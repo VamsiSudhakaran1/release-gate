@@ -1,8 +1,24 @@
-# release-gate v0.1.0 - Complete Project
+# release-gate v0.1.0 - Project Overview & Status
 
 ## What You Have
 
-A complete, working deployment readiness gate for AI agents.
+A foundational deployment readiness gate for AI agents.
+
+**v0.1.0 includes:**
+✅ INPUT_CONTRACT check (schema + sample validation)
+✅ FALLBACK_DECLARED check (governance enforcement)
+✅ CLI tool (init + run commands)
+✅ JSON and text output
+✅ Exit codes for CI/CD
+✅ Complete documentation
+
+**v0.1.0 does NOT include:**
+❌ Runtime agent execution
+❌ Sample output validation
+❌ Formal verification
+❌ Runtime monitoring
+
+See CHANGELOG.md for complete feature list and roadmap.
 
 ### Files Included
 
