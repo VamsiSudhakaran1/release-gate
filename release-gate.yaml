@@ -1,5 +1,5 @@
 project:
-  name: verify-test
+  name: verify
   version: 1.0.0
   description: AI system deployment gate
 
@@ -31,11 +31,11 @@ checks:
     enabled: true
     kill_switch:
       type: feature_flag
-      name: disable_verify_test
+      name: disable_verify
     fallback:
       mode: static_placeholder
       description: Static response returned if system fails
     ownership:
       team: platform-team
       oncall: oncall-platform
-    runbook_url: https://wiki.internal/runbooks/verify-test
+    runbook_url: https://wiki.internal/runbooks/verify

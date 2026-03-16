@@ -1,9 +1,9 @@
 {
   "overall": "PASS",
-  "timestamp": "2026-03-16T10:21:51.176083Z",
+  "timestamp": "2026-03-16T10:42:33.853960Z",
   "environment": "staging",
   "project": {
-    "name": "verify-test",
+    "name": "verify",
     "version": "1.0.0",
     "description": "AI system deployment gate"
   },
@@ -32,7 +32,7 @@
       "name": "fallback_declared",
       "result": "PASS",
       "evidence": {
-        "kill_switch_declared": "disable_verify_test",
+        "kill_switch_declared": "disable_verify",
         "fallback_declared": "static_placeholder",
         "ownership_assigned": "oncall-platform",
         "runbook_provided": true
