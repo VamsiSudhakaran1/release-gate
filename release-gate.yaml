@@ -1,5 +1,5 @@
 project:
-  name: test-system
+  name: test
   version: 1.0.0
   description: AI system deployment gate
 
@@ -31,10 +31,11 @@ checks:
     enabled: true
     kill_switch:
       type: feature_flag
-      name: disable_test_system
+      name: disable_test
     fallback:
       mode: static_placeholder
+      description: Static response returned if system fails
     ownership:
       team: platform-team
       oncall: oncall-platform
-    runbook_url: https://wiki.internal/runbooks/test-system
+    runbook_url: https://wiki.internal/runbooks/test

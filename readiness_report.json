@@ -1,0 +1,42 @@
+{
+  "overall": "PASS",
+  "timestamp": "2026-03-16T09:15:05.168465Z",
+  "environment": "staging",
+  "project": {
+    "name": "test",
+    "version": "1.0.0",
+    "description": "AI system deployment gate"
+  },
+  "summary": {
+    "counts": {
+      "pass": 2,
+      "warn": 0,
+      "fail": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "input_contract",
+      "result": "PASS",
+      "evidence": {
+        "schema_valid": true,
+        "valid_samples_tested": 3,
+        "valid_samples_passed": 3,
+        "valid_samples_failed": 0,
+        "invalid_samples_tested": 3,
+        "invalid_samples_rejected": 3,
+        "invalid_samples_accepted": 0
+      }
+    },
+    {
+      "name": "fallback_declared",
+      "result": "PASS",
+      "evidence": {
+        "kill_switch_declared": "disable_test",
+        "fallback_declared": "static_placeholder",
+        "ownership_assigned": "oncall-platform",
+        "runbook_provided": true
+      }
+    }
+  ]
+}

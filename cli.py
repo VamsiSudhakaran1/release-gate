@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""release-gate CLI - Deployment readiness gate for AI systems"""
+"""release-gate CLI - Deployment readiness gate for AI agents
+
+v0.1.0: INPUT_CONTRACT (schema + sample validation) + FALLBACK_DECLARED (governance)
+"""
 
 import sys
 import json
@@ -11,7 +14,6 @@ def init_project(project_name, output_dir="."):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Create config file
     config_content = f"""project:
   name: {project_name}
   version: 1.0.0
@@ -48,41 +50,43 @@ checks:
       name: disable_{project_name.replace('-', '_')}
     fallback:
       mode: static_placeholder
+      description: Static response returned if system fails
     ownership:
       team: platform-team
       oncall: oncall-platform
     runbook_url: https://wiki.internal/runbooks/{project_name}
 """
     
-    # Write config
     config_path = output_path / "release-gate.yaml"
     with open(config_path, 'w') as f:
         f.write(config_content)
     print(f"✓ Created: {config_path}")
     
-    # Create valid samples
     valid_content = """{"prompt":"Test prompt 1","duration_sec":5}
 {"prompt":"Test prompt 2","duration_sec":10}
 {"prompt":"Another test","duration_sec":30}
 """
-    valid_path = output_path / "valid_requests.jsonl"
-    with open(valid_path, 'w') as f:
-        f.write(valid_content)
-    print(f"✓ Created: {valid_path}")
     
-    # Create invalid samples
     invalid_content = """{"prompt":"","duration_sec":5}
 {"prompt":"Test","duration_sec":120}
 {"duration_sec":5}
 """
+    
+    valid_path = output_path / "valid_requests.jsonl"
     invalid_path = output_path / "invalid_requests.jsonl"
+    
+    with open(valid_path, 'w') as f:
+        f.write(valid_content)
+    print(f"✓ Created: {valid_path}")
+    
     with open(invalid_path, 'w') as f:
         f.write(invalid_content)
     print(f"✓ Created: {invalid_path}")
     
     print("\n✨ Initialization complete!")
 
-def run_gate(config_path, env="staging", output_format="json"):
+
+def run_gate(config_path, env="staging", output_format="json", output_file="readiness_report.json"):
     """Run the deployment gate checks"""
     try:
         import yaml
@@ -119,109 +123,30 @@ def run_gate(config_path, env="staging", output_format="json"):
         "checks": []
     }
     
+    # Get base directory for relative paths
+    config_dir = config_file.parent
+    
     # INPUT_CONTRACT check
-    input_check = config.get("checks", {}).get("input_contract", {})
-    if input_check.get("enabled", True):
-        schema = input_check.get("schema")
-        if not schema:
-            results["checks"].append({
-                "name": "input_contract",
-                "result": "FAIL",
-                "evidence": {"error": "No schema defined"}
-            })
-            results["overall"] = "FAIL"
-            results["summary"]["counts"]["fail"] += 1
-        else:
-            try:
-                jsonschema.Draft7Validator.check_schema(schema)
-                results["checks"].append({
-                    "name": "input_contract",
-                    "result": "PASS",
-                    "evidence": {"schema_valid": True, "checked": "syntax"}
-                })
-                results["summary"]["counts"]["pass"] += 1
-            except Exception as e:
-                results["checks"].append({
-                    "name": "input_contract",
-                    "result": "FAIL",
-                    "evidence": {"error": f"Invalid schema: {str(e)}"}
-                })
-                results["overall"] = "FAIL"
-                results["summary"]["counts"]["fail"] += 1
+    input_check_result = _check_input_contract(config, config_dir, jsonschema)
+    results["checks"].append(input_check_result)
+    if input_check_result["result"] == "FAIL":
+        results["overall"] = "FAIL"
+    results["summary"]["counts"][input_check_result["result"].lower()] += 1
     
     # FALLBACK_DECLARED check
-    fallback_check = config.get("checks", {}).get("fallback_declared", {})
-    if fallback_check.get("enabled", True):
-        missing = []
-        if not fallback_check.get("kill_switch"):
-            missing.append("kill_switch")
-        if not fallback_check.get("fallback"):
-            missing.append("fallback")
-        if not fallback_check.get("ownership"):
-            missing.append("ownership")
-        if not fallback_check.get("runbook_url"):
-            missing.append("runbook_url")
-        
-        if missing:
-            results["checks"].append({
-                "name": "fallback_declared",
-                "result": "FAIL",
-                "evidence": {"missing_fields": missing}
-            })
-            if results["overall"] == "PASS":
-                results["overall"] = "FAIL"
-            results["summary"]["counts"]["fail"] += 1
-        else:
-            results["checks"].append({
-                "name": "fallback_declared",
-                "result": "PASS",
-                "evidence": {"all_declared": True}
-            })
-            results["summary"]["counts"]["pass"] += 1
+    fallback_check_result = _check_fallback_declared(config)
+    results["checks"].append(fallback_check_result)
+    if fallback_check_result["result"] == "FAIL":
+        results["overall"] = "FAIL"
+    results["summary"]["counts"][fallback_check_result["result"].lower()] += 1
     
     # Write report
-    with open("readiness_report.json", 'w') as f:
+    with open(output_file, 'w') as f:
         json.dump(results, f, indent=2)
     
     # Display
     if output_format == "text":
-        print("\n" + "="*70)
-        print("  release-gate v0.1.0 - Deployment Readiness Report")
-        print("="*70)
-        print(f"\nProject: {config.get('project', {}).get('name', 'unknown')}")
-        print(f"Environment: {env}")
-        print(f"Timestamp: {results['timestamp']}")
-        print("\n" + "-"*70)
-        print("Check Results:")
-        print("-"*70)
-        
-        for check in results["checks"]:
-            if check["result"] == "PASS":
-                status = "✓ PASS"
-            elif check["result"] == "FAIL":
-                status = "✗ FAIL"
-            else:
-                status = "⚠ WARN"
-            
-            print(f"\n{check['name']}")
-            print(f"  Status: {status}")
-            for key, value in check.get("evidence", {}).items():
-                if isinstance(value, list):
-                    print(f"  {key}: {', '.join(value)}")
-                else:
-                    print(f"  {key}: {value}")
-        
-        print("\n" + "="*70)
-        summary = results["summary"]["counts"]
-        print(f"Summary: {summary['pass']} passed, {summary['warn']} warned, {summary['fail']} failed")
-        overall = results['overall']
-        if overall == "PASS":
-            print(f"Overall: ✓ PASS")
-        elif overall == "WARN":
-            print(f"Overall: ⚠ WARN")
-        else:
-            print(f"Overall: ✗ FAIL")
-        print("="*70 + "\n")
+        _display_text_report(results)
     else:
         print(json.dumps(results, indent=2))
     
@@ -229,15 +154,298 @@ def run_gate(config_path, env="staging", output_format="json"):
     exit_codes = {"PASS": 0, "WARN": 10, "FAIL": 1}
     return exit_codes.get(results["overall"], 1)
 
+
+def _check_input_contract(config, config_dir, jsonschema):
+    """
+    Validate INPUT_CONTRACT check.
+    
+    Tests:
+    1. Schema is defined and syntactically valid
+    2. All valid samples pass the schema
+    3. All invalid samples fail the schema
+    """
+    input_check = config.get("checks", {}).get("input_contract", {})
+    
+    if not input_check.get("enabled", True):
+        return {
+            "name": "input_contract",
+            "result": "PASS",
+            "evidence": {"status": "check disabled"}
+        }
+    
+    schema = input_check.get("schema")
+    if not schema:
+        return {
+            "name": "input_contract",
+            "result": "FAIL",
+            "evidence": {"error": "No schema defined"}
+        }
+    
+    # Validate schema syntax
+    try:
+        jsonschema.Draft7Validator.check_schema(schema)
+    except Exception as e:
+        return {
+            "name": "input_contract",
+            "result": "FAIL",
+            "evidence": {"error": f"Invalid JSON Schema: {str(e)}"}
+        }
+    
+    # Load samples
+    samples_config = input_check.get("samples", {})
+    valid_path = samples_config.get("valid_path")
+    invalid_path = samples_config.get("invalid_path")
+    
+    if not valid_path or not invalid_path:
+        return {
+            "name": "input_contract",
+            "result": "FAIL",
+            "evidence": {"error": "Missing sample paths (valid_path and invalid_path required)"}
+        }
+    
+    try:
+        valid_samples = _load_jsonl_file(config_dir / valid_path)
+        invalid_samples = _load_jsonl_file(config_dir / invalid_path)
+    except Exception as e:
+        return {
+            "name": "input_contract",
+            "result": "FAIL",
+            "evidence": {"error": f"Failed to load samples: {str(e)}"}
+        }
+    
+    # Test valid samples
+    validator = jsonschema.Draft7Validator(schema)
+    valid_failures = []
+    
+    for i, sample in enumerate(valid_samples):
+        errors = list(validator.iter_errors(sample))
+        if errors:
+            valid_failures.append({
+                "sample_index": i,
+                "data": sample,
+                "error": errors[0].message if errors else "Unknown error"
+            })
+    
+    # Test invalid samples
+    invalid_passes = []
+    
+    for i, sample in enumerate(invalid_samples):
+        errors = list(validator.iter_errors(sample))
+        if not errors:
+            invalid_passes.append({
+                "sample_index": i,
+                "data": sample
+            })
+    
+    # Determine result
+    evidence = {
+        "schema_valid": True,
+        "valid_samples_tested": len(valid_samples),
+        "valid_samples_passed": len(valid_samples) - len(valid_failures),
+        "valid_samples_failed": len(valid_failures),
+        "invalid_samples_tested": len(invalid_samples),
+        "invalid_samples_rejected": len(invalid_samples) - len(invalid_passes),
+        "invalid_samples_accepted": len(invalid_passes)
+    }
+    
+    if valid_failures and invalid_passes:
+        return {
+            "name": "input_contract",
+            "result": "FAIL",
+            "evidence": {
+                **evidence,
+                "failed_valid_samples": valid_failures[:2],
+                "passed_invalid_samples": invalid_passes[:2]
+            },
+            "suggestion": "Fix schema: valid samples must pass, invalid samples must fail"
+        }
+    elif valid_failures:
+        return {
+            "name": "input_contract",
+            "result": "FAIL",
+            "evidence": {
+                **evidence,
+                "failed_valid_samples": valid_failures[:2]
+            },
+            "suggestion": "Schema rejected valid samples. Review schema constraints."
+        }
+    elif invalid_passes:
+        return {
+            "name": "input_contract",
+            "result": "WARN",
+            "evidence": {
+                **evidence,
+                "passed_invalid_samples": invalid_passes[:2]
+            },
+            "suggestion": "Schema accepted invalid samples. Tighten schema constraints."
+        }
+    else:
+        return {
+            "name": "input_contract",
+            "result": "PASS",
+            "evidence": evidence
+        }
+
+
+def _check_fallback_declared(config):
+    """
+    Validate FALLBACK_DECLARED check.
+    
+    Validates:
+    1. Kill switch is declared
+    2. Fallback mode is declared
+    3. Ownership is assigned
+    4. Runbook URL is provided
+    """
+    fallback_check = config.get("checks", {}).get("fallback_declared", {})
+    
+    if not fallback_check.get("enabled", True):
+        return {
+            "name": "fallback_declared",
+            "result": "PASS",
+            "evidence": {"status": "check disabled"}
+        }
+    
+    missing = []
+    
+    # Check kill switch
+    kill_switch = fallback_check.get("kill_switch")
+    if not kill_switch:
+        missing.append("kill_switch")
+    elif not kill_switch.get("type") or not kill_switch.get("name"):
+        missing.append("kill_switch (incomplete: missing type or name)")
+    
+    # Check fallback
+    fallback = fallback_check.get("fallback")
+    if not fallback:
+        missing.append("fallback")
+    elif not fallback.get("mode"):
+        missing.append("fallback (incomplete: missing mode)")
+    
+    # Check ownership
+    ownership = fallback_check.get("ownership")
+    if not ownership:
+        missing.append("ownership")
+    elif not ownership.get("team") or not ownership.get("oncall"):
+        missing.append("ownership (incomplete: missing team or oncall)")
+    
+    # Check runbook
+    runbook_url = fallback_check.get("runbook_url")
+    if not runbook_url:
+        missing.append("runbook_url")
+    elif not isinstance(runbook_url, str) or not (runbook_url.startswith("http://") or runbook_url.startswith("https://")):
+        missing.append("runbook_url (invalid: must be valid http/https URL)")
+    
+    evidence = {
+        "kill_switch_declared": kill_switch is not None and kill_switch.get("type") and kill_switch.get("name"),
+        "fallback_declared": fallback is not None and fallback.get("mode"),
+        "ownership_assigned": ownership is not None and ownership.get("team") and ownership.get("oncall"),
+        "runbook_provided": runbook_url is not None and isinstance(runbook_url, str) and (runbook_url.startswith("http://") or runbook_url.startswith("https://"))
+    }
+    
+    if missing:
+        return {
+            "name": "fallback_declared",
+            "result": "FAIL",
+            "evidence": {
+                **evidence,
+                "missing_fields": missing
+            },
+            "suggestion": f"Declare: {', '.join([m.split('(')[0].strip() for m in missing])}"
+        }
+    else:
+        return {
+            "name": "fallback_declared",
+            "result": "PASS",
+            "evidence": evidence
+        }
+
+
+def _load_jsonl_file(file_path):
+    """Load and parse a JSONL file"""
+    path = Path(file_path)
+    
+    if not path.exists():
+        raise FileNotFoundError(f"Sample file not found: {path}")
+    
+    items = []
+    with open(path, 'r') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if line:
+                try:
+                    items.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON at line {line_num} in {path}: {line}")
+    
+    return items
+
+
+def _display_text_report(results):
+    """Display report in human-readable text format"""
+    print("\n" + "="*70)
+    print("  release-gate v0.1.0 - Deployment Readiness Report")
+    print("="*70)
+    
+    print(f"\nProject: {results['project'].get('name', 'unknown')}")
+    print(f"Environment: {results['environment']}")
+    print(f"Timestamp: {results['timestamp']}")
+    
+    print("\n" + "-"*70)
+    print("Check Results:")
+    print("-"*70)
+    
+    for check in results["checks"]:
+        name = check['name']
+        result = check['result']
+        
+        if result == "PASS":
+            status = "✓ PASS"
+        elif result == "FAIL":
+            status = "✗ FAIL"
+        else:
+            status = "⚠ WARN"
+        
+        print(f"\n{name}")
+        print(f"  Status: {status}")
+        
+        for key, value in check.get("evidence", {}).items():
+            if isinstance(value, list):
+                if value and len(str(value)) > 60:
+                    print(f"  {key}: {len(value)} item(s)")
+                else:
+                    print(f"  {key}: {value}")
+            elif isinstance(value, dict):
+                print(f"  {key}: {json.dumps(value)}")
+            else:
+                print(f"  {key}: {value}")
+        
+        if check.get('suggestion'):
+            print(f"  💡 {check['suggestion']}")
+    
+    print("\n" + "="*70)
+    summary = results["summary"]["counts"]
+    print(f"Summary: {summary['pass']} passed, {summary['warn']} warned, {summary['fail']} failed")
+    
+    overall = results['overall']
+    if overall == "PASS":
+        status = "✓ PASS"
+    elif overall == "WARN":
+        status = "⚠ WARN"
+    else:
+        status = "✗ FAIL"
+    
+    print(f"Overall Decision: {status}")
+    print("="*70 + "\n")
+
+
 def main():
+    """Entry point for the CLI"""
     if len(sys.argv) < 2:
-        print("release-gate v0.1.0 - Deployment Readiness Gate for AI Systems")
+        print("release-gate v0.1.0 - Deployment readiness gate for AI agents")
         print("\nUsage:")
         print("  python cli.py init --project NAME")
-        print("  python cli.py run --config CONFIG [--env ENV] [--format FORMAT]")
-        print("\nExample:")
-        print("  python cli.py init --project my-system")
-        print("  python cli.py run --config release-gate.yaml --format text")
+        print("  python cli.py run --config CONFIG [--env ENV] [--format FORMAT] [--output FILE]")
         sys.exit(0)
     
     command = sys.argv[1]
@@ -255,6 +463,7 @@ def main():
         config = None
         env = "staging"
         fmt = "json"
+        output = "readiness_report.json"
         
         if "--config" in sys.argv:
             idx = sys.argv.index("--config")
@@ -271,19 +480,29 @@ def main():
             if idx + 1 < len(sys.argv):
                 fmt = sys.argv[idx + 1]
         
+        if "--output" in sys.argv:
+            idx = sys.argv.index("--output")
+            if idx + 1 < len(sys.argv):
+                output = sys.argv[idx + 1]
+        
         if not config:
             print("ERROR: --config is required")
             print("Usage: python cli.py run --config release-gate.yaml")
             sys.exit(1)
         
-        sys.exit(run_gate(config, env, fmt))
+        sys.exit(run_gate(config, env, fmt, output))
     
     else:
         print(f"Unknown command: {command}")
-        print("\nUsage:")
-        print("  python cli.py init --project NAME")
-        print("  python cli.py run --config CONFIG")
         sys.exit(1)
 
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user", file=sys.stderr)
+        sys.exit(130)
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
