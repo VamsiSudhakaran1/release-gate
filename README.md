@@ -1,5 +1,6 @@
 # release-gate v0.1.0
 
+<<<<<<< HEAD
 **Deployment Readiness Gate for Autonomous AI Agents**
 
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -42,11 +43,35 @@ It prevents the 9 most critical failure modes documented in [Agents of Chaos](ht
 > **release-gate tests: "Is it safe to run unsupervised?"**
 
 These are fundamentally different questions that require different answers.
+=======
+**Pre-deployment governance gate for AI agents that validates request contracts and operational readiness.**
+
+![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-3.7+-blue)
+![Status](https://img.shields.io/badge/status-v0.1-brightgreen)
+
+---
+
+## What is release-gate?
+
+release-gate prevents autonomous AI agents from being deployed without operational safeguards.
+
+It answers: **Is this agent safe to run unsupervised?**
+
+### The Key Insight
+
+> **Traditional QA tests: "Does it work?"**
+>
+> **release-gate tests: "Is it safe to run?"**
+
+These are fundamentally different questions that require different tools.
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 
 ---
 
 ## The Problem
 
+<<<<<<< HEAD
 ### Real-World AI Agent Failures
 
 The research paper "Agents of Chaos: Red-Teaming of Autonomous AI Agents" (Shapira et al., 2026) documents 11 ways production AI agents fail:
@@ -170,6 +195,34 @@ This is why SonarQube works for code quality and Terraform policy checks work fo
 - Invalid input handling
 
 **Configuration:**
+=======
+Autonomous AI agents fail in production in ways traditional testing can't catch:
+
+- **Non-owner access** (Agents of Chaos #2) - Anyone can execute commands
+- **Self-destruction** (Agents of Chaos #1) - Agent deletes its own infrastructure
+- **Resource exhaustion** (Agents of Chaos #4, #5) - Infinite loops consume tokens
+- **Identity spoofing** (Agents of Chaos #8) - Governance bypassed via usernames
+- **Manipulation** (Agents of Chaos #7) - Agents exploited into harmful behavior
+
+These aren't bugs. They're **governance failures**.
+
+**Reference:** [Agents of Chaos: Red-Teaming of Autonomous AI Agents](https://arxiv.org/abs/2602.20021)
+
+---
+
+## What release-gate Does (v0.1)
+
+### ✅ Validates INPUT_CONTRACT
+
+Ensures your agent's request format is well-defined and tested.
+
+**Checks:**
+- ✅ Schema is defined and syntactically valid
+- ✅ All valid test samples pass the schema
+- ✅ All invalid test samples fail the schema
+
+**Example:**
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```yaml
 input_contract:
   enabled: true
@@ -190,6 +243,7 @@ input_contract:
     invalid_path: invalid_requests.jsonl
 ```
 
+<<<<<<< HEAD
 #### 2. FALLBACK_DECLARED Check
 
 **Validates:** Operational safety mechanisms are declared
@@ -207,17 +261,35 @@ input_contract:
 - Orphaned systems
 
 **Configuration:**
+=======
+### ✅ Validates FALLBACK_DECLARED
+
+Ensures operational safety mechanisms are documented.
+
+**Checks:**
+- ✅ Kill switch is declared (how to disable)
+- ✅ Fallback mode is specified (what happens if it fails)
+- ✅ Ownership is assigned (who's responsible)
+- ✅ Runbook URL is provided (incident response)
+
+**Example:**
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```yaml
 fallback_declared:
   enabled: true
   kill_switch:
     type: feature_flag
+<<<<<<< HEAD
     name: disable_system
+=======
+    name: disable_my_agent
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
   fallback:
     mode: static_placeholder
   ownership:
     team: platform-team
     oncall: oncall-platform
+<<<<<<< HEAD
   runbook_url: https://wiki.internal/runbooks/system
 ```
 
@@ -233,11 +305,30 @@ fallback_declared:
 | No external calls | Privacy-first, no data transmission |
 | Fast execution | <1 second for typical configs |
 | MIT License | Free to use and modify |
+=======
+  runbook_url: https://wiki.internal/runbooks/my-agent
+```
+
+---
+
+## What release-gate Does NOT Do (v0.1)
+
+These features are planned for future versions:
+
+❌ **Runtime testing** - Doesn't execute the agent
+❌ **Sample validation** - Doesn't test actual outputs
+❌ **Behavior verification** - Doesn't prove safeguards work
+❌ **Formal verification** - Doesn't mathematically verify behavior
+❌ **Runtime monitoring** - Doesn't continuously verify at runtime
+
+See [CHANGELOG.md](CHANGELOG.md) for complete roadmap.
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 
 ---
 
 ## Quick Start
 
+<<<<<<< HEAD
 ### 60-Second Demo
 
 ```bash
@@ -294,10 +385,55 @@ python cli.py run --config release-gate.yaml --format text
 
 You should see: **Overall: ✓ PASS**
 
+=======
+### 1. Install
+
+```bash
+pip install pyyaml jsonschema
+```
+
+### 2. Initialize
+
+```bash
+python cli.py init --project my-system
+```
+
+Creates:
+- `release-gate.yaml` - Configuration template
+- `valid_requests.jsonl` - Valid request examples
+- `invalid_requests.jsonl` - Invalid request examples
+
+### 3. Run
+
+```bash
+python cli.py run --config release-gate.yaml --format text
+```
+
+Expected output:
+```
+input_contract
+  Status: ✓ PASS
+  valid_samples_tested: 3
+  valid_samples_passed: 3
+  invalid_samples_tested: 3
+  invalid_samples_rejected: 3
+
+fallback_declared
+  Status: ✓ PASS
+  kill_switch_declared: True
+  fallback_declared: True
+  ownership_assigned: True
+  runbook_provided: True
+
+Overall Decision: ✓ PASS
+```
+
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ---
 
 ## Usage
 
+<<<<<<< HEAD
 ### Command: init
 
 Initialize a new release-gate project.
@@ -342,17 +478,37 @@ python cli.py run --config CONFIG [--env ENV] [--format FORMAT] [--output FILE]
 python cli.py run --config release-gate.yaml --format text
 
 # Machine-readable JSON
+=======
+### Initialize a Project
+
+```bash
+python cli.py init --project my-system
+```
+
+### Run Governance Gate
+
+```bash
+# Text output (human-readable)
+python cli.py run --config release-gate.yaml --format text
+
+# JSON output (machine-readable, saved to readiness_report.json)
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 python cli.py run --config release-gate.yaml --format json
 
 # Custom output file
 python cli.py run --config release-gate.yaml --output my-report.json
 
+<<<<<<< HEAD
 # Production environment
+=======
+# Specify environment
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 python cli.py run --config release-gate.yaml --env prod
 ```
 
 ### Exit Codes
 
+<<<<<<< HEAD
 | Code | Status | Meaning | CI/CD Action |
 |------|--------|---------|--------------|
 | 0 | PASS | All checks passed | Deploy automatically |
@@ -372,12 +528,34 @@ elif [ $? -eq 10 ]; then
   send_approval_request
 else
   echo "Deployment blocked"
+=======
+| Code | Status | Meaning |
+|------|--------|---------|
+| 0 | PASS | All checks passed, safe to deploy |
+| 10 | WARN | Warnings found (invalid samples accepted) |
+| 1 | FAIL | Critical failures, deployment blocked |
+
+**CI/CD Example:**
+```bash
+python cli.py run --config release-gate.yaml
+exit_code=$?
+
+if [ $exit_code -eq 0 ]; then
+  echo "✓ Deploying..."
+  deploy_to_production
+elif [ $exit_code -eq 10 ]; then
+  echo "⚠ Requires review..."
+  send_for_approval
+else
+  echo "✗ Blocked"
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
   exit 1
 fi
 ```
 
 ---
 
+<<<<<<< HEAD
 ## Configuration Guide
 
 ### File Format
@@ -644,11 +822,19 @@ runbook_url: https://wiki.internal/runbooks/my-system
 **Scenario:** AI agent that generates videos from text prompts
 
 **release-gate.yaml:**
+=======
+## Complete Configuration Example
+
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```yaml
 project:
   name: video-generation-api
   version: 1.0.0
+<<<<<<< HEAD
   description: AI video generation service
+=======
+  description: AI video generation with autonomous agent
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 
 gate:
   policy: default-v0.1
@@ -667,12 +853,18 @@ checks:
           type: string
           minLength: 1
           maxLength: 1000
+<<<<<<< HEAD
           description: Video description
+=======
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
         duration_sec:
           type: number
           minimum: 1
           maximum: 60
+<<<<<<< HEAD
           description: Length in seconds
+=======
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
         resolution:
           type: string
           enum: ["480p", "720p", "1080p"]
@@ -687,6 +879,7 @@ checks:
       name: disable_video_generation
     fallback:
       mode: static_placeholder
+<<<<<<< HEAD
       description: Return static placeholder video
     ownership:
       team: platform-team
@@ -695,12 +888,27 @@ checks:
 ```
 
 **valid_requests.jsonl:**
+=======
+      description: Return static placeholder video on failure
+    ownership:
+      team: platform-team
+      oncall: oncall-platform
+    runbook_url: https://wiki.internal/runbooks/video-generation
+```
+
+---
+
+## Sample Files
+
+### valid_requests.jsonl
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```json
 {"prompt":"A cat playing guitar","duration_sec":5,"resolution":"720p"}
 {"prompt":"A dog dancing in rain","duration_sec":10,"resolution":"1080p"}
 {"prompt":"Ocean waves at sunset","duration_sec":30,"resolution":"480p"}
 ```
 
+<<<<<<< HEAD
 **invalid_requests.jsonl:**
 ```json
 {"prompt":"","duration_sec":5,"resolution":"720p"}
@@ -803,10 +1011,18 @@ checks:
       team: quantitative-trading
       oncall: quant-lead
     runbook_url: https://wiki.internal/runbooks/trading-agent
+=======
+### invalid_requests.jsonl
+```json
+{"prompt":"","duration_sec":5,"resolution":"720p"}
+{"prompt":"Test","duration_sec":120,"resolution":"720p"}
+{"duration_sec":5,"resolution":"720p"}
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```
 
 ---
 
+<<<<<<< HEAD
 ## CI/CD Integration
 
 ### GitHub Actions
@@ -1116,6 +1332,12 @@ Open source is the path to standardization.
 
 Human-readable report:
 
+=======
+## Output Examples
+
+### Text Output
+
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```
 ======================================================================
   release-gate v0.1.0 - Deployment Readiness Report
@@ -1132,6 +1354,7 @@ Check Results:
 input_contract
   Status: ✓ PASS
   schema_valid: True
+<<<<<<< HEAD
   checked: syntax
 
 fallback_declared
@@ -1141,13 +1364,35 @@ fallback_declared
 ======================================================================
 Summary: 2 passed, 0 warned, 0 failed
 Overall: ✓ PASS
+=======
+  valid_samples_tested: 3
+  valid_samples_passed: 3
+  valid_samples_failed: 0
+  invalid_samples_tested: 3
+  invalid_samples_rejected: 3
+  invalid_samples_accepted: 0
+
+fallback_declared
+  Status: ✓ PASS
+  kill_switch_declared: True
+  fallback_declared: True
+  ownership_assigned: True
+  runbook_provided: True
+
+======================================================================
+Summary: 2 passed, 0 warned, 0 failed
+Overall Decision: ✓ PASS
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ======================================================================
 ```
 
 ### JSON Output
 
+<<<<<<< HEAD
 Machine-readable report:
 
+=======
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```json
 {
   "overall": "PASS",
@@ -1170,14 +1415,30 @@ Machine-readable report:
       "result": "PASS",
       "evidence": {
         "schema_valid": true,
+<<<<<<< HEAD
         "checked": "syntax"
+=======
+        "valid_samples_tested": 3,
+        "valid_samples_passed": 3,
+        "valid_samples_failed": 0,
+        "invalid_samples_tested": 3,
+        "invalid_samples_rejected": 3,
+        "invalid_samples_accepted": 0
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
       }
     },
     {
       "name": "fallback_declared",
       "result": "PASS",
       "evidence": {
+<<<<<<< HEAD
         "all_declared": true
+=======
+        "kill_switch_declared": true,
+        "fallback_declared": true,
+        "ownership_assigned": true,
+        "runbook_provided": true
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
       }
     }
   ]
@@ -1186,6 +1447,7 @@ Machine-readable report:
 
 ---
 
+<<<<<<< HEAD
 ## Roadmap
 
 ### Phase 1 (Current - v0.1)
@@ -1375,10 +1637,64 @@ echo "secrets/" >> .gitignore
 
 # Restrict config files if needed
 chmod 600 release-gate.yaml
+=======
+## Documentation
+
+- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute quick start
+- **[EXTENDED_README.md](EXTENDED_README.md)** - Complete guide (8,000+ words)
+- **[CHANGELOG.md](CHANGELOG.md)** - Features and roadmap
+- **[COMPLETE.md](COMPLETE.md)** - Project overview
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute
+
+---
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+- name: Governance Gate
+  run: |
+    pip install pyyaml jsonschema
+    python cli.py run --config release-gate.yaml
+    
+- name: Upload Report
+  if: always()
+  uses: actions/upload-artifact@v3
+  with:
+    name: readiness-report
+    path: readiness_report.json
+```
+
+### GitLab CI
+
+```yaml
+governance:
+  script:
+    - pip install pyyaml jsonschema
+    - python cli.py run --config release-gate.yaml
+  artifacts:
+    paths:
+      - readiness_report.json
+```
+
+### Jenkins
+
+```groovy
+stage('Governance') {
+  steps {
+    sh '''
+      pip install pyyaml jsonschema
+      python cli.py run --config release-gate.yaml
+    '''
+  }
+}
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 ```
 
 ---
 
+<<<<<<< HEAD
 ## References
 
 ### Research Papers
@@ -1471,11 +1787,65 @@ python cli.py run --config release-gate.yaml --format json
 ```
 
 All checks should pass.
+=======
+## Design Philosophy
+
+### 1. Governance ≠ Testing
+
+Testing asks: "Does it work?"
+Governance asks: "Is it safe to run?"
+
+release-gate focuses on governance.
+
+### 2. Configuration-as-Safety
+
+Safety requirements are declared in YAML and validated before deployment.
+
+### 3. Local-First
+
+No external services, no data transmission, no back-end infrastructure.
+
+### 4. Automation Over Checklists
+
+Checklists can be skipped. CI/CD gates cannot.
+
+---
+
+## Current Capabilities (v0.1)
+
+✅ Schema syntax validation  
+✅ Sample test validation  
+✅ Governance declaration enforcement  
+✅ JSON and text output  
+✅ Exit codes for CI/CD  
+✅ No external dependencies (just YAML + JSON Schema)
+
+## Planned Capabilities (v0.2+)
+
+🔜 Runtime agent execution testing  
+🔜 Action budget verification  
+🔜 Performance validation  
+🔜 Formal verification layer  
+🔜 Runtime monitoring integration  
+
+See [CHANGELOG.md](CHANGELOG.md) for complete roadmap.
+
+---
+
+## Requirements
+
+- Python 3.7+
+- pyyaml >= 6.0
+- jsonschema >= 4.0
+
+That's it. No heavy frameworks, no external services.
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 
 ---
 
 ## License
 
+<<<<<<< HEAD
 MIT License
 
 Copyright (c) 2026 release-gate contributors
@@ -1483,11 +1853,23 @@ Copyright (c) 2026 release-gate contributors
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software...
 
 See LICENSE file for full text.
+=======
+MIT License - Use freely and modify as needed.
+
+---
+
+## References
+
+- **Agents of Chaos** - https://arxiv.org/abs/2602.20021
+- **DARPA ANSR** - Assured Neuro-Symbolic Research
+- **Responsible AI** - Safety as a first-class concern
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
 
 ---
 
 ## Support
 
+<<<<<<< HEAD
 ### Getting Help
 
 1. **Check Documentation** - Start with README.md
@@ -1573,3 +1955,17 @@ Include:
 Last Updated: March 16, 2026
 Version: 0.1.0
 Status: Production Ready ✅
+=======
+**Questions or issues?**
+
+- 📖 Read [QUICKSTART.md](QUICKSTART.md) for common questions
+- 📚 Read [EXTENDED_README.md](EXTENDED_README.md) for deep dive
+- 🐛 Open an issue on GitHub
+- 💬 Start a discussion on GitHub
+
+---
+
+**release-gate: Governance enforcement for autonomous AI agents.** 🚀
+
+*Making autonomous agents deterministically reliable.*
+>>>>>>> 5c5e604b06ff94422f637db1ecb1bb61bd18c142
