@@ -1,26 +1,311 @@
 # release-gate v0.1.0
 
-**Pre-deployment governance gate for AI agents that validates request contracts and operational readiness.**
+**The governance gate for autonomous AI agents.**
 
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.7+-blue)
 ![Status](https://img.shields.io/badge/status-v0.1-brightgreen)
 
+Visit **[release-gate.com](https://release-gate.com)** for the complete story.
+
 ---
 
 ## What is release-gate?
 
-release-gate prevents autonomous AI agents from being deployed without operational safeguards.
+release-gate blocks AI agent deployment unless you can prove:
 
-It answers: **Is this agent safe to run unsupervised?**
+✅ **Request Contract is Validated** - Schema defined and tested with valid/invalid samples
+✅ **Operational Safeguards are Declared** - Kill switch, fallback, ownership, runbook present
+✅ **Governance Policies are Met** - System meets your organization's requirements
+✅ **Audit Evidence is Generated** - Machine-readable proof for compliance
 
-### The Key Insight
+---
 
-> **Traditional QA tests: "Does it work?"**
->
-> **release-gate tests: "Is it safe to run?"**
+## The Problem
 
-These are fundamentally different questions that require different tools.
+Autonomous AI agents fail in production in ways traditional testing can't catch:
+
+- **Non-owner access** (Agents of Chaos #2) - Anyone can execute commands
+- **Self-destruction** (Agents of Chaos #1) - Agent deletes its own infrastructure
+- **Resource exhaustion** (Agents of Chaos #4, #5) - Infinite loops consume tokens
+- **Identity spoofing** (Agents of Chaos #8) - Governance bypassed via usernames
+- **Manipulation** (Agents of Chaos #7) - Agents exploited into harmful behavior
+
+**Traditional QA asks:** "Does it work?"
+**release-gate asks:** "Is it safe to run unsupervised?"
+
+These are different questions that require different tools.
+
+**Reference:** [Agents of Chaos: Red-Teaming of Autonomous AI Agents](https://arxiv.org/abs/2602.20021)
+
+---
+
+## What release-gate Does (v0.1)
+
+### ✅ INPUT_CONTRACT Check
+
+Ensures your agent's request format is well-defined and tested.
+
+**Validates:**
+- Schema is defined and syntactically valid ✅
+- All valid test samples pass the schema ✅
+- All invalid test samples fail the schema ✅
+
+### ✅ FALLBACK_DECLARED Check
+
+Ensures operational safety mechanisms are documented.
+
+**Validates:**
+- Kill switch is declared (how to disable) ✅
+- Fallback mode is specified (what happens if it fails) ✅
+- Ownership is assigned (who's responsible) ✅
+- Runbook URL is provided (incident response) ✅
+
+---
+
+## What release-gate Does NOT Do (v0.1)
+
+These features are planned for future versions:
+
+❌ **Runtime behavior testing** - Doesn't execute the agent
+❌ **Output validation** - Doesn't test actual outputs or model behavior
+❌ **Formal verification** - Doesn't mathematically verify behavior
+❌ **Runtime monitoring** - Doesn't continuously verify at runtime
+
+---
+
+## How It Fits in Your Stack
+
+### With LangWatch
+- **LangWatch:** Simulate, evaluate, trace agent behavior
+- **release-gate:** Gate deployment based on governance evidence
+
+Use together:
+1. Use LangWatch to test agent behavior
+2. Pass test results to release-gate
+3. release-gate blocks/approves based on policy
+
+### With Other Tools
+- **Prompt optimization:** Use LangWatch
+- **Production monitoring:** Use DataDog, New Relic, etc.
+- **Pre-deployment policy:** Use release-gate ← You are here
+- **Incident response:** Use runbooks referenced in release-gate
+
+---
+
+## Quick Start
+
+### 1. Install
+
+```bash
+pip install pyyaml jsonschema
+```
+
+### 2. Initialize
+
+```bash
+python cli.py init --project my-system
+```
+
+Creates:
+- `release-gate.yaml` - Configuration template
+- `valid_requests.jsonl` - Valid request examples
+- `invalid_requests.jsonl` - Invalid request examples
+
+### 3. Run
+
+```bash
+python cli.py run --config release-gate.yaml --format text
+```
+
+Expected output:
+
+```
+input_contract: ✓ PASS
+fallback_declared: ✓ PASS
+
+Overall Decision: ✓ PASS
+Exit Code: 0 (safe to deploy)
+```
+
+---
+
+## Configuration
+
+### Minimal Example
+
+```yaml
+project:
+  name: my-agent
+  version: 1.0.0
+
+checks:
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+    samples:
+      valid_path: valid_requests.jsonl
+      invalid_path: invalid_requests.jsonl
+
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: feature_flag
+      name: disable_my_agent
+    fallback:
+      mode: static_placeholder
+    ownership:
+      team: platform-team
+      oncall: oncall-platform
+    runbook_url: https://wiki.internal/runbooks/my-agent
+```
+
+See [examples/](examples/) for complete examples.
+
+---
+
+## Exit Codes
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| 0 | PASS | All checks passed, safe to deploy |
+| 10 | WARN | Warnings found, review recommended |
+| 1 | FAIL | Critical failures, deployment blocked |
+
+**CI/CD Integration:**
+
+```bash
+python cli.py run --config release-gate.yaml
+
+if [ $? -eq 0 ]; then
+  deploy_to_production
+elif [ $? -eq 10 ]; then
+  send_for_approval
+else
+  exit 1  # Deployment blocked
+fi
+```
+
+---
+
+## Documentation
+
+- **[QUICKSTART](docs/QUICKSTART.md)** - 5-minute quick start
+- **[EXTENDED_README](docs/EXTENDED_README.md)** - Comprehensive guide
+- **[ARCHITECTURE](docs/ARCHITECTURE.md)** - How it works
+- **[GOVERNANCE_VISION](docs/GOVERNANCE_VISION.md)** - Long-term roadmap
+- **[INTEGRATION_GUIDE](docs/INTEGRATION_GUIDE.md)** - Using with other tools
+- **[CONTRIBUTING](docs/CONTRIBUTING.md)** - How to contribute
+- **[CHANGELOG](docs/CHANGELOG.md)** - Features and roadmap
+
+---
+
+## Design Philosophy
+
+### 1. Governance ≠ Testing
+
+Testing asks: "Does it work?"
+Governance asks: "Is it safe to run?"
+
+release-gate focuses on governance.
+
+### 2. Policy-as-Code
+
+Safety requirements are declared in YAML and validated before deployment.
+
+### 3. Local-First
+
+No external services, no data transmission, no back-end infrastructure.
+
+### 4. Automation Over Checklists
+
+Checklists can be skipped. CI/CD gates cannot.
+
+### 5. Pluggable Checks
+
+Extensible system for adding governance controls:
+- INPUT_CONTRACT (v0.1)
+- FALLBACK_DECLARED (v0.1)
+- IDENTITY_BOUNDARY (v0.2)
+- ACTION_BUDGET (v0.2)
+- APPROVAL_REQUIRED (v0.3)
+- DATA_EGRESS_POLICY (v0.3)
+
+---
+
+## Roadmap
+
+### v0.1 (Current)
+✅ INPUT_CONTRACT check
+✅ FALLBACK_DECLARED check
+✅ CLI init and run
+✅ JSON/text output
+✅ Exit codes
+
+### v0.2 (Next)
+🔜 IDENTITY_BOUNDARY check
+🔜 ACTION_BUDGET check
+🔜 Better evidence reporting
+
+### v0.3+
+🔮 APPROVAL_REQUIRED check
+🔮 DATA_EGRESS_POLICY check
+🔮 Formal verification
+🔮 Runtime monitoring integration
+
+See [CHANGELOG](docs/CHANGELOG.md) and [GOVERNANCE_VISION](docs/GOVERNANCE_VISION.md) for details.
+
+---
+
+## Requirements
+
+- Python 3.7+
+- pyyaml >= 6.0
+- jsonschema >= 4.0
+
+That's it. No heavy frameworks, no external services.
+
+---
+
+## License
+
+MIT License - Use freely and modify as needed.
+
+---
+
+## Support
+
+**Questions? Start here:**
+
+1. 📖 [QUICKSTART](docs/QUICKSTART.md) - Get running in 5 minutes
+2. 📚 [EXTENDED_README](docs/EXTENDED_README.md) - Complete guide
+3. 🏗️ [ARCHITECTURE](docs/ARCHITECTURE.md) - How it works
+4. 🔗 [INTEGRATION_GUIDE](docs/INTEGRATION_GUIDE.md) - Using with other tools
+5. 💬 [GitHub Issues](https://github.com/VamsiSudhakaran1/release-gate/issues) - Report bugs
+
+---
+
+## The Vision
+
+**release-gate is the OPA / SonarQube / admission-controller layer for AI agents.**
+
+- OPA enforces infrastructure policies
+- SonarQube enforces code quality policies
+- release-gate enforces AI agent governance policies
+
+Expect governance to become as important as testing in the AI era.
+
+---
+
+**release-gate: Enforce governance before deployment.** 🚀
+
+Visit **[release-gate.com](https://release-gate.com)** to learn more.
 
 ---
 
@@ -108,7 +393,7 @@ These features are planned for future versions:
 ❌ **Formal verification** - Doesn't mathematically verify behavior
 ❌ **Runtime monitoring** - Doesn't continuously verify at runtime
 
-See [CHANGELOG.md](docs/CHANGELOG.md) for complete roadmap.
+See [CHANGELOG.md](CHANGELOG.md) for complete roadmap.
 
 ---
 
@@ -369,9 +654,11 @@ Overall Decision: ✓ PASS
 
 ## Documentation
 
-- **[Quick Start](docs/QUICKSTART.md)** - 5-minute quick start
-- **[Changelog](docs/CHANGELOG.md)** - Features and roadmap
-
+- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute quick start
+- **[EXTENDED_README.md](EXTENDED_README.md)** - Complete guide (8,000+ words)
+- **[CHANGELOG.md](CHANGELOG.md)** - Features and roadmap
+- **[COMPLETE.md](COMPLETE.md)** - Project overview
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute
 
 ---
 
