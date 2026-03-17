@@ -445,15 +445,15 @@
         }
 
         .scenario-header {
-            padding: 1.5rem;
+            padding: 1.25rem;
             background: linear-gradient(135deg, var(--danger), #dc2626);
             color: white;
         }
 
         .scenario-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            margin: 0;
         }
 
         .scenario-body {
@@ -461,71 +461,78 @@
         }
 
         .threat-box {
-            background: rgba(239, 68, 68, 0.1);
-            border-left: 4px solid var(--danger);
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1rem;
+            background: rgba(239, 68, 68, 0.08);
+            border-left: 3px solid var(--danger);
+            padding: 0.75rem;
+            border-radius: 0.4rem;
+            margin-bottom: 0.75rem;
         }
 
         .threat-label {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 700;
-            text-transform: uppercase;
             color: var(--danger);
-            letter-spacing: 0.5px;
-            margin-bottom: 0.3rem;
+            margin-bottom: 0.25rem;
         }
 
         .threat-description {
-            font-size: 0.95rem;
+            font-size: 0.85rem;
             color: var(--text);
-            line-height: 1.6;
         }
 
-        .impact-box {
-            background: rgba(239, 68, 68, 0.08);
-            border-left: 4px solid var(--danger);
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .impact-label {
+        .check-box {
+            background: rgba(59, 130, 246, 0.08);
+            border-left: 3px solid var(--accent);
+            padding: 0.75rem;
+            border-radius: 0.4rem;
+            margin-bottom: 0.75rem;
+            font-family: monospace;
             font-size: 0.8rem;
+            color: var(--secondary);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .result-box {
+            background: rgba(16, 185, 129, 0.08);
+            border-left: 3px solid var(--success);
+            padding: 0.75rem;
+            border-radius: 0.4rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .result-label {
+            font-size: 0.75rem;
             font-weight: 700;
-            text-transform: uppercase;
-            color: var(--danger);
-            letter-spacing: 0.5px;
-            margin-bottom: 0.3rem;
-        }
-
-        .impact-item {
-            font-size: 0.9rem;
-            color: var(--text);
-            margin-bottom: 0.5rem;
-        }
-
-        .solution-box {
-            background: rgba(16, 185, 129, 0.1);
-            border-left: 4px solid var(--success);
-            padding: 1rem;
-            border-radius: 0.5rem;
-        }
-
-        .solution-label {
-            font-size: 0.8rem;
-            font-weight: 700;
-            text-transform: uppercase;
             color: var(--success);
-            letter-spacing: 0.5px;
-            margin-bottom: 0.3rem;
+            margin-bottom: 0.25rem;
         }
 
-        .solution-description {
-            font-size: 0.95rem;
+        .result-text {
+            font-size: 0.85rem;
             color: var(--text);
-            line-height: 1.6;
+        }
+
+        .decision-box {
+            background: white;
+            border: 2px solid var(--success);
+            border-radius: 0.4rem;
+            padding: 0.75rem;
+            text-align: center;
+        }
+
+        .decision-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-light);
+            margin-bottom: 0.25rem;
+        }
+
+        .decision-value {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--success);
         }
 
         /* ===== COMING SOON SECTION ===== */
@@ -774,25 +781,26 @@
                         <!-- Scenario 1 -->
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">💥 Self-Destruction Risk</div>
+                                <div class="scenario-title">💥 #1: Self-Destruction</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Agent deletes databases and backups without permission</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Agent autonomously deletes critical infrastructure</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• All generated videos lost</div>
-                                    <div class="impact-item">• Generation pipeline destroyed</div>
-                                    <div class="impact-item">• Service down 48+ hours</div>
-                                    <div class="impact-item">• Loss: $500K+</div>
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    operations: read_only</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Delete operations blocked</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Enforces action limits (read-only operations). ✓ Requires kill switch. ✓ Verifies ownership and fallback declared.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
@@ -800,25 +808,27 @@
                         <!-- Scenario 2 -->
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">🔓 No Access Control</div>
+                                <div class="scenario-title">🔓 #2: Non-Owner Access</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Anyone can access the agent. No authentication needed.</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Anyone can execute without verification</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Attackers generate unlimited videos</div>
-                                    <div class="impact-item">• GPU costs spike to $100K/day</div>
-                                    <div class="impact-item">• Service becomes unusable</div>
-                                    <div class="impact-item">• Customer data compromised</div>
+                                <div class="check-box">release-gate.yaml:
+  input_contract:
+    auth: required
+    rate_limit: 100/hour</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Auth + rate limits enforced</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Requires authentication. ✓ Enforces rate limits per user. ✓ Verifies data isolation boundaries.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
@@ -826,25 +836,27 @@
                         <!-- Scenario 3 -->
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">🔥 Runaway Costs</div>
+                                <div class="scenario-title">🔥 #3: Resource Exhaustion</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Agent retries infinitely, consuming all resources</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Infinite loops consume all CPU/tokens</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Infinite retry loops</div>
-                                    <div class="impact-item">• GPU bills reach $50K+/day</div>
-                                    <div class="impact-item">• Takes 8 hours to notice</div>
-                                    <div class="impact-item">• Service unresponsive</div>
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    max_retries: 3
+    max_daily_cost: 1000</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Cost/retry limits enforced</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Sets max retries. ✓ Enforces daily cost limits. ✓ Requires timeout per request.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
@@ -866,75 +878,81 @@
                     <div class="scenario-grid">
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">💥 Self-Destruction Risk</div>
+                                <div class="scenario-title">🎭 #4: Identity Spoofing</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Agent deletes transcription history and trained models</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Attacker impersonates legitimate user</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• All transcriptions lost</div>
-                                    <div class="impact-item">• Customer archives wiped</div>
-                                    <div class="impact-item">• HIPAA compliance violation</div>
-                                    <div class="impact-item">• Legal liability: $2M+ fines</div>
+                                <div class="check-box">release-gate.yaml:
+  input_contract:
+    identity: verified
+    mfa: required</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - MFA + identity verification</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Limits operations to read-only. ✓ Requires kill switch. ✓ Enforces backup procedures.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
 
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">🔓 No Access Control</div>
+                                <div class="scenario-title">🎪 #5: Hallucinated Endpoints</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">No authentication. Anyone can transcribe any audio.</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Agent calls APIs that don't exist</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Patient/confidential data accessed</div>
-                                    <div class="impact-item">• Voice cloning data stolen</div>
-                                    <div class="impact-item">• Competitors scrape your models</div>
-                                    <div class="impact-item">• Data breach lawsuit</div>
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    api_validation: strict
+    timeout_per_call: 30s</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - API validation + timeout enforced</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Mandates authentication. ✓ Enforces rate limits. ✓ Verifies data encryption.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
 
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">🔥 Runaway Costs</div>
+                                <div class="scenario-title">🔪 #6: Manipulation</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Agent stuck in transcription retry loop</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Agent tricked into harmful behavior</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Processes same audio 1000x times</div>
-                                    <div class="impact-item">• Costs balloon to $100K+</div>
-                                    <div class="impact-item">• Queue backs up for 48 hours</div>
-                                    <div class="impact-item">• SLA breached (99.9% uptime)</div>
+                                <div class="check-box">release-gate.yaml:
+  input_contract:
+    input_sanitization: true
+    prompt_validation: strict</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Input validation enforced</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Limits retries per request. ✓ Sets daily cost caps. ✓ Requires timeout per file.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
@@ -956,75 +974,81 @@
                     <div class="scenario-grid">
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">💥 Self-Destruction Risk</div>
+                                <div class="scenario-title">💾 #7: Data Leakage</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Agent deletes auth system and customer conversations</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">Sensitive info exposed or exfiltrated</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Authentication broken</div>
-                                    <div class="impact-item">• Support conversations lost</div>
-                                    <div class="impact-item">• Millions of users locked out</div>
-                                    <div class="impact-item">• Complete account compromise</div>
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    data_egress: restricted
+    encryption: end-to-end</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Data egress + encryption verified</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Restricts delete operations. ✓ Requires kill switch. ✓ Enforces data protection.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
 
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">🔓 No Access Control</div>
+                                <div class="scenario-title">⏱️ #8: Latency Degradation</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">No login required. Anyone can chat and extract data.</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">System becomes slow and unresponsive</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Hackers extract customer data</div>
-                                    <div class="impact-item">• API keys stolen from chat</div>
-                                    <div class="impact-item">• Payment info exposed</div>
-                                    <div class="impact-item">• Customer trust destroyed</div>
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    max_latency: 5s
+    circuit_breaker: enabled</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Latency + circuit breaker enforced</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Requires OAuth2 authentication. ✓ Enforces rate limits. ✓ Verifies customer data isolation.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
 
                         <div class="scenario-card">
                             <div class="scenario-header">
-                                <div class="scenario-title">🔥 Runaway Costs</div>
+                                <div class="scenario-title">💾 #9: Memory Exhaustion</div>
                             </div>
                             <div class="scenario-body">
                                 <div class="threat-box">
-                                    <div class="threat-label">The Problem</div>
-                                    <div class="threat-description">Agent stuck in token generation loop</div>
+                                    <div class="threat-label">Agents of Chaos Failure</div>
+                                    <div class="threat-description">OOM kills process causing outage</div>
                                 </div>
 
-                                <div class="impact-box">
-                                    <div class="impact-label">Post-Deploy Impact</div>
-                                    <div class="impact-item">• Infinite token generation</div>
-                                    <div class="impact-item">• API budget depleted mid-month</div>
-                                    <div class="impact-item">• Service dies for all users</div>
-                                    <div class="impact-item">• Revenue loss: $10K+</div>
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    max_memory: 2GB
+    auto_shutdown: true</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Release-gate Output</div>
+                                    <div class="result-text">✓ PASS - Memory limit + auto-shutdown</div>
                                 </div>
 
-                                <div class="solution-box">
-                                    <div class="solution-label">release-gate Prevents This</div>
-                                    <div class="solution-description">✓ Sets max tokens per request. ✓ Enforces monthly budget caps. ✓ Requires timeout per chat.</div>
+                                <div class="decision-box">
+                                    <div class="decision-label">Decision</div>
+                                    <div class="decision-value">✓ SAFE</div>
                                 </div>
                             </div>
                         </div>
@@ -1043,7 +1067,7 @@
 
         <div class="roadmap-grid">
             <div class="roadmap-item">
-                <div class="roadmap-version">v0.2 - Q2 2024</div>
+                <div class="roadmap-version">v0.2 - Q2 2026</div>
                 <h3>More Checks</h3>
                 <ul class="roadmap-features">
                     <li>Identity & Access Control</li>
@@ -1054,7 +1078,7 @@
             </div>
 
             <div class="roadmap-item">
-                <div class="roadmap-version">v0.3 - Q3 2024</div>
+                <div class="roadmap-version">v0.3 - Q3 2026</div>
                 <h3>Dashboard</h3>
                 <ul class="roadmap-features">
                     <li>Web UI for governance</li>
@@ -1065,7 +1089,7 @@
             </div>
 
             <div class="roadmap-item">
-                <div class="roadmap-version">v1.0 - Q4 2024</div>
+                <div class="roadmap-version">v1.0 - Q4 2026</div>
                 <h3>Enterprise</h3>
                 <ul class="roadmap-features">
                     <li>Runtime enforcement</li>
