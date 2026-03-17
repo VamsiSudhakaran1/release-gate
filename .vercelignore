@@ -1,0 +1,10 @@
+cli.py
+requirements.txt
+*.pyc
+__pycache__
+tests/
+docs/
+examples/
+api/
+.git
+.gitignore
