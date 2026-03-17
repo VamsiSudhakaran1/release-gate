@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="release-gate enforces governance policies before AI agent deployment.">
+    <title>release-gate | Governance Before Deployment</title>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #0f172a;
+            --secondary: #1e293b;
+            --accent: #3b82f6;
+            --accent-light: #60a5fa;
+            --accent-dark: #1e40af;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg: #ffffff;
+            --bg-light: #f8fafc;
+            --bg-lighter: #f1f5f9;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            color: var(--text);
+            background: var(--bg);
+            overflow-x: hidden;
+        }
+
+        /* ===== NAVIGATION ===== */
+        nav {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .nav-brand {
+            font-size: 1.5rem;
+            font-weight: 900;
+            color: var(--primary);
+            letter-spacing: -1px;
+        }
+
+        .nav-brand code {
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            color: white;
+            padding: 0.3rem 0.6rem;
+            border-radius: 0.3rem;
+            font-family: monospace;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent);
+        }
+
+        @media (max-width: 768px) {
+            nav {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            .nav-links {
+                gap: 1rem;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+        }
+
+        /* ===== HERO SECTION ===== */
+        .hero {
+            min-height: 100vh;
+            padding: 8rem 2rem 4rem;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+            border-radius: 50%;
+            top: -200px;
+            right: -100px;
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            bottom: -150px;
+            left: -50px;
+            animation: float 8s ease-in-out infinite reverse;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(30px); }
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 1;
+            max-width: 900px;
+        }
+
+        .hero h1 {
+            font-size: 4.5rem;
+            font-weight: 900;
+            margin-bottom: 1.5rem;
+            line-height: 1.1;
+            color: var(--primary);
+            animation: slideInDown 0.8s ease-out;
+        }
+
+        .hero h1 span {
+            display: block;
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-tagline {
+            font-size: 1.5rem;
+            color: var(--text-light);
+            margin-bottom: 2rem;
+            animation: slideInUp 0.8s ease-out 0.2s both;
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 1.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            animation: slideInUp 0.8s ease-out 0.4s both;
+        }
+
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .btn {
+            padding: 1rem 2.5rem;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            color: white;
+            box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px rgba(59, 130, 246, 0.5);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--accent);
+            border: 2px solid var(--accent);
+        }
+
+        .btn-secondary:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* ===== PIPELINE SECTION ===== */
+        .pipeline-section {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
+        }
+
+        .section-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-title h2 {
+            font-size: 3rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .section-title p {
+            font-size: 1.2rem;
+            color: var(--text-light);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .pipeline-viz {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 2rem;
+            padding: 3rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+            border: 1px solid var(--border);
+            animation: slideInUp 0.8s ease-out 0.2s both;
+        }
+
+        .pipeline-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .pipeline-step {
+            text-align: center;
+            padding: 1.5rem;
+            background: linear-gradient(135deg, var(--bg-light) 0%, white 100%);
+            border-radius: 1rem;
+            border: 2px solid var(--border);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .pipeline-step:nth-child(3) {
+            border-color: var(--success);
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), white);
+        }
+
+        .pipeline-step:hover {
+            border-color: var(--accent);
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2);
+            transform: translateY(-4px);
+        }
+
+        .pipeline-icon {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .pipeline-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--accent);
+            letter-spacing: 1px;
+        }
+
+        .pipeline-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-top: 0.5rem;
+        }
+
+        /* ===== EXAMPLES SECTION ===== */
+        .examples-section {
+            padding: 6rem 2rem;
+            background: var(--bg);
+        }
+
+        .examples-title {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .examples-title h2 {
+            font-size: 3rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .examples-title p {
+            font-size: 1.1rem;
+            color: var(--text-light);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .agent-tabs {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-bottom: 3rem;
+            flex-wrap: wrap;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .agent-tab {
+            padding: 0.75rem 1.75rem;
+            border: 2px solid var(--border);
+            background: white;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+        }
+
+        .agent-tab:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .agent-tab.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .examples-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .example-card {
+            display: none;
+            animation: slideInUp 0.5s ease-out;
+        }
+
+        .example-card.active {
+            display: block;
+        }
+
+        .example-display {
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
+            border: 1px solid var(--border);
+            border-radius: 1.5rem;
+            padding: 2.5rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+        }
+
+        .example-header {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .example-icon {
+            font-size: 3rem;
+        }
+
+        .example-header h3 {
+            font-size: 1.5rem;
+            color: var(--primary);
+        }
+
+        .example-header p {
+            font-size: 0.95rem;
+            color: var(--text-light);
+        }
+
+        .scenario-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .scenario-card {
+            background: white;
+            border-radius: 1rem;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .scenario-card:hover {
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.15);
+            transform: translateY(-4px);
+        }
+
+        .scenario-header {
+            padding: 1.25rem;
+            background: linear-gradient(135deg, var(--accent), #1e40af);
+            color: white;
+        }
+
+        .scenario-title {
+            font-size: 1rem;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .scenario-body {
+            padding: 1.5rem;
+        }
+
+        .threat-box {
+            background: rgba(239, 68, 68, 0.08);
+            border-left: 3px solid var(--danger);
+            padding: 0.75rem;
+            border-radius: 0.4rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .threat-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--danger);
+            margin-bottom: 0.25rem;
+        }
+
+        .threat-description {
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+
+        .check-box {
+            background: rgba(59, 130, 246, 0.08);
+            border-left: 3px solid var(--accent);
+            padding: 0.75rem;
+            border-radius: 0.4rem;
+            margin-bottom: 0.75rem;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: var(--secondary);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .result-box {
+            background: rgba(16, 185, 129, 0.08);
+            border-left: 3px solid var(--success);
+            padding: 0.75rem;
+            border-radius: 0.4rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .result-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--success);
+            margin-bottom: 0.25rem;
+        }
+
+        .result-text {
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+
+        .decision-box {
+            background: white;
+            border: 2px solid var(--success);
+            border-radius: 0.4rem;
+            padding: 0.75rem;
+            text-align: center;
+        }
+
+        .decision-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-light);
+            margin-bottom: 0.25rem;
+        }
+
+        .decision-value {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--success);
+        }
+
+        /* ===== FEATURES SECTION ===== */
+        .features-section {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
+        }
+
+        .features-grid {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+        }
+
+        .feature-card {
+            background: white;
+            border-radius: 1.5rem;
+            padding: 2rem;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            transform: translateY(-4px);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.2rem;
+            margin-bottom: 0.75rem;
+            color: var(--primary);
+        }
+
+        .feature-card p {
+            font-size: 0.95rem;
+            color: var(--text-light);
+            line-height: 1.6;
+        }
+
+        /* ===== COMING SOON SECTION ===== */
+        .coming-soon-section {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+        }
+
+        .coming-soon-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .coming-soon-title h2 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .coming-soon-title p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .roadmap-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .roadmap-item {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 1rem;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .roadmap-item:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .roadmap-version {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.8;
+            margin-bottom: 0.75rem;
+        }
+
+        .roadmap-item h3 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+        }
+
+        .roadmap-features {
+            list-style: none;
+        }
+
+        .roadmap-features li {
+            margin-bottom: 0.75rem;
+            padding-left: 1.5rem;
+            position: relative;
+            opacity: 0.9;
+            font-size: 0.95rem;
+        }
+
+        .roadmap-features li::before {
+            content: '→';
+            position: absolute;
+            left: 0;
+            opacity: 0.7;
+        }
+
+        /* ===== FOOTER ===== */
+        footer {
+            background: var(--primary);
+            color: var(--text-light);
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .footer-links a:hover {
+            color: var(--accent-light);
+        }
+
+        .beta-badge {
+            display: inline-block;
+            background: var(--warning);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 2rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero h1 span {
+                font-size: 2rem;
+            }
+
+            .section-title h2,
+            .coming-soon-title h2 {
+                font-size: 2rem;
+            }
+
+            .example-header {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .scenario-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .agent-tabs {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-brand">release<code>-gate</code></div>
+        <ul class="nav-links">
+            <li><a href="#pipeline">Pipeline</a></li>
+            <li><a href="#examples">Examples</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a></li>
+        </ul>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="beta-badge">v0.2.0 - Active Development</div>
+            <h1>Ready to Deploy?<span>release-gate decides.</span></h1>
+            <p class="hero-tagline">Codified governance before deployment. Enforce policies, generate evidence, control access.</p>
+            
+            <div class="hero-cta">
+                <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start" class="btn btn-primary">Get Started (5 min)</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn btn-secondary">View on GitHub</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pipeline Section -->
+    <section class="pipeline-section" id="pipeline">
+        <div class="section-title">
+            <h2>The Critical Gate</h2>
+            <p>release-gate sits in the CI/CD pipeline between test and deploy. One clear decision: PASS or FAIL.</p>
+        </div>
+
+        <div class="pipeline-viz">
+            <div class="pipeline-steps">
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">🛠️</div>
+                    <div class="pipeline-label">Step 1</div>
+                    <div class="pipeline-title">Build</div>
+                </div>
+
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">✅</div>
+                    <div class="pipeline-label">Step 2</div>
+                    <div class="pipeline-title">Test</div>
+                </div>
+
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">🚪</div>
+                    <div class="pipeline-label">Step 3 - HERE</div>
+                    <div class="pipeline-title">release-gate</div>
+                </div>
+
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">🚀</div>
+                    <div class="pipeline-label">Step 4</div>
+                    <div class="pipeline-title">Deploy</div>
+                </div>
+
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">📊</div>
+                    <div class="pipeline-label">Step 5</div>
+                    <div class="pipeline-title">Monitor</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features-section" id="features">
+        <div class="section-title">
+            <h2>What release-gate Enforces</h2>
+            <p>v0.2.0 validates these 4 governance policies before deployment</p>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature-card reveal">
+                <div class="feature-icon">📋</div>
+                <h3>INPUT_CONTRACT</h3>
+                <p>Request schema is well-defined and tested with valid/invalid samples.</p>
+            </div>
+
+            <div class="feature-card reveal">
+                <div class="feature-icon">🛡️</div>
+                <h3>FALLBACK_DECLARED</h3>
+                <p>Kill switch, fallback mode, ownership, and incident runbook are documented.</p>
+            </div>
+
+            <div class="feature-card reveal">
+                <div class="feature-icon">🔐</div>
+                <h3>IDENTITY_BOUNDARY (v0.2)</h3>
+                <p>Authentication is required, rate limits are set, data isolation is defined.</p>
+            </div>
+
+            <div class="feature-card reveal">
+                <div class="feature-icon">💰</div>
+                <h3>ACTION_BUDGET (v0.2)</h3>
+                <p>Token, retry, cost, and concurrency limits are enforced.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Examples Section -->
+    <section class="examples-section" id="examples">
+        <div class="examples-title">
+            <h2>See It In Action</h2>
+            <p>Three agent types. Three deployment scenarios. Same governance gate.</p>
+        </div>
+
+        <div class="agent-tabs">
+            <button class="agent-tab active" onclick="selectAgent('video')">🎬 Video Generation</button>
+            <button class="agent-tab" onclick="selectAgent('audio')">🎵 Audio Processing</button>
+            <button class="agent-tab" onclick="selectAgent('llm')">🤖 LLM Assistant</button>
+        </div>
+
+        <div class="examples-container">
+            <div class="example-card active" id="example-video">
+                <div class="example-display">
+                    <div class="example-header">
+                        <div class="example-icon">🎬</div>
+                        <div>
+                            <h3>Video Generation API</h3>
+                            <p>Autonomous agent that generates videos from prompts</p>
+                        </div>
+                    </div>
+
+                    <div class="scenario-grid">
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">💥 #1: Self-Destruction</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Agent deletes critical infrastructure</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    operations: read_only</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Delete operations blocked</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔓 #2: Non-Owner Access</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Anyone can execute commands</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  identity_boundary:
+    auth: required
+    rate_limit: 100</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Auth + limits enforced</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔥 #3: Resource Exhaustion</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Infinite loops exhaust resources</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  action_budget:
+    max_retries: 3
+    max_daily_cost: 1000</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Budgets enforced</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="example-card" id="example-audio">
+                <div class="example-display">
+                    <div class="example-header">
+                        <div class="example-icon">🎵</div>
+                        <div>
+                            <h3>Audio Processing Agent</h3>
+                            <p>Transcribes and analyzes audio files</p>
+                        </div>
+                    </div>
+
+                    <div class="scenario-grid">
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🎭 #4: Identity Spoofing</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Attacker impersonates legitimate user</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  identity_boundary:
+    identity: verified
+    mfa: required</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - MFA verified</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🎪 #5: Hallucinated Endpoints</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Agent calls APIs that don't exist</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    timeout_per_call: 30s</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Timeout enforced</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔪 #6: Manipulation</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Agent tricked into harmful behavior</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  input_contract:
+    validation: strict</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Input validation on</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="example-card" id="example-llm">
+                <div class="example-display">
+                    <div class="example-header">
+                        <div class="example-icon">🤖</div>
+                        <div>
+                            <h3>LLM Assistant Agent</h3>
+                            <p>Customer support chatbot using Claude/GPT</p>
+                        </div>
+                    </div>
+
+                    <div class="scenario-grid">
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">💾 #7: Data Leakage</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">Sensitive info exposed or exfiltrated</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    data_egress: restricted
+    encryption: e2e</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Data restrictions on</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">⏱️ #8: Latency Degradation</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">System becomes slow and unresponsive</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  fallback_declared:
+    max_latency: 5s
+    circuit_breaker: on</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Latency monitored</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">💾 #9: Memory Exhaustion</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">Problem</div>
+                                    <div class="threat-description">OOM kills process, outage</div>
+                                </div>
+
+                                <div class="check-box">release-gate.yaml:
+  action_budget:
+    max_memory: 2GB
+    auto_shutdown: true</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Decision</div>
+                                    <div class="result-text">✓ PASS - Memory limits set</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Safe</div>
+                                    <div class="decision-value">✓ YES</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Coming Soon Section -->
+    <section class="coming-soon-section" id="roadmap">
+        <div class="coming-soon-title">
+            <h2>The Roadmap</h2>
+            <p>We're building the governance control plane for AI agents. Here's what's coming.</p>
+        </div>
+
+        <div class="roadmap-grid">
+            <div class="roadmap-item">
+                <div class="roadmap-version">v0.2 - Now</div>
+                <h3>Core Checks</h3>
+                <ul class="roadmap-features">
+                    <li>INPUT_CONTRACT validation</li>
+                    <li>FALLBACK_DECLARED verification</li>
+                    <li>IDENTITY_BOUNDARY enforcement</li>
+                    <li>ACTION_BUDGET controls</li>
+                </ul>
+            </div>
+
+            <div class="roadmap-item">
+                <div class="roadmap-version">v0.3 - Q2 2026</div>
+                <h3>Approvals & Monitoring</h3>
+                <ul class="roadmap-features">
+                    <li>Approval workflows</li>
+                    <li>Dashboard UI</li>
+                    <li>Audit reports</li>
+                    <li>Compliance evidence</li>
+                </ul>
+            </div>
+
+            <div class="roadmap-item">
+                <div class="roadmap-version">v1.0 - Q4 2026</div>
+                <h3>Runtime Enforcement</h3>
+                <ul class="roadmap-features">
+                    <li>Runtime policy enforcement</li>
+                    <li>Multi-tenant support</li>
+                    <li>Enterprise integrations</li>
+                    <li>Custom policies</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start">Quick Start</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate#documentation">Docs</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate/issues">Issues</a>
+        </div>
+        <div>
+            <p>release-gate | Governance Before Deployment</p>
+            <p style="font-size: 0.85rem; margin-top: 0.5rem;">MIT License | Open Source | v0.2.0-active-development</p>
+        </div>
+    </footer>
+
+    <script>
+        function selectAgent(agent) {
+            document.querySelectorAll('.example-card').forEach(card => {
+                card.classList.remove('active');
+            });
+            document.querySelectorAll('.agent-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.getElementById('example-' + agent).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        const revealElements = document.querySelectorAll('.reveal');
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        revealElements.forEach(element => {
+            observer.observe(element);
+        });
+
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                const href = this.getAttribute('href');
+                if (href !== '#' && document.querySelector(href)) {
+                    e.preventDefault();
+                    document.querySelector(href).scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -407,6 +407,11 @@ def main():
         ("WARN exit code (10)", test_warn_exit_code_10),
         ("WARN in summary", test_warn_in_summary),
         ("FAIL precedence over WARN", test_warn_precedence_fail_wins),
+        # Phase 2 tests
+        ("Phase 2: IDENTITY_BOUNDARY PASS", test_phase_2_identity_boundary),
+        ("Phase 2: IDENTITY_BOUNDARY FAIL", test_phase_2_identity_boundary_fail),
+        ("Phase 2: ACTION_BUDGET PASS", test_phase_2_action_budget),
+        ("Phase 2: ACTION_BUDGET FAIL", test_phase_2_action_budget_fail),
     ]
     
     passed = 0

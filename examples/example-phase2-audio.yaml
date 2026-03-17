@@ -1,0 +1,59 @@
+project:
+  name: audio-processing-agent
+  version: 2.0.0
+  description: Audio transcription and analysis with Phase 2 governance
+
+gate:
+  policy: v0.2-complete
+
+checks:
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required:
+        - audio_file
+        - format
+      properties:
+        audio_file:
+          type: string
+          pattern: "^[a-zA-Z0-9._-]+\\.(mp3|wav|m4a|ogg)$"
+        format:
+          type: string
+          enum: [mp3, wav, m4a, ogg]
+        language:
+          type: string
+          default: en
+    samples:
+      valid_path: valid_audio_requests.jsonl
+      invalid_path: invalid_audio_requests.jsonl
+
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: environment_variable
+      name: DISABLE_AUDIO_PROCESSING
+    fallback:
+      mode: queue_for_manual_processing
+      description: Queue for human review if agent fails
+    ownership:
+      team: audio-analytics-team
+      oncall: oncall-audio-analytics
+    runbook_url: https://wiki.internal/runbooks/audio-processing
+
+  identity_boundary:
+    enabled: true
+    authentication: required
+    rate_limit: 50
+    data_isolation:
+      - user_owned_files_only
+      - no_cross_tenant_access
+      - encryption_required
+      - hipaa_compliance_mode
+
+  action_budget:
+    enabled: true
+    max_tokens_per_request: 5000
+    max_retries: 2
+    max_daily_cost: 2000
+    max_concurrent_requests: 10

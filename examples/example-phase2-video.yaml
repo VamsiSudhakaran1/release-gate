@@ -1,0 +1,57 @@
+project:
+  name: video-generation-api
+  version: 2.0.0
+  description: Video generation agent with Phase 2 governance
+
+gate:
+  policy: v0.2-complete
+
+checks:
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required:
+        - prompt
+        - duration_sec
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        duration_sec:
+          type: number
+          minimum: 1
+          maximum: 60
+    samples:
+      valid_path: valid_requests.jsonl
+      invalid_path: invalid_requests.jsonl
+
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: feature_flag
+      name: disable_video_generation
+    fallback:
+      mode: static_placeholder
+      description: Return error response, no video generation
+    ownership:
+      team: video-platform-team
+      oncall: oncall-video-gen
+    runbook_url: https://wiki.internal/runbooks/video-generation
+
+  identity_boundary:
+    enabled: true
+    authentication: required
+    rate_limit: 100
+    data_isolation:
+      - customer_project_only
+      - no_cross_customer_access
+      - verified_api_key_required
+
+  action_budget:
+    enabled: true
+    max_tokens_per_request: 10000
+    max_retries: 3
+    max_daily_cost: 5000
+    max_concurrent_requests: 20

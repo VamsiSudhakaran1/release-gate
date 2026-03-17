@@ -1,0 +1,62 @@
+project:
+  name: customer-support-llm
+  version: 2.0.0
+  description: Customer support chatbot with Phase 2 governance
+
+gate:
+  policy: v0.2-complete
+
+checks:
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required:
+        - user_id
+        - message
+      properties:
+        user_id:
+          type: string
+          pattern: "^[a-zA-Z0-9-]+$"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        conversation_id:
+          type: string
+        context:
+          type: object
+    samples:
+      valid_path: valid_chat_requests.jsonl
+      invalid_path: invalid_chat_requests.jsonl
+
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: feature_flag
+      name: disable_llm_support
+    fallback:
+      mode: escalate_to_human
+      escalation_timeout: 300
+      description: Escalate to human support agent
+    ownership:
+      team: customer-support-platform
+      oncall: oncall-support-eng
+    runbook_url: https://wiki.internal/runbooks/llm-support
+
+  identity_boundary:
+    enabled: true
+    authentication: required
+    rate_limit: 200
+    data_isolation:
+      - customer_only_access
+      - no_cross_customer_data_leakage
+      - oauth2_required
+      - mfa_for_sensitive_operations
+
+  action_budget:
+    enabled: true
+    max_tokens_per_request: 2000
+    max_retries: 3
+    max_daily_cost: 10000
+    max_concurrent_requests: 50

@@ -1,10 +1,10 @@
-# release-gate v0.1.0
+# release-gate v0.2.0
 
 **The governance gate for autonomous AI agents.**
 
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.7+-blue)
-![Status](https://img.shields.io/badge/status-v0.1-brightgreen)
+![Status](https://img.shields.io/badge/status-v0.2-brightgreen)
 
 Visit **[release-gate.com](https://release-gate.com)** for the complete story.
 
@@ -16,6 +16,8 @@ release-gate blocks AI agent deployment unless you can prove:
 
 ✅ **Request Contract is Validated** - Schema defined and tested with valid/invalid samples
 ✅ **Operational Safeguards are Declared** - Kill switch, fallback, ownership, runbook present
+✅ **Access Control is Enforced** - Authentication and rate limiting configured
+✅ **Resource Budgets are Set** - Token, retry, cost, and concurrency limits defined
 ✅ **Governance Policies are Met** - System meets your organization's requirements
 ✅ **Audit Evidence is Generated** - Machine-readable proof for compliance
 
@@ -40,7 +42,7 @@ These are different questions that require different tools.
 
 ---
 
-## What release-gate Does (v0.1)
+## What release-gate Does (v0.2)
 
 ### ✅ INPUT_CONTRACT Check
 
@@ -61,9 +63,28 @@ Ensures operational safety mechanisms are documented.
 - Ownership is assigned (who's responsible) ✅
 - Runbook URL is provided (incident response) ✅
 
+### ✅ IDENTITY_BOUNDARY Check (v0.2 NEW)
+
+Ensures your agent enforces proper access control and rate limiting.
+
+**Validates:**
+- Authentication is required or explicitly allowed ✅
+- Rate limits are configured per user/client ✅
+- Data isolation boundaries are defined ✅
+
+### ✅ ACTION_BUDGET Check (v0.2 NEW)
+
+Ensures your agent has guardrails on resource consumption and costs.
+
+**Validates:**
+- Max tokens per request is defined ✅
+- Max retries per request is defined ✅
+- Max daily/monthly cost is defined ✅
+- Max concurrent requests is defined ✅
+
 ---
 
-## What release-gate Does NOT Do (v0.1)
+## What release-gate Does NOT Do (v0.2)
 
 These features are planned for future versions:
 

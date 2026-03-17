@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """release-gate CLI - Deployment readiness gate for AI agents
 
-v0.1.0: INPUT_CONTRACT (schema + sample validation) + FALLBACK_DECLARED (governance)
+v0.2.0: 
+  - INPUT_CONTRACT (schema + sample validation)
+  - FALLBACK_DECLARED (governance)
+  - IDENTITY_BOUNDARY (auth + rate limits + data isolation)
+  - ACTION_BUDGET (token + retry + cost + concurrency limits)
 """
 
 import sys
@@ -55,6 +59,21 @@ checks:
       team: platform-team
       oncall: oncall-platform
     runbook_url: https://wiki.internal/runbooks/{project_name}
+
+  identity_boundary:
+    enabled: true
+    authentication: required
+    rate_limit: 100
+    data_isolation:
+      - user_owned_data_only
+      - no_cross_user_access
+
+  action_budget:
+    enabled: true
+    max_tokens_per_request: 5000
+    max_retries: 3
+    max_daily_cost: 1000
+    max_concurrent_requests: 10
 """
     
     config_path = output_path / "release-gate.yaml"
@@ -143,6 +162,24 @@ def run_gate(config_path, env="staging", output_format="json", output_file="read
     elif fallback_check_result["result"] == "WARN" and results["overall"] != "FAIL":
         results["overall"] = "WARN"
     results["summary"]["counts"][fallback_check_result["result"].lower()] += 1
+    
+    # IDENTITY_BOUNDARY check (v0.2)
+    identity_check_result = _check_identity_boundary(config)
+    results["checks"].append(identity_check_result)
+    if identity_check_result["result"] == "FAIL":
+        results["overall"] = "FAIL"
+    elif identity_check_result["result"] == "WARN" and results["overall"] != "FAIL":
+        results["overall"] = "WARN"
+    results["summary"]["counts"][identity_check_result["result"].lower()] += 1
+    
+    # ACTION_BUDGET check (v0.2)
+    budget_check_result = _check_action_budget(config)
+    results["checks"].append(budget_check_result)
+    if budget_check_result["result"] == "FAIL":
+        results["overall"] = "FAIL"
+    elif budget_check_result["result"] == "WARN" and results["overall"] != "FAIL":
+        results["overall"] = "WARN"
+    results["summary"]["counts"][budget_check_result["result"].lower()] += 1
     
     # Write report
     with open(output_file, 'w') as f:
@@ -360,6 +397,131 @@ def _check_fallback_declared(config):
     else:
         return {
             "name": "fallback_declared",
+            "result": "PASS",
+            "evidence": evidence
+        }
+
+
+def _check_identity_boundary(config):
+    """
+    Validate IDENTITY_BOUNDARY check (Phase v0.2).
+    
+    Validates:
+    1. Authentication is required or explicitly allowed
+    2. Rate limits are defined
+    3. Data isolation boundaries are clear
+    """
+    identity_check = config.get("checks", {}).get("identity_boundary", {})
+    
+    if not identity_check.get("enabled", True):
+        return {
+            "name": "identity_boundary",
+            "result": "PASS",
+            "evidence": {"status": "check disabled"}
+        }
+    
+    issues = []
+    
+    # Check authentication
+    auth_required = identity_check.get("authentication")
+    if auth_required not in ["required", "optional"]:
+        issues.append("authentication (must be 'required' or 'optional')")
+    
+    # Check rate limits
+    rate_limit = identity_check.get("rate_limit")
+    if auth_required == "required" and not rate_limit:
+        issues.append("rate_limit (required when auth is required)")
+    elif rate_limit and (not isinstance(rate_limit, int) or rate_limit <= 0):
+        issues.append("rate_limit (must be positive integer)")
+    
+    # Check data isolation
+    data_isolation = identity_check.get("data_isolation", [])
+    if auth_required == "required" and not data_isolation:
+        issues.append("data_isolation (required when auth is required)")
+    
+    evidence = {
+        "authentication_enforced": auth_required == "required",
+        "rate_limits_defined": isinstance(rate_limit, int) and rate_limit > 0,
+        "data_isolation_defined": isinstance(data_isolation, list) and len(data_isolation) > 0
+    }
+    
+    if issues:
+        return {
+            "name": "identity_boundary",
+            "result": "FAIL" if auth_required == "required" else "WARN",
+            "evidence": {
+                **evidence,
+                "missing_fields": issues
+            }
+        }
+    else:
+        return {
+            "name": "identity_boundary",
+            "result": "PASS",
+            "evidence": evidence
+        }
+
+
+def _check_action_budget(config):
+    """
+    Validate ACTION_BUDGET check (Phase v0.2).
+    
+    Validates:
+    1. Max tokens per request is defined
+    2. Max retries is defined
+    3. Max daily/monthly cost is defined
+    4. Max concurrent requests is defined
+    """
+    budget_check = config.get("checks", {}).get("action_budget", {})
+    
+    if not budget_check.get("enabled", True):
+        return {
+            "name": "action_budget",
+            "result": "PASS",
+            "evidence": {"status": "check disabled"}
+        }
+    
+    issues = []
+    
+    # Check token limits
+    max_tokens = budget_check.get("max_tokens_per_request")
+    if not max_tokens or not isinstance(max_tokens, int) or max_tokens <= 0:
+        issues.append("max_tokens_per_request (must be positive integer)")
+    
+    # Check retry limits
+    max_retries = budget_check.get("max_retries")
+    if max_retries is None or not isinstance(max_retries, int) or max_retries < 0:
+        issues.append("max_retries (must be non-negative integer)")
+    
+    # Check cost limits
+    max_daily_cost = budget_check.get("max_daily_cost")
+    if not max_daily_cost or not isinstance(max_daily_cost, (int, float)) or max_daily_cost <= 0:
+        issues.append("max_daily_cost (must be positive number)")
+    
+    # Check concurrency
+    max_concurrent = budget_check.get("max_concurrent_requests")
+    if not max_concurrent or not isinstance(max_concurrent, int) or max_concurrent <= 0:
+        issues.append("max_concurrent_requests (must be positive integer)")
+    
+    evidence = {
+        "max_tokens_defined": isinstance(max_tokens, int) and max_tokens > 0,
+        "max_retries_defined": isinstance(max_retries, int) and max_retries >= 0,
+        "max_daily_cost_defined": isinstance(max_daily_cost, (int, float)) and max_daily_cost > 0,
+        "max_concurrent_defined": isinstance(max_concurrent, int) and max_concurrent > 0
+    }
+    
+    if issues:
+        return {
+            "name": "action_budget",
+            "result": "FAIL" if len(issues) > 2 else "WARN",
+            "evidence": {
+                **evidence,
+                "missing_fields": issues
+            }
+        }
+    else:
+        return {
+            "name": "action_budget",
             "result": "PASS",
             "evidence": evidence
         }

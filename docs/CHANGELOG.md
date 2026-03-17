@@ -2,6 +2,65 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.2.0] - 2026-03-17
+
+### ✨ Features
+
+- **IDENTITY_BOUNDARY Check**: New check for access control and rate limiting
+  - Validates authentication is required or explicitly allowed
+  - Validates rate limits are configured per user/client
+  - Validates data isolation boundaries are defined
+  - Reports detailed evidence on auth enforcement
+  
+- **ACTION_BUDGET Check**: New check for resource and cost controls
+  - Validates max tokens per request is defined
+  - Validates max retries per request is defined
+  - Validates max daily/monthly cost is defined
+  - Validates max concurrent requests is defined
+  - Reports detailed evidence on all budget constraints
+
+- **Phase 2 Example Configs**: Real-world configuration examples
+  - `example-phase2-video.yaml`: Video generation API example
+  - `example-phase2-audio.yaml`: Audio processing example
+  - `example-phase2-llm.yaml`: LLM assistant example
+
+- **Phase 2 Documentation**: Comprehensive release notes
+  - `PHASE_2_RELEASE_NOTES.md`: Complete guide to new checks
+  - Configuration examples for different use cases
+  - Upgrade path from v0.1 to v0.2
+
+### 📋 What v0.2.0 Validates
+
+✅ Request schema is syntactically valid JSON Schema (Draft 7)
+✅ All valid test samples pass the defined schema
+✅ All invalid test samples fail the defined schema
+✅ Kill switch mechanism is declared
+✅ Fallback behavior is specified
+✅ Team ownership and on-call contact assigned
+✅ Incident response runbook URL provided
+✅ **Authentication is required or explicitly allowed**
+✅ **Rate limits are configured**
+✅ **Data isolation boundaries are defined**
+✅ **Max tokens per request is limited**
+✅ **Max retries per request is limited**
+✅ **Max daily/monthly cost is limited**
+✅ **Max concurrent requests is limited**
+
+### 🔄 Breaking Changes
+
+None. v0.1 configs continue to work. New checks are optional.
+
+### 📊 Comparison: v0.1 vs v0.2
+
+| Feature | v0.1 | v0.2 |
+|---------|------|------|
+| INPUT_CONTRACT | ✓ | ✓ |
+| FALLBACK_DECLARED | ✓ | ✓ |
+| IDENTITY_BOUNDARY | ✗ | ✓ |
+| ACTION_BUDGET | ✗ | ✓ |
+
+---
+
 ## [0.1.0] - 2026-03-16
 
 ### ✨ Features
