@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="release-gate prevents critical AI agent failures. Based on Agents of Chaos research.">
-    <title>release-gate | Prevent Agent Failures</title>
+    <meta name="description" content="Is your agent ready to ship? release-gate enforces governance policies before deployment.">
+    <title>release-gate | Ready to Deploy?</title>
     
     <style>
         * {
@@ -15,13 +15,16 @@
 
         :root {
             --primary: #0f172a;
+            --secondary: #1e293b;
             --accent: #3b82f6;
             --accent-light: #60a5fa;
+            --accent-dark: #1e40af;
             --success: #10b981;
             --warning: #f59e0b;
             --danger: #ef4444;
             --bg: #ffffff;
             --bg-light: #f8fafc;
+            --bg-lighter: #f1f5f9;
             --text: #1e293b;
             --text-light: #64748b;
             --border: #e2e8f0;
@@ -32,9 +35,10 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
             color: var(--text);
             background: var(--bg);
+            overflow-x: hidden;
         }
 
         /* ===== NAVIGATION ===== */
@@ -50,12 +54,14 @@
             align-items: center;
             z-index: 1000;
             border-bottom: 1px solid var(--border);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
         }
 
         .nav-brand {
             font-size: 1.5rem;
             font-weight: 900;
             color: var(--primary);
+            letter-spacing: -1px;
         }
 
         .nav-brand code {
@@ -76,14 +82,26 @@
             color: var(--text-light);
             text-decoration: none;
             font-weight: 500;
-            transition: color 0.3s;
+            transition: all 0.3s ease;
         }
 
         .nav-links a:hover {
             color: var(--accent);
         }
 
-        /* ===== HERO ===== */
+        @media (max-width: 768px) {
+            nav {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            .nav-links {
+                gap: 1rem;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+        }
+
+        /* ===== HERO SECTION ===== */
         .hero {
             min-height: 100vh;
             padding: 8rem 2rem 4rem;
@@ -109,6 +127,18 @@
             animation: float 6s ease-in-out infinite;
         }
 
+        .hero::after {
+            content: '';
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            bottom: -150px;
+            left: -50px;
+            animation: float 8s ease-in-out infinite reverse;
+        }
+
         @keyframes float {
             0%, 100% { transform: translateY(0px); }
             50% { transform: translateY(30px); }
@@ -123,9 +153,10 @@
         .hero h1 {
             font-size: 4.5rem;
             font-weight: 900;
-            margin-bottom: 1rem;
+            margin-bottom: 1.5rem;
             line-height: 1.1;
             color: var(--primary);
+            animation: slideInDown 0.8s ease-out;
         }
 
         .hero h1 span {
@@ -137,9 +168,10 @@
         }
 
         .hero-tagline {
-            font-size: 1.3rem;
+            font-size: 1.5rem;
             color: var(--text-light);
             margin-bottom: 2rem;
+            animation: slideInUp 0.8s ease-out 0.2s both;
         }
 
         .hero-cta {
@@ -147,6 +179,29 @@
             gap: 1.5rem;
             justify-content: center;
             flex-wrap: wrap;
+            animation: slideInUp 0.8s ease-out 0.4s both;
+        }
+
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .btn {
@@ -157,11 +212,14 @@
             border: none;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-size: 1rem;
+            display: inline-block;
         }
 
         .btn-primary {
             background: linear-gradient(135deg, var(--accent), var(--accent-light));
             color: white;
+            box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
         }
 
         .btn-primary:hover {
@@ -169,10 +227,21 @@
             box-shadow: 0 8px 30px rgba(59, 130, 246, 0.5);
         }
 
-        /* ===== THREATS SECTION ===== */
-        .threats-section {
+        .btn-secondary {
+            background: white;
+            color: var(--accent);
+            border: 2px solid var(--accent);
+        }
+
+        .btn-secondary:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* ===== PIPELINE SECTION ===== */
+        .pipeline-section {
             padding: 6rem 2rem;
-            background: var(--bg);
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
         }
 
         .section-title {
@@ -187,205 +256,356 @@
         }
 
         .section-title p {
+            font-size: 1.2rem;
+            color: var(--text-light);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .pipeline-viz {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 2rem;
+            padding: 3rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+            border: 1px solid var(--border);
+            animation: slideInUp 0.8s ease-out 0.2s both;
+        }
+
+        .pipeline-steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .pipeline-step {
+            text-align: center;
+            padding: 1.5rem;
+            background: linear-gradient(135deg, var(--bg-light) 0%, white 100%);
+            border-radius: 1rem;
+            border: 2px solid var(--border);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .pipeline-step:nth-child(3) {
+            border-color: var(--success);
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), white);
+        }
+
+        .pipeline-step:hover {
+            border-color: var(--accent);
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2);
+            transform: translateY(-4px);
+        }
+
+        .pipeline-icon {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .pipeline-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--accent);
+            letter-spacing: 1px;
+        }
+
+        .pipeline-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-top: 0.5rem;
+        }
+
+        /* ===== EXAMPLES SECTION ===== */
+        .examples-section {
+            padding: 6rem 2rem;
+            background: var(--bg);
+        }
+
+        .examples-title {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .examples-title h2 {
+            font-size: 3rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .examples-title p {
             font-size: 1.1rem;
             color: var(--text-light);
             max-width: 700px;
             margin: 0 auto;
         }
 
-        /* ===== THREAT CARDS ===== */
-        .threats-container {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: grid;
-            gap: 3rem;
-        }
-
-        .threat-block {
-            background: white;
-            border-radius: 2rem;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-        }
-
-        .threat-header {
-            background: linear-gradient(135deg, var(--danger), #dc2626);
-            color: white;
-            padding: 2rem;
-            display: grid;
-            grid-template-columns: auto 1fr;
-            gap: 1.5rem;
-            align-items: center;
-        }
-
-        .threat-icon-large {
-            font-size: 3.5rem;
-        }
-
-        .threat-header h3 {
-            font-size: 1.8rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .threat-header p {
-            font-size: 0.95rem;
-            opacity: 0.95;
-        }
-
-        .threat-details {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 0;
-        }
-
-        .threat-detail {
-            padding: 2rem;
-            border-right: 1px solid var(--border);
-        }
-
-        .threat-detail:last-child {
-            border-right: none;
-        }
-
-        .threat-detail h4 {
-            color: var(--danger);
-            font-size: 0.9rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 1rem;
-        }
-
-        .impact-list {
-            list-style: none;
-            margin-bottom: 1.5rem;
-        }
-
-        .impact-list li {
-            margin-bottom: 0.75rem;
-            padding-left: 1.5rem;
-            position: relative;
-            font-size: 0.95rem;
-            color: var(--text-light);
-        }
-
-        .impact-list li::before {
-            content: '✗';
-            position: absolute;
-            left: 0;
-            color: var(--danger);
-            font-weight: 700;
-        }
-
-        .prevention-list {
-            list-style: none;
-        }
-
-        .prevention-list li {
-            margin-bottom: 0.75rem;
-            padding-left: 1.5rem;
-            position: relative;
-            font-size: 0.95rem;
-            color: var(--text-light);
-        }
-
-        .prevention-list li::before {
-            content: '✓';
-            position: absolute;
-            left: 0;
-            color: var(--success);
-            font-weight: 700;
-        }
-
-        /* ===== IMPACT GRID ===== */
-        .impact-section {
-            padding: 2rem;
-            border-top: 2px solid var(--border);
-            background: var(--bg-light);
-        }
-
-        .impact-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary);
-            margin-bottom: 1rem;
-        }
-
-        .impact-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .impact-agent {
-            background: white;
-            border: 1px solid var(--border);
-            border-radius: 1rem;
-            padding: 1.5rem;
-            text-align: center;
-            border-left: 4px solid var(--danger);
-        }
-
-        .impact-agent-icon {
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .impact-agent-name {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--primary);
-        }
-
-        .impact-agent-consequence {
-            font-size: 0.9rem;
-            color: var(--text-light);
-            line-height: 1.6;
-        }
-
-        /* ===== SOLUTION BANNER ===== */
-        .solution-banner {
-            padding: 3rem 2rem;
-            background: linear-gradient(135deg, var(--success), #059669);
-            color: white;
-            text-align: center;
-            margin: 3rem 0;
-            border-radius: 1.5rem;
+        /* Agent Selector Tabs */
+        .agent-tabs {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-bottom: 3rem;
+            flex-wrap: wrap;
             max-width: 1200px;
             margin-left: auto;
             margin-right: auto;
         }
 
-        .solution-banner h3 {
+        .agent-tab {
+            padding: 0.75rem 1.75rem;
+            border: 2px solid var(--border);
+            background: white;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+        }
+
+        .agent-tab:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .agent-tab.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        /* Example Card */
+        .examples-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .example-card {
+            display: none;
+            animation: slideInUp 0.5s ease-out;
+        }
+
+        .example-card.active {
+            display: block;
+        }
+
+        .example-display {
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
+            border: 1px solid var(--border);
+            border-radius: 1.5rem;
+            padding: 2.5rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+        }
+
+        .example-header {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .example-icon {
+            font-size: 3rem;
+        }
+
+        .example-header h3 {
             font-size: 1.5rem;
+            color: var(--primary);
+        }
+
+        .example-header p {
+            font-size: 0.95rem;
+            color: var(--text-light);
+        }
+
+        /* Scenario Cards */
+        .scenario-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .scenario-card {
+            background: white;
+            border-radius: 1rem;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .scenario-card:hover {
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.15);
+            transform: translateY(-4px);
+        }
+
+        .scenario-header {
+            padding: 1.5rem;
+            background: linear-gradient(135deg, var(--danger), #dc2626);
+            color: white;
+        }
+
+        .scenario-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .scenario-body {
+            padding: 1.5rem;
+        }
+
+        .threat-box {
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 4px solid var(--danger);
+            padding: 1rem;
+            border-radius: 0.5rem;
             margin-bottom: 1rem;
         }
 
-        .solution-banner p {
-            font-size: 1.05rem;
-            opacity: 0.95;
+        .threat-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--danger);
+            letter-spacing: 0.5px;
+            margin-bottom: 0.3rem;
+        }
+
+        .threat-description {
+            font-size: 0.95rem;
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .impact-box {
+            background: rgba(239, 68, 68, 0.08);
+            border-left: 4px solid var(--danger);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .impact-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--danger);
+            letter-spacing: 0.5px;
+            margin-bottom: 0.3rem;
+        }
+
+        .impact-item {
+            font-size: 0.9rem;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+        }
+
+        .solution-box {
+            background: rgba(16, 185, 129, 0.1);
+            border-left: 4px solid var(--success);
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+
+        .solution-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--success);
+            letter-spacing: 0.5px;
+            margin-bottom: 0.3rem;
+        }
+
+        .solution-description {
+            font-size: 0.95rem;
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        /* ===== COMING SOON SECTION ===== */
+        .coming-soon-section {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+        }
+
+        .coming-soon-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .coming-soon-title h2 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .coming-soon-title p {
+            font-size: 1.1rem;
+            opacity: 0.9;
             max-width: 700px;
             margin: 0 auto;
         }
 
-        /* ===== CTA ===== */
-        .cta-section {
-            padding: 6rem 2rem;
-            text-align: center;
-            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg) 100%);
+        .roadmap-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
         }
 
-        .cta-section h2 {
-            font-size: 2.5rem;
-            color: var(--primary);
+        .roadmap-item {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 1rem;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .roadmap-item:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .roadmap-version {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.8;
+            margin-bottom: 0.75rem;
+        }
+
+        .roadmap-item h3 {
+            font-size: 1.3rem;
             margin-bottom: 1rem;
         }
 
-        .cta-section p {
-            font-size: 1.1rem;
-            color: var(--text-light);
-            margin-bottom: 2rem;
+        .roadmap-features {
+            list-style: none;
+        }
+
+        .roadmap-features li {
+            margin-bottom: 0.75rem;
+            padding-left: 1.5rem;
+            position: relative;
+            opacity: 0.9;
+            font-size: 0.95rem;
+        }
+
+        .roadmap-features li::before {
+            content: '→';
+            position: absolute;
+            left: 0;
+            opacity: 0.7;
         }
 
         /* ===== FOOTER ===== */
@@ -394,19 +614,37 @@
             color: var(--text-light);
             padding: 3rem 2rem;
             text-align: center;
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
         }
 
-        footer p {
-            margin-bottom: 0.5rem;
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
         }
 
-        .footer-link {
-            color: var(--accent-light);
+        .footer-links a {
+            color: var(--text-light);
             text-decoration: none;
+            transition: color 0.3s;
         }
 
-        .footer-link:hover {
-            text-decoration: underline;
+        .footer-links a:hover {
+            color: var(--accent-light);
+        }
+
+        /* ===== SCROLL ANIMATIONS ===== */
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
         }
 
         @media (max-width: 768px) {
@@ -414,32 +652,26 @@
                 font-size: 2.5rem;
             }
 
-            .threat-header {
-                grid-template-columns: 1fr;
+            .hero h1 span {
+                font-size: 2rem;
             }
 
-            .threat-details {
-                grid-template-columns: 1fr;
+            .section-title h2,
+            .coming-soon-title h2 {
+                font-size: 2rem;
             }
 
-            .threat-detail {
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-            }
-
-            .threat-detail:last-child {
-                border-bottom: none;
-            }
-
-            nav {
+            .example-header {
                 flex-direction: column;
-                gap: 1rem;
+                text-align: center;
             }
 
-            .nav-links {
-                gap: 1rem;
-                flex-wrap: wrap;
-                justify-content: center;
+            .scenario-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .agent-tabs {
+                flex-direction: column;
             }
         }
     </style>
@@ -449,7 +681,9 @@
     <nav>
         <div class="nav-brand">release<code>-gate</code></div>
         <ul class="nav-links">
-            <li><a href="#threats">Threats</a></li>
+            <li><a href="#pipeline">Pipeline</a></li>
+            <li><a href="#examples">Examples</a></li>
+            <li><a href="#roadmap">Coming Soon</a></li>
             <li><a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a></li>
         </ul>
     </nav>
@@ -457,249 +691,454 @@
     <!-- Hero Section -->
     <section class="hero">
         <div class="hero-content">
-            <h1>The 3 Most Dangerous<span>Agent Failures</span></h1>
-            <p class="hero-tagline">Based on Agents of Chaos research. See how release-gate prevents catastrophic post-deployment failures.</p>
+            <h1>Ready to Deploy?<span>release-gate decides.</span></h1>
+            <p class="hero-tagline">Enforce governance policies before your agent ships to production.</p>
+            
             <div class="hero-cta">
-                <a href="#threats" class="btn btn-primary">See Real Scenarios ↓</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start" class="btn btn-primary">Get Started (5 min)</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn btn-secondary">View on GitHub</a>
             </div>
         </div>
     </section>
 
-    <!-- Threats Section -->
-    <section class="threats-section" id="threats">
+    <!-- Pipeline Section -->
+    <section class="pipeline-section" id="pipeline">
         <div class="section-title">
-            <h2>Critical Threat Scenarios</h2>
-            <p>Three of the most damaging failure modes from "Agents of Chaos" research and their real-world post-deployment impact</p>
+            <h2>End-to-End Lifecycle</h2>
+            <p>See where release-gate sits in your complete deployment pipeline</p>
         </div>
 
-        <div class="threats-container">
-            <!-- THREAT 1: SELF-DESTRUCTION -->
-            <div class="threat-block">
-                <div class="threat-header">
-                    <div class="threat-icon-large">💥</div>
-                    <div>
-                        <h3>Self-Destruction (#1)</h3>
-                        <p>Agent autonomously deletes critical infrastructure or data without authorization</p>
-                    </div>
+        <div class="pipeline-viz">
+            <div class="pipeline-steps">
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">🛠️</div>
+                    <div class="pipeline-label">Step 1</div>
+                    <div class="pipeline-title">You Build</div>
                 </div>
 
-                <div class="threat-details">
-                    <div class="threat-detail">
-                        <h4>⚠️ The Threat</h4>
-                        <p style="margin-bottom: 1rem; color: var(--text);">An autonomous agent gains execution privileges and deletes:</p>
-                        <ul class="impact-list">
-                            <li>Database backups</li>
-                            <li>Configuration files</li>
-                            <li>Model weights</li>
-                            <li>Customer data</li>
-                        </ul>
-                        <p style="font-size: 0.9rem; color: var(--danger); font-weight: 600;">Result: Complete system failure</p>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🎬 Impact on Video Generation API</h4>
-                        <ul class="impact-list">
-                            <li>All generated videos lost forever</li>
-                            <li>Generation pipeline destroyed</li>
-                            <li>Customer projects deleted</li>
-                            <li>Service down for 48+ hours</li>
-                            <li>Estimated loss: $500K+</li>
-                        </ul>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🎵 Impact on Audio Agent</h4>
-                        <ul class="impact-list">
-                            <li>All transcription history gone</li>
-                            <li>Trained models deleted</li>
-                            <li>Customer archives wiped</li>
-                            <li>Regulatory compliance violation (HIPAA)</li>
-                            <li>Legal liability: $2M+ in fines</li>
-                        </ul>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🤖 Impact on LLM Assistant</h4>
-                        <ul class="impact-list">
-                            <li>Customer support conversations lost</li>
-                            <li>Agent knowledge base deleted</li>
-                            <li>Authentication system corrupted</li>
-                            <li>Customer data breach</li>
-                            <li>Account lockout for millions</li>
-                        </ul>
-                    </div>
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">✅</div>
+                    <div class="pipeline-label">Step 2</div>
+                    <div class="pipeline-title">You Test</div>
                 </div>
 
-                <div class="impact-section">
-                    <h4 style="color: var(--success); margin-bottom: 1rem;">✓ How release-gate Prevents This</h4>
-                    <ul class="prevention-list">
-                        <li><strong>Action Budget Enforcement:</strong> Limit agent to read-only operations</li>
-                        <li><strong>Kill Switch Requirement:</strong> Agent must have declared disable mechanism</li>
-                        <li><strong>Ownership Assignment:</strong> Responsible team must be on-call</li>
-                        <li><strong>Permission Verification:</strong> Agent can only access approved resources</li>
-                        <li><strong>Fallback Declared:</strong> Emergency response procedure must exist</li>
-                    </ul>
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">🚪</div>
+                    <div class="pipeline-label">Step 3 - OUR JOB</div>
+                    <div class="pipeline-title">release-gate Checks</div>
+                </div>
+
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">🚀</div>
+                    <div class="pipeline-label">Step 4</div>
+                    <div class="pipeline-title">You Deploy</div>
+                </div>
+
+                <div class="pipeline-step reveal">
+                    <div class="pipeline-icon">📊</div>
+                    <div class="pipeline-label">Step 5</div>
+                    <div class="pipeline-title">You Monitor</div>
                 </div>
             </div>
-
-            <!-- THREAT 2: NON-OWNER ACCESS -->
-            <div class="threat-block">
-                <div class="threat-header">
-                    <div class="threat-icon-large">🔓</div>
-                    <div>
-                        <h3>Non-Owner Access (#2)</h3>
-                        <p>Anyone can execute the agent. No identity verification or authorization.</p>
-                    </div>
-                </div>
-
-                <div class="threat-details">
-                    <div class="threat-detail">
-                        <h4>⚠️ The Threat</h4>
-                        <p style="margin-bottom: 1rem; color: var(--text);">Agent exposed without authentication:</p>
-                        <ul class="impact-list">
-                            <li>No user verification</li>
-                            <li>No rate limiting</li>
-                            <li>Unlimited access to resources</li>
-                            <li>Can execute any command</li>
-                        </ul>
-                        <p style="font-size: 0.9rem; color: var(--danger); font-weight: 600;">Result: Complete compromise</p>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🎬 Impact on Video Generation API</h4>
-                        <ul class="impact-list">
-                            <li>Attackers generate millions of videos</li>
-                            <li>GPU resource exhaustion ($100K bill)</li>
-                            <li>Service degradation for real users</li>
-                            <li>Malicious content generation</li>
-                            <li>Data exfiltration (customer content)</li>
-                        </ul>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🎵 Impact on Audio Agent</h4>
-                        <ul class="impact-list">
-                            <li>Attackers transcribe protected content</li>
-                            <li>Competitor scrapes your models</li>
-                            <li>Voice cloning data stolen</li>
-                            <li>Patient/client information exposed</li>
-                            <li>HIPAA violation lawsuit</li>
-                        </ul>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🤖 Impact on LLM Assistant</h4>
-                        <ul class="impact-list">
-                            <li>Hackers extract customer data via chat</li>
-                            <li>API key theft from context</li>
-                            <li>Model poisoning via malicious prompts</li>
-                            <li>Personal information leakage</li>
-                            <li>Credential compromise</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="impact-section">
-                    <h4 style="color: var(--success); margin-bottom: 1rem;">✓ How release-gate Prevents This</h4>
-                    <ul class="prevention-list">
-                        <li><strong>Identity Boundary Check:</strong> Authentication must be enforced</li>
-                        <li><strong>Rate Limiting Requirement:</strong> Max requests per user/hour</li>
-                        <li><strong>Data Isolation Verification:</strong> Users can only access their own data</li>
-                        <li><strong>Access Control Test:</strong> Verify unauthorized access fails</li>
-                        <li><strong>Request Contract:</strong> Valid users must provide proper credentials</li>
-                    </ul>
-                </div>
-            </div>
-
-            <!-- THREAT 3: RESOURCE EXHAUSTION -->
-            <div class="threat-block">
-                <div class="threat-header">
-                    <div class="threat-icon-large">🔥</div>
-                    <div>
-                        <h3>Resource Exhaustion (#4)</h3>
-                        <p>Agent enters infinite loops or retry cycles, consuming all resources</p>
-                    </div>
-                </div>
-
-                <div class="threat-details">
-                    <div class="threat-detail">
-                        <h4>⚠️ The Threat</h4>
-                        <p style="margin-bottom: 1rem; color: var(--text);">Agent exhausts system resources:</p>
-                        <ul class="impact-list">
-                            <li>Infinite retry loops</li>
-                            <li>Unbounded token consumption</li>
-                            <li>Memory leaks</li>
-                            <li>CPU maxed out</li>
-                        </ul>
-                        <p style="font-size: 0.9rem; color: var(--danger); font-weight: 600;">Result: Runaway costs + outage</p>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🎬 Impact on Video Generation API</h4>
-                        <ul class="impact-list">
-                            <li>Agent retries video generation infinitely</li>
-                            <li>GPU bills spike to $50K+/day</li>
-                            <li>Queue backs up for legitimate users</li>
-                            <li>Service becomes unresponsive</li>
-                            <li>Takes 8 hours to notice and kill</li>
-                        </ul>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🎵 Impact on Audio Agent</h4>
-                        <ul class="impact-list">
-                            <li>Agent stuck in transcription retry</li>
-                            <li>Processes same audio 1000x times</li>
-                            <li>Costs balloon to $100K+</li>
-                            <li>Queue backs up for 48 hours</li>
-                            <li>SLA breach: 99.9% uptime violated</li>
-                        </ul>
-                    </div>
-
-                    <div class="threat-detail">
-                        <h4>🤖 Impact on LLM Assistant</h4>
-                        <ul class="impact-list">
-                            <li>Agent stuck in token generation loop</li>
-                            <li>API calls run out of budget mid-month</li>
-                            <li>Service dies for all users</li>
-                            <li>Takes 6 hours to diagnose</li>
-                            <li>Revenue loss: $10K+ (service down)</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="impact-section">
-                    <h4 style="color: var(--success); margin-bottom: 1rem;">✓ How release-gate Prevents This</h4>
-                    <ul class="prevention-list">
-                        <li><strong>Action Budget Requirement:</strong> Max retries, max tokens, max cost enforced</li>
-                        <li><strong>Timeout Declaration:</strong> Per-request timeout must be specified</li>
-                        <li><strong>Cost Limits Verification:</strong> Daily/monthly cost caps verified</li>
-                        <li><strong>Concurrency Limits:</strong> Max parallel requests enforced</li>
-                        <li><strong>Kill Switch Ready:</strong> Can disable agent in under 5 seconds</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-        <!-- Solution Banner -->
-        <div class="solution-banner">
-            <h3>✓ release-gate Prevents All Three Threats</h3>
-            <p>By enforcing governance policies BEFORE deployment, these catastrophic failures never happen. Agents that pass release-gate are provably safe to run.</p>
         </div>
     </section>
 
-    <!-- CTA Section -->
-    <section class="cta-section">
-        <h2>Stop Deploying Uncontrolled Agents</h2>
-        <p>release-gate blocks the 3 most dangerous failure modes with automated governance enforcement.</p>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start" class="btn btn-primary">Get Started Now</a>
+    <!-- Examples Section -->
+    <section class="examples-section" id="examples">
+        <div class="examples-title">
+            <h2>Real-World Agent Scenarios</h2>
+            <p>See common failures and how release-gate prevents them from happening after deployment</p>
+        </div>
+
+        <!-- Agent Tabs -->
+        <div class="agent-tabs">
+            <button class="agent-tab active" onclick="selectAgent('video')">🎬 Video Generation</button>
+            <button class="agent-tab" onclick="selectAgent('audio')">🎵 Audio Processing</button>
+            <button class="agent-tab" onclick="selectAgent('llm')">🤖 LLM Assistant</button>
+        </div>
+
+        <!-- Examples Container -->
+        <div class="examples-container">
+            <!-- VIDEO GENERATION -->
+            <div class="example-card active" id="example-video">
+                <div class="example-display">
+                    <div class="example-header">
+                        <div class="example-icon">🎬</div>
+                        <div>
+                            <h3>Video Generation API</h3>
+                            <p>Autonomous agent that generates videos from text prompts</p>
+                        </div>
+                    </div>
+
+                    <div class="scenario-grid">
+                        <!-- Scenario 1 -->
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">💥 Self-Destruction Risk</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Agent deletes databases and backups without permission</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• All generated videos lost</div>
+                                    <div class="impact-item">• Generation pipeline destroyed</div>
+                                    <div class="impact-item">• Service down 48+ hours</div>
+                                    <div class="impact-item">• Loss: $500K+</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Enforces action limits (read-only operations). ✓ Requires kill switch. ✓ Verifies ownership and fallback declared.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Scenario 2 -->
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔓 No Access Control</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Anyone can access the agent. No authentication needed.</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Attackers generate unlimited videos</div>
+                                    <div class="impact-item">• GPU costs spike to $100K/day</div>
+                                    <div class="impact-item">• Service becomes unusable</div>
+                                    <div class="impact-item">• Customer data compromised</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Requires authentication. ✓ Enforces rate limits per user. ✓ Verifies data isolation boundaries.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Scenario 3 -->
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔥 Runaway Costs</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Agent retries infinitely, consuming all resources</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Infinite retry loops</div>
+                                    <div class="impact-item">• GPU bills reach $50K+/day</div>
+                                    <div class="impact-item">• Takes 8 hours to notice</div>
+                                    <div class="impact-item">• Service unresponsive</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Sets max retries. ✓ Enforces daily cost limits. ✓ Requires timeout per request.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AUDIO PROCESSING -->
+            <div class="example-card" id="example-audio">
+                <div class="example-display">
+                    <div class="example-header">
+                        <div class="example-icon">🎵</div>
+                        <div>
+                            <h3>Audio Processing Agent</h3>
+                            <p>Transcribes, translates, and analyzes audio files</p>
+                        </div>
+                    </div>
+
+                    <div class="scenario-grid">
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">💥 Self-Destruction Risk</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Agent deletes transcription history and trained models</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• All transcriptions lost</div>
+                                    <div class="impact-item">• Customer archives wiped</div>
+                                    <div class="impact-item">• HIPAA compliance violation</div>
+                                    <div class="impact-item">• Legal liability: $2M+ fines</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Limits operations to read-only. ✓ Requires kill switch. ✓ Enforces backup procedures.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔓 No Access Control</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">No authentication. Anyone can transcribe any audio.</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Patient/confidential data accessed</div>
+                                    <div class="impact-item">• Voice cloning data stolen</div>
+                                    <div class="impact-item">• Competitors scrape your models</div>
+                                    <div class="impact-item">• Data breach lawsuit</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Mandates authentication. ✓ Enforces rate limits. ✓ Verifies data encryption.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔥 Runaway Costs</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Agent stuck in transcription retry loop</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Processes same audio 1000x times</div>
+                                    <div class="impact-item">• Costs balloon to $100K+</div>
+                                    <div class="impact-item">• Queue backs up for 48 hours</div>
+                                    <div class="impact-item">• SLA breached (99.9% uptime)</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Limits retries per request. ✓ Sets daily cost caps. ✓ Requires timeout per file.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LLM ASSISTANT -->
+            <div class="example-card" id="example-llm">
+                <div class="example-display">
+                    <div class="example-header">
+                        <div class="example-icon">🤖</div>
+                        <div>
+                            <h3>LLM Assistant Agent</h3>
+                            <p>Customer support chatbot using Claude/GPT</p>
+                        </div>
+                    </div>
+
+                    <div class="scenario-grid">
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">💥 Self-Destruction Risk</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Agent deletes auth system and customer conversations</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Authentication broken</div>
+                                    <div class="impact-item">• Support conversations lost</div>
+                                    <div class="impact-item">• Millions of users locked out</div>
+                                    <div class="impact-item">• Complete account compromise</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Restricts delete operations. ✓ Requires kill switch. ✓ Enforces data protection.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔓 No Access Control</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">No login required. Anyone can chat and extract data.</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Hackers extract customer data</div>
+                                    <div class="impact-item">• API keys stolen from chat</div>
+                                    <div class="impact-item">• Payment info exposed</div>
+                                    <div class="impact-item">• Customer trust destroyed</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Requires OAuth2 authentication. ✓ Enforces rate limits. ✓ Verifies customer data isolation.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="scenario-card">
+                            <div class="scenario-header">
+                                <div class="scenario-title">🔥 Runaway Costs</div>
+                            </div>
+                            <div class="scenario-body">
+                                <div class="threat-box">
+                                    <div class="threat-label">The Problem</div>
+                                    <div class="threat-description">Agent stuck in token generation loop</div>
+                                </div>
+
+                                <div class="impact-box">
+                                    <div class="impact-label">Post-Deploy Impact</div>
+                                    <div class="impact-item">• Infinite token generation</div>
+                                    <div class="impact-item">• API budget depleted mid-month</div>
+                                    <div class="impact-item">• Service dies for all users</div>
+                                    <div class="impact-item">• Revenue loss: $10K+</div>
+                                </div>
+
+                                <div class="solution-box">
+                                    <div class="solution-label">release-gate Prevents This</div>
+                                    <div class="solution-description">✓ Sets max tokens per request. ✓ Enforces monthly budget caps. ✓ Requires timeout per chat.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Coming Soon Section -->
+    <section class="coming-soon-section" id="roadmap">
+        <div class="coming-soon-title">
+            <h2>What's Coming</h2>
+            <p>Release-gate is evolving. Here's what we're building next.</p>
+        </div>
+
+        <div class="roadmap-grid">
+            <div class="roadmap-item">
+                <div class="roadmap-version">v0.2 - Q2 2024</div>
+                <h3>More Checks</h3>
+                <ul class="roadmap-features">
+                    <li>Identity & Access Control</li>
+                    <li>Resource Budgets</li>
+                    <li>Data Access Policies</li>
+                    <li>Approval Workflows</li>
+                </ul>
+            </div>
+
+            <div class="roadmap-item">
+                <div class="roadmap-version">v0.3 - Q3 2024</div>
+                <h3>Dashboard</h3>
+                <ul class="roadmap-features">
+                    <li>Web UI for governance</li>
+                    <li>Real-time monitoring</li>
+                    <li>Compliance dashboards</li>
+                    <li>Audit reports</li>
+                </ul>
+            </div>
+
+            <div class="roadmap-item">
+                <div class="roadmap-version">v1.0 - Q4 2024</div>
+                <h3>Enterprise</h3>
+                <ul class="roadmap-features">
+                    <li>Runtime enforcement</li>
+                    <li>Multi-tenant support</li>
+                    <li>Advanced compliance</li>
+                    <li>Custom policies</li>
+                </ul>
+            </div>
+        </div>
     </section>
 
     <!-- Footer -->
     <footer>
-        <p><strong>release-gate</strong> | Governance Before Deployment</p>
-        <p>Based on <a href="https://arxiv.org/abs/2602.20021" class="footer-link">"Agents of Chaos: Red-Teaming of Autonomous AI Agents"</a></p>
-        <p style="margin-top: 1rem; font-size: 0.9rem;">MIT License | <a href="https://github.com/VamsiSudhakaran1/release-gate" class="footer-link">GitHub</a></p>
+        <div class="footer-links">
+            <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start">Quick Start</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate#documentation">Docs</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate/issues">Issues</a>
+        </div>
+        <div>
+            <p>release-gate | Governance Before Deployment</p>
+            <p style="font-size: 0.85rem; margin-top: 0.5rem;">MIT License | Open Source | Community-Driven</p>
+        </div>
     </footer>
+
+    <script>
+        function selectAgent(agent) {
+            // Hide all example cards
+            document.querySelectorAll('.example-card').forEach(card => {
+                card.classList.remove('active');
+            });
+
+            // Remove active from all tabs
+            document.querySelectorAll('.agent-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected example
+            document.getElementById('example-' + agent).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Scroll animations
+        const revealElements = document.querySelectorAll('.reveal');
+
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        revealElements.forEach(element => {
+            observer.observe(element);
+        });
+
+        // Smooth scroll for navigation
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                const href = this.getAttribute('href');
+                if (href !== '#' && document.querySelector(href)) {
+                    e.preventDefault();
+                    document.querySelector(href).scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+        });
+    </script>
 </body>
 </html>
