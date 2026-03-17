@@ -1,0 +1,4 @@
+{
+  "public": "public",
+  "buildCommand": "echo 'Website ready'"
+}

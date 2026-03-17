@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Is your agent ready to ship? release-gate enforces governance policies before deployment. Easy to install. Ready to use.">
+    <meta name="keywords" content="AI agent deployment, governance gate, ready to ship, policy enforcement, deployment safety">
+    <meta name="author" content="release-gate">
+    
+    <title>release-gate | Ready to Deploy?</title>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #0f172a;
+            --accent: #3b82f6;
+            --accent-light: #60a5fa;
+            --accent-dark: #1e40af;
+            --success: #10b981;
+            --bg: #ffffff;
+            --bg-light: #f8fafc;
+            --bg-darker: #f1f5f9;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --text-lighter: #94a3b8;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+            overflow-x: hidden;
+        }
+
+        /* Smooth scrolling */
+        html {
+            scroll-behavior: smooth;
+        }
+
+        /* Navigation */
+        nav {
+            background: linear-gradient(180deg, var(--bg) 0%, rgba(255,255,255,0.95) 100%);
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-brand {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.8px;
+            color: var(--primary);
+        }
+
+        .nav-brand code {
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2.5rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent);
+        }
+
+        @media (max-width: 768px) {
+            .nav-links {
+                gap: 1rem;
+                font-size: 0.85rem;
+            }
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-darker) 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 4rem 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            top: -200px;
+            right: -100px;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, transparent 70%);
+            border-radius: 50%;
+            bottom: -150px;
+            left: -50px;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 1;
+            max-width: 800px;
+        }
+
+        .hero h1 {
+            font-size: 4rem;
+            font-weight: 900;
+            margin-bottom: 1.5rem;
+            line-height: 1.1;
+            color: var(--primary);
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .hero h1 span {
+            color: var(--accent);
+            display: block;
+            font-size: 3.5rem;
+        }
+
+        .hero-tagline {
+            font-size: 1.4rem;
+            color: var(--text-light);
+            margin-bottom: 2rem;
+            animation: fadeInUp 0.8s ease-out 0.2s both;
+        }
+
+        .hero-question {
+            background: white;
+            border: 2px solid var(--accent);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 3rem;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--accent);
+            animation: fadeInUp 0.8s ease-out 0.4s both;
+            box-shadow: 0 4px 20px rgba(59, 130, 246, 0.1);
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            animation: fadeInUp 0.8s ease-out 0.6s both;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .btn {
+            padding: 0.875rem 2rem;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-block;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--accent);
+            border: 2px solid var(--accent);
+        }
+
+        .btn-secondary:hover {
+            background: var(--accent);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        @media (max-width: 768px) {
+            .hero {
+                min-height: auto;
+                padding: 3rem 1.5rem;
+            }
+
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero h1 span {
+                font-size: 2rem;
+            }
+
+            .hero-tagline {
+                font-size: 1.1rem;
+            }
+        }
+
+        /* Workflow Section */
+        .workflow {
+            padding: 6rem 2rem;
+            background: var(--bg);
+            position: relative;
+        }
+
+        .workflow-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .workflow-title h2 {
+            font-size: 2.8rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .workflow-title p {
+            font-size: 1.15rem;
+            color: var(--text-light);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .workflow-container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .workflow-step {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3rem;
+            margin-bottom: 4rem;
+            align-items: center;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .workflow-step:nth-child(even) {
+            direction: rtl;
+        }
+
+        .workflow-step:nth-child(even) > * {
+            direction: ltr;
+        }
+
+        .workflow-step-content h3 {
+            font-size: 1.8rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .workflow-step-content p {
+            color: var(--text-light);
+            font-size: 1.05rem;
+            margin-bottom: 1rem;
+            line-height: 1.8;
+        }
+
+        .workflow-step-visual {
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-darker) 100%);
+            border-radius: 1rem;
+            padding: 3rem 2rem;
+            text-align: center;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border: 2px solid var(--border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .workflow-step-visual::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+        }
+
+        .workflow-icon {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .workflow-step-label {
+            font-size: 0.9rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--accent);
+            letter-spacing: 1px;
+            margin-bottom: 0.5rem;
+        }
+
+        .workflow-step-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--primary);
+            position: relative;
+            z-index: 1;
+        }
+
+        @media (max-width: 768px) {
+            .workflow-step {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            .workflow-step:nth-child(even) {
+                direction: ltr;
+            }
+
+            .workflow-title h2 {
+                font-size: 2rem;
+            }
+        }
+
+        /* Release-Gate Flow Section */
+        .release-gate-flow {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-darker) 100%);
+            position: relative;
+        }
+
+        .release-gate-flow-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .release-gate-flow-title h2 {
+            font-size: 2.8rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .flow-diagram {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 1.5rem;
+            padding: 3rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .flow-step-inline {
+            display: flex;
+            align-items: center;
+            margin-bottom: 2rem;
+            gap: 2rem;
+        }
+
+        .flow-step-inline:last-child {
+            margin-bottom: 0;
+        }
+
+        .flow-number {
+            background: var(--accent);
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.3rem;
+            flex-shrink: 0;
+        }
+
+        .flow-content h4 {
+            color: var(--primary);
+            font-size: 1.2rem;
+            margin-bottom: 0.3rem;
+        }
+
+        .flow-content p {
+            color: var(--text-light);
+            font-size: 1rem;
+        }
+
+        .flow-arrow {
+            text-align: center;
+            color: var(--accent);
+            font-size: 1.5rem;
+            margin: 1rem 0;
+        }
+
+        /* What It Does Section */
+        .what-it-does {
+            padding: 6rem 2rem;
+            background: var(--bg);
+        }
+
+        .what-it-does-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .what-it-does-title h2 {
+            font-size: 2.8rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .capabilities-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .capability-card {
+            background: white;
+            border: 2px solid var(--border);
+            border-radius: 1rem;
+            padding: 2rem;
+            transition: all 0.3s ease;
+        }
+
+        .capability-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
+            transform: translateY(-4px);
+        }
+
+        .capability-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .capability-card h3 {
+            color: var(--primary);
+            margin-bottom: 0.75rem;
+            font-size: 1.2rem;
+        }
+
+        .capability-card p {
+            color: var(--text-light);
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        /* Easy to Install Section */
+        .easy-install {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-darker) 100%);
+        }
+
+        .easy-install-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .easy-install-title h2 {
+            font-size: 2.8rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .install-container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 1rem;
+            padding: 3rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .install-step {
+            display: grid;
+            grid-template-columns: 60px 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .install-step:last-child {
+            margin-bottom: 0;
+        }
+
+        .install-number {
+            background: var(--accent);
+            color: white;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .install-step-content h4 {
+            color: var(--primary);
+            font-size: 1.15rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .install-step-content p {
+            color: var(--text-light);
+            margin-bottom: 0.75rem;
+        }
+
+        .code-block {
+            background: var(--primary);
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            margin-top: 0.5rem;
+        }
+
+        /* Ready to Deploy Section */
+        .ready-to-deploy {
+            padding: 6rem 2rem;
+            background: var(--bg);
+        }
+
+        .ready-to-deploy-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .ready-to-deploy-title h2 {
+            font-size: 2.8rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .benefit-item {
+            text-align: center;
+        }
+
+        .benefit-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .benefit-item h3 {
+            color: var(--primary);
+            margin-bottom: 0.75rem;
+            font-size: 1.1rem;
+        }
+
+        .benefit-item p {
+            color: var(--text-light);
+            font-size: 0.95rem;
+        }
+
+        /* CTA Section */
+        .cta-final {
+            padding: 6rem 2rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-dark) 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .cta-final h2 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .cta-final p {
+            font-size: 1.15rem;
+            margin-bottom: 2rem;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .cta-final .btn {
+            color: var(--primary);
+        }
+
+        /* Footer */
+        footer {
+            background: var(--primary);
+            color: var(--text-lighter);
+            padding: 3rem 2rem;
+            text-align: center;
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-lighter);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .footer-links a:hover {
+            color: var(--accent-light);
+        }
+
+        .footer-bottom {
+            font-size: 0.9rem;
+            color: var(--text-lighter);
+            padding-top: 2rem;
+            border-top: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .easy-install-title h2,
+            .what-it-does-title h2,
+            .release-gate-flow-title h2,
+            .ready-to-deploy-title h2 {
+                font-size: 2rem;
+            }
+
+            .install-container {
+                padding: 1.5rem;
+            }
+
+            .flow-diagram {
+                padding: 1.5rem;
+            }
+
+            footer {
+                padding: 2rem 1rem;
+            }
+
+            .footer-links {
+                flex-direction: column;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-brand">release<code>-gate</code></div>
+        <ul class="nav-links">
+            <li><a href="#workflow">Workflow</a></li>
+            <li><a href="#install">Install</a></li>
+            <li><a href="#deploy">Deploy</a></li>
+            <li><a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a></li>
+        </ul>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1>Ready to Deploy?<span>release-gate decides.</span></h1>
+            <p class="hero-tagline">Enforce governance policies before your agent ships to production.</p>
+            
+            <div class="hero-question">
+                Is your agent really ready for the world?
+            </div>
+
+            <div class="hero-cta">
+                <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start" class="btn btn-primary">Get Started Now</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn btn-secondary">View on GitHub</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Workflow Section -->
+    <section class="workflow" id="workflow">
+        <div class="workflow-title">
+            <h2>Where Does release-gate Fit?</h2>
+            <p>See exactly where release-gate sits in your deployment pipeline</p>
+        </div>
+
+        <div class="workflow-container">
+            <!-- Step 1 -->
+            <div class="workflow-step">
+                <div class="workflow-step-content">
+                    <div class="workflow-step-label">Step 1</div>
+                    <h3>You Build Your Agent</h3>
+                    <p>Create your autonomous agent with all the features you need. Build it right, test it thoroughly. This is your work—release-gate doesn't touch this.</p>
+                </div>
+                <div class="workflow-step-visual">
+                    <div class="workflow-icon">🛠️</div>
+                    <div class="workflow-step-title">Development</div>
+                </div>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="workflow-step">
+                <div class="workflow-step-visual">
+                    <div class="workflow-icon">✅</div>
+                    <div class="workflow-step-title">Testing & Validation</div>
+                </div>
+                <div class="workflow-step-content">
+                    <div class="workflow-step-label">Step 2</div>
+                    <h3>You Test Your Agent</h3>
+                    <p>Run your tests. Use your testing tools. Verify behavior. Make sure it works as expected. This is standard practice—release-gate complements this, not replaces it.</p>
+                </div>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="workflow-step">
+                <div class="workflow-step-content">
+                    <div class="workflow-step-label">Step 3 - THIS IS WHERE WE COME IN</div>
+                    <h3>release-gate Checks Governance</h3>
+                    <p>Before deployment, release-gate answers: <strong>"Is this agent safe to run?"</strong></p>
+                    <p>It checks your governance policies. Verifies safeguards. Ensures operational readiness. Then makes a decision:</p>
+                    <ul style="margin-top: 1rem; color: var(--text-light); text-align: left;">
+                        <li style="margin-bottom: 0.5rem;">✓ <strong>PASS</strong> → Safe to deploy</li>
+                        <li style="margin-bottom: 0.5rem;">⚠ <strong>WARN</strong> → Review recommended</li>
+                        <li>✗ <strong>FAIL</strong> → Fix before deployment</li>
+                    </ul>
+                </div>
+                <div class="workflow-step-visual">
+                    <div class="workflow-icon">🚪</div>
+                    <div class="workflow-step-title">Governance Gate</div>
+                </div>
+            </div>
+
+            <!-- Step 4 -->
+            <div class="workflow-step">
+                <div class="workflow-step-visual">
+                    <div class="workflow-icon">🚀</div>
+                    <div class="workflow-step-title">Deployment</div>
+                </div>
+                <div class="workflow-step-content">
+                    <div class="workflow-step-label">Step 4</div>
+                    <h3>You Deploy (If release-gate Approves)</h3>
+                    <p>Once release-gate gives the green light, deploy with confidence. Your agent has been tested AND verified for governance compliance. You're ready for production.</p>
+                </div>
+            </div>
+
+            <!-- Step 5 -->
+            <div class="workflow-step">
+                <div class="workflow-step-content">
+                    <div class="workflow-step-label">Step 5</div>
+                    <h3>You Monitor in Production</h3>
+                    <p>Track how your agent performs. Monitor costs, latency, errors. You have what you need because release-gate made sure kill switches, fallbacks, and ownership were all declared upfront.</p>
+                </div>
+                <div class="workflow-step-visual">
+                    <div class="workflow-icon">📊</div>
+                    <div class="workflow-step-title">Production Running</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- release-gate Flow Section -->
+    <section class="release-gate-flow">
+        <div class="release-gate-flow-title">
+            <h2>What Does release-gate Actually Do?</h2>
+            <p>Three simple checks. One powerful decision.</p>
+        </div>
+
+        <div class="flow-diagram">
+            <div class="flow-step-inline">
+                <div class="flow-number">1</div>
+                <div class="flow-content">
+                    <h4>Initialize Your Governance Policy</h4>
+                    <p>Create a <code>release-gate.yaml</code> file that defines your safety requirements: request contracts, kill switches, ownership, fallback modes, and more.</p>
+                </div>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="flow-step-inline">
+                <div class="flow-number">2</div>
+                <div class="flow-content">
+                    <h4>Run the Governance Check</h4>
+                    <p>Execute <code>release-gate run --config release-gate.yaml</code> and release-gate validates every policy you defined.</p>
+                </div>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="flow-step-inline">
+                <div class="flow-number">3</div>
+                <div class="flow-content">
+                    <h4>Get Your Answer</h4>
+                    <p>release-gate returns <strong>PASS</strong> (deploy), <strong>WARN</strong> (review), or <strong>FAIL</strong> (fix). Use the exit code in your CI/CD pipeline.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- What It Does Section -->
+    <section class="what-it-does">
+        <div class="what-it-does-title">
+            <h2>What Gets Checked?</h2>
+            <p>release-gate validates governance across multiple dimensions</p>
+        </div>
+
+        <div class="capabilities-grid">
+            <div class="capability-card">
+                <div class="capability-icon">📋</div>
+                <h3>Request Contract</h3>
+                <p>Verify your request format is well-defined and validated. Test both valid and invalid samples against your schema.</p>
+            </div>
+
+            <div class="capability-card">
+                <div class="capability-icon">🔧</div>
+                <h3>Operational Safeguards</h3>
+                <p>Ensure kill switch, fallback mode, ownership, and runbook are all declared and documented. You're prepared for emergencies.</p>
+            </div>
+
+            <div class="capability-card">
+                <div class="capability-icon">🔐</div>
+                <h3>Safety Boundaries</h3>
+                <p>Define identity requirements, access controls, rate limits, and budget enforcement. Control who can use your agent and how much it can spend.</p>
+            </div>
+
+            <div class="capability-card">
+                <div class="capability-icon">🎯</div>
+                <h3>Policy Enforcement</h3>
+                <p>Convert your safety requirements from good intentions into actual checks. Policies that block bad deployments aren't just documented—they're enforced.</p>
+            </div>
+
+            <div class="capability-card">
+                <div class="capability-icon">📊</div>
+                <h3>Evidence Generation</h3>
+                <p>Generate audit-ready reports that prove your governance is in place. Perfect for compliance teams and auditors.</p>
+            </div>
+
+            <div class="capability-card">
+                <div class="capability-icon">🚫</div>
+                <h3>Automated Gating</h3>
+                <p>Integrate with CI/CD pipelines. Block bad deployments automatically. No manual review needed—the gate makes the decision.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Easy to Install Section -->
+    <section class="easy-install" id="install">
+        <div class="easy-install-title">
+            <h2>Easy to Install. Easy to Use.</h2>
+            <p>Up and running in 5 minutes. Zero external dependencies.</p>
+        </div>
+
+        <div class="install-container">
+            <div class="install-step">
+                <div class="install-number">1</div>
+                <div class="install-step-content">
+                    <h4>Install (One Command)</h4>
+                    <p>No complex setup. No external services. Just Python and two libraries.</p>
+                    <div class="code-block">pip install pyyaml jsonschema</div>
+                </div>
+            </div>
+
+            <div class="install-step">
+                <div class="install-number">2</div>
+                <div class="install-step-content">
+                    <h4>Initialize (Template Generated)</h4>
+                    <p>release-gate creates a template configuration for you to customize.</p>
+                    <div class="code-block">python cli.py init --project my-agent</div>
+                </div>
+            </div>
+
+            <div class="install-step">
+                <div class="install-number">3</div>
+                <div class="install-step-content">
+                    <h4>Customize (Your Policies)</h4>
+                    <p>Edit the generated YAML file with your governance requirements. Easy to read, easy to version control.</p>
+                    <div class="code-block">nano release-gate.yaml  # Edit your policies</div>
+                </div>
+            </div>
+
+            <div class="install-step">
+                <div class="install-number">4</div>
+                <div class="install-step-content">
+                    <h4>Run (Check Governance)</h4>
+                    <p>Execute the governance check. Get back PASS/WARN/FAIL. Use in CI/CD pipelines.</p>
+                    <div class="code-block">python cli.py run --config release-gate.yaml</div>
+                </div>
+            </div>
+
+            <div class="install-step">
+                <div class="install-number">5</div>
+                <div class="install-step-content">
+                    <h4>Deploy (Automated or Manual)</h4>
+                    <p>If PASS, deploy automatically. If WARN, require review. If FAIL, block deployment. Your choice.</p>
+                    <div class="code-block">if [ $? -eq 0 ]; then deploy_to_production; fi</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Ready to Deploy Section -->
+    <section class="ready-to-deploy" id="deploy">
+        <div class="ready-to-deploy-title">
+            <h2>Ready to Be Deployed</h2>
+            <p>Why release-gate is built for production from day one</p>
+        </div>
+
+        <div class="benefits-grid">
+            <div class="benefit-item">
+                <div class="benefit-icon">⚡</div>
+                <h3>Fast</h3>
+                <p>Runs in under 200ms. No waiting. No performance overhead.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">🔌</div>
+                <h3>No Dependencies</h3>
+                <p>Just Python. No external services, no APIs, no cloud calls. Local-first.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">🔄</div>
+                <h3>CI/CD Ready</h3>
+                <p>Exit codes (0, 10, 1) work perfectly in pipelines. Kubernetes, GitHub Actions, Jenkins, etc.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">📋</div>
+                <h3>Policy as Code</h3>
+                <p>YAML-based policies. Version control them. Track changes. Audit trail included.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">🔐</div>
+                <h3>Secure</h3>
+                <p>No data transmission. No external calls. Everything stays on your machine.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">📊</div>
+                <h3>Auditable</h3>
+                <p>JSON reports. Compliance templates. SOC2, ISO, HIPAA ready.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">🛠️</div>
+                <h3>Open Source</h3>
+                <p>MIT License. Contribute. Extend. Make it yours. Community-driven.</p>
+            </div>
+
+            <div class="benefit-item">
+                <div class="benefit-icon">📚</div>
+                <h3>Well Documented</h3>
+                <p>Quick start, examples, API docs, governance guides. Everything you need.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="cta-final">
+        <h2>Is Your Agent Really Ready?</h2>
+        <p>Find out with release-gate. Then deploy with confidence.</p>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start" class="btn btn-primary">Start Now (5 minutes)</a>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start">Quick Start</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate#documentation">Documentation</a>
+            <a href="https://github.com/VamsiSudhakaran1/release-gate/issues">Issues</a>
+        </div>
+        <div class="footer-bottom">
+            <p>release-gate | Governance for AI Agent Deployments</p>
+            <p style="margin-top: 0.5rem; font-size: 0.8rem;">MIT License | Open Source | Community-Driven</p>
+        </div>
+    </footer>
+</body>
+</html>
