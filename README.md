@@ -269,22 +269,32 @@ Extensible system for adding governance controls:
 
 ## Roadmap
 
-### v0.1 (Current)
-✅ INPUT_CONTRACT check
-✅ FALLBACK_DECLARED check
-✅ CLI init and run
-✅ JSON/text output
-✅ Exit codes
+### v0.2 (Current - March 2026) ✅
+✅ INPUT_CONTRACT check - Request schema validation
+✅ FALLBACK_DECLARED check - Operational safeguards
+✅ IDENTITY_BOUNDARY check - Access control & rate limits
+✅ ACTION_BUDGET check - Resource & cost controls
+✅ CLI init and run commands
+✅ JSON/text output formats
+✅ Exit codes (0=PASS, 10=WARN, 1=FAIL)
+✅ 14 unit tests (100% passing)
+✅ Example configurations for 3 agent types
+✅ Comprehensive documentation
 
-### v0.2 (Next)
-🔜 IDENTITY_BOUNDARY check
-🔜 ACTION_BUDGET check
-🔜 Better evidence reporting
+### v0.3 (Q2 2026) 🔜
+🔜 APPROVAL_REQUIRED check - Deployment approval workflows
+🔜 DATA_EGRESS_POLICY check - Data movement restrictions
+🔜 Approval UI / Dashboard
+🔜 Audit report generation
+🔜 Compliance evidence mappings (SOC2, ISO, HIPAA)
+🔜 Enhanced evidence reporting
 
-### v0.3+
-🔮 APPROVAL_REQUIRED check
-🔮 DATA_EGRESS_POLICY check
-🔮 Formal verification
+### v1.0 (Q4 2026) 🔮
+🔮 Runtime enforcement (at execution time)
+🔮 Multi-tenant support
+🔮 Enterprise integrations (Slack, PagerDuty, etc.)
+🔮 Custom policy language
+🔮 Formal verification layer
 🔮 Runtime monitoring integration
 
 See [CHANGELOG](docs/CHANGELOG.md) and [GOVERNANCE_VISION](docs/GOVERNANCE_VISION.md) for details.
