@@ -1167,10 +1167,235 @@
                         <div class="example-icon">🎵</div>
                         <div>
                             <h3>Audio Processing Agent</h3>
-                            <p>Transcribes and analyzes audio files</p>
+                            <p>Transcribes and analyzes audio files with confidentiality</p>
                         </div>
                     </div>
-                    <p style="padding: 2rem; text-align: center; color: var(--text-light);">Audio processing examples with PASS/WARN/FAIL scenarios...</p>
+
+                    <div class="scenario-grid">
+                        <!-- Audio Scenario 1: Data Isolation -->
+                        <div class="scenario-card">
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
+                            </div>
+
+                            <!-- PASS -->
+                            <div class="scenario-content active">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Customer A's data visible to Customer B</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  data_isolation:
+    - customer_owned_only
+    - no_cross_access</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✓ PASS - Data isolation enforced</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Data isolation defined but not tested in prod</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  data_isolation:
+    - customer_owned_only
+  # No test cases provided</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - Isolation untested in production</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No data isolation boundaries defined</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  # data_isolation missing</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Data isolation required</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Audio Scenario 2: Timeout Protection -->
+                        <div class="scenario-card">
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
+                            </div>
+
+                            <!-- PASS -->
+                            <div class="scenario-content active">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Agent stuck processing 10-hour audio file</div>
+                                </div>
+
+                                <div class="check-box">fallback_declared:
+  max_latency: 300s
+  timeout_per_call: 300</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✓ PASS - Timeout enforced</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Timeout is very high (3600 seconds)</div>
+                                </div>
+
+                                <div class="check-box">fallback_declared:
+  max_latency: 3600s
+  timeout_per_call: 3600</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - Very high timeout</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No timeout defined</div>
+                                </div>
+
+                                <div class="check-box">fallback_declared:
+  # No timeout specified</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Timeout required</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Audio Scenario 3: Retry Limits -->
+                        <div class="scenario-card">
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
+                            </div>
+
+                            <!-- PASS -->
+                            <div class="scenario-content active">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Agent retries indefinitely on transient failures</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_retries: 3
+  retry_backoff: exponential</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✓ PASS - Retries bounded</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">High retry count (10 retries)</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_retries: 10
+  retry_backoff: linear</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - High retry threshold</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No retry limit defined</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  # max_retries missing</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Retry limit required</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1180,10 +1405,235 @@
                         <div class="example-icon">🤖</div>
                         <div>
                             <h3>LLM Assistant Agent</h3>
-                            <p>Customer support chatbot using Claude/GPT</p>
+                            <p>Customer support chatbot with token budget constraints</p>
                         </div>
                     </div>
-                    <p style="padding: 2rem; text-align: center; color: var(--text-light);">LLM assistant examples with PASS/WARN/FAIL scenarios...</p>
+
+                    <div class="scenario-grid">
+                        <!-- LLM Scenario 1: Token Budget -->
+                        <div class="scenario-card">
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
+                            </div>
+
+                            <!-- PASS -->
+                            <div class="scenario-content active">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Agent generates unlimited tokens, $1000+ daily bill</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_tokens_per_req: 2000
+  max_daily_cost: 100</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✓ PASS - Token & cost limits set</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Token limit is high (10000 tokens/req)</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_tokens_per_req: 10000
+  max_daily_cost: 500</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - Very high token limit</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No token or cost limit defined</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  # max_tokens_per_req missing
+  # max_daily_cost missing</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Budget limits required</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- LLM Scenario 2: Rate Limiting -->
+                        <div class="scenario-card">
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
+                            </div>
+
+                            <!-- PASS -->
+                            <div class="scenario-content active">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">One user floods endpoint with 1000 requests</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  authentication: required
+  rate_limit: 10</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✓ PASS - Rate limited per user</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Rate limit is very high (100/min per user)</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  authentication: required
+  rate_limit: 100</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - High rate limit threshold</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No rate limit or authentication</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  authentication: optional
+  # rate_limit missing</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Auth + rate limits required</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- LLM Scenario 3: Concurrency Control -->
+                        <div class="scenario-card">
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
+                            </div>
+
+                            <!-- PASS -->
+                            <div class="scenario-content active">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Concurrent requests overload LLM endpoint</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_concurrent: 5
+  queuing: enabled</div>
+
+                                <div class="result-box">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✓ PASS - Concurrency bounded</div>
+                                </div>
+
+                                <div class="decision-box">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">High concurrent limit (50 concurrent)</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_concurrent: 50
+  queuing: disabled</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - High concurrency threshold</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No concurrency limit defined</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  # max_concurrent missing</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Concurrency limit required</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
