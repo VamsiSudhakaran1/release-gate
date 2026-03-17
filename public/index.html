@@ -320,189 +320,57 @@
             margin-top: 0.5rem;
         }
 
-        /* ===== FEATURES OVERVIEW SECTION ===== */
-        .features-overview-section {
+        /* ===== WHAT IT DOES SECTION ===== */
+        .what-does-section {
             padding: 6rem 2rem;
             background: var(--bg);
         }
 
-        .features-overview-grid {
+        .what-does-grid {
             max-width: 1200px;
             margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 2rem;
         }
 
-        .feature-overview-card {
-            background: white;
-            border-radius: 1.5rem;
-            padding: 2rem;
-            border: 2px solid var(--border);
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        .what-does-item {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.05), white);
+            border-left: 3px solid var(--success);
+            border-radius: 0.5rem;
         }
 
-        .feature-overview-card:hover {
-            border-color: var(--accent);
-            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
-            transform: translateY(-8px);
-        }
-
-        .feature-overview-icon {
-            font-size: 3.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .feature-overview-card h3 {
-            font-size: 1.3rem;
-            color: var(--primary);
-            margin-bottom: 0.5rem;
-        }
-
-        .feature-overview-card p {
-            font-size: 0.9rem;
-            color: var(--text-light);
-        }
-
-        .feature-overview-card.new-badge::after {
-            content: 'v0.2';
-            display: inline-block;
-            background: var(--accent);
-            color: white;
-            padding: 0.3rem 0.8rem;
-            border-radius: 2rem;
-            font-size: 0.75rem;
+        .what-does-item strong {
+            color: var(--success);
             font-weight: 700;
-            margin-top: 0.75rem;
         }
 
-        /* ===== DETAILED FEATURES SECTION ===== */
-        .features-detailed-section {
+        /* ===== WHAT IT DOES NOT DO SECTION ===== */
+        .what-not-section {
             padding: 6rem 2rem;
             background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
         }
 
-        .features-detailed-grid {
-            max-width: 1400px;
+        .what-not-grid {
+            max-width: 1200px;
             margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 2rem;
         }
 
-        .feature-detailed-card {
-            background: white;
-            border-radius: 1.5rem;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
-            transition: all 0.3s ease;
-        }
-
-        .feature-detailed-card:hover {
-            box-shadow: 0 12px 35px rgba(59, 130, 246, 0.15);
-            transform: translateY(-4px);
-        }
-
-        .feature-card-header {
-            padding: 2rem;
-            background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-            color: white;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .feature-card-header-icon {
-            font-size: 2.5rem;
-        }
-
-        .feature-card-header h3 {
-            font-size: 1.3rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .feature-card-header p {
-            font-size: 0.85rem;
-            opacity: 0.9;
-        }
-
-        .feature-card-body {
+        .what-not-item {
+            margin-bottom: 2rem;
             padding: 1.5rem;
-        }
-
-        .feature-section {
-            margin-bottom: 1.5rem;
-        }
-
-        .feature-section:last-child {
-            margin-bottom: 0;
-        }
-
-        .feature-section-title {
-            font-size: 0.85rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: var(--accent);
-            letter-spacing: 1px;
-            margin-bottom: 0.75rem;
-        }
-
-        .how-its-used {
-            background: rgba(59, 130, 246, 0.08);
-            border-left: 3px solid var(--accent);
-            padding: 1rem;
-            border-radius: 0.5rem;
-            font-family: 'Courier New', monospace;
-            font-size: 0.8rem;
-            color: var(--secondary);
-            white-space: pre-wrap;
-            word-break: break-word;
-            overflow-x: auto;
-        }
-
-        .real-uses {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .use-item {
-            font-size: 0.9rem;
-            color: var(--text);
-            padding-left: 1.5rem;
-            position: relative;
-        }
-
-        .use-item::before {
-            content: '→';
-            position: absolute;
-            left: 0;
-            color: var(--accent);
-            font-weight: 700;
-        }
-
-        .impact-box {
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.08), rgba(239, 68, 68, 0.04));
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.05), white);
             border-left: 3px solid var(--danger);
-            padding: 0.75rem;
             border-radius: 0.5rem;
         }
 
-        .impact-title {
-            font-size: 0.8rem;
-            font-weight: 700;
+        .what-not-item strong {
             color: var(--danger);
-            margin-bottom: 0.25rem;
+            font-weight: 700;
         }
 
-        .impact-description {
-            font-size: 0.85rem;
-            color: var(--text);
-            line-height: 1.5;
+        .what-not-item em {
+            color: var(--text-light);
+            font-style: italic;
         }
 
         /* ===== EXAMPLES SECTION ===== */
@@ -608,20 +476,55 @@
             transform: translateY(-4px);
         }
 
-        .scenario-header {
-            padding: 1.25rem;
-            background: linear-gradient(135deg, var(--accent), #1e40af);
-            color: white;
+        /* Scenario Status Tabs */
+        .scenario-status-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            background: white;
         }
 
-        .scenario-title {
-            font-size: 1rem;
-            font-weight: 700;
-            margin: 0;
+        .scenario-status-tab {
+            flex: 1;
+            padding: 0.75rem;
+            text-align: center;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: none;
+            background: transparent;
+            color: var(--text-light);
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
         }
 
-        .scenario-body {
+        .scenario-status-tab:hover {
+            color: var(--text);
+        }
+
+        .scenario-status-tab.pass-tab {
+            border-bottom-color: var(--success);
+        }
+
+        .scenario-status-tab.warn-tab {
+            border-bottom-color: var(--warning);
+        }
+
+        .scenario-status-tab.fail-tab {
+            border-bottom-color: var(--danger);
+        }
+
+        .scenario-status-tab.active {
+            color: var(--text);
+        }
+
+        /* Scenario Content */
+        .scenario-content {
+            display: none;
             padding: 1.5rem;
+        }
+
+        .scenario-content.active {
+            display: block;
         }
 
         .threat-box {
@@ -650,11 +553,13 @@
             padding: 0.75rem;
             border-radius: 0.4rem;
             margin-bottom: 0.75rem;
-            font-family: monospace;
-            font-size: 0.8rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
             color: var(--secondary);
             white-space: pre-wrap;
             word-break: break-word;
+            line-height: 1.5;
+            overflow-x: auto;
         }
 
         .result-box {
@@ -665,11 +570,29 @@
             margin-bottom: 0.75rem;
         }
 
+        .result-box.warn {
+            background: rgba(245, 158, 11, 0.08);
+            border-left-color: var(--warning);
+        }
+
+        .result-box.fail {
+            background: rgba(239, 68, 68, 0.08);
+            border-left-color: var(--danger);
+        }
+
         .result-label {
             font-size: 0.75rem;
             font-weight: 700;
             color: var(--success);
             margin-bottom: 0.25rem;
+        }
+
+        .result-box.warn .result-label {
+            color: var(--warning);
+        }
+
+        .result-box.fail .result-label {
+            color: var(--danger);
         }
 
         .result-text {
@@ -685,6 +608,14 @@
             text-align: center;
         }
 
+        .decision-box.warn {
+            border-color: var(--warning);
+        }
+
+        .decision-box.fail {
+            border-color: var(--danger);
+        }
+
         .decision-label {
             font-size: 0.7rem;
             font-weight: 700;
@@ -697,6 +628,14 @@
             font-size: 1rem;
             font-weight: 700;
             color: var(--success);
+        }
+
+        .decision-box.warn .decision-value {
+            color: var(--warning);
+        }
+
+        .decision-box.fail .decision-value {
+            color: var(--danger);
         }
 
         /* ===== COMING SOON SECTION ===== */
@@ -854,15 +793,6 @@
             .agent-tabs {
                 flex-direction: column;
             }
-
-            .feature-card-header {
-                flex-direction: column;
-                text-align: center;
-            }
-
-            .features-detailed-grid {
-                grid-template-columns: 1fr;
-            }
         }
     </style>
 </head>
@@ -872,8 +802,8 @@
         <div class="nav-brand">release<code>-gate</code></div>
         <ul class="nav-links">
             <li><a href="#pipeline">Pipeline</a></li>
-            <li><a href="#features-overview">Features</a></li>
-            <li><a href="#features-detailed">Details</a></li>
+            <li><a href="#what-does">What It Does</a></li>
+            <li><a href="#examples">Examples</a></li>
             <li><a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a></li>
         </ul>
     </nav>
@@ -934,218 +864,48 @@
         </div>
     </section>
 
-    <!-- Features Overview Section -->
-    <section class="features-overview-section" id="features-overview">
+    <!-- What It Does Section -->
+    <section class="what-does-section" id="what-does">
         <div class="section-title">
-            <h2>What release-gate Enforces</h2>
-            <p>v0.2.0 validates these 4 governance checks before deployment</p>
+            <h2>What release-gate Does (v0.2)</h2>
+            <p>These 4 governance checks run before deployment</p>
         </div>
 
-        <div class="features-overview-grid">
-            <div class="feature-overview-card reveal">
-                <div class="feature-overview-icon">📋</div>
-                <h3>INPUT_CONTRACT</h3>
-                <p>Request schema validation</p>
+        <div class="what-does-grid">
+            <div class="what-does-item reveal">
+                <strong>✓ Request Contract is Validated</strong> - Schema defined and tested with valid/invalid samples
             </div>
-
-            <div class="feature-overview-card reveal">
-                <div class="feature-overview-icon">🛡️</div>
-                <h3>FALLBACK_DECLARED</h3>
-                <p>Operational safeguards</p>
+            <div class="what-does-item reveal">
+                <strong>✓ Operational Safeguards are Declared</strong> - Kill switch, fallback, ownership, runbook present
             </div>
-
-            <div class="feature-overview-card reveal new-badge">
-                <div class="feature-overview-icon">🔐</div>
-                <h3>IDENTITY_BOUNDARY</h3>
-                <p>Access control & rate limits</p>
+            <div class="what-does-item reveal">
+                <strong>✓ Access Control is Enforced</strong> - Authentication and rate limiting configured
             </div>
-
-            <div class="feature-overview-card reveal new-badge">
-                <div class="feature-overview-icon">💰</div>
-                <h3>ACTION_BUDGET</h3>
-                <p>Resource & cost controls</p>
+            <div class="what-does-item reveal">
+                <strong>✓ Resource Budgets are Set</strong> - Token, retry, cost, and concurrency limits defined
             </div>
         </div>
     </section>
 
-    <!-- Features Detailed Section -->
-    <section class="features-detailed-section" id="features-detailed">
+    <!-- What It Does NOT Do Section -->
+    <section class="what-not-section">
         <div class="section-title">
-            <h2>Deep Dive Into Features</h2>
-            <p>How each check works, when you use it, and why it matters</p>
+            <h2>What release-gate Does NOT Do (v0.2)</h2>
+            <p><em>These features are planned for future versions</em></p>
         </div>
 
-        <div class="features-detailed-grid">
-            <!-- INPUT_CONTRACT -->
-            <div class="feature-detailed-card reveal">
-                <div class="feature-card-header">
-                    <div class="feature-card-header-icon">📋</div>
-                    <div>
-                        <h3>INPUT_CONTRACT</h3>
-                        <p>Request schema validation & testing</p>
-                    </div>
-                </div>
-                <div class="feature-card-body">
-                    <!-- How it's used -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">How It's Used</div>
-                        <div class="how-its-used">schema:
-  type: object
-  required: [prompt]
-  properties:
-    prompt:
-      type: string
-      minLength: 1
-      maxLength: 1000</div>
-                    </div>
-
-                    <!-- Real Uses -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">Real Uses</div>
-                        <div class="real-uses">
-                            <div class="use-item">Validates JSON Schema syntax</div>
-                            <div class="use-item">Tests valid samples pass</div>
-                            <div class="use-item">Tests invalid samples fail</div>
-                            <div class="use-item">Prevents malformed requests</div>
-                        </div>
-                    </div>
-
-                    <!-- Impact -->
-                    <div class="feature-section">
-                        <div class="impact-box">
-                            <div class="impact-title">Real Impact</div>
-                            <div class="impact-description">Ensures your agent receives well-formed requests. Prevents crashes from unexpected input types. Catches schema errors before production.</div>
-                        </div>
-                    </div>
-                </div>
+        <div class="what-not-grid">
+            <div class="what-not-item reveal">
+                <strong>✗ Runtime behavior testing</strong> - Doesn't execute the agent or test actual behavior
             </div>
-
-            <!-- FALLBACK_DECLARED -->
-            <div class="feature-detailed-card reveal">
-                <div class="feature-card-header">
-                    <div class="feature-card-header-icon">🛡️</div>
-                    <div>
-                        <h3>FALLBACK_DECLARED</h3>
-                        <p>Operational safety & incident response</p>
-                    </div>
-                </div>
-                <div class="feature-card-body">
-                    <!-- How it's used -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">How It's Used</div>
-                        <div class="how-its-used">fallback_declared:
-  kill_switch:
-    type: feature_flag
-    name: disable_agent
-  ownership:
-    team: platform-eng
-    oncall: oncall-email
-  runbook_url:
-    https://wiki/runbook</div>
-                    </div>
-
-                    <!-- Real Uses -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">Real Uses</div>
-                        <div class="real-uses">
-                            <div class="use-item">Declares kill switch mechanism</div>
-                            <div class="use-item">Specifies fallback behavior</div>
-                            <div class="use-item">Assigns team ownership</div>
-                            <div class="use-item">Links incident runbook</div>
-                        </div>
-                    </div>
-
-                    <!-- Impact -->
-                    <div class="feature-section">
-                        <div class="impact-box">
-                            <div class="impact-title">Real Impact</div>
-                            <div class="impact-description">Ensures you can kill the agent in <5 seconds. Team knows who to page. Incident response is documented. Production outages are handled fast.</div>
-                        </div>
-                    </div>
-                </div>
+            <div class="what-not-item reveal">
+                <strong>✗ Output validation</strong> - Doesn't test actual outputs or model behavior
             </div>
-
-            <!-- IDENTITY_BOUNDARY -->
-            <div class="feature-detailed-card reveal">
-                <div class="feature-card-header">
-                    <div class="feature-card-header-icon">🔐</div>
-                    <div>
-                        <h3>IDENTITY_BOUNDARY (v0.2)</h3>
-                        <p>Access control & rate limiting</p>
-                    </div>
-                </div>
-                <div class="feature-card-body">
-                    <!-- How it's used -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">How It's Used</div>
-                        <div class="how-its-used">identity_boundary:
-  authentication: required
-  rate_limit: 100
-  data_isolation:
-    - user_owned_only
-    - no_cross_access</div>
-                    </div>
-
-                    <!-- Real Uses -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">Real Uses</div>
-                        <div class="real-uses">
-                            <div class="use-item">Requires user authentication</div>
-                            <div class="use-item">Limits requests per user/hour</div>
-                            <div class="use-item">Isolates customer data</div>
-                            <div class="use-item">Prevents unauthorized access</div>
-                        </div>
-                    </div>
-
-                    <!-- Impact -->
-                    <div class="feature-section">
-                        <div class="impact-box">
-                            <div class="impact-title">Real Impact</div>
-                            <div class="impact-description">Stops attackers from free agent access. Prevents customers from seeing each other's data. Blocks abuse and brute force. Makes multi-tenant safe.</div>
-                        </div>
-                    </div>
-                </div>
+            <div class="what-not-item reveal">
+                <strong>✗ Formal verification</strong> - Doesn't mathematically verify behavior
             </div>
-
-            <!-- ACTION_BUDGET -->
-            <div class="feature-detailed-card reveal">
-                <div class="feature-card-header">
-                    <div class="feature-card-header-icon">💰</div>
-                    <div>
-                        <h3>ACTION_BUDGET (v0.2)</h3>
-                        <p>Resource & cost controls</p>
-                    </div>
-                </div>
-                <div class="feature-card-body">
-                    <!-- How it's used -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">How It's Used</div>
-                        <div class="how-its-used">action_budget:
-  max_tokens_per_req: 5000
-  max_retries: 3
-  max_daily_cost: 1000
-  max_concurrent: 10</div>
-                    </div>
-
-                    <!-- Real Uses -->
-                    <div class="feature-section">
-                        <div class="feature-section-title">Real Uses</div>
-                        <div class="real-uses">
-                            <div class="use-item">Caps tokens per request</div>
-                            <div class="use-item">Limits retry attempts</div>
-                            <div class="use-item">Sets daily spending limit</div>
-                            <div class="use-item">Bounds concurrent load</div>
-                        </div>
-                    </div>
-
-                    <!-- Impact -->
-                    <div class="feature-section">
-                        <div class="impact-box">
-                            <div class="impact-title">Real Impact</div>
-                            <div class="impact-description">Prevents infinite loop $50K bills. Stops resource exhaustion crashes. Ensures predictable monthly costs. Protects service availability.</div>
-                        </div>
-                    </div>
-                </div>
+            <div class="what-not-item reveal">
+                <strong>✗ Runtime monitoring</strong> - Doesn't continuously verify at runtime
             </div>
         </div>
     </section>
@@ -1154,7 +914,7 @@
     <section class="examples-section" id="examples">
         <div class="section-title">
             <h2>See It In Action</h2>
-            <p>Real agent scenarios with actual governance checks</p>
+            <p>Real agent scenarios with PASS, WARN, and FAIL outcomes</p>
         </div>
 
         <div class="agent-tabs">
@@ -1175,82 +935,224 @@
                     </div>
 
                     <div class="scenario-grid">
+                        <!-- Scenario 1 -->
                         <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">💥 #1: Self-Destruction</div>
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
                             </div>
-                            <div class="scenario-body">
+
+                            <!-- PASS Content -->
+                            <div class="scenario-content active">
                                 <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Agent deletes critical infrastructure</div>
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Agent tries to delete infrastructure</div>
                                 </div>
 
-                                <div class="check-box">release-gate.yaml:
-  fallback_declared:
-    operations: read_only</div>
+                                <div class="check-box">fallback_declared:
+  operations: read_only</div>
 
                                 <div class="result-box">
-                                    <div class="result-label">Decision</div>
+                                    <div class="result-label">Check Result</div>
                                     <div class="result-text">✓ PASS - Delete operations blocked</div>
                                 </div>
 
                                 <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN Content -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Fallback is defined but untested</div>
+                                </div>
+
+                                <div class="check-box">fallback_declared:
+  operations: read_only
+  # fallback NOT tested</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - Fallback exists but untested</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL Content -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No fallback mechanism defined</div>
+                                </div>
+
+                                <div class="check-box">fallback_declared:
+  # Missing operations field</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - No fallback defined</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
                                 </div>
                             </div>
                         </div>
 
+                        <!-- Scenario 2 -->
                         <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">🔓 #2: Non-Owner Access</div>
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
                             </div>
-                            <div class="scenario-body">
+
+                            <!-- PASS Content -->
+                            <div class="scenario-content active">
                                 <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Anyone can execute commands</div>
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Agent receives unauthorized request</div>
                                 </div>
 
-                                <div class="check-box">release-gate.yaml:
-  identity_boundary:
-    auth: required
-    rate_limit: 100</div>
+                                <div class="check-box">identity_boundary:
+  authentication: required
+  rate_limit: 100</div>
 
                                 <div class="result-box">
-                                    <div class="result-label">Decision</div>
+                                    <div class="result-label">Check Result</div>
                                     <div class="result-text">✓ PASS - Auth + limits enforced</div>
                                 </div>
 
                                 <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN Content -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Rate limit is very high (1000/hour)</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  authentication: required
+  rate_limit: 1000</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - High rate limit set</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL Content -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Authentication is optional</div>
+                                </div>
+
+                                <div class="check-box">identity_boundary:
+  authentication: optional
+  rate_limit: 100</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - Auth required not enforced</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
                                 </div>
                             </div>
                         </div>
 
+                        <!-- Scenario 3 -->
                         <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">🔥 #3: Resource Exhaustion</div>
+                            <div class="scenario-status-tabs">
+                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
+                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
+                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
                             </div>
-                            <div class="scenario-body">
+
+                            <!-- PASS Content -->
+                            <div class="scenario-content active">
                                 <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Infinite loops exhaust resources</div>
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Agent loops infinitely consuming resources</div>
                                 </div>
 
-                                <div class="check-box">release-gate.yaml:
-  action_budget:
-    max_retries: 3
-    max_daily_cost: 1000</div>
+                                <div class="check-box">action_budget:
+  max_retries: 3
+  max_daily_cost: 1000</div>
 
                                 <div class="result-box">
-                                    <div class="result-label">Decision</div>
+                                    <div class="result-label">Check Result</div>
                                     <div class="result-text">✓ PASS - Budgets enforced</div>
                                 </div>
 
                                 <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✓ APPROVED</div>
+                                </div>
+                            </div>
+
+                            <!-- WARN Content -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">Cost limit is very high ($50K/day)</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  max_retries: 3
+  max_daily_cost: 50000</div>
+
+                                <div class="result-box warn">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">⚠ WARN - High cost limit set</div>
+                                </div>
+
+                                <div class="decision-box warn">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
+                                </div>
+                            </div>
+
+                            <!-- FAIL Content -->
+                            <div class="scenario-content">
+                                <div class="threat-box">
+                                    <div class="threat-label">Scenario</div>
+                                    <div class="threat-description">No budgets defined at all</div>
+                                </div>
+
+                                <div class="check-box">action_budget:
+  # Missing all fields</div>
+
+                                <div class="result-box fail">
+                                    <div class="result-label">Check Result</div>
+                                    <div class="result-text">✗ FAIL - No budgets defined</div>
+                                </div>
+
+                                <div class="decision-box fail">
+                                    <div class="decision-label">Deployment</div>
+                                    <div class="decision-value">✗ BLOCKED</div>
                                 </div>
                             </div>
                         </div>
@@ -1258,6 +1160,7 @@
                 </div>
             </div>
 
+            <!-- Audio and LLM examples follow same structure -->
             <div class="example-card" id="example-audio">
                 <div class="example-display">
                     <div class="example-header">
@@ -1267,87 +1170,7 @@
                             <p>Transcribes and analyzes audio files</p>
                         </div>
                     </div>
-
-                    <div class="scenario-grid">
-                        <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">🎭 #4: Identity Spoofing</div>
-                            </div>
-                            <div class="scenario-body">
-                                <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Attacker impersonates legitimate user</div>
-                                </div>
-
-                                <div class="check-box">release-gate.yaml:
-  identity_boundary:
-    identity: verified
-    mfa: required</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Decision</div>
-                                    <div class="result-text">✓ PASS - MFA verified</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">🎪 #5: Hallucinated Endpoints</div>
-                            </div>
-                            <div class="scenario-body">
-                                <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Agent calls APIs that don't exist</div>
-                                </div>
-
-                                <div class="check-box">release-gate.yaml:
-  fallback_declared:
-    timeout_per_call: 30s</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Decision</div>
-                                    <div class="result-text">✓ PASS - Timeout enforced</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">🔪 #6: Manipulation</div>
-                            </div>
-                            <div class="scenario-body">
-                                <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Agent tricked into harmful behavior</div>
-                                </div>
-
-                                <div class="check-box">release-gate.yaml:
-  input_contract:
-    validation: strict</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Decision</div>
-                                    <div class="result-text">✓ PASS - Input validation on</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <p style="padding: 2rem; text-align: center; color: var(--text-light);">Audio processing examples with PASS/WARN/FAIL scenarios...</p>
                 </div>
             </div>
 
@@ -1360,86 +1183,7 @@
                             <p>Customer support chatbot using Claude/GPT</p>
                         </div>
                     </div>
-
-                    <div class="scenario-grid">
-                        <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">💾 #7: Data Leakage</div>
-                            </div>
-                            <div class="scenario-body">
-                                <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">Sensitive info exposed or exfiltrated</div>
-                                </div>
-
-                                <div class="check-box">release-gate.yaml:
-  fallback_declared:
-    data_egress: restricted</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Decision</div>
-                                    <div class="result-text">✓ PASS - Data restrictions on</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">⏱️ #8: Latency Degradation</div>
-                            </div>
-                            <div class="scenario-body">
-                                <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">System becomes slow and unresponsive</div>
-                                </div>
-
-                                <div class="check-box">release-gate.yaml:
-  fallback_declared:
-    max_latency: 5s</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Decision</div>
-                                    <div class="result-text">✓ PASS - Latency monitored</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="scenario-card">
-                            <div class="scenario-header">
-                                <div class="scenario-title">💾 #9: Memory Exhaustion</div>
-                            </div>
-                            <div class="scenario-body">
-                                <div class="threat-box">
-                                    <div class="threat-label">Problem</div>
-                                    <div class="threat-description">OOM kills process, outage</div>
-                                </div>
-
-                                <div class="check-box">release-gate.yaml:
-  action_budget:
-    max_memory: 2GB</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Decision</div>
-                                    <div class="result-text">✓ PASS - Memory limits set</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Safe</div>
-                                    <div class="decision-value">✓ YES</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <p style="padding: 2rem; text-align: center; color: var(--text-light);">LLM assistant examples with PASS/WARN/FAIL scenarios...</p>
                 </div>
             </div>
         </div>
@@ -1457,7 +1201,7 @@
                 <div class="roadmap-version">v0.2 - Now</div>
                 <h3>Core Checks</h3>
                 <ul class="roadmap-features">
-                    <li>INPUT_CONTRACT validation</li>
+                    <li>REQUEST_CONTRACT validation</li>
                     <li>FALLBACK_DECLARED verification</li>
                     <li>IDENTITY_BOUNDARY enforcement</li>
                     <li>ACTION_BUDGET controls</li>
@@ -1471,7 +1215,7 @@
                     <li>Approval workflows</li>
                     <li>Dashboard UI</li>
                     <li>Audit reports</li>
-                    <li>Compliance evidence</li>
+                    <li>Compliance mappings</li>
                 </ul>
             </div>
 
@@ -1512,6 +1256,30 @@
             });
             document.getElementById('example-' + agent).classList.add('active');
             event.target.classList.add('active');
+        }
+
+        function switchScenario(button, status) {
+            const card = button.closest('.scenario-card');
+            
+            // Update tabs
+            card.querySelectorAll('.scenario-status-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            button.classList.add('active');
+            
+            // Update content
+            card.querySelectorAll('.scenario-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Show correct content
+            if (status === 'pass') {
+                card.querySelectorAll('.scenario-content')[0].classList.add('active');
+            } else if (status === 'warn') {
+                card.querySelectorAll('.scenario-content')[1].classList.add('active');
+            } else if (status === 'fail') {
+                card.querySelectorAll('.scenario-content')[2].classList.add('active');
+            }
         }
 
         const revealElements = document.querySelectorAll('.reveal');

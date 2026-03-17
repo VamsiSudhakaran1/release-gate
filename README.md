@@ -97,20 +97,27 @@ These features are planned for future versions:
 
 ## How It Fits in Your Stack
 
-### With LangWatch
-- **LangWatch:** Simulate, evaluate, trace agent behavior
-- **release-gate:** Gate deployment based on governance evidence
+### With Any Tool
+release-gate **doesn't care what testing framework you use**. It integrates with any tool or custom validators:
 
-Use together:
-1. Use LangWatch to test agent behavior
-2. Pass test results to release-gate
-3. release-gate blocks/approves based on policy
+**Works with:**
+- ✅ Unit tests (pytest, Jest, unittest, etc.)
+- ✅ Integration tests (any framework)
+- ✅ Agent evaluators (LangSmith, Evals, custom)
+- ✅ Behavior testers (simulation frameworks)
+- ✅ Custom validators (your own code)
 
-### With Other Tools
-- **Prompt optimization:** Use LangWatch
-- **Production monitoring:** Use DataDog, New Relic, etc.
+**Full workflow:**
+1. Test agent behavior (any framework/tool)
+2. Document results in release-gate.yaml
+3. release-gate validates governance policies
+4. CI/CD blocks or approves deployment
+
+### With Observability Tools
+- **Testing/Evaluation:** Any framework (LangSmith, custom evals, unit tests)
 - **Pre-deployment policy:** Use release-gate ← You are here
-- **Incident response:** Use runbooks referenced in release-gate
+- **Production monitoring:** Use DataDog, New Relic, CloudWatch, etc.
+- **Incident response:** Use runbooks referenced in release-gate.yaml
 
 ---
 
