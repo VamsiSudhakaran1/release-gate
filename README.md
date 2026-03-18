@@ -19,10 +19,15 @@ Visit **[release-gate.com](https://release-gate.com)** for the complete story.
 release-gate blocks AI agent deployment unless you can prove:
 
 ✅ **Request Contract is Validated** - Schema defined and tested with valid/invalid samples
+
 ✅ **Operational Safeguards are Declared** - Kill switch, fallback, ownership, runbook present
+
 ✅ **Access Control is Enforced** - Authentication and rate limiting configured
+
 ✅ **Resource Budgets are Set** - Token, retry, cost, and concurrency limits defined
+
 ✅ **Governance Policies are Met** - System meets your organization's requirements
+
 ✅ **Audit Evidence is Generated** - Machine-readable proof for compliance
 
 ---
@@ -93,8 +98,11 @@ Ensures your agent has guardrails on resource consumption and costs.
 These features are planned for future versions:
 
 ❌ **Runtime behavior testing** - Doesn't execute the agent
+
 ❌ **Output validation** - Doesn't test actual outputs or model behavior
+
 ❌ **Formal verification** - Doesn't mathematically verify behavior
+
 ❌ **Runtime monitoring** - Doesn't continuously verify at runtime
 
 ---
