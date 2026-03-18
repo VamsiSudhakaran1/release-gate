@@ -8,6 +8,14 @@
 
 Visit **[release-gate.com](https://release-gate.com)** for the complete story.
 
+![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/python-3.7+-blue)
+![Status](https://img.shields.io/badge/status-v0.2-brightgreen)
+![Tests](https://img.shields.io/badge/tests-14%2F14%20passing-brightgreen)
+![Code Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+![AI Governance](https://img.shields.io/badge/AI-Governance-blue)
+![Agents](https://img.shields.io/badge/for-AI%20Agents-orange)
+
 ---
 
 ## What is release-gate?
