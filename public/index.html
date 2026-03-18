@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="release-gate enforces governance policies before AI agent deployment.">
-    <title>release-gate | Governance Before Deployment</title>
-    
+    <title>release-gate | Deployment Governance for AI Agents</title>
+    <meta name="description" content="Enforce governance policies for AI agents before deployment. Pre-deployment validation, policy-as-code, compliance-ready.">
     <style>
         * {
             margin: 0;
@@ -14,20 +13,17 @@
         }
 
         :root {
-            --primary: #0f172a;
-            --secondary: #1e293b;
-            --accent: #3b82f6;
-            --accent-light: #60a5fa;
-            --accent-dark: #1e40af;
-            --success: #10b981;
+            --primary: #3b82f6;
+            --primary-dark: #1e40af;
+            --accent: #10b981;
             --warning: #f59e0b;
             --danger: #ef4444;
-            --bg: #ffffff;
-            --bg-light: #f8fafc;
-            --bg-lighter: #f1f5f9;
-            --text: #1e293b;
-            --text-light: #64748b;
-            --border: #e2e8f0;
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --surface-light: #334155;
+            --text: #e2e8f0;
+            --text-dim: #94a3b8;
+            --border: #475569;
         }
 
         html {
@@ -35,1728 +31,1048 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: var(--bg);
-            overflow-x: hidden;
+            color: var(--text);
+            line-height: 1.6;
         }
 
-        /* ===== NAVIGATION ===== */
-        nav {
-            position: fixed;
+        /* Header & Navigation */
+        header {
+            position: sticky;
             top: 0;
-            width: 100%;
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(15, 23, 42, 0.95);
             backdrop-filter: blur(10px);
-            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+            padding: 1rem 2rem;
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            z-index: 1000;
-            border-bottom: 1px solid var(--border);
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
         }
 
-        .nav-brand {
+        .logo {
             font-size: 1.5rem;
-            font-weight: 900;
+            font-weight: bold;
             color: var(--primary);
-            letter-spacing: -1px;
         }
 
-        .nav-brand code {
-            background: linear-gradient(135deg, var(--accent), var(--accent-light));
-            color: white;
-            padding: 0.3rem 0.6rem;
-            border-radius: 0.3rem;
-            font-family: monospace;
+        .logo span {
+            color: var(--text);
+            margin-left: 0.5rem;
         }
 
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-            list-style: none;
-        }
-
-        .nav-links a {
-            color: var(--text-light);
+        nav a {
+            color: var(--text-dim);
             text-decoration: none;
-            font-weight: 500;
-            transition: all 0.3s ease;
+            margin: 0 1.5rem;
+            transition: color 0.2s;
         }
 
-        .nav-links a:hover {
-            color: var(--accent);
+        nav a:hover {
+            color: var(--primary);
         }
 
-        @media (max-width: 768px) {
-            nav {
-                flex-direction: column;
-                gap: 1rem;
-            }
-            .nav-links {
-                gap: 1rem;
-                flex-wrap: wrap;
-                justify-content: center;
-            }
-        }
-
-        /* ===== HERO SECTION ===== */
+        /* Hero Section */
         .hero {
-            min-height: 100vh;
-            padding: 8rem 2rem 4rem;
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
             text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .hero::before {
-            content: '';
-            position: absolute;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
-            border-radius: 50%;
-            top: -200px;
-            right: -100px;
-            animation: float 6s ease-in-out infinite;
-        }
-
-        .hero::after {
-            content: '';
-            position: absolute;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
-            border-radius: 50%;
-            bottom: -150px;
-            left: -50px;
-            animation: float 8s ease-in-out infinite reverse;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(30px); }
-        }
-
-        .hero-content {
-            position: relative;
-            z-index: 1;
-            max-width: 900px;
         }
 
         .hero h1 {
-            font-size: 4.5rem;
-            font-weight: 900;
-            margin-bottom: 1.5rem;
-            line-height: 1.1;
-            color: var(--primary);
-            animation: slideInDown 0.8s ease-out;
-        }
-
-        .hero h1 span {
-            display: block;
-            background: linear-gradient(135deg, var(--accent), var(--accent-light));
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
 
-        .hero-tagline {
-            font-size: 1.5rem;
-            color: var(--text-light);
+        .hero .tagline {
+            font-size: 1.3rem;
+            color: var(--text-dim);
             margin-bottom: 2rem;
-            animation: slideInUp 0.8s ease-out 0.2s both;
-        }
-
-        .hero-cta {
-            display: flex;
-            gap: 1.5rem;
-            justify-content: center;
-            flex-wrap: wrap;
-            animation: slideInUp 0.8s ease-out 0.4s both;
-        }
-
-        @keyframes slideInDown {
-            from {
-                opacity: 0;
-                transform: translateY(-30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        @keyframes slideInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .btn {
-            padding: 1rem 2.5rem;
-            border-radius: 0.75rem;
-            font-weight: 600;
-            text-decoration: none;
-            border: none;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-size: 1rem;
-            display: inline-block;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, var(--accent), var(--accent-light));
-            color: white;
-            box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 30px rgba(59, 130, 246, 0.5);
-        }
-
-        .btn-secondary {
-            background: white;
-            color: var(--accent);
-            border: 2px solid var(--accent);
-        }
-
-        .btn-secondary:hover {
-            background: var(--accent);
-            color: white;
-        }
-
-        /* ===== PIPELINE SECTION ===== */
-        .pipeline-section {
-            padding: 6rem 2rem;
-            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
-        }
-
-        .section-title {
-            text-align: center;
-            margin-bottom: 4rem;
-        }
-
-        .section-title h2 {
-            font-size: 3rem;
-            color: var(--primary);
-            margin-bottom: 1rem;
-        }
-
-        .section-title p {
-            font-size: 1.2rem;
-            color: var(--text-light);
             max-width: 600px;
-            margin: 0 auto;
+            margin-left: auto;
+            margin-right: auto;
         }
 
-        .pipeline-viz {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 2rem;
-            padding: 3rem;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
-            border: 1px solid var(--border);
-            animation: slideInUp 0.8s ease-out 0.2s both;
-        }
-
-        .pipeline-steps {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .pipeline-step {
-            text-align: center;
-            padding: 1.5rem;
-            background: linear-gradient(135deg, var(--bg-light) 0%, white 100%);
-            border-radius: 1rem;
-            border: 2px solid var(--border);
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .pipeline-step:nth-child(3) {
-            border-color: var(--success);
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), white);
-        }
-
-        .pipeline-step:hover {
-            border-color: var(--accent);
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2);
-            transform: translateY(-4px);
-        }
-
-        .pipeline-icon {
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .pipeline-label {
-            font-size: 0.8rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: var(--accent);
-            letter-spacing: 1px;
-        }
-
-        .pipeline-title {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--primary);
-            margin-top: 0.5rem;
-        }
-
-        /* ===== WHAT IT DOES SECTION ===== */
-        .what-does-section {
-            padding: 6rem 2rem;
-            background: var(--bg);
-        }
-
-        .what-does-grid {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .what-does-item {
-            margin-bottom: 2rem;
-            padding: 1.5rem;
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.05), white);
-            border-left: 3px solid var(--success);
-            border-radius: 0.5rem;
-        }
-
-        .what-does-item strong {
-            color: var(--success);
-            font-weight: 700;
-        }
-
-        /* ===== WHAT IT DOES NOT DO SECTION ===== */
-        .what-not-section {
-            padding: 6rem 2rem;
-            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
-        }
-
-        .what-not-grid {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .what-not-item {
-            margin-bottom: 2rem;
-            padding: 1.5rem;
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.05), white);
-            border-left: 3px solid var(--danger);
-            border-radius: 0.5rem;
-        }
-
-        .what-not-item strong {
-            color: var(--danger);
-            font-weight: 700;
-        }
-
-        .what-not-item em {
-            color: var(--text-light);
-            font-style: italic;
-        }
-
-        /* ===== EXAMPLES SECTION ===== */
-        .examples-section {
-            padding: 6rem 2rem;
-            background: var(--bg);
-        }
-
-        .agent-tabs {
+        .hero .cta-buttons {
             display: flex;
             gap: 1rem;
             justify-content: center;
             margin-bottom: 3rem;
             flex-wrap: wrap;
-            max-width: 1200px;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--primary);
+            border: 2px solid var(--primary);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .hero .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+            margin-bottom: 3rem;
+            max-width: 600px;
             margin-left: auto;
             margin-right: auto;
         }
 
-        .agent-tab {
-            padding: 0.75rem 1.75rem;
-            border: 2px solid var(--border);
-            background: white;
-            border-radius: 0.75rem;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            font-size: 1rem;
+        .stat {
+            text-align: center;
         }
 
-        .agent-tab:hover {
-            border-color: var(--accent);
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
             color: var(--accent);
         }
 
-        .agent-tab.active {
-            background: var(--accent);
-            color: white;
-            border-color: var(--accent);
+        .stat-label {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
         }
 
-        .examples-container {
+        /* Video Demo Section */
+        .demo-section {
+            background: linear-gradient(180deg, rgba(30, 41, 59, 0.5), rgba(15, 23, 42, 0.8));
+            padding: 4rem 2rem;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+            margin: 4rem 0;
+        }
+
+        .demo-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3rem;
+            align-items: center;
+        }
+
+        .demo-text h2 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .demo-text p {
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+            line-height: 1.8;
+        }
+
+        .demo-video {
+            aspect-ratio: 16 / 9;
+            background: rgba(0, 0, 0, 0.3);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        .demo-video:hover {
+            border-color: var(--primary);
+        }
+
+        .play-button {
+            width: 60px;
+            height: 60px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .demo-video:hover .play-button {
+            transform: scale(1.2);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+        }
+
+        .play-button::after {
+            content: '▶';
+            color: white;
+            font-size: 1.5rem;
+            margin-left: 4px;
+        }
+
+        /* Features Section */
+        .features {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+
+        .features h2 {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+        }
+
+        .feature-card {
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 8px;
+            border-left: 4px solid var(--primary);
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-left-color: var(--accent);
+            box-shadow: 0 10px 30px rgba(59, 130, 246, 0.2);
+        }
+
+        .feature-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 0.5rem;
+            color: var(--primary);
+        }
+
+        .feature-card p {
+            color: var(--text-dim);
+            line-height: 1.7;
+        }
+
+        /* Quick Start Section */
+        .quickstart {
+            background: linear-gradient(180deg, rgba(30, 41, 59, 0.5), rgba(15, 23, 42, 0.8));
+            padding: 4rem 2rem;
+            margin: 4rem 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .quickstart-content {
             max-width: 1200px;
             margin: 0 auto;
         }
 
-        .example-card {
-            display: none;
-            animation: slideInUp 0.5s ease-out;
-        }
-
-        .example-card.active {
-            display: block;
-        }
-
-        .example-display {
-            background: linear-gradient(135deg, var(--bg-light) 0%, var(--bg-lighter) 100%);
-            border: 1px solid var(--border);
-            border-radius: 1.5rem;
-            padding: 2.5rem;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
-        }
-
-        .example-header {
-            display: flex;
-            align-items: center;
-            gap: 1.5rem;
+        .quickstart h2 {
+            font-size: 2rem;
             margin-bottom: 2rem;
-            padding-bottom: 1.5rem;
-            border-bottom: 2px solid var(--border);
+            text-align: center;
         }
 
-        .example-icon {
-            font-size: 3rem;
-        }
-
-        .example-header h3 {
-            font-size: 1.5rem;
-            color: var(--primary);
-        }
-
-        .example-header p {
-            font-size: 0.95rem;
-            color: var(--text-light);
-        }
-
-        .scenario-grid {
+        .quickstart-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 2rem;
         }
 
-        .scenario-card {
-            background: white;
-            border-radius: 1rem;
-            overflow: hidden;
-            border: 1px solid var(--border);
-            transition: all 0.3s ease;
-        }
-
-        .scenario-card:hover {
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.15);
-            transform: translateY(-4px);
-        }
-
-        /* Scenario Status Tabs */
-        .scenario-status-tabs {
-            display: flex;
-            border-bottom: 1px solid var(--border);
-            background: white;
-        }
-
-        .scenario-status-tab {
-            flex: 1;
-            padding: 0.75rem;
-            text-align: center;
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-weight: 600;
-            border: none;
-            background: transparent;
-            color: var(--text-light);
-            transition: all 0.3s ease;
-            border-bottom: 3px solid transparent;
-        }
-
-        .scenario-status-tab:hover {
-            color: var(--text);
-        }
-
-        .scenario-status-tab.pass-tab {
-            border-bottom-color: var(--success);
-        }
-
-        .scenario-status-tab.warn-tab {
-            border-bottom-color: var(--warning);
-        }
-
-        .scenario-status-tab.fail-tab {
-            border-bottom-color: var(--danger);
-        }
-
-        .scenario-status-tab.active {
-            color: var(--text);
-        }
-
-        /* Scenario Content */
-        .scenario-content {
-            display: none;
-            padding: 1.5rem;
-        }
-
-        .scenario-content.active {
-            display: block;
-        }
-
-        .threat-box {
-            background: rgba(239, 68, 68, 0.08);
-            border-left: 3px solid var(--danger);
-            padding: 0.75rem;
-            border-radius: 0.4rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .threat-label {
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: var(--danger);
-            margin-bottom: 0.25rem;
-        }
-
-        .threat-description {
-            font-size: 0.85rem;
-            color: var(--text);
-        }
-
-        .check-box {
-            background: rgba(59, 130, 246, 0.08);
-            border-left: 3px solid var(--accent);
-            padding: 0.75rem;
-            border-radius: 0.4rem;
-            margin-bottom: 0.75rem;
-            font-family: 'Courier New', monospace;
-            font-size: 0.75rem;
-            color: var(--secondary);
-            white-space: pre-wrap;
-            word-break: break-word;
-            line-height: 1.5;
-            overflow-x: auto;
-        }
-
-        .result-box {
-            background: rgba(16, 185, 129, 0.08);
-            border-left: 3px solid var(--success);
-            padding: 0.75rem;
-            border-radius: 0.4rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .result-box.warn {
-            background: rgba(245, 158, 11, 0.08);
-            border-left-color: var(--warning);
-        }
-
-        .result-box.fail {
-            background: rgba(239, 68, 68, 0.08);
-            border-left-color: var(--danger);
-        }
-
-        .result-label {
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: var(--success);
-            margin-bottom: 0.25rem;
-        }
-
-        .result-box.warn .result-label {
-            color: var(--warning);
-        }
-
-        .result-box.fail .result-label {
-            color: var(--danger);
-        }
-
-        .result-text {
-            font-size: 0.85rem;
-            color: var(--text);
-        }
-
-        .decision-box {
-            background: white;
-            border: 2px solid var(--success);
-            border-radius: 0.4rem;
-            padding: 0.75rem;
-            text-align: center;
-        }
-
-        .decision-box.warn {
-            border-color: var(--warning);
-        }
-
-        .decision-box.fail {
-            border-color: var(--danger);
-        }
-
-        .decision-label {
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: var(--text-light);
-            margin-bottom: 0.25rem;
-        }
-
-        .decision-value {
-            font-size: 1rem;
-            font-weight: 700;
-            color: var(--success);
-        }
-
-        .decision-box.warn .decision-value {
-            color: var(--warning);
-        }
-
-        .decision-box.fail .decision-value {
-            color: var(--danger);
-        }
-
-        /* ===== COMING SOON SECTION ===== */
-        .coming-soon-section {
-            padding: 6rem 2rem;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-            color: white;
-        }
-
-        .coming-soon-title {
-            text-align: center;
-            margin-bottom: 4rem;
-        }
-
-        .coming-soon-title h2 {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-        }
-
-        .coming-soon-title p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-            max-width: 700px;
-            margin: 0 auto;
-        }
-
-        .roadmap-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 2rem;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .roadmap-item {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 1rem;
+        .quickstart-item {
+            background: var(--surface);
             padding: 2rem;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
+            border-radius: 8px;
+            border: 1px solid var(--border);
         }
 
-        .roadmap-item:hover {
-            background: rgba(255, 255, 255, 0.15);
-            transform: translateY(-4px);
-            border-color: rgba(255, 255, 255, 0.3);
-        }
-
-        .roadmap-version {
-            font-size: 0.85rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            opacity: 0.8;
-            margin-bottom: 0.75rem;
-        }
-
-        .roadmap-item h3 {
-            font-size: 1.3rem;
+        .quickstart-item h3 {
+            color: var(--accent);
             margin-bottom: 1rem;
-        }
-
-        .roadmap-features {
-            list-style: none;
-        }
-
-        .roadmap-features li {
-            margin-bottom: 0.75rem;
-            padding-left: 1.5rem;
-            position: relative;
-            opacity: 0.9;
-            font-size: 0.95rem;
-        }
-
-        .roadmap-features li::before {
-            content: '→';
-            position: absolute;
-            left: 0;
-            opacity: 0.7;
-        }
-
-        /* ===== FOOTER ===== */
-        footer {
-            background: var(--primary);
-            color: var(--text-light);
-            padding: 3rem 2rem;
-            text-align: center;
-            border-top: 1px solid rgba(59, 130, 246, 0.2);
-        }
-
-        .footer-links {
             display: flex;
-            gap: 2rem;
-            justify-content: center;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        .footer-links a {
-            color: var(--text-light);
-            text-decoration: none;
+        .quickstart-item h3::before {
+            content: '▶';
+            font-size: 0.8rem;
+        }
+
+        .code-block {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: var(--accent);
+        }
+
+        /* GitHub Actions Integration */
+        .github-section {
+            max-width: 1200px;
+            margin: 4rem auto;
+            padding: 2rem;
+        }
+
+        .github-section h2 {
+            font-size: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .github-card {
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 8px;
+            border: 2px solid var(--border);
+            margin-bottom: 2rem;
+        }
+
+        .github-card h3 {
+            color: var(--primary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .github-card h3::before {
+            content: '⚙️';
+        }
+
+        .copy-button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 1rem;
+            transition: background 0.3s;
+        }
+
+        .copy-button:hover {
+            background: var(--primary-dark);
+        }
+
+        /* Signup Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: var(--surface);
+            margin: 5% auto;
+            padding: 2rem;
+            border-radius: 12px;
+            max-width: 500px;
+            border: 2px solid var(--border);
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .close-modal {
+            color: var(--text-dim);
+            float: right;
+            font-size: 2rem;
+            cursor: pointer;
             transition: color 0.3s;
         }
 
-        .footer-links a:hover {
-            color: var(--accent-light);
+        .close-modal:hover {
+            color: var(--text);
         }
 
-        .beta-badge {
-            display: inline-block;
-            background: var(--warning);
-            color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 2rem;
-            font-size: 0.85rem;
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
             font-weight: 600;
+            color: var(--text);
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: inherit;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .submit-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .success-message {
+            display: none;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 3rem 2rem;
+            margin-top: 4rem;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .footer-section h4 {
+            color: var(--primary);
             margin-bottom: 1rem;
         }
 
-        .reveal {
-            opacity: 0;
-            transform: translateY(30px);
-            transition: all 0.8s ease-out;
+        .footer-section a,
+        .footer-section p {
+            color: var(--text-dim);
+            text-decoration: none;
+            margin-bottom: 0.5rem;
+            display: block;
+            transition: color 0.3s;
         }
 
-        .reveal.active {
-            opacity: 1;
-            transform: translateY(0);
+        .footer-section a:hover {
+            color: var(--primary);
         }
 
+        .footer-bottom {
+            border-top: 1px solid var(--border);
+            padding-top: 2rem;
+            text-align: center;
+            color: var(--text-dim);
+        }
+
+        .social-links {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 1rem;
+        }
+
+        .social-links a {
+            display: inline-flex;
+            width: 40px;
+            height: 40px;
+            align-items: center;
+            justify-content: center;
+            background: var(--surface-light);
+            border-radius: 50%;
+            transition: background 0.3s;
+        }
+
+        .social-links a:hover {
+            background: var(--primary);
+        }
+
+        /* About Section */
+        .about {
+            max-width: 1200px;
+            margin: 4rem auto;
+            padding: 2rem;
+        }
+
+        .about-card {
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 8px;
+            border-left: 4px solid var(--accent);
+        }
+
+        .about-card h3 {
+            color: var(--accent);
+            margin-bottom: 1rem;
+        }
+
+        .about-card p {
+            color: var(--text-dim);
+            line-height: 1.8;
+            margin-bottom: 1rem;
+        }
+
+        /* Responsive */
         @media (max-width: 768px) {
             .hero h1 {
-                font-size: 2.5rem;
-            }
-
-            .hero h1 span {
                 font-size: 2rem;
             }
 
-            .section-title h2,
-            .coming-soon-title h2 {
-                font-size: 2rem;
+            .hero .tagline {
+                font-size: 1rem;
             }
 
-            .example-header {
-                flex-direction: column;
-                text-align: center;
-            }
-
-            .scenario-grid {
+            .demo-content {
                 grid-template-columns: 1fr;
             }
 
-            .agent-tabs {
+            .hero .stats {
+                grid-template-columns: 1fr;
+            }
+
+            .features-grid,
+            .quickstart-grid {
+                grid-template-columns: 1fr;
+            }
+
+            nav a {
+                margin: 0 0.75rem;
+                font-size: 0.9rem;
+            }
+
+            .cta-buttons {
                 flex-direction: column;
             }
+
+            .btn {
+                width: 100%;
+            }
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .highlight {
+            color: var(--accent);
+            font-weight: 600;
         }
     </style>
 </head>
 <body>
-    <!-- Navigation -->
-    <nav>
-        <div class="nav-brand">release<code>-gate</code></div>
-        <ul class="nav-links">
-            <li><a href="#pipeline">Pipeline</a></li>
-            <li><a href="#what-does">What It Does</a></li>
-            <li><a href="#examples">Examples</a></li>
-            <li><a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a></li>
-        </ul>
-    </nav>
+    <!-- Header -->
+    <header>
+        <div class="header-content">
+            <div class="logo">🚪 <span>release-gate</span></div>
+            <nav>
+                <a href="#features">Features</a>
+                <a href="#quickstart">Quick Start</a>
+                <a href="#github">Integration</a>
+                <a href="#about">About</a>
+                <a href="#" onclick="openSignup(event)" class="btn btn-primary" style="margin: 0;">Try Now</a>
+            </nav>
+        </div>
+    </header>
 
     <!-- Hero Section -->
     <section class="hero">
-        <div class="hero-content">
-            <div class="beta-badge">v0.2.0 - Active Development</div>
-            <h1>Ready to Deploy?<span>release-gate decides.</span></h1>
-            <p class="hero-tagline">Codified governance before deployment. Enforce policies, generate evidence, control access.</p>
-            
-            <div class="hero-cta">
-                <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start" class="btn btn-primary">Get Started (5 min)</a>
-                <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn btn-secondary">View on GitHub</a>
+        <div class="badge">✨ v0.2.0 — Production Ready</div>
+        <h1>Deploy AI Agents With Confidence</h1>
+        <p class="tagline">
+            Enforce governance policies before deployment. Validate configurations, audit decisions, prove compliance.
+        </p>
+        <div class="cta-buttons">
+            <button class="btn btn-primary" onclick="openSignup()">Get Started Free</button>
+            <a href="#demo" class="btn btn-secondary">Watch Demo</a>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-number">4</div>
+                <div class="stat-label">Governance Checks</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">100%</div>
+                <div class="stat-label">Test Coverage</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">0</div>
+                <div class="stat-label">External Dependencies</div>
             </div>
         </div>
     </section>
 
-    <!-- Pipeline Section -->
-    <section class="pipeline-section" id="pipeline">
-        <div class="section-title">
-            <h2>The Critical Gate</h2>
-            <p>release-gate sits in the CI/CD pipeline between test and deploy. One clear decision: PASS or FAIL.</p>
-        </div>
-
-        <div class="pipeline-viz">
-            <div class="pipeline-steps">
-                <div class="pipeline-step reveal">
-                    <div class="pipeline-icon">🛠️</div>
-                    <div class="pipeline-label">Step 1</div>
-                    <div class="pipeline-title">Build</div>
-                </div>
-
-                <div class="pipeline-step reveal">
-                    <div class="pipeline-icon">✅</div>
-                    <div class="pipeline-label">Step 2</div>
-                    <div class="pipeline-title">Test</div>
-                </div>
-
-                <div class="pipeline-step reveal">
-                    <div class="pipeline-icon">🚪</div>
-                    <div class="pipeline-label">Step 3 - HERE</div>
-                    <div class="pipeline-title">release-gate</div>
-                </div>
-
-                <div class="pipeline-step reveal">
-                    <div class="pipeline-icon">🚀</div>
-                    <div class="pipeline-label">Step 4</div>
-                    <div class="pipeline-title">Deploy</div>
-                </div>
-
-                <div class="pipeline-step reveal">
-                    <div class="pipeline-icon">📊</div>
-                    <div class="pipeline-label">Step 5</div>
-                    <div class="pipeline-title">Monitor</div>
-                </div>
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <h2>The 4 Governance Checks</h2>
+        <div class="features-grid">
+            <div class="feature-card">
+                <h3>✓ INPUT_CONTRACT</h3>
+                <p>Validate request schemas. Ensure valid and invalid samples pass/fail correctly. No ambiguous APIs.</p>
+            </div>
+            <div class="feature-card">
+                <h3>✓ FALLBACK_DECLARED</h3>
+                <p>Kill switches, fallback modes, ownership assigned, runbook URLs. Operational safety proven.</p>
+            </div>
+            <div class="feature-card">
+                <h3>✓ IDENTITY_BOUNDARY</h3>
+                <p>Authentication required, rate limits configured, data isolation defined. Access control enforced.</p>
+            </div>
+            <div class="feature-card">
+                <h3>✓ ACTION_BUDGET</h3>
+                <p>Token limits, retry counts, cost caps, concurrency guards. Resource constraints proven.</p>
             </div>
         </div>
     </section>
 
-    <!-- What It Does Section -->
-    <section class="what-does-section" id="what-does">
-        <div class="section-title">
-            <h2>What release-gate Does (v0.2)</h2>
-            <p>These 4 governance checks run before deployment</p>
-        </div>
-
-        <div class="what-does-grid">
-            <div class="what-does-item reveal">
-                <strong>✓ Request Contract is Validated</strong> - Schema defined and tested with valid/invalid samples
+    <!-- Demo Section -->
+    <section id="demo" class="demo-section">
+        <div class="demo-content">
+            <div class="demo-text">
+                <h2>See It In Action</h2>
+                <p>Watch release-gate validate a video generation agent's governance policy in under 7 seconds.</p>
+                <p>The gate runs in your CI/CD pipeline, blocks deployment if thresholds fail, and creates audit trails for compliance.</p>
+                <p><span class="highlight">Try the interactive demo</span> on the right. Choose a scenario and watch policies validate in real-time.</p>
+                <button class="btn btn-primary" onclick="openSignup()">Start Your First Gate</button>
             </div>
-            <div class="what-does-item reveal">
-                <strong>✓ Operational Safeguards are Declared</strong> - Kill switch, fallback, ownership, runbook present
-            </div>
-            <div class="what-does-item reveal">
-                <strong>✓ Access Control is Enforced</strong> - Authentication and rate limiting configured
-            </div>
-            <div class="what-does-item reveal">
-                <strong>✓ Resource Budgets are Set</strong> - Token, retry, cost, and concurrency limits defined
+            <div class="demo-video" onclick="alert('Demo feature: Click the button below to try the interactive validator. In production, this opens an embedded demo showing real CI/CD integration.')">
+                <div class="play-button"></div>
             </div>
         </div>
     </section>
 
-    <!-- What It Does NOT Do Section -->
-    <section class="what-not-section">
-        <div class="section-title">
-            <h2>What release-gate Does NOT Do (v0.2)</h2>
-            <p><em>These features are planned for future versions</em></p>
-        </div>
-
-        <div class="what-not-grid">
-            <div class="what-not-item reveal">
-                <strong>✗ Runtime behavior testing</strong> - Doesn't execute the agent or test actual behavior
-            </div>
-            <div class="what-not-item reveal">
-                <strong>✗ Output validation</strong> - Doesn't test actual outputs or model behavior
-            </div>
-            <div class="what-not-item reveal">
-                <strong>✗ Formal verification</strong> - Doesn't mathematically verify behavior
-            </div>
-            <div class="what-not-item reveal">
-                <strong>✗ Runtime monitoring</strong> - Doesn't continuously verify at runtime
-            </div>
-        </div>
-    </section>
-
-    <!-- Examples Section -->
-    <section class="examples-section" id="examples">
-        <div class="section-title">
-            <h2>See It In Action</h2>
-            <p>Real agent scenarios with PASS, WARN, and FAIL outcomes</p>
-        </div>
-
-        <div class="agent-tabs">
-            <button class="agent-tab active" onclick="selectAgent('video')">🎬 Video Generation</button>
-            <button class="agent-tab" onclick="selectAgent('audio')">🎵 Audio Processing</button>
-            <button class="agent-tab" onclick="selectAgent('llm')">🤖 LLM Assistant</button>
-        </div>
-
-        <div class="examples-container">
-            <div class="example-card active" id="example-video">
-                <div class="example-display">
-                    <div class="example-header">
-                        <div class="example-icon">🎬</div>
-                        <div>
-                            <h3>Video Generation API</h3>
-                            <p>Autonomous agent that generates videos from text prompts</p>
-                        </div>
-                    </div>
-
-                    <div class="scenario-grid">
-                        <!-- Scenario 1 -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS Content -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Agent tries to delete infrastructure</div>
-                                </div>
-
-                                <div class="check-box">fallback_declared:
-  operations: read_only</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Delete operations blocked</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN Content -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Fallback is defined but untested</div>
-                                </div>
-
-                                <div class="check-box">fallback_declared:
-  operations: read_only
-  # fallback NOT tested</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - Fallback exists but untested</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL Content -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No fallback mechanism defined</div>
-                                </div>
-
-                                <div class="check-box">fallback_declared:
-  # Missing operations field</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - No fallback defined</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Scenario 2 -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS Content -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Agent receives unauthorized request</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  authentication: required
-  rate_limit: 100</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Auth + limits enforced</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN Content -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Rate limit is very high (1000/hour)</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  authentication: required
-  rate_limit: 1000</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - High rate limit set</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL Content -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Authentication is optional</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  authentication: optional
-  rate_limit: 100</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Auth required not enforced</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Scenario 3 -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS Content -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Agent loops infinitely consuming resources</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_retries: 3
-  max_daily_cost: 1000</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Budgets enforced</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN Content -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Cost limit is very high ($50K/day)</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_retries: 3
-  max_daily_cost: 50000</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - High cost limit set</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL Content -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No budgets defined at all</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  # Missing all fields</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - No budgets defined</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+    <!-- Quick Start Section -->
+    <section id="quickstart" class="quickstart">
+        <div class="quickstart-content">
+            <h2>Quick Start (5 Minutes)</h2>
+            <div class="quickstart-grid">
+                <div class="quickstart-item">
+                    <h3>1. Install</h3>
+                    <p>No external services. No data transmission. Local-first evaluation.</p>
+                    <div class="code-block">pip install pyyaml jsonschema</div>
                 </div>
-            </div>
 
-            <!-- Audio and LLM examples follow same structure -->
-            <div class="example-card" id="example-audio">
-                <div class="example-display">
-                    <div class="example-header">
-                        <div class="example-icon">🎵</div>
-                        <div>
-                            <h3>Audio Processing Agent</h3>
-                            <p>Transcribes and analyzes audio files with confidentiality</p>
-                        </div>
-                    </div>
-
-                    <div class="scenario-grid">
-                        <!-- Audio Scenario 1: Data Isolation -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Customer A's data visible to Customer B</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  data_isolation:
-    - customer_owned_only
-    - no_cross_access</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Data isolation enforced</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Data isolation defined but not tested in prod</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  data_isolation:
-    - customer_owned_only
-  # No test cases provided</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - Isolation untested in production</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No data isolation boundaries defined</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  # data_isolation missing</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Data isolation required</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Audio Scenario 2: Timeout Protection -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Agent stuck processing 10-hour audio file</div>
-                                </div>
-
-                                <div class="check-box">fallback_declared:
-  max_latency: 300s
-  timeout_per_call: 300</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Timeout enforced</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Timeout is very high (3600 seconds)</div>
-                                </div>
-
-                                <div class="check-box">fallback_declared:
-  max_latency: 3600s
-  timeout_per_call: 3600</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - Very high timeout</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No timeout defined</div>
-                                </div>
-
-                                <div class="check-box">fallback_declared:
-  # No timeout specified</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Timeout required</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Audio Scenario 3: Retry Limits -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Agent retries indefinitely on transient failures</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_retries: 3
-  retry_backoff: exponential</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Retries bounded</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">High retry count (10 retries)</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_retries: 10
-  retry_backoff: linear</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - High retry threshold</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No retry limit defined</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  # max_retries missing</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Retry limit required</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                <div class="quickstart-item">
+                    <h3>2. Initialize</h3>
+                    <p>Creates a sample configuration template with all 4 checks.</p>
+                    <div class="code-block">python cli.py init --project my-agent</div>
                 </div>
-            </div>
 
-            <div class="example-card" id="example-llm">
-                <div class="example-display">
-                    <div class="example-header">
-                        <div class="example-icon">🤖</div>
-                        <div>
-                            <h3>LLM Assistant Agent</h3>
-                            <p>Customer support chatbot with token budget constraints</p>
-                        </div>
-                    </div>
+                <div class="quickstart-item">
+                    <h3>3. Configure</h3>
+                    <p>Define governance policies in simple YAML. No code required.</p>
+                    <div class="code-block">vim release-gate.yaml
+# Add your checks</div>
+                </div>
 
-                    <div class="scenario-grid">
-                        <!-- LLM Scenario 1: Token Budget -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
+                <div class="quickstart-item">
+                    <h3>4. Validate</h3>
+                    <p>Gate validates your agent configuration. Exit code tells CI/CD what to do.</p>
+                    <div class="code-block">python cli.py run \
+  --config release-gate.yaml</div>
+                </div>
 
-                            <!-- PASS -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Agent generates unlimited tokens, $1000+ daily bill</div>
-                                </div>
+                <div class="quickstart-item">
+                    <h3>5. Gate Decision</h3>
+                    <p>PASS (0), WARN (10), or FAIL (1). Your CI/CD responds accordingly.</p>
+                    <div class="code-block">if $? -eq 0: deploy
+elif $? -eq 10: manual_review
+else: block_deployment</div>
+                </div>
 
-                                <div class="check-box">action_budget:
-  max_tokens_per_req: 2000
-  max_daily_cost: 100</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Token & cost limits set</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Token limit is high (10000 tokens/req)</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_tokens_per_req: 10000
-  max_daily_cost: 500</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - Very high token limit</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No token or cost limit defined</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  # max_tokens_per_req missing
-  # max_daily_cost missing</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Budget limits required</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- LLM Scenario 2: Rate Limiting -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">One user floods endpoint with 1000 requests</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  authentication: required
-  rate_limit: 10</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Rate limited per user</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Rate limit is very high (100/min per user)</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  authentication: required
-  rate_limit: 100</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - High rate limit threshold</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No rate limit or authentication</div>
-                                </div>
-
-                                <div class="check-box">identity_boundary:
-  authentication: optional
-  # rate_limit missing</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Auth + rate limits required</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- LLM Scenario 3: Concurrency Control -->
-                        <div class="scenario-card">
-                            <div class="scenario-status-tabs">
-                                <button class="scenario-status-tab pass-tab active" onclick="switchScenario(this, 'pass')">✓ PASS</button>
-                                <button class="scenario-status-tab warn-tab" onclick="switchScenario(this, 'warn')">⚠ WARN</button>
-                                <button class="scenario-status-tab fail-tab" onclick="switchScenario(this, 'fail')">✗ FAIL</button>
-                            </div>
-
-                            <!-- PASS -->
-                            <div class="scenario-content active">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">Concurrent requests overload LLM endpoint</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_concurrent: 5
-  queuing: enabled</div>
-
-                                <div class="result-box">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✓ PASS - Concurrency bounded</div>
-                                </div>
-
-                                <div class="decision-box">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✓ APPROVED</div>
-                                </div>
-                            </div>
-
-                            <!-- WARN -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">High concurrent limit (50 concurrent)</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  max_concurrent: 50
-  queuing: disabled</div>
-
-                                <div class="result-box warn">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">⚠ WARN - High concurrency threshold</div>
-                                </div>
-
-                                <div class="decision-box warn">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">⚠ MANUAL REVIEW</div>
-                                </div>
-                            </div>
-
-                            <!-- FAIL -->
-                            <div class="scenario-content">
-                                <div class="threat-box">
-                                    <div class="threat-label">Scenario</div>
-                                    <div class="threat-description">No concurrency limit defined</div>
-                                </div>
-
-                                <div class="check-box">action_budget:
-  # max_concurrent missing</div>
-
-                                <div class="result-box fail">
-                                    <div class="result-label">Check Result</div>
-                                    <div class="result-text">✗ FAIL - Concurrency limit required</div>
-                                </div>
-
-                                <div class="decision-box fail">
-                                    <div class="decision-label">Deployment</div>
-                                    <div class="decision-value">✗ BLOCKED</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                <div class="quickstart-item">
+                    <h3>6. Audit Trail</h3>
+                    <p>JSON report shows what passed, what warned, what failed, and why.</p>
+                    <div class="code-block">cat readiness_report.json
+# Full compliance evidence</div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Coming Soon Section -->
-    <section class="coming-soon-section" id="roadmap">
-        <div class="coming-soon-title">
-            <h2>The Roadmap</h2>
-            <p>We're building the governance control plane for AI agents. Here's what's coming.</p>
+    <!-- GitHub Actions Section -->
+    <section id="github" class="github-section">
+        <h2>GitHub Actions Integration</h2>
+        <div class="github-card">
+            <h3>One-Command Deployment Gate</h3>
+            <p>Add this to your workflow. release-gate runs on every pull request, gates your deployments.</p>
+            <div class="code-block">- name: Governance Gate
+  run: |
+    pip install pyyaml jsonschema
+    python cli.py run \
+      --config release-gate.yaml \
+      --format json \
+      --output report.json
+  
+  - name: Parse Decision
+    run: |
+      EXIT_CODE=$?
+      if [ $EXIT_CODE -eq 0 ]; then
+        echo "✓ PASS - Deploying"
+        echo "GATE_DECISION=PASS" >> $GITHUB_ENV
+      elif [ $EXIT_CODE -eq 10 ]; then
+        echo "⚠ WARN - Manual review needed"
+        echo "GATE_DECISION=WARN" >> $GITHUB_ENV
+      else
+        echo "✗ FAIL - Deployment blocked"
+        echo "GATE_DECISION=FAIL" >> $GITHUB_ENV
+        exit 1
+      fi
+  
+  - name: Upload Report
+    uses: actions/upload-artifact@v3
+    with:
+      name: governance-report
+      path: report.json</div>
+            <button class="copy-button" onclick="copyToClipboard()">📋 Copy Workflow</button>
         </div>
 
-        <div class="roadmap-grid">
-            <div class="roadmap-item">
-                <div class="roadmap-version">v0.2 - Now</div>
-                <h3>Core Checks</h3>
-                <ul class="roadmap-features">
-                    <li>REQUEST_CONTRACT validation</li>
-                    <li>FALLBACK_DECLARED verification</li>
-                    <li>IDENTITY_BOUNDARY enforcement</li>
-                    <li>ACTION_BUDGET controls</li>
-                </ul>
-            </div>
+        <div class="github-card">
+            <h3>Real Configuration Example</h3>
+            <p>This is what your release-gate.yaml looks like. All 4 checks, production-ready.</p>
+            <div class="code-block">project:
+  name: video-generation-agent
+  version: 1.0.0
 
-            <div class="roadmap-item">
-                <div class="roadmap-version">v0.3 - Q2 2026</div>
-                <h3>Approvals & Monitoring</h3>
-                <ul class="roadmap-features">
-                    <li>Approval workflows</li>
-                    <li>Dashboard UI</li>
-                    <li>Audit reports</li>
-                    <li>Compliance mappings</li>
-                </ul>
-            </div>
+checks:
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required: [prompt, duration]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        duration:
+          type: number
+          minimum: 1
+          maximum: 60
+    samples:
+      valid_path: valid_requests.jsonl
+      invalid_path: invalid_requests.jsonl
 
-            <div class="roadmap-item">
-                <div class="roadmap-version">v1.0 - Q4 2026</div>
-                <h3>Runtime Enforcement</h3>
-                <ul class="roadmap-features">
-                    <li>Runtime policy enforcement</li>
-                    <li>Multi-tenant support</li>
-                    <li>Enterprise integrations</li>
-                    <li>Custom policies</li>
-                </ul>
-            </div>
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: feature_flag
+      name: disable_video_generation
+    fallback:
+      mode: static_placeholder
+    ownership:
+      team: platform-team
+      oncall: oncall@company.com
+    runbook_url: https://wiki.company.com/video-generation-runbook
+
+  identity_boundary:
+    enabled: true
+    authentication: required
+    rate_limit: 100
+    data_isolation:
+      - user_owned_data_only
+
+  action_budget:
+    enabled: true
+    max_tokens_per_request: 5000
+    max_retries: 3
+    max_daily_cost: 1000
+    max_concurrent_requests: 10</div>
+            <button class="copy-button" onclick="copyToClipboard()">📋 Copy Config</button>
+        </div>
+
+        <div class="github-card">
+            <h3>Expected Output</h3>
+            <p>This is what release-gate shows you in CI/CD. Clear, actionable, compliance-ready.</p>
+            <div class="code-block">======================================================
+  release-gate v0.2.0 | Governance Report
+======================================================
+
+Project: video-generation-agent
+Environment: staging
+Timestamp: 2026-04-16T14:32:00Z
+
+──────────────────────────────────────────────────────
+
+input_contract:
+  Status: ✓ PASS
+  Valid samples tested: 5/5 ✓
+  Invalid samples rejected: 3/3 ✓
+
+fallback_declared:
+  Status: ✓ PASS
+  Kill switch declared: True ✓
+  Fallback mode defined: True ✓
+  Ownership assigned: True ✓
+  Runbook provided: True ✓
+
+identity_boundary:
+  Status: ✓ PASS
+  Authentication required: True ✓
+  Rate limit (100 req/min): Configured ✓
+  Data isolation: Defined ✓
+
+action_budget:
+  Status: ✓ PASS
+  Max tokens/request: 5000 ✓
+  Max retries: 3 ✓
+  Daily cost limit: $1000 ✓
+  Concurrent requests: 10 ✓
+
+──────────────────────────────────────────────────────
+Summary: 4 passed, 0 warned, 0 failed
+Decision: ✓ PASS
+Exit Code: 0 (Deploy)
+======================================================</div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about" class="about">
+        <div class="about-card">
+            <h3>👋 About release-gate</h3>
+            <p><span class="highlight">Built by Vamsi</span> — Solopreneur building the governance infrastructure for AI agents.</p>
+            <p>release-gate is the policy enforcement layer for autonomous AI agents. It validates that your agents are safe, configuration is complete, and governance standards are met — before they reach production.</p>
+            <p><strong>Think of it as:</strong> OPA for AI agents. SonarQube for governance. The admission controller for your deployment pipeline.</p>
+            <p><strong>Based on:</strong> <a href="https://arxiv.org/abs/2602.20021" target="_blank" style="color: var(--primary);">Agents of Chaos: Red-Teaming of Autonomous AI Agents</a></p>
+            <p style="margin-top: 1.5rem;"><strong>Questions? Email me:</strong> <a href="mailto:vamsi.sudhakaran@gmail.com" style="color: var(--primary);">vamsi.sudhakaran@gmail.com</a></p>
+            <p><strong>GitHub:</strong> <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" style="color: var(--primary);">github.com/VamsiSudhakaran1/release-gate</a></p>
         </div>
     </section>
 
     <!-- Footer -->
     <footer>
-        <div class="footer-links">
-            <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start">Quick Start</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate#documentation">Docs</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate/issues">Issues</a>
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Product</h4>
+                <a href="#features">Features</a>
+                <a href="#github">Integration</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank">GitHub</a>
+                <a href="https://release-gate.com" target="_blank">Website</a>
+            </div>
+            <div class="footer-section">
+                <h4>Resources</h4>
+                <a href="#quickstart">Quick Start</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/README.md" target="_blank">Documentation</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate/issues" target="_blank">GitHub Issues</a>
+            </div>
+            <div class="footer-section">
+                <h4>Community</h4>
+                <p>Building governance for AI agents. Questions? Reach out.</p>
+                <p><a href="mailto:vamsi.sudhakaran@gmail.com">vamsi.sudhakaran@gmail.com</a></p>
+            </div>
         </div>
-        <div>
-            <p>release-gate | Governance Before Deployment</p>
-            <p style="font-size: 0.85rem; margin-top: 0.5rem;">MIT License | Open Source | v0.2.0-active-development</p>
+
+        <div class="footer-bottom">
+            <p>&copy; 2026 release-gate. MIT License.</p>
+            <p style="margin-top: 1rem; font-size: 0.9rem;">Powered by policy-as-code. Built for production.</p>
         </div>
     </footer>
 
+    <!-- Signup Modal -->
+    <div id="signupModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeSignup()">&times;</span>
+            <h2 style="color: var(--primary); margin-bottom: 1.5rem;">Get Started Free</h2>
+            
+            <div class="success-message" id="successMessage">
+                ✓ Thanks for your interest! We'll send you early access within 24 hours.
+            </div>
+
+            <form id="signupForm" onsubmit="handleSignup(event)">
+                <div class="form-group">
+                    <label>Your Name</label>
+                    <input type="text" required placeholder="e.g., Sarah">
+                </div>
+
+                <div class="form-group">
+                    <label>Email Address</label>
+                    <input type="email" required placeholder="your@company.com">
+                </div>
+
+                <div class="form-group">
+                    <label>Company / Team</label>
+                    <input type="text" placeholder="e.g., Acme AI">
+                </div>
+
+                <div class="form-group">
+                    <label>How many agents will you deploy?</label>
+                    <input type="number" placeholder="e.g., 3" min="1">
+                </div>
+
+                <div class="form-group">
+                    <label>What's your biggest governance challenge? (Optional)</label>
+                    <textarea placeholder="Tell us about your use case..."></textarea>
+                </div>
+
+                <button type="submit" class="submit-btn">Get Early Access</button>
+            </form>
+
+            <p style="text-align: center; color: var(--text-dim); font-size: 0.9rem; margin-top: 1rem;">
+                We'll send setup instructions and a sandbox environment within 24 hours.
+            </p>
+        </div>
+    </div>
+
     <script>
-        function selectAgent(agent) {
-            document.querySelectorAll('.example-card').forEach(card => {
-                card.classList.remove('active');
-            });
-            document.querySelectorAll('.agent-tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            document.getElementById('example-' + agent).classList.add('active');
-            event.target.classList.add('active');
+        function openSignup(event) {
+            if (event) event.preventDefault();
+            document.getElementById('signupModal').style.display = 'block';
         }
 
-        function switchScenario(button, status) {
-            const card = button.closest('.scenario-card');
-            
-            // Update tabs
-            card.querySelectorAll('.scenario-status-tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            button.classList.add('active');
-            
-            // Update content
-            card.querySelectorAll('.scenario-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            
-            // Show correct content
-            if (status === 'pass') {
-                card.querySelectorAll('.scenario-content')[0].classList.add('active');
-            } else if (status === 'warn') {
-                card.querySelectorAll('.scenario-content')[1].classList.add('active');
-            } else if (status === 'fail') {
-                card.querySelectorAll('.scenario-content')[2].classList.add('active');
+        function closeSignup() {
+            document.getElementById('signupModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('signupModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
             }
         }
 
-        const revealElements = document.querySelectorAll('.reveal');
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
-        };
+        function handleSignup(event) {
+            event.preventDefault();
+            
+            const form = event.target;
+            const name = form.elements[0].value;
+            const email = form.elements[1].value;
+            const company = form.elements[2].value;
+            const agents = form.elements[3].value;
+            const challenge = form.elements[4].value;
 
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.classList.add('active');
-                    observer.unobserve(entry.target);
-                }
+            // In production, this would send to a backend service
+            // For now, show success message
+            document.getElementById('successMessage').style.display = 'block';
+            form.style.display = 'none';
+
+            // Log to console (in production: send to backend)
+            console.log('Signup:', {
+                name,
+                email,
+                company,
+                agents,
+                challenge,
+                timestamp: new Date().toISOString()
             });
-        }, observerOptions);
 
-        revealElements.forEach(element => {
-            observer.observe(element);
-        });
+            // Email notification (would be handled by backend)
+            console.log(`📧 Send email to: ${email}`);
+            console.log(`📧 Also notify: vamsi.sudhakaran@gmail.com`);
 
+            // Reset after 3 seconds
+            setTimeout(() => {
+                form.reset();
+                form.style.display = 'block';
+                document.getElementById('successMessage').style.display = 'none';
+                closeSignup();
+            }, 3000);
+        }
+
+        function copyToClipboard() {
+            const codeBlock = event.target.previousElementSibling;
+            const text = codeBlock.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const original = btn.textContent;
+                btn.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    btn.textContent = original;
+                }, 2000);
+            });
+        }
+
+        // Smooth scroll to sections
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function (e) {
                 const href = this.getAttribute('href');
-                if (href !== '#' && document.querySelector(href)) {
+                if (href !== '#' && href !== '#demo') {
                     e.preventDefault();
-                    document.querySelector(href).scrollIntoView({ behavior: 'smooth' });
+                    const target = document.querySelector(href);
+                    if (target) {
+                        target.scrollIntoView({ behavior: 'smooth' });
+                    }
                 }
             });
         });
