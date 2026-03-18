@@ -823,7 +823,21 @@ MIT License - Use freely and modify as needed.
 - 💬 Start a discussion on GitHub
 
 ---
+---
 
+## Keywords for Search
+
+release-gate helps you find solutions for:
+- AI agent governance & safety
+- Deployment policy enforcement
+- Pre-deployment gates for agents
+- Agent policy-as-code
+- Compliance for autonomous systems
+- Release gating for AI systems
+- Agent behavior governance
+- Safety gates before deployment
+
+---
 **release-gate: Governance enforcement for autonomous AI agents.** 🚀
 
 *Making autonomous agents deterministically reliable.*
