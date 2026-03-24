@@ -1,855 +1,535 @@
-# release-gate v0.2.0
+# release-gate
 
-**The governance gate for autonomous AI agents.**
+🚪 **Governance enforcement for AI agents** — Prevent cost explosions, ensure safety measures, and enforce access control before deployment.
 
-Visit **[release-gate.com](https://release-gate.com)** for the complete story.
+[![GitHub License](https://img.shields.io/github/license/VamsiSudhakaran1/release-gate)](LICENSE)
+[![Tests](https://github.com/VamsiSudhakaran1/release-gate/actions/workflows/tests.yml/badge.svg)](https://github.com/VamsiSudhakaran1/release-gate/actions)
+[![PyPI Version](https://img.shields.io/pypi/v/release-gate)](https://pypi.org/project/release-gate/)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-![License](https://img.shields.io/badge/license-MIT-green)
-![Python](https://img.shields.io/badge/python-3.7+-blue)
-![Status](https://img.shields.io/badge/status-v0.2-brightgreen)
-![Tests](https://img.shields.io/badge/tests-14%2F14%20passing-brightgreen)
-![Code Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
-![AI Governance](https://img.shields.io/badge/AI-Governance-blue)
-![Agents](https://img.shields.io/badge/for-AI%20Agents-orange)
+## The Problem It Solves
 
----
+**Your AI agent costs you $50,000 in a single day.** No warning. No limit. No questions.
 
-## What is release-gate?
+This happens because:
+- ❌ No cost limits are set
+- ❌ No one validates agent configuration
+- ❌ Request volumes spiral unexpectedly
+- ❌ Token usage balloons with complex prompts
+- ❌ One retry loop = 10x cost multiplier
 
-release-gate blocks AI agent deployment unless you can prove:
-
-✅ **Request Contract is Validated** - Schema defined and tested with valid/invalid samples
-
-✅ **Operational Safeguards are Declared** - Kill switch, fallback, ownership, runbook present
-
-✅ **Access Control is Enforced** - Authentication and rate limiting configured
-
-✅ **Resource Budgets are Set** - Token, retry, cost, and concurrency limits defined
-
-✅ **Governance Policies are Met** - System meets your organization's requirements
-
-✅ **Audit Evidence is Generated** - Machine-readable proof for compliance
+**release-gate stops this before it happens.**
 
 ---
 
-## The Problem
+## What It Does (The 4 Checks)
 
-Autonomous AI agents fail in production in ways traditional testing can't catch:
+release-gate sits between testing and deployment, validating agents against 4 critical checks:
 
-- **Non-owner access** (Agents of Chaos #2) - Anyone can execute commands
-- **Self-destruction** (Agents of Chaos #1) - Agent deletes its own infrastructure
-- **Resource exhaustion** (Agents of Chaos #4, #5) - Infinite loops consume tokens
-- **Identity spoofing** (Agents of Chaos #8) - Governance bypassed via usernames
-- **Manipulation** (Agents of Chaos #7) - Agents exploited into harmful behavior
+### 🎯 PRIMARY CHECK: ACTION_BUDGET (NEW v0.3)
 
-**Traditional QA asks:** "Does it work?"
-**release-gate asks:** "Is it safe to run unsupervised?"
+**Prevents cost explosions** — The hero feature that stops $50K mistakes.
 
-These are different questions that require different tools.
+```yaml
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 100  # Sets the limit
+```
 
-**Reference:** [Agents of Chaos: Red-Teaming of Autonomous AI Agents](https://arxiv.org/abs/2602.20021)
+What happens:
 
----
+```
+Agent estimated to cost $250/day
+Budget set to $100/day
+Status: ❌ FAIL - Deployment blocked
 
-## What release-gate Does (v0.2)
+Remediation:
+  Option 1: Use cheaper model (gpt-4-turbo saves 70%)
+  Option 2: Reduce daily request volume
+  Option 3: Increase budget to $250/day
+```
 
-### ✅ INPUT_CONTRACT Check
+**Cost Calculation (Full Transparency):**
+```
+Model: GPT-4-Turbo
+Daily requests: 500
+Input tokens/request: 800
+Output tokens/request: 400
+Estimated daily cost: $12.50
+Monthly cost: $375.00
+Safety margin: 8x (well under $100 budget)
+Status: ✅ PASS
+```
 
-Ensures your agent's request format is well-defined and tested.
+### Supporting Checks (Existing v0.2)
 
-**Validates:**
-- Schema is defined and syntactically valid ✅
-- All valid test samples pass the schema ✅
-- All invalid test samples fail the schema ✅
+#### 📋 INPUT_CONTRACT
+Ensures request schemas are defined and tested.
+- ✅ Schema explicitly defined
+- ✅ Valid inputs pass validation
+- ✅ Invalid inputs fail validation
+- Prevents input-based failures
 
-### ✅ FALLBACK_DECLARED Check
+#### ⏹ FALLBACK_DECLARED
+Ensures agent can be stopped if something goes wrong.
+- ✅ Kill switch defined (feature flag)
+- ✅ Fallback mode exists (escalate to human)
+- ✅ Team ownership clear
+- ✅ Runbook provided
 
-Ensures operational safety mechanisms are documented.
-
-**Validates:**
-- Kill switch is declared (how to disable) ✅
-- Fallback mode is specified (what happens if it fails) ✅
-- Ownership is assigned (who's responsible) ✅
-- Runbook URL is provided (incident response) ✅
-
-### ✅ IDENTITY_BOUNDARY Check (v0.2 NEW)
-
-Ensures your agent enforces proper access control and rate limiting.
-
-**Validates:**
-- Authentication is required or explicitly allowed ✅
-- Rate limits are configured per user/client ✅
-- Data isolation boundaries are defined ✅
-
-### ✅ ACTION_BUDGET Check (v0.2 NEW)
-
-Ensures your agent has guardrails on resource consumption and costs.
-
-**Validates:**
-- Max tokens per request is defined ✅
-- Max retries per request is defined ✅
-- Max daily/monthly cost is defined ✅
-- Max concurrent requests is defined ✅
-
----
-
-## What release-gate Does NOT Do (v0.2)
-
-These features are planned for future versions:
-
-❌ **Runtime behavior testing** - Doesn't execute the agent
-
-❌ **Output validation** - Doesn't test actual outputs or model behavior
-
-❌ **Formal verification** - Doesn't mathematically verify behavior
-
-❌ **Runtime monitoring** - Doesn't continuously verify at runtime
+#### 🔐 IDENTITY_BOUNDARY
+Enforces access control and rate limiting.
+- ✅ Authentication required
+- ✅ Rate limits configured
+- ✅ Data isolation defined
+- Prevents unauthorized access
 
 ---
 
-## How It Fits in Your Stack
-
-### With Any Tool
-release-gate **doesn't care what testing framework you use**. It integrates with any tool or custom validators:
-
-**Works with:**
-- ✅ Unit tests (pytest, Jest, unittest, etc.)
-- ✅ Integration tests (any framework)
-- ✅ Agent evaluators (LangSmith, Evals, custom)
-- ✅ Behavior testers (simulation frameworks)
-- ✅ Custom validators (your own code)
-
-**Full workflow:**
-1. Test agent behavior (any framework/tool)
-2. Document results in release-gate.yaml
-3. release-gate validates governance policies
-4. CI/CD blocks or approves deployment
-
-### With Observability Tools
-- **Testing/Evaluation:** Any framework (LangSmith, custom evals, unit tests)
-- **Pre-deployment policy:** Use release-gate ← You are here
-- **Production monitoring:** Use DataDog, New Relic, CloudWatch, etc.
-- **Incident response:** Use runbooks referenced in release-gate.yaml
-
----
-
-## Quick Start
+## Quick Start (5 Minutes)
 
 ### 1. Install
-
 ```bash
-pip install pyyaml jsonschema
+pip install release-gate
 ```
 
-### 2. Initialize
+### 2. Create governance.yaml
+```yaml
+project:
+  name: my-agent
 
+agent:
+  model: gpt-4-turbo
+  daily_requests: 500
+  avg_input_tokens: 800
+  avg_output_tokens: 400
+  retry_rate: 1.1
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 100
+```
+
+### 3. Run Validation
 ```bash
-python cli.py init --project my-system
+release-gate check --config governance.yaml
 ```
 
-Creates:
-- `release-gate.yaml` - Configuration template
-- `valid_requests.jsonl` - Valid request examples
-- `invalid_requests.jsonl` - Invalid request examples
+### 4. See Decision
+```
+┌──────────────────────────────────────────┐
+│ 🚪 release-gate: All 4 Checks            │
+├──────────────────────────────────────────┤
 
-### 3. Run
+💰 ACTION_BUDGET: ✓ PASS
+   Daily Cost: $12.50
+   Budget: $100.00
+   Safety Margin: 8.0x
 
+📋 INPUT_CONTRACT: ✓ PASS
+   Schema defined
+
+⏹ FALLBACK_DECLARED: ✓ PASS
+   Kill switch configured
+
+🔐 IDENTITY_BOUNDARY: ✓ PASS
+   Authentication required
+
+✅ FINAL DECISION: PASS (Safe to deploy)
+└──────────────────────────────────────────┘
+```
+
+---
+
+## Real-World Example: The $50K Mistake
+
+### Scenario
+You deploy a customer support agent without checking costs:
+
+```yaml
+agent:
+  model: gpt-4           # Expensive model
+  daily_requests: 5000   # High volume
+  avg_input_tokens: 2000 # Long context
+  avg_output_tokens: 1000
+```
+
+**Without release-gate:**
+```
+Day 1: Agent costs $250
+Day 2: No one notices
+Day 3: Cost spike warning
+...
+Week 2: You've spent $50,000
+```
+
+**With release-gate:**
+```
+$ release-gate check --config governance.yaml
+
+❌ FAIL - Cost Control: Budget Exceeded
+
+Daily cost: $250.00
+Budget: $100.00
+Daily overage: $150.00
+Monthly overage: $4,500.00
+
+❌ BLOCKED: Cannot deploy without fixing cost configuration
+
+Remediation Options:
+  Option 1: Use gpt-4-turbo (3.3x cheaper)
+           New cost: $75.88/day → PASS ✓
+  
+  Option 2: Reduce daily requests to 1000
+           New cost: $50/day → PASS ✓
+  
+  Option 3: Increase budget to $250/day
+           Then re-run validation
+```
+
+**Result:** Deployment blocked. Problem caught before it costs you $50K.
+
+---
+
+## Key Features
+
+### 💰 ACTION_BUDGET: Cost Control (v0.3 New)
+
+#### Automatic Cost Estimation
+```python
+# Reads agent config
+agent:
+  model: gpt-4-turbo
+  daily_requests: 500
+  avg_input_tokens: 800
+  avg_output_tokens: 400
+  retry_rate: 1.1
+
+# Automatically calculates:
+# Input cost: $0.00001 × 800 ÷ 1000 × 500 × 1.1 = $4.40/day
+# Output cost: $0.00003 × 400 ÷ 1000 × 500 × 1.1 = $6.60/day
+# Total: $11.00/day
+```
+
+#### Smart Thresholds
+```yaml
+checks:
+  action_budget:
+    max_daily_cost: 100
+    auto_approve_threshold: 10      # < $10 = instant PASS
+    manual_approval_threshold: 50   # $10-$50 = needs review
+    # $50+ = approval routing
+```
+
+#### Approval Routing (Future)
+```yaml
+approval_routes:
+  - type: slack
+    channel: "#ai-governance"
+    mentions: ["@platform-leads"]
+  - type: email
+    to: ["ai-team@company.com"]
+    cc: ["security@company.com"]
+```
+
+### 🔄 Dynamic Pricing
+
+#### No Hardcoding
+```python
+# Instead of hardcoded enums:
+# - Supports ANY model (past, present, future)
+# - Auto-detects from code
+# - User-extensible via JSON
+```
+
+#### Auto-Detection
+```python
+# Code:
+client = OpenAI(model="gpt-4o")
+response = client.chat.completions.create(model="gpt-4o")
+
+# release-gate automatically detects: gpt-4o
+# Looks up pricing
+# Estimates cost
+# All automatic
+```
+
+#### Custom Models
+```json
+{
+  "models": {
+    "my-internal-llama": {
+      "input": 0.0001,
+      "output": 0.0002,
+      "provider": "Internal"
+    }
+  }
+}
+```
+
+Add a custom model. No code changes. Instant support.
+
+---
+
+## Installation
+
+### Via pip
 ```bash
-python cli.py run --config release-gate.yaml --format text
+pip install release-gate
 ```
 
-Expected output:
-
+### From source
+```bash
+git clone https://github.com/VamsiSudhakaran1/release-gate.git
+cd release-gate
+pip install -e .
 ```
-input_contract: ✓ PASS
-fallback_declared: ✓ PASS
 
-Overall Decision: ✓ PASS
-Exit Code: 0 (safe to deploy)
-```
+### Requirements
+- Python 3.8+
+- PyYAML >= 6.0
+- jsonschema >= 4.0
 
 ---
 
 ## Configuration
 
-### Minimal Example
-
+### Minimal (Cost Control Only)
 ```yaml
 project:
   name: my-agent
-  version: 1.0.0
+
+agent:
+  model: gpt-4-turbo
+  daily_requests: 100
+  avg_input_tokens: 500
+  avg_output_tokens: 300
 
 checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 50
+```
+
+### Complete (All 4 Checks)
+```yaml
+project:
+  name: customer-support-agent
+  version: 1.0.0
+
+agent:
+  model: gpt-4-turbo
+  daily_requests: 500
+  avg_input_tokens: 800
+  avg_output_tokens: 400
+  retry_rate: 1.1
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 100
+    auto_approve_threshold: 10
+    manual_approval_threshold: 50
+  
   input_contract:
     enabled: true
     schema:
       type: object
-      required: [prompt]
+      required: [user_query]
       properties:
-        prompt:
+        user_query:
           type: string
-          minLength: 1
-    samples:
-      valid_path: valid_requests.jsonl
-      invalid_path: invalid_requests.jsonl
-
+  
   fallback_declared:
     enabled: true
     kill_switch:
       type: feature_flag
-      name: disable_my_agent
+      name: disable_agent
     fallback:
-      mode: static_placeholder
+      mode: escalate_to_human
     ownership:
-      team: platform-team
-      oncall: oncall-platform
-    runbook_url: https://wiki.internal/runbooks/my-agent
-```
-
-See [examples/](examples/) for complete examples.
-
----
-
-## Exit Codes
-
-| Code | Status | Meaning |
-|------|--------|---------|
-| 0 | PASS | All checks passed, safe to deploy |
-| 10 | WARN | Warnings found, review recommended |
-| 1 | FAIL | Critical failures, deployment blocked |
-
-**CI/CD Integration:**
-
-```bash
-python cli.py run --config release-gate.yaml
-
-if [ $? -eq 0 ]; then
-  deploy_to_production
-elif [ $? -eq 10 ]; then
-  send_for_approval
-else
-  exit 1  # Deployment blocked
-fi
-```
-
----
-
-## Documentation
-
-- **[QUICKSTART](docs/QUICKSTART.md)** - 5-minute quick start
-- **[EXTENDED_README](docs/EXTENDED_README.md)** - Comprehensive guide
-- **[ARCHITECTURE](docs/ARCHITECTURE.md)** - How it works
-- **[GOVERNANCE_VISION](docs/GOVERNANCE_VISION.md)** - Long-term roadmap
-- **[INTEGRATION_GUIDE](docs/INTEGRATION_GUIDE.md)** - Using with other tools
-- **[CONTRIBUTING](docs/CONTRIBUTING.md)** - How to contribute
-- **[CHANGELOG](docs/CHANGELOG.md)** - Features and roadmap
-
----
-
-## Design Philosophy
-
-### 1. Governance ≠ Testing
-
-Testing asks: "Does it work?"
-Governance asks: "Is it safe to run?"
-
-release-gate focuses on governance.
-
-### 2. Policy-as-Code
-
-Safety requirements are declared in YAML and validated before deployment.
-
-### 3. Local-First
-
-No external services, no data transmission, no back-end infrastructure.
-
-### 4. Automation Over Checklists
-
-Checklists can be skipped. CI/CD gates cannot.
-
-### 5. Pluggable Checks
-
-Extensible system for adding governance controls:
-- INPUT_CONTRACT (v0.1)
-- FALLBACK_DECLARED (v0.1)
-- IDENTITY_BOUNDARY (v0.2)
-- ACTION_BUDGET (v0.2)
-- APPROVAL_REQUIRED (v0.3)
-- DATA_EGRESS_POLICY (v0.3)
-
----
-
-## Roadmap
-
-### v0.2 (Current - March 2026) ✅
-✅ INPUT_CONTRACT check - Request schema validation
-✅ FALLBACK_DECLARED check - Operational safeguards
-✅ IDENTITY_BOUNDARY check - Access control & rate limits
-✅ ACTION_BUDGET check - Resource & cost controls
-✅ CLI init and run commands
-✅ JSON/text output formats
-✅ Exit codes (0=PASS, 10=WARN, 1=FAIL)
-✅ 14 unit tests (100% passing)
-✅ Example configurations for 3 agent types
-✅ Comprehensive documentation
-
-### v0.3 (Q2 2026) 🔜
-🔜 APPROVAL_REQUIRED check - Deployment approval workflows
-🔜 DATA_EGRESS_POLICY check - Data movement restrictions
-🔜 Approval UI / Dashboard
-🔜 Audit report generation
-🔜 Compliance evidence mappings (SOC2, ISO, HIPAA)
-🔜 Enhanced evidence reporting
-
-### v1.0 (Q4 2026) 🔮
-🔮 Runtime enforcement (at execution time)
-🔮 Multi-tenant support
-🔮 Enterprise integrations (Slack, PagerDuty, etc.)
-🔮 Custom policy language
-🔮 Formal verification layer
-🔮 Runtime monitoring integration
-
-See [CHANGELOG](docs/CHANGELOG.md) and [GOVERNANCE_VISION](docs/GOVERNANCE_VISION.md) for details.
-
----
-
-## Requirements
-
-- Python 3.7+
-- pyyaml >= 6.0
-- jsonschema >= 4.0
-
-That's it. No heavy frameworks, no external services.
-
----
-
-## License
-
-MIT License - Use freely and modify as needed.
-
----
-
-## Support
-
-**Questions? Start here:**
-
-1. 📖 [QUICKSTART](docs/QUICKSTART.md) - Get running in 5 minutes
-2. 📚 [EXTENDED_README](docs/EXTENDED_README.md) - Complete guide
-3. 🏗️ [ARCHITECTURE](docs/ARCHITECTURE.md) - How it works
-4. 🔗 [INTEGRATION_GUIDE](docs/INTEGRATION_GUIDE.md) - Using with other tools
-5. 💬 [GitHub Issues](https://github.com/VamsiSudhakaran1/release-gate/issues) - Report bugs
-
----
-
-## The Vision
-
-**release-gate is the OPA / SonarQube / admission-controller layer for AI agents.**
-
-- OPA enforces infrastructure policies
-- SonarQube enforces code quality policies
-- release-gate enforces AI agent governance policies
-
-Expect governance to become as important as testing in the AI era.
-
----
-
-**release-gate: Enforce governance before deployment.** 🚀
-
-Visit **[release-gate.com](https://release-gate.com)** to learn more.
-
----
-
-## The Problem
-
-Autonomous AI agents fail in production in ways traditional testing can't catch:
-
-- **Non-owner access** (Agents of Chaos #2) - Anyone can execute commands
-- **Self-destruction** (Agents of Chaos #1) - Agent deletes its own infrastructure
-- **Resource exhaustion** (Agents of Chaos #4, #5) - Infinite loops consume tokens
-- **Identity spoofing** (Agents of Chaos #8) - Governance bypassed via usernames
-- **Manipulation** (Agents of Chaos #7) - Agents exploited into harmful behavior
-
-These aren't bugs. They're **governance failures**.
-
-**Reference:** [Agents of Chaos: Red-Teaming of Autonomous AI Agents](https://arxiv.org/abs/2602.20021)
-
----
-
-## What release-gate Does (v0.1)
-
-### ✅ Validates INPUT_CONTRACT
-
-Ensures your agent's request format is well-defined and tested.
-
-**Checks:**
-- ✅ Schema is defined and syntactically valid
-- ✅ All valid test samples pass the schema
-- ✅ All invalid test samples fail the schema
-
-**Example:**
-```yaml
-input_contract:
-  enabled: true
-  schema:
-    type: object
-    required: [prompt, duration_sec]
-    properties:
-      prompt:
-        type: string
-        minLength: 1
-        maxLength: 1000
-      duration_sec:
-        type: number
-        minimum: 1
-        maximum: 60
-  samples:
-    valid_path: valid_requests.jsonl
-    invalid_path: invalid_requests.jsonl
-```
-
-### ✅ Validates FALLBACK_DECLARED
-
-Ensures operational safety mechanisms are documented.
-
-**Checks:**
-- ✅ Kill switch is declared (how to disable)
-- ✅ Fallback mode is specified (what happens if it fails)
-- ✅ Ownership is assigned (who's responsible)
-- ✅ Runbook URL is provided (incident response)
-
-**Example:**
-```yaml
-fallback_declared:
-  enabled: true
-  kill_switch:
-    type: feature_flag
-    name: disable_my_agent
-  fallback:
-    mode: static_placeholder
-  ownership:
-    team: platform-team
-    oncall: oncall-platform
-  runbook_url: https://wiki.internal/runbooks/my-agent
-```
-
----
-
-## What release-gate Does NOT Do (v0.1)
-
-These features are planned for future versions:
-
-❌ **Runtime behavior testing** - Doesn't execute the agent
-❌ **Output validation** - Doesn't test actual outputs or model behavior
-❌ **Formal verification** - Doesn't mathematically verify behavior
-❌ **Runtime monitoring** - Doesn't continuously verify at runtime
-
-See [CHANGELOG.md](CHANGELOG.md) for complete roadmap.
-
----
-
-## Quick Start
-
-### 1. Install
-
-```bash
-pip install pyyaml jsonschema
-```
-
-### 2. Initialize
-
-```bash
-python cli.py init --project my-system
-```
-
-Creates:
-- `release-gate.yaml` - Configuration template
-- `valid_requests.jsonl` - Valid request examples
-- `invalid_requests.jsonl` - Invalid request examples
-
-### 3. Run
-
-```bash
-python cli.py run --config release-gate.yaml --format text
-```
-
-Expected output:
-```
-input_contract
-  Status: ✓ PASS
-  valid_samples_tested: 3
-  valid_samples_passed: 3
-  invalid_samples_tested: 3
-  invalid_samples_rejected: 3
-
-fallback_declared
-  Status: ✓ PASS
-  kill_switch_declared: True
-  fallback_declared: True
-  ownership_assigned: True
-  runbook_provided: True
-
-Overall Decision: ✓ PASS
+      team: support-team
+      oncall: "oncall@company.com"
+  
+  identity_boundary:
+    enabled: true
+    authentication: required
+    rate_limit: 10
+    data_isolation:
+      - customer_data_only
 ```
 
 ---
 
 ## Usage
 
-### Initialize a Project
-
+### Command Line
 ```bash
-python cli.py init --project my-system
+# Simple validation
+release-gate check --config governance.yaml
+
+# JSON output (for CI/CD)
+release-gate check --config governance.yaml --output json
+
+# YAML output (save to repo)
+release-gate check --config governance.yaml --output yaml > audit.yaml
 ```
-
-### Run Governance Gate
-
-```bash
-# Text output (human-readable)
-python cli.py run --config release-gate.yaml --format text
-
-# JSON output (machine-readable, saved to readiness_report.json)
-python cli.py run --config release-gate.yaml --format json
-
-# Custom output file
-python cli.py run --config release-gate.yaml --output my-report.json
-
-# Specify environment
-python cli.py run --config release-gate.yaml --env prod
-```
-
-### Exit Codes
-
-| Code | Status | Meaning |
-|------|--------|---------|
-| 0 | PASS | All checks passed, safe to deploy |
-| 10 | WARN | Warnings found (invalid samples accepted) |
-| 1 | FAIL | Critical failures, deployment blocked |
-
-**CI/CD Example:**
-```bash
-python cli.py run --config release-gate.yaml
-exit_code=$?
-
-if [ $exit_code -eq 0 ]; then
-  echo "✓ Deploying..."
-  deploy_to_production
-elif [ $exit_code -eq 10 ]; then
-  echo "⚠ Requires review..."
-  send_for_approval
-else
-  echo "✗ Blocked"
-  exit 1
-fi
-```
-
----
-
-## Complete Configuration Example
-
-```yaml
-project:
-  name: video-generation-api
-  version: 1.0.0
-  description: AI video generation with autonomous agent
-
-gate:
-  policy: default-v0.1
-
-checks:
-  input_contract:
-    enabled: true
-    schema:
-      type: object
-      required:
-        - prompt
-        - duration_sec
-        - resolution
-      properties:
-        prompt:
-          type: string
-          minLength: 1
-          maxLength: 1000
-        duration_sec:
-          type: number
-          minimum: 1
-          maximum: 60
-        resolution:
-          type: string
-          enum: ["480p", "720p", "1080p"]
-    samples:
-      valid_path: valid_requests.jsonl
-      invalid_path: invalid_requests.jsonl
-
-  fallback_declared:
-    enabled: true
-    kill_switch:
-      type: feature_flag
-      name: disable_video_generation
-    fallback:
-      mode: static_placeholder
-      description: Return static placeholder video on failure
-    ownership:
-      team: platform-team
-      oncall: oncall-platform
-    runbook_url: https://wiki.internal/runbooks/video-generation
-```
-
----
-
-## Sample Files
-
-### valid_requests.jsonl
-```json
-{"prompt":"A cat playing guitar","duration_sec":5,"resolution":"720p"}
-{"prompt":"A dog dancing in rain","duration_sec":10,"resolution":"1080p"}
-{"prompt":"Ocean waves at sunset","duration_sec":30,"resolution":"480p"}
-```
-
-### invalid_requests.jsonl
-```json
-{"prompt":"","duration_sec":5,"resolution":"720p"}
-{"prompt":"Test","duration_sec":120,"resolution":"720p"}
-{"duration_sec":5,"resolution":"720p"}
-```
-
----
-
-## Output Examples
-
-### Text Output
-
-```
-======================================================================
-  release-gate v0.1.0 - Deployment Readiness Report
-======================================================================
-
-Project: video-generation-api
-Environment: staging
-Timestamp: 2026-03-16T10:30:45Z
-
-----------------------------------------------------------------------
-Check Results:
-----------------------------------------------------------------------
-
-input_contract
-  Status: ✓ PASS
-  schema_valid: True
-  valid_samples_tested: 3
-  valid_samples_passed: 3
-  valid_samples_failed: 0
-  invalid_samples_tested: 3
-  invalid_samples_rejected: 3
-  invalid_samples_accepted: 0
-
-fallback_declared
-  Status: ✓ PASS
-  kill_switch_declared: True
-  fallback_declared: True
-  ownership_assigned: True
-  runbook_provided: True
-
-======================================================================
-Summary: 2 passed, 0 warned, 0 failed
-Overall Decision: ✓ PASS
-======================================================================
-```
-
-### JSON Output
-
-```json
-{
-  "overall": "PASS",
-  "timestamp": "2026-03-16T10:30:45Z",
-  "environment": "staging",
-  "project": {
-    "name": "video-generation-api",
-    "version": "1.0.0"
-  },
-  "summary": {
-    "counts": {
-      "pass": 2,
-      "warn": 0,
-      "fail": 0
-    }
-  },
-  "checks": [
-    {
-      "name": "input_contract",
-      "result": "PASS",
-      "evidence": {
-        "schema_valid": true,
-        "valid_samples_tested": 3,
-        "valid_samples_passed": 3,
-        "valid_samples_failed": 0,
-        "invalid_samples_tested": 3,
-        "invalid_samples_rejected": 3,
-        "invalid_samples_accepted": 0
-      }
-    },
-    {
-      "name": "fallback_declared",
-      "result": "PASS",
-      "evidence": {
-        "kill_switch_declared": true,
-        "fallback_declared": true,
-        "ownership_assigned": true,
-        "runbook_provided": true
-      }
-    }
-  ]
-}
-```
-
----
-
-## Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute quick start
-- **[EXTENDED_README.md](EXTENDED_README.md)** - Complete guide (8,000+ words)
-- **[CHANGELOG.md](CHANGELOG.md)** - Features and roadmap
-- **[COMPLETE.md](COMPLETE.md)** - Project overview
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute
-
----
-
-## CI/CD Integration
 
 ### GitHub Actions
-
 ```yaml
-- name: Governance Gate
-  run: |
-    pip install pyyaml jsonschema
-    python cli.py run --config release-gate.yaml
-    
-- name: Upload Report
-  if: always()
-  uses: actions/upload-artifact@v3
-  with:
-    name: readiness-report
-    path: readiness_report.json
+name: Governance Gate
+on: [pull_request, push]
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install release-gate
+      - run: release-gate check --config governance.yaml
 ```
 
-### GitLab CI
+### Python API
+```python
+from release_gate.checks.action_budget import ActionBudgetCheck
+import yaml
 
-```yaml
-governance:
-  script:
-    - pip install pyyaml jsonschema
-    - python cli.py run --config release-gate.yaml
-  artifacts:
-    paths:
-      - readiness_report.json
-```
+with open('governance.yaml') as f:
+    config = yaml.safe_load(f)
 
-### Jenkins
+check = ActionBudgetCheck()
+result = check.evaluate(config)
 
-```groovy
-stage('Governance') {
-  steps {
-    sh '''
-      pip install pyyaml jsonschema
-      python cli.py run --config release-gate.yaml
-    '''
-  }
-}
+if result['status'] == 'PASS':
+    print("✅ Safe to deploy")
+else:
+    print("❌ Fix cost configuration")
+    for step in result.get('remediation_steps', []):
+        print(f"  - {step}")
 ```
 
 ---
 
-## Design Philosophy
+## Exit Codes
 
-### 1. Governance ≠ Testing
+- **0** = PASS (all checks passed, safe to deploy)
+- **10** = WARN (manual review recommended)
+- **1** = FAIL (deployment blocked, fix issues)
 
-Testing asks: "Does it work?"
-Governance asks: "Is it safe to run?"
-
-release-gate focuses on governance.
-
-### 2. Configuration-as-Safety
-
-Safety requirements are declared in YAML and validated before deployment.
-
-### 3. Local-First
-
-No external services, no data transmission, no back-end infrastructure.
-
-### 4. Automation Over Checklists
-
-Checklists can be skipped. CI/CD gates cannot.
+Perfect for CI/CD pipelines.
 
 ---
 
-## Current Capabilities (v0.1)
+## Roadmap
 
-✅ Schema syntax validation  
-✅ Sample test validation  
-✅ Governance declaration enforcement  
-✅ JSON and text output  
-✅ Exit codes for CI/CD  
-✅ No external dependencies (just YAML + JSON Schema)
+### v0.3 (Current) ✅
+- [x] ACTION_BUDGET check (cost control)
+- [x] Dynamic pricing system
+- [x] Auto-model detection
+- [x] Custom model support
+- [x] All 4 checks working together
 
-## Planned Capabilities (v0.2+)
+### v0.4 (Planned)
+- [ ] GitHub Actions marketplace integration
+- [ ] Web dashboard
+- [ ] Advanced approval workflows
+- [ ] Enterprise SSO/RBAC
 
-🔜 Runtime agent execution testing  
-🔜 Action budget verification  
-🔜 Performance validation  
-🔜 Formal verification layer  
-🔜 Runtime monitoring integration  
-
-See [CHANGELOG.md](CHANGELOG.md) for complete roadmap.
-
----
-
-## Requirements
-
-- Python 3.7+
-- pyyaml >= 6.0
-- jsonschema >= 4.0
-
-That's it. No heavy frameworks, no external services.
+### v1.0 (Vision)
+- [ ] Real-time pricing API integration
+- [ ] Advanced policy templates
+- [ ] Multi-agent governance
+- [ ] Analytics & reporting
 
 ---
 
-## License
+## Supported Models
 
-MIT License - Use freely and modify as needed.
+### OpenAI
+- GPT-4
+- GPT-4 Turbo
+- GPT-4o
+
+### Anthropic
+- Claude 3 Opus
+- Claude 3 Sonnet
+- Claude 3.5 Sonnet
+
+### Open Source
+- Llama 70B
+- Mistral Large
+
+### Custom
+- Any model (add to pricing.json)
 
 ---
 
-## References
+## Examples
 
-- **Agents of Chaos** - https://arxiv.org/abs/2602.20021
-- **DARPA ANSR** - Assured Neuro-Symbolic Research
-- **Responsible AI** - Safety as a first-class concern
+See `examples/` directory:
+- `governance-simple.yaml` - Minimal setup
+- `governance-complete.yaml` - Full setup
+- `pricing.json` - All supported models
+- `test_action_budget.py` - Test suite
+
+---
+
+## Architecture
+
+### 4 Independent Checks
+Each check validates independently:
+- **ACTION_BUDGET** validates cost
+- **INPUT_CONTRACT** validates schema
+- **FALLBACK_DECLARED** validates safety
+- **IDENTITY_BOUNDARY** validates access
+
+No cross-dependencies. Easy to extend.
+
+### Decision Logic
+```
+If ANY check FAILS → FAIL (deployment blocked)
+Else if ANY check WARNS → WARN (manual review)
+Else → PASS (all good)
+```
+
+All 4 checks are equal partners in the decision.
+
+---
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
 ## Support
 
-**Questions or issues?**
-
-- 📖 Read [QUICKSTART.md](QUICKSTART.md) for common questions
-- 📚 Read [EXTENDED_README.md](EXTENDED_README.md) for deep dive
-- 🐛 Open an issue on GitHub
-- 💬 Start a discussion on GitHub
+- 📖 [Documentation](docs/)
+- 🐛 [Issues](https://github.com/VamsiSudhakaran1/release-gate/issues)
+- 💬 [Discussions](https://github.com/VamsiSudhakaran1/release-gate/discussions)
+- 🌐 [Website](https://release-gate.com)
 
 ---
----
 
-## Keywords for Search
+## License
 
-release-gate helps you find solutions for:
-- AI agent governance & safety
-- Deployment policy enforcement
-- Pre-deployment gates for agents
-- Agent policy-as-code
-- Compliance for autonomous systems
-- Release gating for AI systems
-- Agent behavior governance
-- Safety gates before deployment
+MIT — See [LICENSE](LICENSE) for details.
 
 ---
-**release-gate: Governance enforcement for autonomous AI agents.** 🚀
 
-*Making autonomous agents deterministically reliable.*
+## The Vision
+
+**Every AI agent should have cost limits, safety measures, and access controls before deployment.**
+
+release-gate makes this simple, automatic, and transparent.
+
+---
+
+**Prevent cost explosions. Enforce governance. Deploy with confidence.** 🚀
+
+Built by [Vamsi](https://github.com/VamsiSudhakaran1) • [release-gate.com](https://release-gate.com)
