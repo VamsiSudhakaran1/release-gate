@@ -3,1340 +3,347 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'">
-    <meta http-equiv="X-Content-Type-Options" content="nosniff">
-    <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
-    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
-    <meta name="Referrer-Policy" content="strict-origin-when-cross-origin">
-    <meta name="description" content="release-gate - AI Agent Governance Enforcement">
-    <meta name="keywords" content="AI, governance, safety, cost control">
-    <meta name="author" content="Vamsi Sudhakaran">
-    <title>release-gate - AI Agent Governance</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline';">
+    <meta name="description" content="release-gate: Governance enforcement for AI agents. Prevent cost explosions, ensure safety, validate deployments.">
+    <meta name="keywords" content="AI agents, governance, cost control, deployment validation">
+    <title>release-gate — AI Agent Governance</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        html {
-            scroll-behavior: smooth;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             line-height: 1.6;
             color: #0f1419;
-            background: #ffffff;
-            letter-spacing: 0.3px;
+            background: #fff;
         }
-        
-        nav {
-            padding: 1.25rem 4rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: sticky;
-            top: 0;
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-            z-index: 100;
+        .container { max-width: 1000px; margin: 0 auto; padding: 0 2rem; }
+        header {
+            padding: 3rem 0;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 4rem;
         }
-        
-        nav h1 {
-            font-size: 1.4rem;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-        }
-        
-        nav div {
-            display: flex;
-            gap: 2.5rem;
-        }
-        
-        nav a {
-            text-decoration: none;
-            color: #666;
-            font-size: 0.95rem;
-            cursor: pointer;
-            transition: color 0.3s;
-            font-weight: 500;
-        }
-        
-        nav a:hover {
-            color: #000;
-        }
-        
-        .hero {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 6rem 4rem;
-            text-align: center;
-        }
-        
-        .hero h1 {
-            font-size: 3.5rem;
-            margin-bottom: 1.5rem;
-            font-weight: 800;
-            line-height: 1.1;
-            letter-spacing: -1px;
-        }
-        
-        .hero-highlight {
-            color: #ff6b35;
-        }
-        
-        .hero p {
-            font-size: 1.25rem;
-            color: #666;
-            margin-bottom: 2.5rem;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.7;
-        }
-        
-        .cta-buttons {
-            display: flex;
-            gap: 1.5rem;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        
-        .btn {
-            padding: 1rem 2.5rem;
+        h1 { font-size: 2.8rem; font-weight: 800; margin-bottom: 0.5rem; letter-spacing: -1px; }
+        .tagline { font-size: 1.2rem; color: #666; margin-bottom: 2rem; }
+        .hero { margin-bottom: 4rem; }
+        .hero p { font-size: 1.1rem; color: #555; margin-bottom: 1.5rem; line-height: 1.8; }
+        .install-box {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
             border-radius: 8px;
-            font-size: 1rem;
-            font-weight: 600;
-            text-decoration: none;
-            border: none;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            letter-spacing: 0.5px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            font-family: 'Courier New', monospace;
         }
-        
-        .btn-primary {
+        .install-box code {
+            display: block;
+            background: #1a1a1a;
+            color: #00ff7f;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        .checks {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin: 3rem 0;
+        }
+        .check {
+            padding: 1.5rem;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        .check h3 { font-size: 1rem; margin-bottom: 0.5rem; }
+        .check p { font-size: 0.9rem; color: #666; }
+        .demo {
+            background: #f0f0f0;
+            border-left: 4px solid #ff6b35;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            border-radius: 4px;
+        }
+        .demo pre {
+            background: #1a1a1a;
+            color: #00ff7f;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.85rem;
+            margin: 1rem 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .cta {
+            display: inline-block;
             background: #1a1a1a;
             color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            margin-right: 1rem;
+            margin-top: 1rem;
+            transition: all 0.3s;
         }
-        
-        .btn-primary:hover {
-            background: #333;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-        }
-        
-        .btn-secondary {
+        .cta:hover { background: #333; transform: translateY(-2px); }
+        .cta-secondary {
             background: transparent;
             color: #1a1a1a;
             border: 1.5px solid #1a1a1a;
         }
-        
-        .btn-secondary:hover {
-            background: #f5f5f5;
-            transform: translateY(-2px);
-        }
-        
-        section {
-            padding: 5rem 4rem;
-        }
-        
-        .section-title {
-            font-size: 2.8rem;
-            font-weight: 800;
-            margin-bottom: 3rem;
-            text-align: center;
-            letter-spacing: -0.5px;
-        }
-        
-        .section-subtitle {
-            font-size: 1.1rem;
-            color: #666;
-            text-align: center;
-            margin-bottom: 3rem;
-            max-width: 700px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.8;
-        }
-        
-        .pipeline-section {
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-        }
-        
-        .pipeline {
-            max-width: 1400px;
-            margin: 0 auto;
+        .cta-secondary:hover { background: #f5f5f5; }
+        .problem { 
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 2rem;
-            margin-top: 3rem;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
         }
-        
-        .pipeline-stage {
-            text-align: center;
-            padding: 2rem;
-            position: relative;
-        }
-        
-        .pipeline-stage::after {
-            content: "\2192";
-            position: absolute;
-            right: -1.5rem;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 2rem;
-            color: #ff6b35;
-            font-weight: bold;
-        }
-        
-        .pipeline-stage:last-child::after {
-            display: none;
-        }
-        
-        .stage-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-        }
-        
-        .stage-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-        
-        .stage-desc {
+        .problem-item {
+            padding: 1rem;
+            background: #fff8f5;
+            border: 1px solid #ffccbb;
+            border-radius: 6px;
             font-size: 0.9rem;
-            color: #666;
         }
-        
-        .release-gate-highlight {
+        .problem-item strong { color: #ff6b35; }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+        .metric {
+            text-align: center;
+            padding: 1rem;
+            background: #f9f9f9;
+            border-radius: 6px;
+        }
+        .metric-value { font-size: 1.8rem; font-weight: 800; color: #ff6b35; }
+        .metric-label { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+        footer {
+            border-top: 1px solid #eee;
+            padding: 2rem 0;
+            margin-top: 4rem;
+            text-align: center;
+            color: #999;
+            font-size: 0.9rem;
+        }
+        .links { margin-top: 1rem; }
+        .links a { color: #ff6b35; text-decoration: none; margin: 0 0.5rem; }
+        .links a:hover { text-decoration: underline; }
+        .pipeline {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            margin: 2rem 0;
+            font-size: 0.9rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .pipeline-step { 
+            text-align: center;
+            flex: 1;
+            min-width: 100px;
+        }
+        .pipeline-step.gate {
             background: #fff3e0;
             border: 2px solid #ff6b35;
-            border-radius: 12px;
-            padding: 1.5rem;
+            padding: 1rem;
+            border-radius: 8px;
             font-weight: 600;
             color: #d84315;
         }
-        
-        .problem-section {
-            background: #ffffff;
-        }
-        
-        .problem-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-            margin-top: 3rem;
-            max-width: 1400px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        .problem-card {
-            background: #fafbfc;
-            padding: 2.5rem;
-            border-radius: 12px;
-            border: 1px solid #e5e7eb;
-            transition: all 0.3s;
-        }
-        
-        .problem-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-            border-color: #ff6b35;
-        }
-        
-        .problem-card h3 {
-            font-size: 1.3rem;
-            margin-bottom: 1rem;
-            color: #ff6b35;
-            font-weight: 700;
-        }
-        
-        .problem-card p {
-            color: #555;
-            font-size: 0.95rem;
-            line-height: 1.7;
-        }
-        
-        .solution-section {
-            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-        }
-        
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-top: 3rem;
-            max-width: 1400px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        .feature-card {
-            padding: 1.5rem;
-            border-radius: 12px;
-            background: white;
-            border: 1px solid #e5e7eb;
-            transition: all 0.3s;
-        }
-        
-        .feature-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-            border-color: #ff6b35;
-        }
-        
-        .feature-card.primary {
-            background: linear-gradient(135deg, #fff8f5 0%, #ffe8dc 100%);
-            border: 2px solid #ff6b35;
-        }
-        
-        .feature-card h3 {
-            font-size: 1.1rem;
-            margin-bottom: 0.6rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-weight: 700;
-        }
-        
-        .feature-card p {
-            color: #555;
-            font-size: 0.85rem;
-            margin-bottom: 1rem;
-            line-height: 1.6;
-        }
-        
-        .feature-list {
-            list-style: none;
-        }
-        
-        .feature-list li {
-            color: #555;
-            font-size: 0.8rem;
-            padding: 0.4rem 0;
-            padding-left: 1.4rem;
-            position: relative;
-        }
-        
-        .feature-list li:before {
-            content: "\2713";
-            position: absolute;
-            left: 0;
-            color: #00aa00;
-            font-weight: bold;
-        }
-        
-        .demo-section {
-            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-            color: white;
-        }
-        
-        .demo-wrapper {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        
-        .demo-section .section-title {
-            color: white;
-        }
-        
-        .demo-section .section-subtitle {
-            color: #ccc;
-        }
-        
-        .tabs {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
-            border-bottom: 1px solid #444;
-            flex-wrap: wrap;
-        }
-        
-        .tab-button {
-            padding: 1rem 1.5rem;
-            background: transparent;
-            border: none;
-            color: #999;
-            cursor: pointer;
-            font-weight: 600;
-            border-bottom: 2px solid transparent;
-            transition: all 0.3s;
-            font-size: 0.95rem;
-        }
-        
-        .tab-button.active {
-            color: #ff6b35;
-            border-bottom-color: #ff6b35;
-        }
-        
-        .tab-button:hover {
-            color: #fff;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-        }
-        
-        .demo-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 3rem;
-            margin-top: 2rem;
-        }
-        
-        .demo-controls {
-            background: #2a2a2a;
-            padding: 2.5rem;
-            border-radius: 12px;
-            border: 1px solid #444;
-        }
-        
-        .demo-controls h3 {
-            margin-bottom: 2rem;
-            color: #ff6b35;
-            font-size: 1.2rem;
-            font-weight: 700;
-        }
-        
-        .control-group {
-            margin-bottom: 1.5rem;
-        }
-        
-        .control-group label {
-            display: block;
-            margin-bottom: 0.6rem;
-            font-size: 0.9rem;
-            color: #aaa;
-            font-weight: 500;
-        }
-        
-        .control-group select,
-        .control-group input {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #444;
-            background: #1a1a1a;
-            color: #fff;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            transition: all 0.3s;
-        }
-        
-        .control-group input:focus,
-        .control-group select:focus {
-            outline: none;
-            border-color: #ff6b35;
-            box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-        }
-        
-        .threshold-info {
-            background: #3a3a3a;
-            padding: 1.5rem;
-            border-radius: 8px;
-            margin-bottom: 1.5rem;
-            border-left: 3px solid #ff6b35;
-            font-size: 0.9rem;
-        }
-        
-        .threshold-info h4 {
-            color: #ff6b35;
-            margin-bottom: 0.8rem;
-            font-size: 0.95rem;
-        }
-        
-        .threshold-line {
-            color: #ccc;
-            margin: 0.5rem 0;
-            font-size: 0.85rem;
-        }
-        
-        .threshold-pass {
-            color: #00ff7f;
-        }
-        
-        .threshold-warn {
-            color: #ffff00;
-        }
-        
-        .threshold-fail {
-            color: #ff6b5a;
-        }
-        
-        .submit-button {
-            width: 100%;
-            padding: 1rem;
-            background: #ff6b35;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: all 0.3s;
-            margin-top: 1rem;
-            letter-spacing: 0.5px;
-        }
-        
-        .submit-button:hover {
-            background: #e55a1f;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(255, 107, 53, 0.3);
-        }
-        
-        .demo-output {
-            background: #1a1a1a;
-            padding: 2.5rem;
-            border-radius: 12px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.85rem;
-            line-height: 1.8;
-            border: 1px solid #444;
-            max-height: 600px;
-            overflow-y: auto;
-        }
-        
-        .demo-output .line {
-            margin-bottom: 0.7rem;
-        }
-        
-        .demo-output .header {
-            color: #fff;
-            border-bottom: 1px solid #444;
-            padding-bottom: 1rem;
-            margin-bottom: 1rem;
-            font-weight: 600;
-        }
-        
-        .demo-output .pass {
-            color: #00ff7f;
-        }
-        
-        .demo-output .warn {
-            color: #ffff00;
-        }
-        
-        .demo-output .fail {
-            color: #ff6b5a;
-        }
-        
-        .demo-output .info {
-            color: #00d4ff;
-        }
-        
-        .demo-output .section-sep {
-            color: #444;
-            margin: 1rem 0;
-        }
-        
-        .quickstart-section {
-            background: #ffffff;
-        }
-        
-        .quickstart-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            padding: 3rem;
-            border-radius: 12px;
-            border: 1px solid #e5e7eb;
-        }
-        
-        .quickstart-content h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 2rem;
-        }
-        
-        .code-block {
-            background: #1a1a1a;
-            color: #00ff7f;
-            padding: 1.5rem;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.85rem;
-            line-height: 1.8;
-            overflow-x: auto;
-            margin: 1rem 0;
-        }
-        
-        .pricing-section {
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-        }
-        
-        .pricing-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-            margin-top: 3rem;
-            max-width: 1400px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        .pricing-card {
-            background: white;
-            padding: 2.5rem;
-            border-radius: 12px;
-            border: 1px solid #e5e7eb;
-            text-align: center;
-            transition: all 0.3s;
-        }
-        
-        .pricing-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-        }
-        
-        .pricing-card h4 {
-            font-size: 1.4rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-        
-        .pricing-price {
-            font-size: 2rem;
-            font-weight: 800;
-            color: #ff6b35;
-            margin-bottom: 1rem;
-        }
-        
-        .pricing-features {
-            list-style: none;
-            margin: 1.5rem 0;
-        }
-        
-        .pricing-features li {
-            padding: 0.6rem 0;
-            color: #555;
-            font-size: 0.9rem;
-        }
-        
-        footer {
-            background: #1a1a1a;
-            color: white;
-            padding: 3rem 4rem;
-            text-align: center;
-        }
-        
-        footer p {
-            margin-bottom: 0.8rem;
-            line-height: 1.7;
-        }
-        
-        footer a {
-            color: #ff6b35;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        
-        footer a:hover {
-            text-decoration: underline;
-        }
-        
-        .footer-links {
-            display: flex;
-            gap: 2rem;
-            justify-content: center;
-            margin-top: 1.5rem;
-            flex-wrap: wrap;
-        }
-        
-        @media (max-width: 768px) {
-            nav {
-                padding: 1rem 2rem;
-                flex-direction: column;
-                gap: 1rem;
-            }
-            
-            nav div {
-                gap: 1.5rem;
-            }
-            
-            .hero {
-                padding: 3rem 2rem;
-            }
-            
-            .hero h1 {
-                font-size: 2.2rem;
-            }
-            
-            section {
-                padding: 3rem 2rem;
-            }
-            
-            .section-title {
-                font-size: 2rem;
-            }
-            
-            .demo-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .pipeline {
-                gap: 1rem;
-            }
-            
-            .pipeline-stage::after {
-                display: none;
-            }
-            
-            .cta-buttons {
-                flex-direction: column;
-            }
-            
-            .btn {
-                width: 100%;
-            }
-            
-            .features-grid {
-                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            }
+        @media (max-width: 640px) {
+            h1 { font-size: 1.8rem; }
+            .tagline { font-size: 1rem; }
+            .hero p { font-size: 1rem; }
         }
     </style>
 </head>
 <body>
-    <nav>
-        <h1>release-gate</h1>
-        <div>
-            <a onclick="scrollToSection('pipeline'); return false;">Pipeline</a>
-            <a onclick="scrollToSection('features'); return false;">Features</a>
-            <a onclick="scrollToSection('demo'); return false;">Demo</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+    <header>
+        <div class="container">
+            <h1>🚪 release-gate</h1>
+            <p class="tagline">Deployment governance for AI systems and agents</p>
         </div>
-    </nav>
-    
-    <section class="hero">
-        <h1>Your AI Agent Just Cost You <span class="hero-highlight">$50,000</span></h1>
-        <p>Without governance, AI agents can spiral to unlimited costs, exceed safety limits, and access wrong data. release-gate prevents this by validating every agent before deployment.</p>
-        <div class="cta-buttons">
-            <a onclick="scrollToSection('demo'); return false;" class="btn btn-primary">Try Interactive Demo</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn btn-secondary">View on GitHub</a>
-        </div>
-    </section>
-    
-    <section class="pipeline-section" id="pipeline">
-        <div class="pipeline-wrapper" style="max-width: 1400px; margin: 0 auto;">
-            <h2 class="section-title">Where release-gate Fits</h2>
-            <p class="section-subtitle">Validation happens between testing and deployment to catch issues before they reach production</p>
+    </header>
+
+    <div class="container">
+        <section class="hero">
+            <p><strong>Prevent cost explosions. Validate deployments. Enforce safety.</strong></p>
+            <p>Your AI agent just cost you $50,000. No warning. No limit. No governance. release-gate prevents this by validating every deployment before it goes live.</p>
             
-            <div class="pipeline">
-                <div class="pipeline-stage">
-                    <div class="stage-icon">💻</div>
-                    <div class="stage-title">Development</div>
-                    <div class="stage-desc">Write agent code</div>
+            <p style="font-size: 0.95rem; color: #999; margin-top: 1.5rem;">Open-source • CI-native • No data leaves your environment</p>
+            
+            <div>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate" class="cta">GitHub Repository</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start-5-minutes" class="cta cta-secondary">Quick Start</a>
+            </div>
+        </section>
+
+        <section>
+            <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">What It Does</h2>
+            <p style="margin-bottom: 1.5rem;">release-gate sits between testing and deployment, validating agents against 4 governance checks:</p>
+            
+            <div class="checks">
+                <div class="check">
+                    <h3>💰 ACTION_BUDGET</h3>
+                    <p>Prevent cost explosions with automatic cost estimation and daily limits.</p>
                 </div>
-                
-                <div class="pipeline-stage">
-                    <div class="stage-icon">✓</div>
-                    <div class="stage-title">Testing</div>
-                    <div class="stage-desc">Unit &amp; integration tests</div>
+                <div class="check">
+                    <h3>📋 INPUT_CONTRACT</h3>
+                    <p>Validate request schemas are defined and tested with valid/invalid samples.</p>
                 </div>
-                
-                <div class="pipeline-stage release-gate-highlight">
-                    <div class="stage-icon">🚪</div>
-                    <div class="stage-title">Governance Gate</div>
-                    <div class="stage-desc"><strong>release-gate validates here</strong></div>
+                <div class="check">
+                    <h3>⏹ FALLBACK_DECLARED</h3>
+                    <p>Ensure kill switches, fallback modes, and ownership exist.</p>
                 </div>
-                
-                <div class="pipeline-stage">
-                    <div class="stage-icon">🚀</div>
-                    <div class="stage-title">Deployment</div>
-                    <div class="stage-desc">Deploy to prod</div>
-                </div>
-                
-                <div class="pipeline-stage">
-                    <div class="stage-icon">📊</div>
-                    <div class="stage-title">Monitoring</div>
-                    <div class="stage-desc">Track metrics</div>
+                <div class="check">
+                    <h3>🔐 IDENTITY_BOUNDARY</h3>
+                    <p>Enforce authentication, rate limits, and data isolation.</p>
                 </div>
             </div>
-        </div>
-    </section>
-    
-    <section class="problem-section">
-        <div style="max-width: 1400px; margin: 0 auto;">
-            <h2 class="section-title">The Problem: Uncontrolled AI Agents</h2>
-            
-            <div class="problem-grid">
-                <div class="problem-card">
-                    <h3>Cost Explosions</h3>
-                    <p>Agents can cost unlimited amounts. One mistake = 400K/year bill with no warning.</p>
-                </div>
-                <div class="problem-card">
-                    <h3>No Safety Measures</h3>
-                    <p>No kill switches, fallback modes, or ownership. Cannot stop a runaway agent.</p>
-                </div>
-                <div class="problem-card">
-                    <h3>Invalid Requests</h3>
-                    <p>Request schemas undefined. Invalid inputs cause crashes or wrong outputs.</p>
-                </div>
-                <div class="problem-card">
-                    <h3>Access Control Missing</h3>
-                    <p>Anyone can access agents. No rate limits, authentication, or data isolation.</p>
-                </div>
-                <div class="problem-card">
-                    <h3>No Validation</h3>
-                    <p>Configurations never validated before deployment. Broken agents go live.</p>
-                </div>
-                <div class="problem-card">
-                    <h3>Late Detection</h3>
-                    <p>Problems found in production after damage done. Hard to track down causes.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-    
-    <section class="solution-section" id="features">
-        <div style="max-width: 1400px; margin: 0 auto;">
-            <h2 class="section-title">The Solution: 4 Governance Checks</h2>
-            <p class="section-subtitle">Each check validates independently. Any failure blocks deployment.</p>
-            
-            <div class="features-grid">
-                <div class="feature-card primary">
-                    <h3>ACTION_BUDGET</h3>
-                    <p>Prevents cost explosions by enforcing strict daily limits with full transparency.</p>
-                    <ul class="feature-list">
-                        <li>Cost estimation</li>
-                        <li>Smart thresholds</li>
-                        <li>Dynamic pricing</li>
-                        <li>Auto-detection</li>
-                        <li>Remediation</li>
-                    </ul>
-                </div>
-                
-                <div class="feature-card">
-                    <h3>FALLBACK</h3>
-                    <p>Ensures safety measures exist before agent goes live.</p>
-                    <ul class="feature-list">
-                        <li>Kill switch</li>
-                        <li>Fallback mode</li>
-                        <li>Team owner</li>
-                        <li>Runbook</li>
-                    </ul>
-                </div>
-                
-                <div class="feature-card">
-                    <h3>INPUT</h3>
-                    <p>Validates request schemas are defined and work correctly.</p>
-                    <ul class="feature-list">
-                        <li>Schema check</li>
-                        <li>Sample test</li>
-                        <li>Type check</li>
-                        <li>Required fields</li>
-                    </ul>
-                </div>
-                
-                <div class="feature-card">
-                    <h3>IDENTITY</h3>
-                    <p>Enforces access control, rate limits, and data isolation.</p>
-                    <ul class="feature-list">
-                        <li>Authentication</li>
-                        <li>Rate limit</li>
-                        <li>Data isolation</li>
-                        <li>Access control</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </section>
-    
-    <section class="demo-section" id="demo">
-        <div class="demo-wrapper">
-            <h2 class="section-title">Interactive Demo - Try All 4 Checks</h2>
-            <p class="section-subtitle">Configure your agent and run a simulation. See how each check validates in real-time.</p>
-            
-            <div class="tabs">
-                <button class="tab-button active" onclick="switchTab('action-budget')">ACTION_BUDGET</button>
-                <button class="tab-button" onclick="switchTab('fallback')">FALLBACK</button>
-                <button class="tab-button" onclick="switchTab('input')">INPUT</button>
-                <button class="tab-button" onclick="switchTab('identity')">IDENTITY</button>
-            </div>
-            
-            <div id="action-budget" class="tab-content active">
-                <div class="demo-container">
-                    <div class="demo-controls">
-                        <h3>Configure Agent</h3>
-                        
-                        <div class="threshold-info">
-                            <h4>PASS/WARN/FAIL Thresholds</h4>
-                            <div class="threshold-line"><span class="threshold-pass">PASS:</span> Daily cost &lt; Budget x 0.5</div>
-                            <div class="threshold-line"><span class="threshold-warn">WARN:</span> Budget x 0.5 to Budget</div>
-                            <div class="threshold-line"><span class="threshold-fail">FAIL:</span> Daily cost &gt; Budget</div>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="model">Model (any model name):</label>
-                            <input type="text" id="model" value="gpt-4-turbo" placeholder="e.g., gpt-4, claude-3, llama-70b...">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="input-price">Input Token Price (per 1M):</label>
-                            <input type="number" id="input-price" value="10" min="0.01" step="0.01" placeholder="price">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="output-price">Output Token Price (per 1M):</label>
-                            <input type="number" id="output-price" value="30" min="0.01" step="0.01" placeholder="price">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="requests">Daily Requests:</label>
-                            <input type="number" id="requests" value="500" min="1" placeholder="requests/day">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="input-tokens">Input Tokens per Request:</label>
-                            <input type="number" id="input-tokens" value="800" min="1" placeholder="tokens">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="output-tokens">Output Tokens per Request:</label>
-                            <input type="number" id="output-tokens" value="400" min="1" placeholder="tokens">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="retry-rate">Retry Rate:</label>
-                            <input type="number" id="retry-rate" value="1.0" min="1" max="5" step="0.1" placeholder="multiplier">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="budget">Daily Budget (USD):</label>
-                            <input type="number" id="budget" value="100" min="1" placeholder="amount">
-                        </div>
-                        
-                        <button class="submit-button" onclick="runDemoActionBudget()">Run Simulation</button>
-                    </div>
-                    
-                    <div class="demo-output" id="action-budget-output">
-                        <div class="header">Run Simulation to see results</div>
-                        <div class="line info">Configure your agent above and submit to validate.</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="fallback" class="tab-content">
-                <div class="demo-container">
-                    <div class="demo-controls">
-                        <h3>Configure Safety</h3>
-                        
-                        <div class="threshold-info">
-                            <h4>PASS/FAIL Thresholds</h4>
-                            <div class="threshold-line"><span class="threshold-pass">PASS:</span> All fields configured</div>
-                            <div class="threshold-line"><span class="threshold-fail">FAIL:</span> Any field missing</div>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="kill-switch">Kill Switch Type:</label>
-                            <select id="kill-switch">
-                                <option value="feature-flag">Feature Flag</option>
-                                <option value="api-endpoint">API Endpoint</option>
-                                <option value="database-flag">Database Flag</option>
-                                <option value="none">None (WILL FAIL)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="fallback-mode">Fallback Mode:</label>
-                            <select id="fallback-mode">
-                                <option value="escalate-human">Escalate to Human</option>
-                                <option value="queue">Queue for Review</option>
-                                <option value="circuit-breaker">Circuit Breaker</option>
-                                <option value="none">None (WILL FAIL)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="team-name">Team Owner:</label>
-                            <input type="text" id="team-name" value="ai-platform" placeholder="e.g., ai-platform-team">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="runbook">Runbook URL:</label>
-                            <input type="text" id="runbook" value="https://wiki.company.com/runbook" placeholder="URL">
-                        </div>
-                        
-                        <button class="submit-button" onclick="runDemoFallback()">Run Simulation</button>
-                    </div>
-                    
-                    <div class="demo-output" id="fallback-output">
-                        <div class="header">Run Simulation to see results</div>
-                        <div class="line info">Configure safety measures and submit to validate.</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="input" class="tab-content">
-                <div class="demo-container">
-                    <div class="demo-controls">
-                        <h3>Configure Input Contract</h3>
-                        
-                        <div class="threshold-info">
-                            <h4>PASS/FAIL Thresholds</h4>
-                            <div class="threshold-line"><span class="threshold-pass">PASS:</span> Schema is defined</div>
-                            <div class="threshold-line"><span class="threshold-fail">FAIL:</span> Schema not defined</div>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="required-fields">Required Fields (comma-separated):</label>
-                            <input type="text" id="required-fields" value="user_query,context_id" placeholder="field1,field2,...">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="schema-defined">Schema Defined:</label>
-                            <select id="schema-defined">
-                                <option value="yes">Yes</option>
-                                <option value="no">No (WILL FAIL)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="valid-samples">Valid Samples Tested:</label>
-                            <input type="number" id="valid-samples" value="5" min="0" placeholder="count">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="invalid-samples">Invalid Samples Tested:</label>
-                            <input type="number" id="invalid-samples" value="3" min="0" placeholder="count">
-                        </div>
-                        
-                        <button class="submit-button" onclick="runDemoInput()">Run Simulation</button>
-                    </div>
-                    
-                    <div class="demo-output" id="input-output">
-                        <div class="header">Run Simulation to see results</div>
-                        <div class="line info">Configure schema requirements and submit to validate.</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="identity" class="tab-content">
-                <div class="demo-container">
-                    <div class="demo-controls">
-                        <h3>Configure Access Control</h3>
-                        
-                        <div class="threshold-info">
-                            <h4>PASS/FAIL Thresholds</h4>
-                            <div class="threshold-line"><span class="threshold-pass">PASS:</span> Auth on + Rate &gt; 0 + Isolation set</div>
-                            <div class="threshold-line"><span class="threshold-fail">FAIL:</span> Any requirement missing</div>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="auth-required">Authentication Required:</label>
-                            <select id="auth-required">
-                                <option value="yes">Yes</option>
-                                <option value="no">No (WILL FAIL)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="rate-limit">Rate Limit (req/min):</label>
-                            <input type="number" id="rate-limit" value="10" min="0" placeholder="requests/minute">
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="data-isolation">Data Isolation:</label>
-                            <select id="data-isolation">
-                                <option value="customer-only">Customer Data Only</option>
-                                <option value="role-based">Role-Based Access</option>
-                                <option value="encrypted">Encrypted Transit</option>
-                                <option value="none">None (WILL FAIL)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="control-group">
-                            <label for="auth-type">Authentication Type:</label>
-                            <input type="text" id="auth-type" value="OAuth 2.0" placeholder="e.g., OAuth 2.0, JWT...">
-                        </div>
-                        
-                        <button class="submit-button" onclick="runDemoIdentity()">Run Simulation</button>
-                    </div>
-                    
-                    <div class="demo-output" id="identity-output">
-                        <div class="header">Run Simulation to see results</div>
-                        <div class="line info">Configure access control and submit to validate.</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-    
-    <section class="quickstart-section">
-        <div class="quickstart-content">
-            <h3>Quick Start - 5 Minutes</h3>
-            
-            <div class="code-block">
+        </section>
+
+        <section>
+            <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">Install & Try (5 minutes)</h2>
+            <div class="install-box">
+                <code>
 $ pip install release-gate
-            </div>
-            
-            <div class="code-block">
-# Create governance.yaml
+
+$ cat > governance.yaml << EOF
 project:
   name: my-agent
 
 agent:
   model: gpt-4-turbo
+  daily_requests: 500
 
 checks:
   action_budget:
     max_daily_cost: 100
-            </div>
-            
-            <div class="code-block">
-$ release-gate check --config governance.yaml
+EOF
 
-PASS - All 4 checks passed. Deploy with confidence.
+$ release-gate run governance.yaml
+                </code>
             </div>
-        </div>
-    </section>
-    
-    <section class="pricing-section">
-        <div style="max-width: 1400px; margin: 0 auto;">
-            <h2 class="section-title">Simple Pricing</h2>
-            
-            <div class="pricing-grid">
-                <div class="pricing-card">
-                    <h4>Free</h4>
-                    <div class="pricing-price">$0</div>
-                    <div class="pricing-price" style="font-size: 0.9rem; color: #666;">/month</div>
-                    <ul class="pricing-features">
-                        <li>All 4 checks</li>
-                        <li>CLI tool</li>
-                        <li>Self-hosted</li>
-                        <li>Up to 5 agents</li>
-                    </ul>
+
+            <div class="demo">
+                <strong>Example: PASS (Deployment allowed)</strong>
+                <pre>
+┌──────────────────────────────────────┐
+│ 🚪 release-gate: Governance Check   │
+├──────────────────────────────────────┤
+
+💰 ACTION_BUDGET: ✓ PASS
+   Daily Cost: $12.50
+   Budget: $100.00
+   Safety Margin: 8.0x
+
+📋 INPUT_CONTRACT: ✓ PASS
+⏹ FALLBACK_DECLARED: ✓ PASS
+🔐 IDENTITY_BOUNDARY: ✓ PASS
+
+✅ FINAL DECISION: PASS
+   Safe to deploy
+└──────────────────────────────────────┘
+                </pre>
+            </div>
+
+            <div class="demo">
+                <strong>Example: FAIL (Deployment blocked)</strong>
+                <pre>
+┌──────────────────────────────────────┐
+│ 🚪 release-gate: Governance Check   │
+├──────────────────────────────────────┤
+
+💰 ACTION_BUDGET: ✗ FAIL
+   Daily Cost: $250.00
+   Budget: $100.00
+   Overage: $150.00/day
+
+⏹ FALLBACK_DECLARED: ✗ FAIL
+   Missing: kill switch configuration
+
+✗ FINAL DECISION: FAIL
+   Fix issues before deploying
+└──────────────────────────────────────┘
+                </pre>
+            </div>
+        </section>
+
+        <section>
+            <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">Why It Matters</h2>
+            <div class="problem">
+                <div class="problem-item"><strong>Cost Explosions:</strong> Agents can spiral to $400K/year with no warning.</div>
+                <div class="problem-item"><strong>No Safety:</strong> No kill switches or fallback modes if agent goes wrong.</div>
+                <div class="problem-item"><strong>No Validation:</strong> Configurations never validated before deployment.</div>
+                <div class="problem-item"><strong>Late Detection:</strong> Problems found in production after damage done.</div>
+            </div>
+
+            <h3 style="font-size: 1.1rem; margin-top: 2rem; margin-bottom: 1rem;">Impact</h3>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value">4</div>
+                    <div class="metric-label">Governance checks</div>
                 </div>
-                
-                <div class="pricing-card">
-                    <h4>Pro</h4>
-                    <div class="pricing-price">$99</div>
-                    <div class="pricing-price" style="font-size: 0.9rem; color: #666;">/month</div>
-                    <ul class="pricing-features">
-                        <li>Free + Dashboard</li>
-                        <li>GitHub Actions</li>
-                        <li>Slack integration</li>
-                        <li>Up to 50 agents</li>
-                    </ul>
+                <div class="metric">
+                    <div class="metric-value">&lt;1s</div>
+                    <div class="metric-label">Validation time</div>
                 </div>
-                
-                <div class="pricing-card">
-                    <h4>Enterprise</h4>
-                    <div class="pricing-price">Custom</div>
-                    <div class="pricing-price" style="font-size: 0.9rem; color: #666;">/month</div>
-                    <ul class="pricing-features">
-                        <li>Pro + SSO</li>
-                        <li>RBAC controls</li>
-                        <li>Audit trails</li>
-                        <li>Priority support</li>
-                    </ul>
+                <div class="metric">
+                    <div class="metric-value">✓</div>
+                    <div class="metric-label">Zero dependencies</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value">↓</div>
+                    <div class="metric-label">Prevent incidents</div>
                 </div>
             </div>
-        </div>
-    </section>
-    
+        </section>
+
+        <section>
+            <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">Where It Fits</h2>
+            <div class="pipeline">
+                <div class="pipeline-step">Development</div>
+                <div style="color: #999;">→</div>
+                <div class="pipeline-step">Testing</div>
+                <div style="color: #999;">→</div>
+                <div class="pipeline-step gate">release-gate<br><small>Validates here</small></div>
+                <div style="color: #999;">→</div>
+                <div class="pipeline-step">Deployment</div>
+                <div style="color: #999;">→</div>
+                <div class="pipeline-step">Monitoring</div>
+            </div>
+        </section>
+
+        <section style="background: #f9f9f9; padding: 2rem; border-radius: 8px; margin: 3rem 0;">
+            <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">Get Started Now</h2>
+            <p style="margin-bottom: 1.5rem;"><strong>release-gate is free and open-source.</strong> Try it with your first agent:</p>
+            <ol style="margin-left: 1.5rem; margin-bottom: 1.5rem;">
+                <li>Install: <code style="background: #f0f0f0; padding: 0.2rem 0.4rem; border-radius: 3px;">pip install release-gate</code></li>
+                <li>Create a config file with your agent details</li>
+                <li>Run: <code style="background: #f0f0f0; padding: 0.2rem 0.4rem; border-radius: 3px;">release-gate run governance.yaml</code></li>
+                <li>See PASS/FAIL decision with clear explanation</li>
+            </ol>
+            <p><a href="https://github.com/VamsiSudhakaran1/release-gate#quick-start-5-minutes" class="cta">View Full Documentation</a></p>
+        </section>
+    </div>
+
     <footer>
-        <p><strong>release-gate v0.3</strong></p>
-        <p>Governance Enforcement for AI Agents</p>
-        <div class="footer-links">
-            <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate/issues">Issues</a>
-            <a href="https://github.com/VamsiSudhakaran1/release-gate/discussions">Discussions</a>
+        <div class="container">
+            <p><strong>release-gate v0.3</strong> — Governance enforcement for AI agents</p>
+            <p>Built by <a href="https://github.com/VamsiSudhakaran1">Vamsi Sudhakaran</a></p>
+            <div class="links">
+                <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate/issues">Issues</a>
+                <a href="https://github.com/VamsiSudhakaran1/release-gate/discussions">Discussions</a>
+            </div>
+            <p style="margin-top: 1rem;">Prevent cost explosions. Enforce governance. Deploy with confidence.</p>
         </div>
-        <p style="margin-top: 2rem; color: #999; font-size: 0.85rem;">Prevent cost explosions. Enforce safety. Deploy with confidence.</p>
     </footer>
-    
-    <script>
-        function scrollToSection(id) {
-            const element = document.getElementById(id);
-            if (element) {
-                element.scrollIntoView({ behavior: 'smooth' });
-            }
-        }
-        
-        function switchTab(tabName) {
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            document.querySelectorAll('.tab-button').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            const tab = document.getElementById(tabName);
-            if (tab) {
-                tab.classList.add('active');
-            }
-            
-            event.target.classList.add('active');
-        }
-        
-        function runDemoActionBudget() {
-            const model = document.getElementById('model').value || 'custom-model';
-            const inputPrice = parseFloat(document.getElementById('input-price').value) || 10;
-            const outputPrice = parseFloat(document.getElementById('output-price').value) || 30;
-            const requests = parseInt(document.getElementById('requests').value) || 500;
-            const inputTokens = parseInt(document.getElementById('input-tokens').value) || 800;
-            const outputTokens = parseInt(document.getElementById('output-tokens').value) || 400;
-            const retryRate = parseFloat(document.getElementById('retry-rate').value) || 1.0;
-            const budget = parseFloat(document.getElementById('budget').value) || 100;
-            
-            const inputCostPerToken = inputPrice / 1000000;
-            const outputCostPerToken = outputPrice / 1000000;
-            
-            const dailyInputCost = inputTokens * inputCostPerToken * requests * retryRate;
-            const dailyOutputCost = outputTokens * outputCostPerToken * requests * retryRate;
-            const dailyTotal = dailyInputCost + dailyOutputCost;
-            const monthlyTotal = dailyTotal * 30;
-            
-            const autoApproveThreshold = budget * 0.5;
-            let status = 'PASS';
-            let statusClass = 'pass';
-            
-            if (dailyTotal > budget) {
-                status = 'FAIL';
-                statusClass = 'fail';
-            } else if (dailyTotal > autoApproveThreshold) {
-                status = 'WARN';
-                statusClass = 'warn';
-            }
-            
-            let output = '<div class="header">ACTION_BUDGET Check Results</div>';
-            output += '<div class="line info">Model: ' + model + '</div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line"><strong class="' + statusClass + '">Status: ' + status + '</strong></div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line">Daily Cost: $' + dailyTotal.toFixed(2) + '</div>';
-            output += '<div class="line">Monthly Cost: $' + monthlyTotal.toFixed(2) + '</div>';
-            output += '<div class="line">Annual Cost: $' + (monthlyTotal * 12).toFixed(2) + '</div>';
-            output += '<div class="line">Budget: $' + budget.toFixed(2) + '</div>';
-            output += '<div class="line">Auto-approve threshold: $' + autoApproveThreshold.toFixed(2) + '</div>';
-            output += '<div class="line section-sep"></div>';
-            
-            if (status === 'PASS') {
-                output += '<div class="line pass">Cost under auto-approve threshold</div>';
-                output += '<div class="line pass">Safe to deploy immediately</div>';
-            } else if (status === 'WARN') {
-                output += '<div class="line warn">Cost between threshold and budget</div>';
-                output += '<div class="line warn">Needs manual approval from team lead</div>';
-            } else {
-                output += '<div class="line fail">Cost exceeds budget</div>';
-                output += '<div class="line fail">Deployment blocked - fix configuration</div>';
-            }
-            
-            document.getElementById('action-budget-output').innerHTML = output;
-        }
-        
-        function runDemoFallback() {
-            const killSwitch = document.getElementById('kill-switch').value;
-            const fallbackMode = document.getElementById('fallback-mode').value;
-            const teamName = document.getElementById('team-name').value;
-            const runbook = document.getElementById('runbook').value;
-            
-            let status = 'PASS';
-            let statusClass = 'pass';
-            
-            if (killSwitch === 'none' || fallbackMode === 'none' || !teamName || !runbook) {
-                status = 'FAIL';
-                statusClass = 'fail';
-            }
-            
-            let output = '<div class="header">FALLBACK_DECLARED Check Results</div>';
-            output += '<div class="line info">Safety Measures Validation</div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line"><strong class="' + statusClass + '">Status: ' + status + '</strong></div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line">Kill Switch: ' + killSwitch + (killSwitch === 'none' ? ' (FAIL)' : ' (OK)') + '</div>';
-            output += '<div class="line">Fallback Mode: ' + fallbackMode + (fallbackMode === 'none' ? ' (FAIL)' : ' (OK)') + '</div>';
-            output += '<div class="line">Team Owner: ' + (teamName ? teamName + ' (OK)' : '(NOT SET - FAIL)') + '</div>';
-            output += '<div class="line">Runbook: ' + (runbook ? '(OK)' : '(NOT SET - FAIL)') + '</div>';
-            output += '<div class="line section-sep"></div>';
-            
-            if (status === 'PASS') {
-                output += '<div class="line pass">All safety measures in place</div>';
-                output += '<div class="line pass">Agent can be stopped if needed</div>';
-            } else {
-                output += '<div class="line fail">Missing required safety measures</div>';
-            }
-            
-            document.getElementById('fallback-output').innerHTML = output;
-        }
-        
-        function runDemoInput() {
-            const requiredFields = document.getElementById('required-fields').value;
-            const schemaDefined = document.getElementById('schema-defined').value;
-            const validSamples = parseInt(document.getElementById('valid-samples').value) || 0;
-            const invalidSamples = parseInt(document.getElementById('invalid-samples').value) || 0;
-            
-            let status = 'PASS';
-            let statusClass = 'pass';
-            
-            if (schemaDefined === 'no') {
-                status = 'FAIL';
-                statusClass = 'fail';
-            }
-            
-            let output = '<div class="header">INPUT_CONTRACT Check Results</div>';
-            output += '<div class="line info">Request Schema Validation</div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line"><strong class="' + statusClass + '">Status: ' + status + '</strong></div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line">Schema Defined: ' + (schemaDefined === 'yes' ? '(OK)' : '(FAIL)') + '</div>';
-            output += '<div class="line">Required Fields: ' + requiredFields + '</div>';
-            output += '<div class="line">Valid Samples Tested: ' + validSamples + '</div>';
-            output += '<div class="line">Invalid Samples Tested: ' + invalidSamples + '</div>';
-            output += '<div class="line section-sep"></div>';
-            
-            if (status === 'PASS') {
-                output += '<div class="line pass">Schema properly defined</div>';
-                output += '<div class="line pass">Request validation ready</div>';
-            } else {
-                output += '<div class="line fail">Schema must be defined</div>';
-            }
-            
-            document.getElementById('input-output').innerHTML = output;
-        }
-        
-        function runDemoIdentity() {
-            const authRequired = document.getElementById('auth-required').value;
-            const rateLimit = parseInt(document.getElementById('rate-limit').value) || 0;
-            const dataIsolation = document.getElementById('data-isolation').value;
-            const authType = document.getElementById('auth-type').value;
-            
-            let status = 'PASS';
-            let statusClass = 'pass';
-            
-            if (authRequired === 'no' || rateLimit === 0 || dataIsolation === 'none') {
-                status = 'FAIL';
-                statusClass = 'fail';
-            }
-            
-            let output = '<div class="header">IDENTITY_BOUNDARY Check Results</div>';
-            output += '<div class="line info">Access Control Validation</div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line"><strong class="' + statusClass + '">Status: ' + status + '</strong></div>';
-            output += '<div class="line section-sep"></div>';
-            output += '<div class="line">Authentication: ' + (authRequired === 'yes' ? '(OK)' : '(FAIL)') + ' (' + authType + ')</div>';
-            output += '<div class="line">Rate Limit: ' + rateLimit + ' req/min ' + (rateLimit > 0 ? '(OK)' : '(FAIL)') + '</div>';
-            output += '<div class="line">Data Isolation: ' + dataIsolation + (dataIsolation !== 'none' ? ' (OK)' : ' (FAIL)') + '</div>';
-            output += '<div class="line section-sep"></div>';
-            
-            if (status === 'PASS') {
-                output += '<div class="line pass">Access control configured</div>';
-                output += '<div class="line pass">Data protection enabled</div>';
-            } else {
-                output += '<div class="line fail">Missing access control measures</div>';
-            }
-            
-            document.getElementById('identity-output').innerHTML = output;
-        }
-    </script>
 </body>
 </html>
