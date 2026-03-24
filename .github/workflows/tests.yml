@@ -1,4 +1,3 @@
-```yaml
 name: Tests
 
 on: [push, pull_request]
@@ -26,4 +25,3 @@ jobs:
     - name: Run tests
       run: |
         python tests/test_release_gate.py
-```
