@@ -24,8 +24,3 @@ jobs:
     
     - name: Run tests
       run: |
-<<<<<<< HEAD
-        python tests/test_release_gate.py
-=======
-        python tests/test_release_gate.py
->>>>>>> cc3c2a021e2a9fa8eedce6a2167766c75e0b67f3
