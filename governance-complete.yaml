@@ -13,6 +13,17 @@ agent:
   avg_output_tokens: 400
   retry_rate: 1.1
 
+# Policy section: Define what's critical vs flexible
+# fail_on: Checks that BLOCK deployment if they fail
+# warn_on: Checks that WARN but don't block if they fail
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+    - IDENTITY_BOUNDARY
+  warn_on:
+    - INPUT_CONTRACT
+    
 checks:
   # PRIMARY: Cost control with approval thresholds
   action_budget:

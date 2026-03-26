@@ -1,0 +1,60 @@
+# governance-working.yaml
+# Complete config that passes all policy checks
+
+project:
+  name: demo-agent
+  description: "Demo AI agent with complete governance"
+
+agent:
+  model: gpt-4-turbo
+  daily_requests: 500
+  avg_input_tokens: 800
+  avg_output_tokens: 400
+
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+  warn_on:
+    - IDENTITY_BOUNDARY
+    - INPUT_CONTRACT
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 100
+  
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: "feature-flag"
+      location: "config/kill-switches"
+    fallback_mode: "escalate-to-human"
+    team_owner: "platform-team"
+    runbook_url: "https://wiki.example.com/runbook"
+  
+  identity_boundary:
+    enabled: true
+    authentication:
+      required: true
+      type: "oauth2"
+    rate_limit:
+      requests_per_minute: 10
+      burst_allowed: false
+    data_isolation:
+      - "customer_id isolation"
+  
+  input_contract:
+    enabled: true
+    schema:
+      type: "object"
+      required:
+        - "user_query"
+      properties:
+        user_query:
+          type: "string"
+    samples:
+      valid:
+        - user_query: "What is the weather?"
+      invalid:
+        - user_query: ""

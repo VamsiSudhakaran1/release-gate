@@ -13,6 +13,16 @@ agent:
   avg_output_tokens: 300
   retry_rate: 1.0
 
+# New: Policy section (optional)
+# If not included, defaults to strict (all checks must pass)
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+  warn_on:
+    - IDENTITY_BOUNDARY
+    - INPUT_CONTRACT
+    
 checks:
   # PRIMARY: Cost control (REQUIRED)
   action_budget:

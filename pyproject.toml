@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "release-gate"
+version = "0.3.1"
+description = "Governance enforcement for AI agents - Prevent cost explosions, ensure safety measures, and enforce access control before deployment."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Vamsi Sudhakaran", email = "vamsi.sudhakaran@gmail.com"}
+]
+keywords = ["ai", "governance", "cost-control", "safety", "deployment"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+release-gate = "release_gate.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/VamsiSudhakaran1/release-gate"
+Documentation = "https://github.com/VamsiSudhakaran1/release-gate#readme"
+Repository = "https://github.com/VamsiSudhakaran1/release-gate"
+Issues = "https://github.com/VamsiSudhakaran1/release-gate/issues"
+
+[tool.setuptools]
+packages = ["release_gate", "release_gate.checks", "release_gate.pricing"]
+
+[tool.setuptools.package-data]
+release_gate = ["*.yaml", "*.json"]
