@@ -4,7 +4,7 @@
 
 [![GitHub License](https://img.shields.io/github/license/VamsiSudhakaran1/release-gate)](LICENSE)
 [![Tests](https://github.com/VamsiSudhakaran1/release-gate/actions/workflows/tests.yml/badge.svg)](https://github.com/VamsiSudhakaran1/release-gate/actions)
-[![PyPI Version](https://img.shields.io/pypi/v/release-gate)](https://pypi.org/project/release-gate/)
+[![PyPI Version](https://img.shields.io/pypi/v/release-gate?v=1)](https://pypi.org/project/release-gate/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
 ## The Problem It Solves
