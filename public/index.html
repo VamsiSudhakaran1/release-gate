@@ -96,8 +96,8 @@
         }
         
         h3 {
-            font-size: 24px;
-            margin: 40px 0 20px 0;
+            font-size: 20px;
+            margin: 30px 0 15px 0;
             font-weight: 600;
         }
         
@@ -243,56 +243,6 @@
             line-height: 1.7;
         }
         
-        .init-section {
-            background: #e8f5e9;
-            border-left: 4px solid #1b5e20;
-            padding: 40px;
-            border-radius: 8px;
-            margin: 40px 0;
-        }
-        
-        .init-section h3 {
-            color: #1b5e20;
-            margin-top: 0;
-        }
-        
-        .init-section p {
-            color: #1b5e20;
-            margin: 15px 0 0 0;
-            font-weight: 500;
-        }
-        
-        .comparison {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 40px;
-            margin: 40px 0;
-        }
-        
-        .comparison h4 {
-            font-size: 18px;
-            margin-bottom: 20px;
-            font-weight: 600;
-        }
-        
-        .comparison ul {
-            list-style: none;
-        }
-        
-        .comparison li {
-            padding: 10px 0;
-            font-size: 14px;
-            color: #666;
-            border-bottom: 1px solid #f0f0f0;
-        }
-        
-        .comparison li:before {
-            content: "✓ ";
-            color: #1b5e20;
-            font-weight: bold;
-            margin-right: 10px;
-        }
-        
         .demo-tabs {
             display: flex;
             gap: 20px;
@@ -361,6 +311,74 @@
             color: #aaaaaa;
         }
         
+        .pipeline-diagram {
+            background: #f5f5f5;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 40px;
+            margin: 40px 0;
+            text-align: center;
+            font-family: 'Monaco', monospace;
+            font-size: 14px;
+        }
+        
+        .enterprise-section {
+            background: #f0f4ff;
+            border-left: 4px solid #1565c0;
+            padding: 40px;
+            border-radius: 8px;
+            margin: 40px 0;
+        }
+        
+        .enterprise-section h3 {
+            color: #1565c0;
+            margin-top: 0;
+        }
+        
+        .roadmap-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin: 40px 0;
+        }
+        
+        .roadmap-card {
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 25px;
+            background: #fafafa;
+        }
+        
+        .roadmap-card h4 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        
+        .roadmap-card ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .roadmap-card li {
+            padding: 8px 0;
+            font-size: 14px;
+            color: #666;
+            border-bottom: 1px solid #e5e5e5;
+        }
+        
+        .roadmap-card li:last-child {
+            border-bottom: none;
+        }
+        
+        .roadmap-card li:before {
+            content: "✓ ";
+            color: #1b5e20;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
         footer {
             background: #1a1a1a;
             color: white;
@@ -408,8 +426,9 @@
                 <div class="logo">🚪 release-gate</div>
                 <ul class="nav-links">
                     <li><a href="#features">Features</a></li>
-                    <li><a href="#setup">Setup</a></li>
-                    <li><a href="#checks">Checks</a></li>
+                    <li><a href="#demo">Demo</a></li>
+                    <li><a href="#pipeline">Pipeline</a></li>
+                    <li><a href="#enterprise">Enterprise</a></li>
                     <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank">GitHub</a></li>
                 </ul>
             </nav>
@@ -419,198 +438,35 @@
     <section class="hero">
         <div class="container">
             <h1>Governance for AI Agents</h1>
-            <p class="tagline">Cost control, safety enforcement, and access governance before your agent deploys. One command to set it all up.</p>
+            <p class="tagline">Validate cost, safety, and access before your agent deploys. Sits in your CI/CD pipeline. Zero infrastructure.</p>
             
             <div class="hero-buttons">
                 <a href="https://github.com/VamsiSudhakaran1/release-gate" class="button-primary">Get Started</a>
-                <a href="#setup" class="button-secondary">View Setup</a>
+                <a href="#demo" class="button-secondary">See Examples</a>
             </div>
             
             <div class="hero-image">
-                <pre>$ release-gate init
+                <pre>$ release-gate run governance.yaml
 
-🚪 release-gate: Project Initialization Wizard
-================================================
-Welcome! Let's set up governance for your AI agent.
+🚪 release-gate: Governance Validation
+================================================================================
 
-📋 STEP 1: Project Details
-Project name [my-agent]: my-awesome-agent
+CHECK                    STATUS   IMPACT
+──────────────────────────────────────
+ACTION_BUDGET            ✓ PASS   —
+BUDGET_SIMULATION        ✓ PASS   —
+FALLBACK_DECLARED        ✓ PASS   —
+IDENTITY_BOUNDARY        ✓ PASS   —
+INPUT_CONTRACT           ✓ PASS   —
 
-🤖 STEP 2: Agent Configuration
-Select AI model:
-  1. gpt-4-turbo (OpenAI)
-  2. gpt-4 (OpenAI)
-  ...
-Select option [1]: 1
-
-💰 STEP 3: Budget Configuration
-Max daily cost (USD) [100]: 50
-
-📊 STEP 4: Usage Simulation
-Expected requests per day [1000]: 500
-
-🛡️ STEP 5: Safety Configuration
-Team owner [platform-team]: my-team
-Runbook URL: https://wiki.example.com/runbook
-
-🔄 STEP 6: CI/CD Integration
-Select CI/CD platform:
-  1. GitHub Actions
-  2. GitLab CI
-  3. Jenkins
-  4. Other
-Select option [1]: 1
-
-========================================================
-✅ Configuration Complete!
-📝 Generating files...
-✓ Created governance.yaml
-✓ Created GOVERNANCE.md
-✓ Created CI/CD config
-
-🚀 Setup Complete! Ready to deploy.
-========================================================</pre>
+✅ FINAL DECISION: PASS
+All checks passed. Safe to deploy.
+================================================================================ </pre>
             </div>
         </div>
     </section>
 
     <section id="features">
-        <div class="container">
-            <h2>Why release-gate?</h2>
-            
-            <div class="features">
-                <div class="feature">
-                    <h3>⚡ One Command Setup</h3>
-                    <p>Run `release-gate init` and answer 6 questions. Complete governance in 5 minutes. No manual configuration.</p>
-                </div>
-                
-                <div class="feature">
-                    <h3>💰 Budget Simulation</h3>
-                    <p>Project realistic costs before deployment. Accounts for retries, caching, and peak usage. Works with 10+ models.</p>
-                </div>
-                
-                <div class="feature">
-                    <h3>⚡ Policy Engine</h3>
-                    <p>Define what's critical (blocks deployment) vs. flexible (needs review). Zero infrastructure. Runs in CI/CD.</p>
-                </div>
-                
-                <div class="feature">
-                    <h3>🔒 Access Control</h3>
-                    <p>Enforce authentication, rate limiting, and data isolation. Identity boundaries that stick.</p>
-                </div>
-                
-                <div class="feature">
-                    <h3>🛡️ Safety First</h3>
-                    <p>Require fallback modes, kill switches, and runbooks. Never deploy without an escape hatch.</p>
-                </div>
-                
-                <div class="feature">
-                    <h3>✅ Contract Validation</h3>
-                    <p>Validate input schemas against samples. Catch configuration errors early.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section id="setup">
-        <div class="container">
-            <h2>Setup in 3 Commands</h2>
-            
-            <div class="code-block"><code>pip install release-gate
-release-gate init
-git push</code></div>
-
-            <h3>Interactive Setup Wizard</h3>
-            
-            <div class="init-section">
-                <h3>One Command to Set Everything Up</h3>
-                <p>The init command asks 6 simple questions and generates your complete governance configuration.</p>
-            </div>
-
-            <h3>What Gets Generated</h3>
-            
-            <div class="comparison">
-                <div>
-                    <h4>Before Init</h4>
-                    <ul>
-                        <li>Manual YAML creation</li>
-                        <li>Learn 5 checks</li>
-                        <li>Research model pricing</li>
-                        <li>Write CI/CD config</li>
-                        <li>30+ minutes setup</li>
-                    </ul>
-                </div>
-                
-                <div>
-                    <h4>After Init</h4>
-                    <ul>
-                        <li>Interactive questionnaire</li>
-                        <li>Auto-configured checks</li>
-                        <li>Built-in pricing data</li>
-                        <li>Auto-generated CI/CD</li>
-                        <li>5 minutes setup</li>
-                    </ul>
-                </div>
-            </div>
-
-            <h3>Init Command Steps</h3>
-
-            <p style="color: #666; margin: 20px 0;">Run the command and follow the interactive prompts:</p>
-
-            <div class="code-block"><code># Step 1: Initialize
-release-gate init
-
-# Step 2: Answer 6 questions
-# - Project name
-# - AI model (10+ options)
-# - Daily budget
-# - Requests per day
-# - Tokens per request
-# - Team owner & runbook
-# - CI/CD platform
-
-# Step 3: Auto-generates
-# ✓ governance.yaml (fully configured)
-# ✓ GOVERNANCE.md (documentation)
-# ✓ .github/workflows/release-gate.yml (GitHub Actions)
-#   or .gitlab-ci.yml (GitLab CI)
-#   or Jenkinsfile (Jenkins)
-# ✓ Updated .gitignore
-
-# Step 4: Deploy
-git add governance.yaml GOVERNANCE.md .github/
-git commit -m "feat: add release-gate governance"
-git push
-
-# CI/CD pipeline automatically runs on every push!</code></div>
-
-            <h3>CI/CD Platform Support</h3>
-            
-            <div class="checks-grid">
-                <div class="check-card">
-                    <h4>GitHub Actions</h4>
-                    <p>Init creates `.github/workflows/release-gate.yml` with full integration. Run on every push and PR.</p>
-                </div>
-                
-                <div class="check-card">
-                    <h4>GitLab CI</h4>
-                    <p>Init creates `.gitlab-ci.yml` with governance stage. Integrated with merge request workflows.</p>
-                </div>
-                
-                <div class="check-card">
-                    <h4>Jenkins</h4>
-                    <p>Init creates `Jenkinsfile` pipeline. Works with existing Jenkins infrastructure.</p>
-                </div>
-                
-                <div class="check-card">
-                    <h4>Manual / Other</h4>
-                    <p>Just creates `governance.yaml`. You handle CI/CD integration yourself.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section id="checks">
         <div class="container">
             <h2>The 5 Governance Checks</h2>
             
@@ -622,7 +478,7 @@ git push
                 
                 <div class="check-card">
                     <h4>🎯 BUDGET_SIMULATION</h4>
-                    <p>Project costs realistically. Accounts for retries, caching, spiky usage. Daily/monthly/annual estimates.</p>
+                    <p>Project costs realistically. Accounts for retries, caching, spiky usage. Works with 10+ models.</p>
                 </div>
                 
                 <div class="check-card">
@@ -640,41 +496,250 @@ git push
                     <p>Validate schemas. Define required inputs and validate against samples.</p>
                 </div>
             </div>
+
+            <h3>Why This Matters</h3>
+            <p style="color: #666; margin: 20px 0 0 0;">AI agents can cost thousands per day and fail in production. release-gate sits between tests and deployment to catch problems early: runaway costs, missing safety measures, and access control gaps.</p>
+        </div>
+    </section>
+
+    <section id="demo">
+        <div class="container">
+            <h2>See It In Action</h2>
+            
+            <div class="demo-tabs">
+                <button class="demo-tab active" onclick="showDemo('pass')">✅ Passing</button>
+                <button class="demo-tab" onclick="showDemo('fail')">❌ Failed</button>
+                <button class="demo-tab" onclick="showDemo('warn')">⚠️ Warnings</button>
+            </div>
+
+            <!-- PASSING -->
+            <div id="pass" class="demo-content active">
+                <h3>All Checks Pass: Deployment Approved</h3>
+                
+                <div class="output-container">
+                    <div class="output-line">$ release-gate run governance.yaml</div>
+                    <div class="output-line">================================================================================</div>
+                    <div class="output-line pass">🚪 release-gate: Governance Validation</div>
+                    <div class="output-line">================================================================================</div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="pass">CHECK                    STATUS   IMPACT</span></div>
+                    <div class="output-line">────────────────────────────────────────</div>
+                    <div class="output-line"><span class="pass">ACTION_BUDGET            ✓ PASS   —</span></div>
+                    <div class="output-line"><span class="pass">BUDGET_SIMULATION        ✓ PASS   —</span></div>
+                    <div class="output-line"><span class="pass">FALLBACK_DECLARED        ✓ PASS   —</span></div>
+                    <div class="output-line"><span class="pass">IDENTITY_BOUNDARY        ✓ PASS   —</span></div>
+                    <div class="output-line"><span class="pass">INPUT_CONTRACT           ✓ PASS   —</span></div>
+                    <div class="output-line">────────────────────────────────────────</div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="pass">✅ FINAL DECISION: PASS</span></div>
+                    <div class="output-line"><span class="pass">All checks passed. Safe to deploy.</span></div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="pass">💰 BUDGET SIMULATION:</span></div>
+                    <div class="output-line"><span class="pass">   Daily Cost: $12.50 / Budget: $100.00 / Safety: 8.00x</span></div>
+                    <div class="output-line">================================================================================</div>
+                </div>
+            </div>
+
+            <!-- FAILING -->
+            <div id="fail" class="demo-content">
+                <h3>Critical Failures: Deployment Blocked</h3>
+                
+                <div class="output-container">
+                    <div class="output-line">$ release-gate run governance.yaml</div>
+                    <div class="output-line">================================================================================</div>
+                    <div class="output-line fail">🚪 release-gate: Governance Validation</div>
+                    <div class="output-line">================================================================================</div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="fail">CHECK                    STATUS   IMPACT</span></div>
+                    <div class="output-line">────────────────────────────────────────</div>
+                    <div class="output-line"><span class="fail">ACTION_BUDGET            ✗ FAIL   CRITICAL</span></div>
+                    <div class="output-line"><span class="fail">BUDGET_SIMULATION        ✗ FAIL   CRITICAL</span></div>
+                    <div class="output-line"><span class="fail">FALLBACK_DECLARED        ✗ FAIL   CRITICAL</span></div>
+                    <div class="output-line"><span class="fail">IDENTITY_BOUNDARY        ✗ FAIL   CRITICAL</span></div>
+                    <div class="output-line"><span class="pass">INPUT_CONTRACT           ✓ PASS   —</span></div>
+                    <div class="output-line">────────────────────────────────────────</div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="fail">❌ FINAL DECISION: FAIL</span></div>
+                    <div class="output-line"><span class="fail">Deployment blocked. Fix critical issues first.</span></div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="fail">❌ BUDGET_SIMULATION: Daily cost $600 exceeds $50 budget</span></div>
+                    <div class="output-line"><span class="fail">❌ FALLBACK_DECLARED: Missing fallback mode and runbook</span></div>
+                    <div class="output-line"><span class="fail">❌ IDENTITY_BOUNDARY: Authentication not required</span></div>
+                    <div class="output-line">================================================================================</div>
+                </div>
+            </div>
+
+            <!-- WARNINGS -->
+            <div id="warn" class="demo-content">
+                <h3>Warnings: Needs Review</h3>
+                
+                <div class="output-container">
+                    <div class="output-line">$ release-gate run governance.yaml</div>
+                    <div class="output-line">================================================================================</div>
+                    <div class="output-line warn">🚪 release-gate: Governance Validation</div>
+                    <div class="output-line">================================================================================</div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="warn">CHECK                    STATUS   IMPACT</span></div>
+                    <div class="output-line">────────────────────────────────────────</div>
+                    <div class="output-line"><span class="fail">ACTION_BUDGET            ✗ FAIL   CRITICAL</span></div>
+                    <div class="output-line"><span class="warn">BUDGET_SIMULATION        ⚠ WARN   HIGH</span></div>
+                    <div class="output-line"><span class="pass">FALLBACK_DECLARED        ✓ PASS   —</span></div>
+                    <div class="output-line"><span class="warn">IDENTITY_BOUNDARY        ⚠ WARN   HIGH</span></div>
+                    <div class="output-line"><span class="pass">INPUT_CONTRACT           ✓ PASS   —</span></div>
+                    <div class="output-line">────────────────────────────────────────</div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="fail">❌ FINAL DECISION: FAIL</span></div>
+                    <div class="output-line"><span class="fail">Critical check failed. Budget must be adjusted.</span></div>
+                    <div class="output-line"></div>
+                    <div class="output-line"><span class="warn">⚠️ WARNINGS: Non-critical checks need review</span></div>
+                    <div class="output-line"><span class="warn">   Budget using 85% of daily limit (tight margin)</span></div>
+                    <div class="output-line"><span class="warn">   Rate limiting not configured</span></div>
+                    <div class="output-line">================================================================================</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="pipeline">
+        <div class="container">
+            <h2>Where It Sits: The Deployment Pipeline</h2>
+            
+            <div class="pipeline-diagram">
+                <pre>Development → Testing → release-gate ← [DECISION] → Deployment → Production
+                              ↓
+                    ✅ All checks pass
+                    ⚠️ Warnings (review)
+                    ❌ Fails (fix first)</pre>
+            </div>
+
+            <p style="color: #666; text-align: center; margin: 20px 0;">release-gate sits in your CI/CD pipeline between tests and deployment. It's the governance gate that decides: "Is this safe to deploy?"</p>
+
+            <h3>How It Works</h3>
+            
+            <div class="code-block"><code># In your CI/CD pipeline (.github/workflows, .gitlab-ci.yml, Jenkinsfile)
+
+1. Run tests (your existing test suite)
+2. Run release-gate checks
+   - release-gate run governance.yaml
+   - If exit code 1: FAIL (block deployment)
+   - If exit code 10: WARN (needs approval)
+   - If exit code 0: PASS (deploy)
+3. Deploy to production (only if pass/approved)</code></div>
+
+            <h3>Quick Setup</h3>
+            
+            <div class="code-block"><code># One command to set it all up
+pip install release-gate
+release-gate init
+
+# Answers 6 questions, generates:
+# - governance.yaml (your configuration)
+# - .github/workflows/release-gate.yml (or .gitlab-ci.yml / Jenkinsfile)
+# - GOVERNANCE.md (documentation)
+
+# Commit and push - you're done!
+git push</code></div>
+        </div>
+    </section>
+
+    <section id="enterprise">
+        <div class="container">
+            <h2>For Enterprise Teams</h2>
+
+            <div class="enterprise-section">
+                <h3>How Enterprises Use release-gate</h3>
+                <p>Sit release-gate in your deployment pipeline to enforce governance across all AI agent deployments. Define policies by team, environment, or risk level.</p>
+            </div>
+
+            <h3>Common Enterprise Scenarios</h3>
+
+            <div class="checks-grid">
+                <div class="check-card">
+                    <h4>Cost Control at Scale</h4>
+                    <p>Enforce per-agent daily budgets across all teams. Prevent runaway costs from affecting other projects.</p>
+                </div>
+                
+                <div class="check-card">
+                    <h4>Compliance & Audit</h4>
+                    <p>Ensure every agent has documented fallbacks, runbooks, and ownership. Export governance evidence for audits.</p>
+                </div>
+                
+                <div class="check-card">
+                    <h4>Team Autonomy</h4>
+                    <p>Let teams self-serve with flexible policies. Critical checks block, non-critical checks warn.</p>
+                </div>
+                
+                <div class="check-card">
+                    <h4>Zero Infrastructure</h4>
+                    <p>Runs in CI/CD. No backend, no dashboards, no user management. Pure governance in code.</p>
+                </div>
+            </div>
+
+            <h3>Enterprise Example: Multi-Team Policy</h3>
+
+            <div class="code-block"><code># Production: Strict
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - BUDGET_SIMULATION
+    - FALLBACK_DECLARED
+    - IDENTITY_BOUNDARY
+
+# Development: Flexible
+policy:
+  fail_on:
+    - ACTION_BUDGET
+  warn_on:
+    - FALLBACK_DECLARED
+    - IDENTITY_BOUNDARY</code></div>
+
+            <h3>What's Coming</h3>
+
+            <div class="roadmap-grid">
+                <div class="roadmap-card">
+                    <h4>Current</h4>
+                    <ul>
+                        <li>5 governance checks</li>
+                        <li>Budget simulation (10+ models)</li>
+                        <li>Policy engine</li>
+                        <li>Multi-platform CI/CD</li>
+                        <li>Interactive setup wizard</li>
+                    </ul>
+                </div>
+                
+                <div class="roadmap-card">
+                    <h4>Next (v0.5)</h4>
+                    <ul>
+                        <li>Action scope (allowed tools)</li>
+                        <li>Ownership enforcement</li>
+                        <li>Deployment fingerprinting</li>
+                        <li>GitHub PR integration</li>
+                    </ul>
+                </div>
+                
+                <div class="roadmap-card">
+                    <h4>Future (v0.6+)</h4>
+                    <ul>
+                        <li>Constraint engine</li>
+                        <li>Proof mode (verification)</li>
+                        <li>Enterprise dashboards</li>
+                        <li>Policy packs (templates)</li>
+                    </ul>
+                </div>
+            </div>
         </div>
     </section>
 
     <section>
         <div class="container">
-            <h2>Running Validation</h2>
+            <h2>Get Started Now</h2>
             
-            <h3>Local Testing</h3>
-            <div class="code-block"><code>release-gate run governance.yaml
+            <h3>3 Commands</h3>
+            <div class="code-block"><code>pip install release-gate
+release-gate init
+git push</code></div>
 
-# Exit codes:
-# 0 = PASS (deploy)
-# 10 = WARN (review needed)
-# 1 = FAIL (fix first)</code></div>
-
-            <h3>Example Output</h3>
-            <div class="output-container">
-                <div class="output-line">$ release-gate run governance.yaml</div>
-                <div class="output-line">================================================================================</div>
-                <div class="output-line pass">🚪 release-gate: Governance Validation</div>
-                <div class="output-line">================================================================================</div>
-                <div class="output-line"></div>
-                <div class="output-line"><span class="pass">CHECK                    STATUS   IMPACT</span></div>
-                <div class="output-line">────────────────────────────────────────────────────────────────</div>
-                <div class="output-line"><span class="pass">ACTION_BUDGET            ✓ PASS   —</span></div>
-                <div class="output-line"><span class="pass">BUDGET_SIMULATION        ✓ PASS   —</span></div>
-                <div class="output-line"><span class="pass">FALLBACK_DECLARED        ✓ PASS   —</span></div>
-                <div class="output-line"><span class="pass">IDENTITY_BOUNDARY        ✓ PASS   —</span></div>
-                <div class="output-line"><span class="pass">INPUT_CONTRACT           ✓ PASS   —</span></div>
-                <div class="output-line">────────────────────────────────────────────────────────────────</div>
-                <div class="output-line"></div>
-                <div class="output-line"><span class="pass">✅ FINAL DECISION: PASS</span></div>
-                <div class="output-line"><span class="pass">All checks passed. Safe to deploy.</span></div>
-                <div class="output-line">================================================================================</div>
-            </div>
+            <p style="color: #666; text-align: center; margin-top: 20px;">The init command asks 6 questions and generates your complete governance setup. Takes 5 minutes.</p>
         </div>
     </section>
 
