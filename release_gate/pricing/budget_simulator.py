@@ -82,6 +82,26 @@ class BudgetSimulator:
             retry_rate = factors.get('retry_rate', 1.0)
             cache_hit_rate = factors.get('cache_hit_rate', 0.0)
             spiky_usage = factors.get('spiky_usage_multiplier', 1.0)
+
+            # Validate factor ranges
+            if not (1.0 <= retry_rate <= 10.0):
+                return {
+                    'status': 'FAIL',
+                    'error': f'retry_rate must be between 1.0 and 10.0, got {retry_rate}',
+                    'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                }
+            if not (0.0 <= cache_hit_rate <= 1.0):
+                return {
+                    'status': 'FAIL',
+                    'error': f'cache_hit_rate must be between 0.0 and 1.0, got {cache_hit_rate}',
+                    'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                }
+            if not (1.0 <= spiky_usage <= 20.0):
+                return {
+                    'status': 'FAIL',
+                    'error': f'spiky_usage_multiplier must be between 1.0 and 20.0, got {spiky_usage}',
+                    'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                }
             
             # Get pricing
             pricing = self.get_pricing(model)

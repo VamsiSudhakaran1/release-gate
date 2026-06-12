@@ -1,17 +1,13 @@
 """INPUT_CONTRACT Check - Validates request schemas are defined"""
 import json
+from typing import Dict, Any
 
 
 class InputContractCheck:
     """Validates that input schemas are defined and tested"""
-    
-    def evaluate(self, config):
-        """
-        Evaluate INPUT_CONTRACT check
-        
-        Returns:
-            dict: {status, evidence}
-        """
+
+    def evaluate(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Evaluate INPUT_CONTRACT check."""
         checks_config = config.get('checks', {})
         input_config = checks_config.get('input_contract', {})
         

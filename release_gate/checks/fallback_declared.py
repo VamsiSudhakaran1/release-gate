@@ -1,16 +1,12 @@
 """FALLBACK_DECLARED Check - Ensures safety measures exist"""
+from typing import Dict, Any
 
 
 class FallbackDeclaredCheck:
     """Validates that kill switches and fallback modes are declared"""
-    
-    def evaluate(self, config):
-        """
-        Evaluate FALLBACK_DECLARED check
-        
-        Returns:
-            dict: {status, evidence}
-        """
+
+    def evaluate(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Evaluate FALLBACK_DECLARED check."""
         checks_config = config.get('checks', {})
         fallback_config = checks_config.get('fallback_declared', {})
         

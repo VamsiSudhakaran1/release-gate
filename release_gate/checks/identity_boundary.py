@@ -1,16 +1,12 @@
 """IDENTITY_BOUNDARY Check - Enforces access control and rate limits"""
+from typing import Dict, Any
 
 
 class IdentityBoundaryCheck:
     """Validates authentication, rate limits, and data isolation"""
-    
-    def evaluate(self, config):
-        """
-        Evaluate IDENTITY_BOUNDARY check
-        
-        Returns:
-            dict: {status, evidence}
-        """
+
+    def evaluate(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Evaluate IDENTITY_BOUNDARY check."""
         checks_config = config.get('checks', {})
         identity_config = checks_config.get('identity_boundary', {})
         

@@ -44,19 +44,23 @@ class TestBudgetSimulatorBasic:
         assert result['costs']['daily'] > 100
     
     def test_simulation_warns_at_70_percent(self):
-        """Test WARN status at 70% of budget"""
+        """Test WARN status at 70% of budget.
+
+        gpt-4-turbo: $10/1M input + $30/1M output = $0.04/request (1k tokens each)
+        17500 requests/day × $0.04 = $700/day = 70% of $1000 budget → WARN
+        """
         config = {
             'agent': {'model': 'gpt-4-turbo'},
             'simulation': {
-                'requests_per_day': 1750,
+                'requests_per_day': 18000,
                 'tokens_per_request': {'input': 1000, 'output': 1000},
             },
-            'budget': {'max_daily_cost': 1000}  # Higher budget so 1750 requests = ~70%
+            'budget': {'max_daily_cost': 1000}
         }
-        
+
         simulator = BudgetSimulator()
         result = simulator.simulate(config)
-        
+
         assert result['status'] == 'WARN'
         assert result['budget']['usage_percent'] >= 70
         assert result['budget']['usage_percent'] < 100

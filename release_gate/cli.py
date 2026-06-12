@@ -7,6 +7,7 @@ import sys
 import yaml
 import json
 from pathlib import Path
+from typing import Dict, Any
 
 # Add package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -42,11 +43,83 @@ except ImportError:
     CRYPTO_AVAILABLE = False
 
 
-def load_config(config_path):
+GOVERNANCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "project": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        },
+        "agent": {
+            "type": "object",
+            "properties": {
+                "model": {"type": "string"},
+                "daily_requests": {"type": "number", "minimum": 0},
+                "avg_input_tokens": {"type": "number", "minimum": 1},
+                "avg_output_tokens": {"type": "number", "minimum": 1},
+                "retry_rate": {"type": "number", "minimum": 1.0, "maximum": 10.0},
+            },
+        },
+        "checks": {
+            "type": "object",
+            "properties": {
+                "action_budget": {
+                    "type": "object",
+                    "properties": {
+                        "max_daily_cost": {"type": "number", "minimum": 0},
+                    },
+                },
+                "fallback_declared": {
+                    "type": "object",
+                    "properties": {
+                        "team_owner": {"type": "string", "minLength": 1},
+                        "runbook_url": {"type": "string", "minLength": 1},
+                    },
+                },
+            },
+        },
+        "simulation": {
+            "type": "object",
+            "properties": {
+                "factors": {
+                    "type": "object",
+                    "properties": {
+                        "retry_rate": {"type": "number", "minimum": 1.0, "maximum": 10.0},
+                        "cache_hit_rate": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                        "spiky_usage_multiplier": {"type": "number", "minimum": 1.0, "maximum": 20.0},
+                    },
+                },
+            },
+        },
+        "policy": {
+            "type": "object",
+            "properties": {
+                "fail_on": {"type": "array", "items": {"type": "string"}},
+                "warn_on": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+}
+
+
+def validate_config(config: Dict[str, Any]) -> None:
+    """Validate governance config structure; exits on error."""
+    try:
+        import jsonschema
+        jsonschema.validate(instance=config, schema=GOVERNANCE_SCHEMA)
+    except ImportError:
+        pass  # jsonschema not installed; skip validation
+    except jsonschema.ValidationError as e:
+        print(f"Error: Invalid governance config — {e.message} (at {' -> '.join(str(p) for p in e.path)})")
+        sys.exit(1)
+
+
+def load_config(config_path: str) -> Dict[str, Any]:
     """Load and parse governance config from YAML"""
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
+        validate_config(config)
         return config
     except FileNotFoundError:
         print(f"Error: Config file not found: {config_path}")
