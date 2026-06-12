@@ -43,7 +43,7 @@ Repository = "https://github.com/VamsiSudhakaran1/release-gate"
 Issues = "https://github.com/VamsiSudhakaran1/release-gate/issues"
 
 [tool.setuptools]
-packages = ["release_gate", "release_gate.checks", "release_gate.pricing"]
+packages = ["release_gate", "release_gate.checks", "release_gate.pricing", "release_gate.crypto"]
 
 [tool.setuptools.package-data]
 release_gate = ["*.yaml", "*.json"]

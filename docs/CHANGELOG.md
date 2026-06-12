@@ -2,6 +2,40 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.5.0] - 2026-06-12
+
+### ✨ Features
+
+- **Cryptographic Governance Signing**: RSA-PSS + SHA256 signatures lock `governance.yaml` against post-review tampering
+  - `release-gate validate-and-lock --sign` creates `.release-gate-proof.json` and `.governance.sig`
+  - `release-gate validate-and-lock --verify` validates signature and hash in CI
+  - `release_gate.crypto` package bundled inside the main package (no separate install required)
+
+- **Config Schema Validation**: `governance.yaml` is validated against a JSON Schema at load time
+  - Invalid field types, negative budgets, and out-of-range values produce clear error messages before any check runs
+  - Uses `jsonschema` (already a dependency); gracefully skips if not installed
+
+- **Simulation Parameter Bounds Checking**: Nonsensical multiplier values now produce a `FAIL` with a descriptive message
+  - `retry_rate`: must be 1.0 – 10.0
+  - `cache_hit_rate`: must be 0.0 – 1.0
+  - `spiky_usage_multiplier`: must be 1.0 – 20.0
+
+- **Comprehensive Test Suite**: 75 unit and integration tests covering all 5 checks, the policy engine, and the budget simulator
+  - `tests/test_checks.py`: full coverage for `ActionBudgetCheck`, `FallbackDeclaredCheck`, `IdentityBoundaryCheck`, `InputContractCheck`, `BudgetSimulationBounds`, and end-to-end integration
+
+### 🔧 Fixes
+
+- **Version sync**: `__init__.py`, `setup.py`, and `pyproject.toml` now all report `0.5.0`; `__version__` is read dynamically via `importlib.metadata`
+- **test_crypto.py imports**: fixed from bare `governance_signer`/`governance_verifier` to `release_gate.crypto.governance_signer`/`release_gate.crypto.governance_verifier`
+- **WARN threshold test**: corrected `test_simulation_warns_at_70_percent` to use a request count that actually exceeds 70% of budget
+
+### 📦 Internal
+
+- Added type hints (`Dict[str, Any]`) to all public `evaluate()` methods in check modules
+- `release_gate.crypto` package now declared in `pyproject.toml` package list
+
+---
+
 ## [0.2.0] - 2026-03-17
 
 ### ✨ Features

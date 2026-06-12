@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="release-gate",
-    version="0.3.0",
+    version="0.5.0",
     description="Governance enforcement for AI agents",
     author="Vamsi Sudhakaran",
     author_email="vamsi.sudhakaran@gmail.com",
@@ -12,7 +12,7 @@ setup(
         "pyyaml>=6.0",
         "jsonschema>=4.0",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     entry_points={
         "console_scripts": [
             "release-gate=release_gate.cli:main",

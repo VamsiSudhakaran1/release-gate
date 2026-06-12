@@ -18,8 +18,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 
-from governance_signer import GovernanceSigner, sign_and_lock_governance
-from governance_verifier import GovernanceVerifier, verify_governance_integrity
+from release_gate.crypto.governance_signer import GovernanceSigner, sign_and_lock_governance
+from release_gate.crypto.governance_verifier import GovernanceVerifier, verify_governance_integrity
 
 
 @pytest.fixture
