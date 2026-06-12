@@ -1,0 +1,86 @@
+# governance-safe-pass.yaml
+# Demo: Safe deployment — all checks pass
+# Run: release-gate impact examples/governance-safe-pass.yaml
+
+project:
+  name: customer-support-agent
+  version: 1.0.0
+  description: AI customer support agent with full governance
+
+agent:
+  model: gpt-4-turbo
+  daily_requests: 5000
+  avg_input_tokens: 800
+  avg_output_tokens: 400
+  retry_rate: 1.1
+
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+    - IDENTITY_BOUNDARY
+  warn_on:
+    - INPUT_CONTRACT
+    - BUDGET_SIMULATION
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 500
+
+  budget_simulation:
+    enabled: true
+
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: feature-flag
+      name: disable_ai_support
+    fallback_mode: human-handoff
+    team_owner: platform-team
+    runbook_url: https://wiki.example.com/runbooks/ai-support
+
+  identity_boundary:
+    enabled: true
+    authentication:
+      required: true
+      type: jwt
+    rate_limit:
+      requests_per_minute: 30
+    data_isolation:
+      - tenant_id
+      - user_id
+
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required:
+        - message
+        - session_id
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        session_id:
+          type: string
+    samples:
+      valid:
+        - {message: "I need help with my order", session_id: "sess_123"}
+      invalid:
+        - {}
+        - {message: ""}
+
+simulation:
+  requests_per_day: 5000
+  tokens_per_request:
+    input: 800
+    output: 400
+  factors:
+    retry_rate: 1.1
+    cache_hit_rate: 0.2
+    spiky_usage_multiplier: 1.5
+
+budget:
+  max_daily_cost: 500

@@ -1,0 +1,84 @@
+name: "release-gate"
+description: "Governance enforcement for AI agents — prevent cost explosions, enforce safety measures, and validate access control before deployment."
+author: "Vamsi Sudhakaran"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  config:
+    description: "Path to governance.yaml"
+    required: false
+    default: "governance.yaml"
+  command:
+    description: "Command to run: 'run' (governance checks) or 'impact' (Impact Simulator)"
+    required: false
+    default: "run"
+  html-report:
+    description: "If set, write an HTML impact report to this path (e.g. report.html)"
+    required: false
+    default: ""
+  output-evidence:
+    description: "If set, write detailed JSON evidence to this path"
+    required: false
+    default: ""
+  fail-on-warn:
+    description: "Exit with code 1 on WARN as well as FAIL (default: false)"
+    required: false
+    default: "false"
+  python-version:
+    description: "Python version to use"
+    required: false
+    default: "3.11"
+
+outputs:
+  decision:
+    description: "PASS, WARN, or BLOCK/FAIL"
+  daily-cost:
+    description: "Estimated daily cost in USD (from Impact Simulator)"
+  runaway-cost:
+    description: "Runaway scenario daily cost in USD"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install release-gate
+      shell: bash
+      run: pip install release-gate --quiet
+
+    - name: Run release-gate ${{ inputs.command }}
+      id: gate
+      shell: bash
+      run: |
+        EXTRA_FLAGS=""
+        if [ -n "${{ inputs.html-report }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --html-report ${{ inputs.html-report }}"
+        fi
+        if [ -n "${{ inputs.output-evidence }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --output-evidence ${{ inputs.output-evidence }}"
+        fi
+
+        set +e
+        release-gate ${{ inputs.command }} ${{ inputs.config }} $EXTRA_FLAGS
+        EXIT_CODE=$?
+        set -e
+
+        # Exit code 10 = WARN. Treat as failure only if fail-on-warn is true.
+        if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then
+          echo "Decision: WARN (allowed — set fail-on-warn: true to block)"
+          exit 0
+        fi
+        exit $EXIT_CODE
+
+    - name: Upload HTML report
+      if: inputs.html-report != '' && always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-gate-report
+        path: ${{ inputs.html-report }}

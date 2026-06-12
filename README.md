@@ -10,9 +10,45 @@
 
 ## What is release-gate?
 
-release-gate sits between your tests and your deployment. It validates that your AI agent meets governance requirements before it goes live.
+release-gate sits between your tests and your deployment. It validates that your AI agent meets governance requirements before it goes live — and **shows you the money at risk** if it doesn't.
 
 **No infrastructure. No complex setup. One command to set it all up.**
+
+```
+$ release-gate impact governance.yaml
+
+  release-gate  |  Impact Simulator
+  ════════════════════════════════════════════════════════════════════════
+
+  Model            gpt-4 (OpenAI)
+  Requests/day     10,000
+  Tokens/request   2,000 in + 800 out
+
+  ────────────────────────────────────────────────────────────────────────
+  Scenario                            Daily       Monthly          Annual
+  ────────────────────────────────────────────────────────────────────────
+    Normal operation             $ 1,080.00  $  32,400.00  $   394,200.00
+  ! Runaway loop (15x retries + 5x traffic) $54,000.00  $1,620,000.00  $19,710,000.00
+  ────────────────────────────────────────────────────────────────────────
+  * Risk delta (money at stake)  $52,920.00  $1,587,600.00  $19,051,200.00
+
+  Budget cap       $200.00/day   [✗ FAIL]  (headroom: $-880.00/day)
+
+  GOVERNANCE GAPS — Business Impact
+  ────────────────────────────────────────────────────────────────────────
+  1. [FALLBACK_DECLARED] KILL_SWITCH not declared
+     → No way to stop a runaway agent — manual intervention required
+  2. [FALLBACK_DECLARED] TEAM_OWNER not declared
+     → No owner means no one gets paged when costs spike at 3 AM
+  3. [IDENTITY_BOUNDARY] RATE_LIMIT not declared
+     → No rate limit — a single client can exhaust budget in minutes
+  4. [ACTION_BUDGET] MAX_DAILY_COST not declared
+     → Unlimited spend — no circuit breaker on daily cost
+
+  FINAL VERDICT:  ✗  BLOCKED
+```
+
+**Engineering leaders see money, not YAML warnings.**
 
 ## Quick Start
 
@@ -45,6 +81,24 @@ That's it! Governance is now active on every push and PR.
 - **🔑 Cryptographic Signing** *(v0.5)* - RSA-PSS + SHA256 signatures lock governance.yaml against tampering
 - **🧪 Config Schema Validation** - YAML structure validated at load time with clear error messages
 - **⚙️ Simulation Bounds Checking** - Invalid multiplier values (`retry_rate`, `cache_hit_rate`) are caught before they produce nonsensical cost projections
+
+---
+
+## Commands
+
+| Command | What it does |
+|---------|-------------|
+| `release-gate impact <config.yaml>` | **Impact Simulator** — shows normal cost, runaway-loop cost, money at risk, and governance gaps with business impact |
+| `release-gate run <config.yaml>` | Governance checks — PASS/WARN/FAIL with exit codes for CI |
+| `release-gate init` | Interactive setup wizard |
+| `release-gate validate-and-lock` | Cryptographic signing/verification (v0.5) |
+
+### Flags
+| Flag | Description |
+|------|-------------|
+| `--html-report <file.html>` | Write self-contained HTML impact report (ideal for CI artifacts) |
+| `--output-evidence <file.json>` | Save full JSON evidence |
+| `--fail-on-warn` | Treat WARN as FAIL in CI (GitHub Action only) |
 
 ---
 
@@ -84,65 +138,6 @@ release-gate init
 - ✓ CI/CD pipeline config - Platform-specific
 - ✓ Updated `.gitignore`
 
-**Example interaction:**
-
-```
-🚪 release-gate: Project Initialization Wizard
-================================================
-
-📋 STEP 1: Project Details
-Project name [my-agent]: my-awesome-agent
-
-🤖 STEP 2: Agent Configuration
-Select AI model:
-  1. gpt-4-turbo (OpenAI)
-  2. gpt-4 (OpenAI)
-  3. gpt-3.5-turbo (OpenAI)
-  4. claude-3-opus (Anthropic)
-  5. claude-3-sonnet (Anthropic)
-  ...
-Select option [1]: 1
-✓ Model: gpt-4-turbo
-
-💰 STEP 3: Budget Configuration
-Max daily cost (USD) [100]: 50
-✓ Budget: $50.00/day
-
-📊 STEP 4: Usage Simulation
-Expected requests per day [1000]: 500
-Average input tokens per request [800]: 800
-Average output tokens per request [400]: 400
-
-🛡️ STEP 5: Safety Configuration
-Team owner [platform-team]: my-team
-Runbook URL [https://...]: https://wiki.example.com/runbook
-
-🔄 STEP 6: CI/CD Integration
-Select CI/CD platform:
-  1. GitHub Actions
-  2. GitLab CI
-  3. Jenkins
-  4. Other / Manual
-Select option [1]: 1
-✓ CI/CD: GitHub Actions
-
-========================================================
-✅ Configuration Complete!
-📝 Generating files...
-✓ Created governance.yaml
-✓ Created GOVERNANCE.md
-✓ Created .github/workflows/release-gate.yml
-
-🚀 Setup Complete! Ready to deploy.
-========================================================
-
-Next steps:
-  1. Review governance.yaml
-  2. Commit files to git
-  3. Push to repository
-  4. Test with: release-gate run governance.yaml
-```
-
 ---
 
 ### Option 2: Manual Setup (Advanced)
@@ -172,15 +167,6 @@ checks:
 
   budget_simulation:
     enabled: true
-    simulation:
-      requests_per_day: 1000
-      tokens_per_request:
-        input: 800
-        output: 400
-      factors:
-        retry_rate: 1.2        # 20% retries
-        cache_hit_rate: 0.3    # 30% cache hits
-        spiky_usage_multiplier: 1.5  # Peak is 50% higher
 
   fallback_declared:
     enabled: true
@@ -225,67 +211,47 @@ checks:
 release-gate run governance.yaml
 ```
 
-**Output:**
-
-```
-================================================================================
-🚪 release-gate: Governance Validation
-================================================================================
-
-CHECK                    STATUS   IMPACT
-──────────────────────────────────────────────────────────────
-ACTION_BUDGET            ✓ PASS   —
-BUDGET_SIMULATION        ✓ PASS   —
-FALLBACK_DECLARED        ✓ PASS   —
-IDENTITY_BOUNDARY        ✓ PASS   —
-INPUT_CONTRACT           ✓ PASS   —
-
-──────────────────────────────────────────────────────────────
-
-✅ FINAL DECISION: PASS
-All checks passed. Safe to deploy.
-
-💰 BUDGET SIMULATION DETAILS:
-   Model: gpt-4-turbo
-   Daily Cost: $12.50
-   Monthly Cost: $375.00
-   Annual Cost: $4,562.50
-   Budget: $100.00/day
-   Safety Margin: 8.00x
-   Usage: 12.5% of budget
-
-================================================================================
-```
-
 ---
 
 ## CI/CD Integration
 
 ### GitHub Actions
 
-Init creates `.github/workflows/release-gate.yml`:
+Add release-gate to any AI agent repo in 5 lines:
 
 ```yaml
-name: release-gate Governance Check
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
-
-jobs:
-  governance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-      - run: pip install release-gate
-      - run: release-gate run governance.yaml
+# .github/workflows/governance.yml
+- name: release-gate Impact Check
+  uses: VamsiSudhakaran1/release-gate@v0.5.0
+  with:
+    config: governance.yaml
+    command: impact
+    html-report: report.html   # uploaded as CI artifact automatically
 ```
 
-### GitLab CI
+The HTML report is uploaded as a CI artifact on every run — give your team a live dashboard of cost risk without leaving GitHub.
 
-Init creates `.gitlab-ci.yml`:
+### Full options
+
+```yaml
+- uses: VamsiSudhakaran1/release-gate@v0.5.0
+  with:
+    config: governance.yaml       # default: governance.yaml
+    command: impact               # or: run
+    html-report: report.html      # optional HTML report
+    output-evidence: evidence.json # optional JSON evidence
+    fail-on-warn: "true"          # treat WARN as failure (default: false)
+    python-version: "3.11"        # default: 3.11
+```
+
+### Demo scenarios
+
+| Config | Expected result |
+|--------|----------------|
+| `examples/governance-safe-pass.yaml` | ✓ APPROVED — full governance |
+| `examples/governance-unsafe-fail.yaml` | ✗ BLOCKED — missing kill switch, rate limit, budget cap |
+
+### GitLab CI
 
 ```yaml
 governance:
@@ -298,8 +264,6 @@ governance:
 ```
 
 ### Jenkins
-
-Init creates `Jenkinsfile`:
 
 ```groovy
 pipeline {
@@ -329,51 +293,10 @@ The Budget Simulation Engine projects realistic costs by accounting for:
 
 ### Supported Models
 
-**OpenAI:**
-- gpt-4-turbo ($10 input, $30 output per 1M tokens)
-- gpt-4 ($30 input, $60 output)
-- gpt-3.5-turbo ($0.50 input, $1.50 output)
-
-**Anthropic:**
-- claude-3-opus ($15 input, $75 output)
-- claude-3-sonnet ($3 input, $15 output)
-- claude-3-haiku ($0.25 input, $1.25 output)
-
-**Google:**
-- gemini-2.0-flash ($0.075 input, $0.3 output)
-
-**XAI (Grok):**
-- grok-2 ($2 input, $10 output)
-- grok-3 ($5 input, $15 output)
-
-### Example: Cost Projection
-
-```yaml
-simulation:
-  requests_per_day: 1000
-  tokens_per_request:
-    input: 800
-    output: 400
-  factors:
-    retry_rate: 1.2
-    cache_hit_rate: 0.3
-    spiky_usage_multiplier: 1.5
-```
-
-**Calculation:**
-
-```
-Daily input tokens: 1000 * 800 * 1.2 * (1-0.3) * 1.5 = 1,008,000
-Daily output tokens: 1000 * 400 * 1.2 * (1-0.3) * 1.5 = 504,000
-
-Input cost: 1,008,000 / 1,000,000 * $10 = $10.08
-Output cost: 504,000 / 1,000,000 * $30 = $15.12
-
-Daily cost: $25.20
-Monthly cost: $756
-Annual cost: $9,198
-Safety margin: 3.97x
-```
+**OpenAI:** gpt-4-turbo, gpt-4, gpt-3.5-turbo
+**Anthropic:** claude-3-opus, claude-3-sonnet, claude-3-haiku
+**Google:** gemini-2.0-flash
+**XAI (Grok):** grok-2, grok-3
 
 ---
 
@@ -399,114 +322,22 @@ policy:
 
 ---
 
-## Use Cases
-
-### Startup with Limited Budget
-```yaml
-policy:
-  fail_on:
-    - ACTION_BUDGET
-    - BUDGET_SIMULATION
-```
-Strict cost control before anything else.
-
-### Enterprise with Safety Requirements
-```yaml
-policy:
-  fail_on:
-    - FALLBACK_DECLARED
-    - IDENTITY_BOUNDARY
-    - ACTION_BUDGET
-```
-Safety and access control are non-negotiable.
-
-### Development Team
-```yaml
-policy:
-  fail_on:
-    - ACTION_BUDGET
-  warn_on:
-    - FALLBACK_DECLARED
-    - IDENTITY_BOUNDARY
-```
-Cost matters most, other issues get warnings.
-
----
-
-## FAQ
-
-**Q: Do I need to use init?**
-A: No. You can write `governance.yaml` manually. But init is much faster (5 minutes vs 30 minutes).
-
-**Q: Does release-gate require a backend?**
-A: No. Zero infrastructure. Runs entirely in your CI/CD pipeline.
-
-**Q: Does it send data to external services?**
-A: No. All pricing is built-in. No external API calls. Privacy-first.
-
-**Q: Can I customize the checks?**
-A: Yes. Each check can be enabled/disabled and configured in `governance.yaml`.
-
-**Q: What models does Budget Simulation support?**
-A: 10+ models out-of-the-box. Custom models can be added with custom pricing.
-
-**Q: How accurate is the cost projection?**
-A: Medium confidence. Actual costs depend on real usage patterns. Monitor and adjust after deployment.
-
-**Q: Can I use this with custom models?**
-A: Yes. Register custom pricing programmatically or in configuration.
-
----
-
-## Roadmap
-
-### Current ✅
-- Init command with interactive wizard
-- Budget Simulation Engine (10+ models)
-- Policy Engine (fail_on vs warn_on)
-- All 5 checks working
-- Impact reporting
-- Multi-platform CI/CD
-
-### Next
-- Action Scope Declared (allowed/blocked tools)
-- Ownership Enforced (team + oncall)
-- Deployment Fingerprint (reproducibility)
-- GitHub PR bot integration
-
-### Future
-- Runtime integration hooks
-- Constraint engine (symbolic rules)
-- Enterprise dashboards
-- Policy packs for industries
-
----
-
 ## Cryptographic Governance (v0.5)
 
 Lock your `governance.yaml` against post-review tampering using RSA-PSS + SHA256.
 
-### Generate a key pair
-
 ```bash
+# Generate a key pair (one-time setup)
 openssl genrsa -out governance-key.pem 2048
 openssl rsa -in governance-key.pem -pubout -out governance-key.pub
-```
 
-### Sign and lock
-
-```bash
+# Sign and lock
 release-gate validate-and-lock \
   --governance governance.yaml \
   --sign \
   --private-key governance-key.pem
-```
 
-This writes `.release-gate-proof.json` and `.governance.sig` next to your governance file.
-
-### Verify in CI
-
-```bash
+# Verify in CI
 release-gate validate-and-lock \
   --governance governance.yaml \
   --verify \
@@ -515,7 +346,7 @@ release-gate validate-and-lock \
 
 Exit code `0` = valid. Exit code `1` = tampered or missing signature.
 
-> **Security note:** Store the private key in your secrets manager (e.g., GitHub Secrets, Vault). Only the public key needs to be committed to the repository.
+> **Security note:** Store the private key in your secrets manager (e.g., GitHub Secrets, Vault). Only the public key needs to be committed.
 
 ---
 
@@ -525,7 +356,7 @@ To prevent nonsensical cost projections, `release-gate` enforces these ranges on
 `simulation.factors` values:
 
 | Parameter | Valid range | Default |
-|-----------|-------------|---------|
+|-----------|-------------|----------|
 | `retry_rate` | 1.0 – 10.0 | 1.0 |
 | `cache_hit_rate` | 0.0 – 1.0 | 0.0 |
 | `spiky_usage_multiplier` | 1.0 – 20.0 | 1.0 |

@@ -1,0 +1,61 @@
+# governance-unsafe-fail.yaml
+# Demo: Unsafe deployment — critical governance missing
+# Run: release-gate impact examples/governance-unsafe-fail.yaml
+#
+# This config is intentionally incomplete to show what gets BLOCKED
+# and the business impact of deploying without safeguards.
+
+project:
+  name: autonomous-trading-agent
+  version: 0.1.0
+  description: Autonomous agent — no governance configured
+
+agent:
+  model: gpt-4
+  daily_requests: 10000
+  avg_input_tokens: 2000
+  avg_output_tokens: 800
+
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+    - IDENTITY_BOUNDARY
+
+checks:
+  action_budget:
+    enabled: true
+    # max_daily_cost NOT SET — unlimited spend possible
+
+  budget_simulation:
+    enabled: true
+
+  fallback_declared:
+    enabled: true
+    # kill_switch NOT DECLARED
+    # team_owner NOT DECLARED
+    # runbook_url NOT DECLARED
+
+  identity_boundary:
+    enabled: true
+    authentication:
+      required: false   # anyone can call this agent
+    # rate_limit NOT SET
+    data_isolation: []  # no tenant isolation
+
+  input_contract:
+    enabled: true
+    # schema NOT DEFINED
+
+simulation:
+  requests_per_day: 10000
+  tokens_per_request:
+    input: 2000
+    output: 800
+  factors:
+    retry_rate: 1.0
+    cache_hit_rate: 0.0
+    spiky_usage_multiplier: 1.0
+
+budget:
+  max_daily_cost: 200

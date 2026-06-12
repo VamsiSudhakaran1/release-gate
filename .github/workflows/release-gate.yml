@@ -1,0 +1,41 @@
+name: Release Gate — Governance & Impact Check
+
+on:
+  push:
+    paths:
+      - "governance.yaml"
+      - "**/*.py"
+  pull_request:
+    paths:
+      - "governance.yaml"
+
+jobs:
+  governance:
+    name: Governance Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Impact Simulator (safe example)
+        uses: ./
+        with:
+          config: examples/governance-safe-pass.yaml
+          command: impact
+          html-report: release-gate-safe-report.html
+
+      - name: Governance gate check (safe example)
+        uses: ./
+        with:
+          config: examples/governance-safe-pass.yaml
+          command: run
+          output-evidence: evidence-safe.json
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: governance-reports
+          path: |
+            release-gate-safe-report.html
+            evidence-safe.json
