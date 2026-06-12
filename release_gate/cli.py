@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 release-gate CLI - Governance enforcement for AI agents
-Version: 0.4.1 with Init Command
+Version: 0.5.0 with Cryptographic Governance Validation
 """
 import sys
 import yaml
@@ -29,6 +29,17 @@ try:
     INIT_AVAILABLE = True
 except ImportError:
     INIT_AVAILABLE = False
+
+# Import Cryptographic Governance Validation (v0.5)
+try:
+    from release_gate.crypto import (
+        GovernanceSigner,
+        GovernanceVerifier,
+        sign_and_lock_governance,
+    )
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
 
 
 def load_config(config_path):
@@ -298,7 +309,7 @@ def save_evidence(results, decision, output_path=None):
         'decision': decision,
         'checks': results,
         'timestamp': None,
-        'policy_version': 'v0.4.1'
+        'policy_version': 'v0.5.0'
     }
     
     try:
@@ -309,16 +320,85 @@ def save_evidence(results, decision, output_path=None):
         print(f"Warning: Could not save evidence: {e}")
 
 
+# ============================================================================
+# v0.5: Cryptographic Governance Validation Command
+# ============================================================================
+
+def validate_and_lock(governance, sign, private_key, verify, public_key):
+    """
+    Validate and cryptographically lock governance.yaml.
+    
+    This is the v0.5 crypto layer that runs BEFORE the policy checks.
+    """
+    
+    if not CRYPTO_AVAILABLE:
+        print("Error: Cryptographic validation not available. Please install: pip install cryptography")
+        sys.exit(1)
+    
+    print("\n🚪 release-gate: Governance Validation & Locking (v0.5)\n")
+    print("=" * 70)
+    
+    if sign and not private_key:
+        print("❌ --private-key required for signing")
+        return 1
+    
+    if verify and not public_key:
+        print("❌ --public-key required for verification")
+        return 1
+    
+    # Sign workflow
+    if sign:
+        print("\n[1/2] Creating validation proof and signature...")
+        try:
+            result = sign_and_lock_governance(
+                governance,
+                private_key
+            )
+            print(f"✅ Governance locked")
+            print(f"   Hash: {result['proof']['governance_hash'][:16]}...")
+            print(f"   Proof file: {result['proof_file']}")
+            print(f"   Signature file: {result['sig_file']}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return 1
+    
+    # Verify workflow
+    if verify:
+        print("\n[1/2] Verifying governance integrity...")
+        try:
+            verifier = GovernanceVerifier(governance)
+            result = verifier.verify_governance(public_key)
+            
+            if result['valid']:
+                print("✅ Governance signature valid")
+                print(f"   Verified at: {result['proof']['timestamp']}")
+            else:
+                print("❌ Governance verification FAILED")
+                for error in result['errors']:
+                    print(f"   - {error}")
+                return 1
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return 1
+    
+    print("\n" + "=" * 70)
+    print("✅ GOVERNANCE VALIDATION COMPLETE\n")
+    return 0
+
+
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print("🚪 release-gate v0.4.1")
+    print("🚪 release-gate v0.5.0")
     print("="*80)
     print("\nUsage:")
-    print("  release-gate init              # Initialize new project (interactive)")
-    print("  release-gate run <config.yaml> # Run governance checks")
+    print("  release-gate init                       # Initialize new project (interactive)")
+    print("  release-gate run <config.yaml>          # Run governance checks (v0.4.1)")
+    print("  release-gate validate-and-lock          # Cryptographic validation (v0.5 - NEW)")
     print("\nExamples:")
     print("  release-gate init")
+    print("  release-gate validate-and-lock --governance governance.yaml --sign --private-key key.pem")
+    print("  release-gate validate-and-lock --governance governance.yaml --verify --public-key key.pub")
     print("  release-gate run governance.yaml")
     print("  release-gate run governance.yaml --output-evidence evidence.json")
     print("\nMore info: https://github.com/VamsiSudhakaran1/release-gate")
@@ -349,6 +429,41 @@ def main():
         except Exception as e:
             print(f"\n\n❌ Error: {e}")
             sys.exit(1)
+    
+    # Handle validate-and-lock command (v0.5)
+    elif command == 'validate-and-lock':
+        # Parse validate-and-lock arguments
+        governance = 'governance.yaml'  # default
+        sign = False
+        private_key = None
+        verify = False
+        public_key = None
+        
+        # Parse flags
+        if '--governance' in sys.argv:
+            idx = sys.argv.index('--governance')
+            if idx + 1 < len(sys.argv):
+                governance = sys.argv[idx + 1]
+        
+        if '--sign' in sys.argv:
+            sign = True
+        
+        if '--private-key' in sys.argv:
+            idx = sys.argv.index('--private-key')
+            if idx + 1 < len(sys.argv):
+                private_key = sys.argv[idx + 1]
+        
+        if '--verify' in sys.argv:
+            verify = True
+        
+        if '--public-key' in sys.argv:
+            idx = sys.argv.index('--public-key')
+            if idx + 1 < len(sys.argv):
+                public_key = sys.argv[idx + 1]
+        
+        # Run validation
+        exit_code = validate_and_lock(governance, sign, private_key, verify, public_key)
+        sys.exit(exit_code)
     
     # Handle run command
     elif command == 'run':
@@ -393,6 +508,14 @@ def main():
         print(f"Unknown command: {command}")
         print_help()
         sys.exit(1)
+
+
+# ============================================================================
+# Entry Point for setup.py/pyproject.toml
+# ============================================================================
+def unified_main():
+    """Unified entry point for command-line invocation"""
+    main()
 
 
 if __name__ == '__main__':
