@@ -1,654 +1,512 @@
 #!/usr/bin/env python3
 """
-release-gate v0.3 Comprehensive Demo
-Shows all features, decision flows, and real-world scenarios
+release-gate v0.5 — Interactive Demo
+=====================================
+A friendly walkthrough for first-time users.
+
+What you'll see:
+  1. What release-gate is and why it exists
+  2. A safe deployment that gets APPROVED
+  3. A dangerous deployment that gets BLOCKED — with the dollar figure
+  4. How to fix the problems and re-run
+  5. How to add it to GitHub Actions in 5 lines
+
+Run it:
+  python COMPREHENSIVE_DEMO.py
 """
 
-import json
-import yaml
-from pathlib import Path
+import time
+import textwrap
+
+try:
+    from release_gate.impact_simulator import ImpactSimulator
+    from release_gate.cli import run_checks, determine_decision
+    LIVE = True
+except ImportError:
+    LIVE = False
 
 
-def print_header(title):
-    """Print a formatted header"""
-    print("\n")
-    print("=" * 70)
+def h1(title):
+    print()
+    print("=" * 68)
     print(f"  {title}")
-    print("=" * 70)
+    print("=" * 68)
     print()
 
+def h2(title):
+    print()
+    print(f"  ── {title}")
+    print()
 
-def print_section(title):
-    """Print a section header"""
-    print(f"\n{'─' * 70}")
-    print(f"  {title}")
-    print(f"{'─' * 70}\n")
+def say(text, indent=4):
+    prefix = " " * indent
+    for line in textwrap.wrap(text, width=64):
+        print(prefix + line)
 
+def code(lines):
+    print()
+    for line in lines:
+        print("    " + line)
+    print()
 
-def demo_scenario_1_cost_well_under_budget():
-    """Demo 1: Cost is well under budget (Auto-approval)"""
-    print_header("DEMO 1: Cost Well Under Budget ✅")
-    
-    config = {
-        "project": {"name": "simple-chatbot"},
-        "agent": {
-            "model": "gpt-4-turbo",
-            "daily_requests": 100,
-            "avg_input_tokens": 500,
-            "avg_output_tokens": 300,
-            "retry_rate": 1.0
-        },
-        "checks": {
-            "action_budget": {
-                "enabled": True,
-                "max_daily_cost": 50
-            }
-        }
-    }
-    
-    print("CONFIGURATION:")
-    print(yaml.dump(config, default_flow_style=False))
-    
-    print("\nCALCULATION:")
-    print("""
-    Model: GPT-4-Turbo
-    Pricing: $0.00001 input, $0.00003 output
-    
-    Daily Calculation:
-      Input cost:  $0.00001 × (500 tokens / 1000) × 100 requests = $0.50
-      Output cost: $0.00003 × (300 tokens / 1000) × 100 requests = $0.90
-      Total daily: $1.40
-    
-    Monthly: $1.40 × 30 = $42.00
-    """)
-    
-    print("\nDECISION LOGIC:")
-    print("""
-    Auto-approval threshold: $50 × 0.1 = $5.00
-    Manual approval threshold: $50 × 0.5 = $25.00
-    Max daily budget: $50.00
-    
-    Daily cost: $1.40
-    Is $1.40 <= $5.00? YES
-    → AUTO-APPROVAL ✓
-    """)
-    
-    print("\nOUTPUT:")
-    print("""
-    ┌──────────────────────────────────────────┐
-    │ 🚪 release-gate: Validation              │
-    ├──────────────────────────────────────────┤
-    
-    💰 ACTION_BUDGET: ✓ PASS
-       Cost Control: Automatic Approval
-    
-       Daily Cost:   $1.40
-       Monthly Cost: $42.00
-       Budget:       $50.00
-       Safety Margin: 35.7x
-    
-       ✓ Daily cost is well under the limit
-       ✓ Safety margin is comfortable (35.7x)
-       ✓ No manual approval needed
-    
-    ✅ FINAL DECISION: PASS (Safe to deploy)
-    └──────────────────────────────────────────┘
-    """)
-    
-    print("\n📋 WHAT THIS MEANS:")
-    print("  • Agent can be deployed immediately")
-    print("  • Costs are well controlled")
-    print("  • No manual review needed")
-    print("  • Plenty of budget headroom (35x safety margin)")
+def pause():
+    try:
+        input("  ↵  Press Enter to continue...\n")
+    except EOFError:
+        print()
+
+def verdict(label, colour):
+    colours = {"green": "\033[92m", "red": "\033[91m", "yellow": "\033[93m"}
+    reset   = "\033[0m"
+    c = colours.get(colour, "")
+    print(f"\n  {c}{'━' * 64}{reset}")
+    print(f"  {c}  {label}{reset}")
+    print(f"  {c}{'━' * 64}{reset}\n")
+
+def money(label, amount):
+    print(f"    {label:<36} ${amount:>12,.2f}")
 
 
-def demo_scenario_2_cost_near_limit():
-    """Demo 2: Cost near limit (Manual approval needed)"""
-    print_header("DEMO 2: Cost Near Budget Limit ⚠️")
-    
-    config = {
-        "project": {"name": "premium-search"},
-        "agent": {
-            "model": "gpt-4-turbo",
-            "daily_requests": 1000,
-            "avg_input_tokens": 1500,
-            "avg_output_tokens": 800,
-            "retry_rate": 1.2
-        },
-        "checks": {
-            "action_budget": {
-                "enabled": True,
-                "max_daily_cost": 50
-            }
-        }
-    }
-    
-    print("CONFIGURATION:")
-    print(yaml.dump(config, default_flow_style=False))
-    
-    print("\nCALCULATION:")
-    print("""
-    Model: GPT-4-Turbo
-    Pricing: $0.00001 input, $0.00003 output
-    
-    Daily Calculation:
-      Input cost:  $0.00001 × (1500 / 1000) × 1000 × 1.2 = $18.00
-      Output cost: $0.00003 × (800 / 1000) × 1000 × 1.2 = $28.80
-      Total daily: $46.80
-    
-    Monthly: $46.80 × 30 = $1,404.00
-    """)
-    
-    print("\nDECISION LOGIC:")
-    print("""
-    Auto-approval threshold: $50 × 0.1 = $5.00
-    Manual approval threshold: $50 × 0.5 = $25.00
-    Max daily budget: $50.00
-    
-    Daily cost: $46.80
-    Is $46.80 <= $5.00? NO
-    Is $46.80 <= $25.00? NO
-    Is $46.80 <= $50.00? YES
-    → MANUAL APPROVAL NEEDED ⚠️
-    """)
-    
-    print("\nOUTPUT:")
-    print("""
-    ┌──────────────────────────────────────────┐
-    │ 🚪 release-gate: Validation              │
-    ├──────────────────────────────────────────┤
-    
-    💰 ACTION_BUDGET: ⚠️ WARN
-       Cost Control: At Budget Limit
-    
-       Daily Cost:   $46.80
-       Monthly Cost: $1,404.00
-       Budget:       $50.00
-       Safety Margin: 1.1x
-    
-       ⚠️ Daily cost is near the maximum budget
-       ⚠️ Safety margin is minimal (only 1.1x)
-       ⚠️ Consider raising budget or optimizing cost
-    
-    ❓ FINAL DECISION: WARN (Manual review recommended)
-       Sending approval notifications...
-       - Slack: #ai-governance
-       - Email: ai-team@company.com
-    └──────────────────────────────────────────┘
-    """)
-    
-    print("\n📋 WHAT THIS MEANS:")
-    print("  • Deployment is paused")
-    print("  • Team lead needs to review")
-    print("  • Cost is at budget limit with no headroom")
-    print("  • Should either:")
-    print("    - Raise budget to $50-60")
-    print("    - Optimize agent to reduce cost")
-    print("    - Manually approve if acceptable risk")
+def intro():
+    h1("Welcome to release-gate  \U0001f6aa")
+    say(
+        "release-gate is a pre-deployment governance gate for AI agents. "
+        "Before your agent goes live, it answers one question:"
+    )
+    print()
+    print("        ❓ Is this agent safe to deploy?")
+    print()
+    say(
+        "It checks five things: cost, cost simulation, fallback safety, "
+        "access control, and input contracts. If anything is missing or "
+        "over budget, deployment is BLOCKED."
+    )
+    print()
+    say(
+        "More importantly — it shows you the MONEY AT RISK if a safeguard "
+        "is missing. Engineering leaders see dollars, not YAML warnings."
+    )
+    pause()
 
 
-def demo_scenario_3_cost_exceeds_budget():
-    """Demo 3: Cost exceeds budget (FAIL - deployment blocked)"""
-    print_header("DEMO 3: Cost Exceeds Budget ❌")
-    
-    config = {
-        "project": {"name": "high-volume-search"},
-        "agent": {
-            "model": "gpt-4",  # Expensive model
-            "daily_requests": 5000,
-            "avg_input_tokens": 2000,
-            "avg_output_tokens": 1000,
-            "retry_rate": 1.5  # High retry rate
-        },
-        "checks": {
-            "action_budget": {
-                "enabled": True,
-                "max_daily_cost": 100
-            }
-        }
-    }
-    
-    print("CONFIGURATION:")
-    print(yaml.dump(config, default_flow_style=False))
-    
-    print("\nCALCULATION:")
-    print("""
-    Model: GPT-4 (Expensive)
-    Pricing: $0.00003 input, $0.0001 output
-    
-    Daily Calculation:
-      Input cost:  $0.00003 × (2000 / 1000) × 5000 × 1.5 = $450.00
-      Output cost: $0.0001 × (1000 / 1000) × 5000 × 1.5 = $750.00
-      Total daily: $1,200.00
-    
-    Monthly: $1,200.00 × 30 = $36,000.00
-    
-    ANNUAL: $1,200.00 × 365 = $438,000.00
-    """)
-    
-    print("\nDECISION LOGIC:")
-    print("""
-    Max daily budget: $100.00
-    Daily cost: $1,200.00
-    
-    Is $1,200.00 <= $100.00? NO
-    → DEPLOYMENT BLOCKED ❌
-    """)
-    
-    print("\nOUTPUT:")
-    print("""
-    ┌──────────────────────────────────────────┐
-    │ 🚪 release-gate: Validation              │
-    ├──────────────────────────────────────────┤
-    
-    💰 ACTION_BUDGET: ❌ FAIL
-       Cost Control: Budget Exceeded
-    
-       Daily Cost:    $1,200.00
-       Monthly Cost:  $36,000.00
-       Annual Cost:   $438,000.00
-       Budget:        $100.00
-       Daily Overage: $1,100.00
-    
-       ✗ Daily cost EXCEEDS maximum budget by 12x
-       ✗ This is how agents cost companies millions
-       ✗ BLOCKED: Cannot deploy without fixing cost
-    
-    ❌ FINAL DECISION: FAIL (Deployment blocked)
-    └──────────────────────────────────────────┘
-    """)
-    
-    print("\n📋 REMEDIATION OPTIONS:")
-    print("""
-    Option 1: Use cheaper model (GPT-4-Turbo)
-      Model:    GPT-4-Turbo (3.3x cheaper)
-      New cost: $1,200 / 3.3 = $363.63/day → Still too high
-      Status:   Still FAIL
-    
-    Option 2: Reduce daily request volume
-      Daily requests: 5000 → 250
-      New cost: $1,200 × (250/5000) = $60.00/day → PASS ✓
-      Status:   OK, but reduces functionality
-    
-    Option 3: Reduce context size
-      Input tokens: 2000 → 500
-      New cost: ~$300/day → Still high
-      Status:   FAIL
-    
-    Option 4: Use cheapest model (Claude-3-Sonnet)
-      Model:    Claude-3-Sonnet
-      Input:    $0.000003
-      Output:   $0.000015
-      New cost: ~$150/day → Still FAIL
-      Status:   FAIL
-    
-    Option 5: Increase budget
-      Current: $100/day
-      Required: $1,200/day
-      Cost: $438,000/year
-      Status:   Financially not viable for most organizations
-    
-    RECOMMENDED:
-    1. Use GPT-4-Turbo + reduce request volume to 250/day
-    2. Or use Claude-3-Sonnet + reduce request volume to 500/day
-    3. Or reconsider use case (is this agent necessary?)
-    """)
-    
-    print("\n⚠️ WHAT THIS PREVENTS:")
-    print("  • Agent is NOT deployed")
-    print("  • $438,000/year mistake is prevented")
-    print("  • Team must fix cost configuration first")
-    print("  • This is why release-gate exists")
+def demo_safe():
+    h1("DEMO 1 — Safe deployment  ✓")
 
+    say(
+        "Imagine you're shipping a customer-support AI agent. "
+        "You've set a $500/day budget, declared a kill switch, "
+        "set up auth, and written a runbook. Let's see what "
+        "release-gate says."
+    )
 
-def demo_scenario_4_no_budget_defined():
-    """Demo 4: No budget defined (FAIL - mandatory)"""
-    print_header("DEMO 4: No Budget Defined (Mandatory) ❌")
-    
-    config = {
-        "project": {"name": "experimental-agent"},
-        "agent": {
-            "model": "gpt-4-turbo",
-            "daily_requests": 1000,
-            "avg_input_tokens": 1000,
-            "avg_output_tokens": 500
-        },
-        "checks": {
-            "action_budget": {
-                "enabled": True
-                # max_daily_cost: NOT DEFINED ← Problem!
-            }
-        }
-    }
-    
-    print("CONFIGURATION:")
-    print(yaml.dump(config, default_flow_style=False))
-    
-    print("\nPROBLEM:")
-    print("""
-    max_daily_cost is NOT defined!
-    This is a MANDATORY field.
-    
-    Why? Because:
-    • Without limits, cost is unlimited
-    • Agents can spiral to $50K/day
-    • This is how real disasters happen
-    • release-gate won't allow it
-    """)
-    
-    print("\nOUTPUT:")
-    print("""
-    ┌──────────────────────────────────────────┐
-    │ 🚪 release-gate: Validation              │
-    ├──────────────────────────────────────────┤
-    
-    💰 ACTION_BUDGET: ❌ FAIL
-       Cost Control: No Budget Defined
-    
-       Estimated daily cost: $50.00
-       Budget configured: NONE (REQUIRED!)
-    
-       ✗ Agent cost cannot be unlimited
-       ✗ max_daily_cost is mandatory
-       ✗ BLOCKED: Define budget and retry
-    
-    ❌ FINAL DECISION: FAIL (Deployment blocked)
-    └──────────────────────────────────────────┘
-    """)
-    
-    print("\n📋 HOW TO FIX:")
-    print("""
-    Add to governance.yaml:
-    
-    checks:
-      action_budget:
-        enabled: true
-        max_daily_cost: 50  ← ADD THIS LINE
-    
-    Then re-run:
-    $ release-gate check --config governance.yaml
-    """)
+    h2("Configuration (governance-safe-pass.yaml)")
+    code([
+        "agent:",
+        "  model: gpt-4-turbo",
+        "  daily_requests: 5000",
+        "",
+        "checks:",
+        "  action_budget:",
+        "    max_daily_cost: 500          # hard cap",
+        "  fallback_declared:",
+        "    kill_switch: {type: feature-flag}",
+        "    team_owner: platform-team",
+        "    runbook_url: https://wiki.example.com/runbook",
+        "  identity_boundary:",
+        "    authentication: {required: true}",
+        "    rate_limit: {requests_per_minute: 30}",
+        "    data_isolation: [tenant_id]",
+        "",
+        "simulation:",
+        "  requests_per_day: 5000",
+        "  tokens_per_request: {input: 800, output: 400}",
+        "  factors:",
+        "    retry_rate: 1.1              # 10% retries",
+        "    cache_hit_rate: 0.2          # 20% cache hits",
+        "    spiky_usage_multiplier: 1.5  # 50% peak spike",
+        "",
+        "budget:",
+        "  max_daily_cost: 500",
+    ])
 
+    h2("Running: release-gate impact governance-safe-pass.yaml")
 
-def demo_scenario_5_all_4_checks():
-    """Demo 5: All 4 checks together"""
-    print_header("DEMO 5: All 4 Checks Working Together")
-    
-    print("CONFIGURATION:")
-    config = {
-        "project": {"name": "customer-support"},
-        "agent": {
-            "model": "gpt-4-turbo",
-            "daily_requests": 500,
-            "avg_input_tokens": 800,
-            "avg_output_tokens": 400
-        },
-        "checks": {
-            "action_budget": {
-                "enabled": True,
-                "max_daily_cost": 100
+    config_safe = {
+        "project": {"name": "customer-support-agent"},
+        "agent": {"model": "gpt-4-turbo"},
+        "simulation": {
+            "requests_per_day": 5000,
+            "tokens_per_request": {"input": 800, "output": 400},
+            "factors": {
+                "retry_rate": 1.1,
+                "cache_hit_rate": 0.2,
+                "spiky_usage_multiplier": 1.5,
             },
-            "input_contract": {
-                "enabled": True,
-                "schema": {
-                    "type": "object",
-                    "required": ["user_query"],
-                    "properties": {
-                        "user_query": {"type": "string", "minLength": 1}
-                    }
-                }
-            },
+        },
+        "budget": {"max_daily_cost": 500},
+        "checks": {
+            "action_budget":    {"enabled": True, "max_daily_cost": 500},
+            "budget_simulation":{"enabled": True},
             "fallback_declared": {
                 "enabled": True,
-                "kill_switch": {"type": "feature_flag", "name": "disable_support"},
-                "fallback": {"mode": "escalate_to_human"}
+                "kill_switch": {"type": "feature-flag"},
+                "fallback_mode": "human-handoff",
+                "team_owner": "platform-team",
+                "runbook_url": "https://wiki.example.com/runbook",
             },
             "identity_boundary": {
                 "enabled": True,
-                "authentication": "required",
-                "rate_limit": 10
-            }
-        }
+                "authentication": {"required": True, "type": "jwt"},
+                "rate_limit": {"requests_per_minute": 30},
+                "data_isolation": ["tenant_id"],
+            },
+            "input_contract": {
+                "enabled": True,
+                "schema": {"required": ["message"]},
+                "samples": {
+                    "valid": [{"message": "How do I return an order?"}],
+                    "invalid": [{}],
+                },
+            },
+        },
     }
-    print(yaml.dump(config, default_flow_style=False)[:500] + "...")
-    
-    print("\nRUNNING ALL 4 CHECKS:")
-    print("""
-    ┌──────────────────────────────────────────┐
-    │ 🚪 release-gate: All 4 Checks            │
-    ├──────────────────────────────────────────┤
-    
-    1️⃣  ACTION_BUDGET Check
-        ├─ Model: GPT-4-Turbo ✓
-        ├─ Daily requests: 500 ✓
-        ├─ Input tokens: 800 ✓
-        ├─ Output tokens: 400 ✓
-        ├─ Estimated daily cost: $10.50 ✓
-        ├─ Budget: $100.00 ✓
-        └─ Result: ✅ PASS (9.5x safety margin)
-    
-    2️⃣  INPUT_CONTRACT Check
-        ├─ Schema defined: YES ✓
-        ├─ Required fields: [user_query] ✓
-        ├─ Field types: user_query is string ✓
-        └─ Result: ✅ PASS (Schema properly configured)
-    
-    3️⃣  FALLBACK_DECLARED Check
-        ├─ Kill switch: enabled ✓
-        ├─ Fallback mode: escalate_to_human ✓
-        ├─ Team ownership: not defined ⚠️
-        └─ Result: ✅ PASS (Essentials configured)
-    
-    4️⃣  IDENTITY_BOUNDARY Check
-        ├─ Authentication: required ✓
-        ├─ Rate limit: 10 req/min ✓
-        ├─ Data isolation: not defined ⚠️
-        └─ Result: ✅ PASS (Security enforced)
-    
-    ╔══════════════════════════════════════════╗
-    ║ ✅ FINAL DECISION: PASS                 ║
-    ║    All 4 checks passed                  ║
-    ║    Safe to deploy                       ║
-    ╚══════════════════════════════════════════╝
-    └──────────────────────────────────────────┘
-    """)
-    
-    print("\n📋 WHAT EACH CHECK VALIDATED:")
-    print("""
-    ✅ ACTION_BUDGET: Cost is under control ($10.50 << $100)
-    ✅ INPUT_CONTRACT: Requests have proper schema
-    ✅ FALLBACK_DECLARED: Agent can be killed if needed
-    ✅ IDENTITY_BOUNDARY: Only authenticated users can access
-    
-    DEPLOYMENT READY!
-    """)
 
+    if LIVE:
+        sim = ImpactSimulator()
+        impact = sim.simulate(config_safe)
+        normal  = impact["normal"]
+        runaway = impact["runaway"]
+        delta   = impact["risk_delta"]
+        budget  = impact["budget"]
 
-def demo_scenario_6_dynamic_pricing():
-    """Demo 6: Dynamic pricing and auto-detection"""
-    print_header("DEMO 6: Dynamic Pricing & Auto-Detection")
-    
-    print("SCENARIO: You don't know the exact model cost")
-    print()
-    
-    print("STEP 1: release-gate detects model from code")
-    print("""
-    Your agent code:
-    ────────────────────────────────────────
-    from openai import OpenAI
-    
-    client = OpenAI()
-    response = client.chat.completions.create(
-        model="gpt-4o",  ← Auto-detected!
-        messages=[...]
+        print("    ─" * 32)
+        print(f"    {'Scenario':<36} {'Daily':>12}  {'Monthly':>13}")
+        print("    ─" * 32)
+        money("Normal operation",     normal["daily"])
+        money("Runaway loop (15× retries)", runaway["daily"])
+        print("    ─" * 32)
+        money("Risk delta (money at stake)", delta["daily"])
+        print()
+        print(f"    Budget cap: ${budget['max_daily']:,.2f}/day  →  "
+              f"headroom: ${budget['headroom']:,.2f}/day")
+        print()
+        print("    No governance gaps detected.")
+    else:
+        print("    Normal operation       $    132.00  $   3,960.00")
+        print("    Runaway loop (15×)     $  5,000.00  $ 150,000.00")
+        print("    ─" * 26)
+        print("    Risk delta             $  4,868.00  $ 146,040.00")
+        print()
+        print("    Budget cap: $500.00/day  →  headroom: $368.00/day")
+        print("    No governance gaps detected.")
+
+    verdict("✓  FINAL VERDICT:  APPROVED  — safe to deploy", "green")
+
+    say(
+        "The agent costs ~$132/day under normal load. Even if it runs "
+        "into a 15× retry loop, the kill switch can stop it. "
+        "Budget has $368/day of headroom. Deploy with confidence."
     )
-    ────────────────────────────────────────
-    
-    release-gate extracts: model = "gpt-4o"
-    """)
-    
-    print("\nSTEP 2: Looks up pricing from pricing.json")
-    print("""
-    {
-      "gpt-4o": {
-        "input": 0.000005,
-        "output": 0.000015,
-        "provider": "OpenAI"
-      }
-    }
-    """)
-    
-    print("\nSTEP 3: Calculates cost automatically")
-    print("""
-    Model: GPT-4o (auto-detected)
-    Pricing: $0.000005 input, $0.000015 output
-    
-    Daily calculation:
-      Input:  $0.000005 × (500 / 1000) × 100 = $0.25
-      Output: $0.000015 × (300 / 1000) × 100 = $0.45
-      Total:  $0.70/day
-    """)
-    
-    print("\nSTEP 4: Custom model support")
-    print("""
-    Add to pricing.json:
-    {
-      "my-internal-model": {
-        "input": 0.0001,
-        "output": 0.0002
-      }
-    }
-    
-    Use in governance.yaml:
-    agent:
-      model: my-internal-model  ← Works immediately!
-    
-    No code changes needed!
-    """)
-    
-    print("\n✅ RESULT:")
-    print("  • No hardcoding of models")
-    print("  • Supports any model (past, present, future)")
-    print("  • Auto-detects from code")
-    print("  • User-extensible via JSON")
+    pause()
 
 
-def demo_end_to_end_workflow():
-    """Demo: Complete end-to-end workflow"""
-    print_header("DEMO 7: Complete End-to-End Workflow")
-    
-    print("DEVELOPER'S JOURNEY:")
+def demo_unsafe():
+    h1("DEMO 2 — Dangerous deployment  ✗")
+
+    say(
+        "Now imagine a different team shipping an autonomous trading agent. "
+        "They skipped the governance config — no kill switch, no auth, "
+        "no budget cap. Let's see what release-gate says."
+    )
+
+    h2("Configuration (governance-unsafe-fail.yaml)")
+    code([
+        "agent:",
+        "  model: gpt-4       # expensive model",
+        "  daily_requests: 10000",
+        "",
+        "checks:",
+        "  action_budget:",
+        "    enabled: true",
+        "    # max_daily_cost NOT SET ← no circuit breaker!",
+        "",
+        "  fallback_declared:",
+        "    enabled: true",
+        "    # kill_switch NOT DECLARED",
+        "    # team_owner  NOT DECLARED",
+        "",
+        "  identity_boundary:",
+        "    authentication:",
+        "      required: false  # anyone can call this agent",
+        "    # rate_limit NOT SET",
+    ])
+
+    h2("Running: release-gate impact governance-unsafe-fail.yaml")
+
+    config_unsafe = {
+        "project": {"name": "autonomous-trading-agent"},
+        "agent": {"model": "gpt-4"},
+        "simulation": {
+            "requests_per_day": 10000,
+            "tokens_per_request": {"input": 2000, "output": 800},
+            "factors": {
+                "retry_rate": 1.0,
+                "cache_hit_rate": 0.0,
+                "spiky_usage_multiplier": 1.0,
+            },
+        },
+        "budget": {"max_daily_cost": 200},
+        "checks": {
+            "action_budget":    {"enabled": True},
+            "budget_simulation":{"enabled": True},
+            "fallback_declared": {"enabled": True},
+            "identity_boundary": {
+                "enabled": True,
+                "authentication": {"required": False},
+                "data_isolation": [],
+            },
+            "input_contract": {"enabled": True},
+        },
+    }
+
+    if LIVE:
+        sim = ImpactSimulator()
+        impact = sim.simulate(config_unsafe)
+        normal  = impact["normal"]
+        runaway = impact["runaway"]
+        delta   = impact["risk_delta"]
+        budget  = impact["budget"]
+        gaps    = impact["governance_gaps"]
+
+        print("    ─" * 32)
+        money("Normal operation",          normal["daily"])
+        money("Runaway loop (15× retries)", runaway["daily"])
+        print("    ─" * 32)
+        money("Risk delta (money at stake)", delta["daily"])
+        print()
+        print(f"    Budget cap: ${budget['max_daily']:,.2f}/day  →  "
+              f"OVERAGE: ${abs(budget.get('headroom') or 0):,.2f}/day")
+        print()
+        print(f"    Governance gaps detected: {len(gaps)}")
+        for i, gap in enumerate(gaps, 1):
+            print(f"    {i}. [{gap['check']}] {gap['field'].upper()} not declared")
+            print(f"       → {gap['impact']}")
+    else:
+        print("    Normal operation         $  1,080.00  $  32,400.00")
+        print("    Runaway loop (15×)       $ 54,000.00  $1,620,000.00")
+        print("    ─" * 26)
+        print("    Risk delta               $ 52,920.00  $1,587,600.00")
+        print()
+        print("    Budget cap: $200/day  →  OVERAGE: $880/day")
+        print()
+        print("    Governance gaps: 5")
+        print("    1. [FALLBACK_DECLARED] KILL_SWITCH not declared")
+        print("       → No way to stop a runaway agent")
+        print("    2. [FALLBACK_DECLARED] TEAM_OWNER not declared")
+        print("       → No owner means no one gets paged at 3 AM")
+        print("    3. [IDENTITY_BOUNDARY] AUTHENTICATION not declared")
+        print("       → Anyone can call this agent and rack up unlimited costs")
+        print("    4. [IDENTITY_BOUNDARY] RATE_LIMIT not declared")
+        print("       → A single client can exhaust the budget in minutes")
+        print("    5. [ACTION_BUDGET] MAX_DAILY_COST not declared")
+        print("       → No circuit breaker on daily spend")
+
+    verdict("✗  FINAL VERDICT:  BLOCKED  — fix the gaps above first", "red")
+
+    say(
+        "$52,920 per day at risk. This is not a theoretical number — "
+        "this is what happens when an LLM agent enters a retry loop "
+        "with no kill switch and no rate limit. release-gate caught it "
+        "before a single request hit production."
+    )
+    pause()
+
+
+def demo_fix():
+    h1("DEMO 3 — How to fix it in 5 minutes  \U0001f527")
+
+    say(
+        "release-gate doesn't just tell you what's wrong — "
+        "it tells you what to add. Here's the minimal fix:"
+    )
+
+    h2("Add these fields to governance.yaml")
+    code([
+        "checks:",
+        "  action_budget:",
+        "    max_daily_cost: 500      # ← circuit breaker added",
+        "",
+        "  fallback_declared:",
+        "    kill_switch:",
+        "      type: feature-flag     # ← can stop agent instantly",
+        "    team_owner: risk-team    # ← who gets paged at 3 AM",
+        "    runbook_url: https://wiki.example.com/trading-agent",
+        "",
+        "  identity_boundary:",
+        "    authentication:",
+        "      required: true         # ← only authenticated users",
+        "    rate_limit:",
+        "      requests_per_minute: 10",
+    ])
+
+    h2("Or use the interactive setup wizard")
+    code([
+        "$ pip install release-gate",
+        "$ release-gate init",
+        "",
+        "  \U0001f6aa release-gate: Project Initialization Wizard",
+        "  ────────────────────────────────",
+        "  Project name [my-agent]: trading-agent",
+        "  AI model: gpt-4",
+        "  Daily budget [100]: 500",
+        "  Team owner: risk-team",
+        "",
+        "  ✓ Created governance.yaml",
+        "  ✓ Created .github/workflows/release-gate.yml",
+    ])
+
+    say(
+        "After adding the missing fields, re-run "
+        "'release-gate impact governance.yaml' — the verdict "
+        "changes from BLOCKED to APPROVED."
+    )
+    pause()
+
+
+def demo_cicd():
+    h1("DEMO 4 — GitHub Actions in 5 lines  \U0001f504")
+
+    say(
+        "Once governance.yaml is in your repo, add release-gate "
+        "to your CI pipeline. Every PR gets a cost report. "
+        "Deployment is blocked automatically if governance fails."
+    )
+
+    h2(".github/workflows/governance.yml")
+    code([
+        "name: AI Agent Governance",
+        "on: [push, pull_request]",
+        "",
+        "jobs:",
+        "  governance:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v4",
+        "",
+        "      - name: Impact check",
+        "        uses: VamsiSudhakaran1/release-gate@v0.5.0",
+        "        with:",
+        "          command: impact",
+        "          html-report: report.html",
+        "          # ↑ uploaded as CI artifact automatically",
+    ])
+
+    h2("Exit codes your pipeline understands")
+    code([
+        "exit 0   →  PASS  — deploy",
+        "exit 10  →  WARN  — review needed (allowed by default)",
+        "exit 1   →  FAIL  — blocked",
+    ])
+
+    say(
+        "Set 'fail-on-warn: true' to also block on WARN. "
+        "The HTML report is uploaded as a GitHub Actions artifact "
+        "on every run — cost dashboard without leaving GitHub."
+    )
+    pause()
+
+
+def demo_crypto():
+    h1("DEMO 5 — Cryptographic signing (v0.5)  \U0001f511")
+
+    say(
+        "Once governance.yaml is reviewed and approved, lock it "
+        "so no one can quietly change the budget limit after sign-off. "
+        "release-gate uses RSA-PSS + SHA256 to sign and verify the file."
+    )
+
+    h2("Sign governance.yaml after review")
+    code([
+        "# Generate a key pair (one-time setup)",
+        "openssl genrsa -out governance-key.pem 2048",
+        "openssl rsa -in governance-key.pem -pubout -out governance-key.pub",
+        "",
+        "# Sign the governance file",
+        "release-gate validate-and-lock \\",
+        "  --governance governance.yaml \\",
+        "  --sign \\",
+        "  --private-key governance-key.pem",
+        "",
+        "# Output:",
+        "# ✓ Governance locked",
+        "#   Hash: a3f2b1c9...",
+        "#   Proof file: .release-gate-proof.json",
+    ])
+
+    h2("Verify in CI before running checks")
+    code([
+        "release-gate validate-and-lock \\",
+        "  --governance governance.yaml \\",
+        "  --verify \\",
+        "  --public-key governance-key.pub",
+        "",
+        "# exit 0 = governance unchanged since sign-off",
+        "# exit 1 = tampered — deployment blocked",
+    ])
+
+    say(
+        "The proof file records the exact governance state at sign-off. "
+        "Changing any value breaks the signature and blocks CI."
+    )
+    pause()
+
+
+def summary():
+    h1("Summary  \U0001f4cb")
+
+    print("  What release-gate gives you:\n")
+    items = [
+        ("Impact Simulator",       "Shows normal cost AND runaway-loop cost — dollars, not YAML"),
+        ("5 governance checks",    "Budget, simulation, fallback, identity, input contract"),
+        ("Policy engine",          "Define what's critical (FAIL) vs. what's flexible (WARN)"),
+        ("HTML report",            "Self-contained report as CI artifact on every PR"),
+        ("GitHub Actions",         "5 lines to gate every deploy — works with any CI"),
+        ("Cryptographic signing",  "Lock governance.yaml so limits can't be changed post-review"),
+        ("100 tests",              "Full coverage across all checks, simulator, and renderers"),
+    ]
+    for name, desc in items:
+        print(f"  ✓ {name:<30} {desc}")
+
     print()
-    
-    print("1️⃣  DEVELOP AGENT")
-    print("""
-    Write your agent code:
-    ────────────────────────────────────────
-    from openai import OpenAI
-    
-    def customer_support_agent(query):
-        client = OpenAI()
-        return client.chat.completions.create(
-            model="gpt-4-turbo",
-            messages=[{"role": "user", "content": query}]
-        )
-    ────────────────────────────────────────
-    """)
-    
-    print("\n2️⃣  CREATE GOVERNANCE CONFIG")
-    print("""
-    governance.yaml:
-    ────────────────────────────────────────
-    project:
-      name: customer-support
-    
-    agent:
-      model: gpt-4-turbo
-      daily_requests: 500
-      avg_input_tokens: 800
-      avg_output_tokens: 400
-    
-    checks:
-      action_budget:
-        enabled: true
-        max_daily_cost: 100
-    ────────────────────────────────────────
-    """)
-    
-    print("\n3️⃣  VALIDATE BEFORE DEPLOYMENT")
-    print("""
-    $ release-gate check --config governance.yaml
-    
-    ┌──────────────────────────────────────────┐
-    │ 🚪 release-gate: Validation              │
-    ├──────────────────────────────────────────┤
-    
-    💰 ACTION_BUDGET: ✓ PASS
-       Daily cost: $10.50 << Budget: $100
-    
-    ✅ FINAL DECISION: PASS
-    └──────────────────────────────────────────┘
-    """)
-    
-    print("\n4️⃣  DEPLOY WITH CONFIDENCE")
-    print("""
-    $ git commit -m "Add customer support agent with governance"
-    $ git push origin main
-    $ kubectl apply -f deployment.yaml
-    
-    ✅ Agent deployed securely
-    ✅ Costs under control ($10.50/day max)
-    ✅ Safety measures in place
-    ✅ Governance enforced
-    """)
-    
-    print("\n5️⃣  MONITOR & ADJUST")
-    print("""
-    Real usage after 1 week:
-      Actual daily cost: $8.20 (under $10.50 estimate)
-      Perfect! Everything is under budget.
-    
-    Real usage after 3 months:
-      Actual daily cost: $35.00 (still under $100 budget)
-      Plenty of headroom.
-    
-    release-gate prevented $50K mistakes while allowing
-    profitable operation.
-    """)
+    print("  Install:\n")
+    print("    pip install release-gate")
+    print("    release-gate init          # interactive wizard")
+    print("    release-gate impact governance.yaml")
+    print()
+    print("  GitHub: https://github.com/VamsiSudhakaran1/release-gate")
+    print()
 
 
 def main():
-    """Run all demos"""
-    print("\n")
-    print("╔" + "═" * 68 + "╗")
-    print("║" + " " * 68 + "║")
-    print("║" + "  release-gate v0.3: Comprehensive Feature Demo".center(68) + "║")
-    print("║" + "  Governance Enforcement for AI Agents".center(68) + "║")
-    print("║" + " " * 68 + "║")
-    print("╚" + "═" * 68 + "╝")
-    
-    demo_scenario_1_cost_well_under_budget()
-    demo_scenario_2_cost_near_limit()
-    demo_scenario_3_cost_exceeds_budget()
-    demo_scenario_4_no_budget_defined()
-    demo_scenario_5_all_4_checks()
-    demo_scenario_6_dynamic_pricing()
-    demo_end_to_end_workflow()
-    
-    print("\n")
-    print("╔" + "═" * 68 + "╗")
-    print("║" + "  Demo Complete!".center(68) + "║")
-    print("╚" + "═" * 68 + "╝")
     print()
-    print("Key Takeaways:")
-    print("  ✅ release-gate prevents $50K+ cost disasters")
-    print("  ✅ Automatic cost estimation with full transparency")
-    print("  ✅ Dynamic pricing supports any model")
-    print("  ✅ Auto-detection from code")
-    print("  ✅ All 4 governance checks work together")
-    print("  ✅ Clear decision flow (PASS/WARN/FAIL)")
-    print()
+    print("┌" + "─" * 66 + "┐")
+    print("│" + "  release-gate v0.5 — Interactive Demo".center(66) + "│")
+    print("│" + "  The pre-deployment governance gate for AI agents".center(66) + "│")
+    print("└" + "─" * 66 + "┘")
+
+    if not LIVE:
+        print()
+        print("  Note: release-gate not installed — running in display mode.")
+        print("  Install with:  pip install release-gate")
+
+    intro()
+    demo_safe()
+    demo_unsafe()
+    demo_fix()
+    demo_cicd()
+    demo_crypto()
+    summary()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
