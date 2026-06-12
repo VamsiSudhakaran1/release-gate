@@ -1,6 +1,6 @@
 # governance-safe-pass.yaml
 # Demo: Safe deployment — all checks pass
-# Run: release-gate impact examples/governance-safe-pass.yaml
+# Run: release-gate score examples/governance-safe-pass.yaml --evals examples/evals.yaml --traces examples/traces/safe-trace.json
 
 project:
   name: customer-support-agent
@@ -84,3 +84,18 @@ simulation:
 
 budget:
   max_daily_cost: 500
+
+# Trace policies — evaluated when --traces is passed to release-gate score
+trace_policies:
+  allowed_tools:
+    - search_docs
+    - get_order
+    - create_ticket
+    - list_orders
+  forbidden_tools:
+    - delete_database
+    - send_email_external
+    - export_data
+  max_tool_calls: 10
+  max_retries: 2
+  max_tokens_per_run: 15000

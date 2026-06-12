@@ -1,0 +1,10 @@
+{
+  "trace_id": "safe-trace-001",
+  "steps": [
+    {"type": "llm_call",  "model": "gpt-4-turbo", "tokens": 850},
+    {"type": "tool_call", "tool": "search_docs",  "args": {"query": "return policy"}},
+    {"type": "llm_call",  "model": "gpt-4-turbo", "tokens": 420},
+    {"type": "tool_call", "tool": "get_order",    "args": {"order_id": "42"}},
+    {"type": "llm_call",  "model": "gpt-4-turbo", "tokens": 310}
+  ]
+}
