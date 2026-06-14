@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>release-gate | AI Agent Cost &amp; Safety Gate</title>
+  <title>release-gate | AI Agent Release Decision Engine</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -18,6 +18,7 @@
       --yellow:  #d29922;
       --red:     #f85149;
       --blue:    #58a6ff;
+      --purple:  #bc8cff;
       --accent:  #1f6feb;
     }
 
@@ -72,10 +73,10 @@
       letter-spacing: -1.5px; line-height: 1.15;
       margin-bottom: 20px;
     }
-    .hero h1 span { color: var(--red); }
+    .hero h1 span { color: var(--green); }
     .tagline {
       font-size: 1.15rem; color: var(--muted);
-      max-width: 600px; margin: 0 auto 36px;
+      max-width: 640px; margin: 0 auto 36px;
     }
     .hero-btns { display: flex; gap: 12px; justify-content: center; margin-bottom: 56px; flex-wrap: wrap; }
     .btn-primary {
@@ -117,6 +118,7 @@
     .t-green  { color: var(--green); }
     .t-red    { color: var(--red); }
     .t-yellow { color: var(--yellow); }
+    .t-purple { color: var(--purple); }
     .t-muted  { color: var(--muted); }
     .t-bright { color: var(--bright); }
     .t-bold   { font-weight: 700; }
@@ -132,6 +134,7 @@
     }
     @media (max-width: 700px) {
       .hero-terminals { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
     }
     .hero-terminal-label {
       font-size: .75rem; font-weight: 600;
@@ -171,6 +174,13 @@
     .feature-icon { font-size: 1.6rem; margin-bottom: 12px; }
     .feature-card h3 { color: var(--bright); font-size: 1rem; margin-bottom: 8px; }
     .feature-card p  { color: var(--muted); font-size: .875rem; line-height: 1.7; }
+    .feature-card .tag {
+      display: inline-block; font-size: .7rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .05em;
+      padding: 2px 8px; border-radius: 10px; margin-bottom: 10px;
+    }
+    .tag-new { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.3); }
+    .tag-v5  { background: rgba(88,166,255,.12); color: var(--blue);  border: 1px solid rgba(88,166,255,.25); }
 
     .checks-table {
       width: 100%; border-collapse: collapse; margin-top: 32px;
@@ -190,7 +200,7 @@
     .checks-table td:last-child  { color: var(--muted); font-size: .85rem; }
 
     .tab-nav {
-      display: flex; gap: 4px;
+      display: flex; gap: 4px; flex-wrap: wrap;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px 10px 0 0;
@@ -276,6 +286,18 @@
       border-top: 1px solid var(--border);
       font-size: .8rem; color: var(--muted);
     }
+
+    .command-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px; margin-top: 28px;
+    }
+    .command-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px 18px;
+    }
+    .command-card code { color: var(--blue); font-size: .82rem; font-family: monospace; display: block; margin-bottom: 6px; }
+    .command-card p { color: var(--muted); font-size: .82rem; }
   </style>
 </head>
 <body>
@@ -286,7 +308,7 @@
     <ul class="nav-links">
       <li><a href="#how-it-works">How it works</a></li>
       <li><a href="#demo">Live demo</a></li>
-      <li><a href="#ci">CI/CD</a></li>
+      <li><a href="#features">Features</a></li>
       <li><a href="#checks">Checks</a></li>
       <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" class="nav-cta">GitHub &rarr;</a></li>
     </ul>
@@ -295,9 +317,9 @@
 
 <section class="hero">
   <div class="container">
-    <div class="badge">v0.5.0 &mdash; now with Impact Simulator</div>
-    <h1>Your AI agent could cost<br><span>$54,000 in a single day.</span></h1>
-    <p class="tagline">release-gate shows you the money at risk &mdash; and blocks deployment until your governance is in place.</p>
+    <div class="badge">v0.6.0 &mdash; AI release decision engine</div>
+    <h1>PROMOTE, HOLD, or <span style="color:var(--red)">BLOCK</span><br><span>&#x2014; with a score to prove it.</span></h1>
+    <p class="tagline">release-gate runs evals, validates agent traces, checks cost budgets, and generates an evidence pack &mdash; then gives you one number (0&ndash;100) and one decision.</p>
     <div class="hero-btns">
       <a href="#how-it-works" class="btn-primary">See how it works</a>
       <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">View on GitHub</a>
@@ -305,46 +327,49 @@
 
     <div class="hero-terminals">
       <div>
-        <div class="hero-terminal-label safe">&#x2713; Fully governed &mdash; approved</div>
+        <div class="hero-terminal-label safe">&#x2713; Fully governed &mdash; PROMOTE</div>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
             <span class="terminal-label">governance-safe-pass.yaml</span>
           </div>
           <div class="terminal-body">
-            <span class="t-line t-muted">$ release-gate impact governance.yaml</span>
+            <span class="t-line t-muted">$ release-gate score governance.yaml</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  Normal cost      <span class="t-green">$132/day</span></span>
-            <span class="t-line t-bright">  Runaway scenario <span class="t-yellow">$5,000/day</span></span>
-            <span class="t-line t-bright">  Risk delta       $4,868/day</span>
+            <span class="t-line t-bright">  Readiness Score   <span class="t-green t-bold">94 / 100</span></span>
+            <span class="t-line t-bright">  Confidence        high</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  Budget cap  $500/day  <span class="t-green">&#x2713; PASS</span></span>
-            <span class="t-line t-bright">  Headroom    $368/day</span>
+            <span class="t-line t-bright">  safety            <span class="t-green">100</span>   access_control  <span class="t-green">100</span></span>
+            <span class="t-line t-bright">  cost               <span class="t-green">90</span>   fallback        <span class="t-green">100</span></span>
+            <span class="t-line t-bright">  eval_quality       <span class="t-green">85</span>   observability    <span class="t-green">80</span></span>
             <span class="t-blank"></span>
-            <span class="t-line t-green t-bold">  FINAL VERDICT:  &#x2713;  APPROVED</span>
+            <span class="t-line t-bright">  Critical failures  <span class="t-green">none</span></span>
+            <span class="t-blank"></span>
+            <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)</span>
           </div>
         </div>
       </div>
       <div>
-        <div class="hero-terminal-label unsafe">&#x2717; Missing safeguards &mdash; blocked</div>
+        <div class="hero-terminal-label unsafe">&#x2717; Missing safeguards &mdash; BLOCK</div>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
             <span class="terminal-label">governance-unsafe-fail.yaml</span>
           </div>
           <div class="terminal-body">
-            <span class="t-line t-muted">$ release-gate impact governance.yaml</span>
+            <span class="t-line t-muted">$ release-gate score governance.yaml</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  Normal cost      <span class="t-yellow">$1,080/day</span></span>
-            <span class="t-line t-bright">  Runaway scenario <span class="t-red">$54,000/day</span></span>
-            <span class="t-line t-red  t-bold">  Risk delta       $52,920/day</span>
+            <span class="t-line t-bright">  Readiness Score   <span class="t-red t-bold">41 / 100</span></span>
+            <span class="t-line t-bright">  Confidence        low</span>
             <span class="t-blank"></span>
-            <span class="t-line t-red">  1. KILL_SWITCH not declared</span>
-            <span class="t-line t-muted">     &rarr; No way to stop a runaway agent</span>
-            <span class="t-line t-red">  2. RATE_LIMIT not declared</span>
-            <span class="t-line t-muted">     &rarr; Anyone can exhaust budget in minutes</span>
+            <span class="t-line t-bright">  safety             <span class="t-red">20</span>   access_control   <span class="t-red">30</span></span>
+            <span class="t-line t-bright">  cost               <span class="t-red">40</span>   fallback          <span class="t-red">0</span></span>
             <span class="t-blank"></span>
-            <span class="t-line t-red t-bold">  FINAL VERDICT:  &#x2717;  BLOCKED</span>
+            <span class="t-line t-red">  Critical failures:</span>
+            <span class="t-line t-red">    FALLBACK_DECLARED &mdash; kill switch missing</span>
+            <span class="t-line t-red">    ACTION_BUDGET     &mdash; no budget cap set</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-red t-bold">  Decision:  &#x2717;  BLOCK  (score 41/100)</span>
           </div>
         </div>
       </div>
@@ -355,30 +380,30 @@
 <section id="how-it-works">
   <div class="container">
     <p class="section-eyebrow">How it works</p>
-    <h2 class="section-title">Three steps to safe deployment</h2>
-    <p class="section-subtitle">release-gate slots into your existing CI/CD pipeline. No backend, no dashboard, no sign-up.</p>
+    <h2 class="section-title">Four steps to a defensible release decision</h2>
+    <p class="section-subtitle">release-gate slots into your CI/CD pipeline. No backend, no dashboard, no sign-up.</p>
 
     <div class="steps" style="margin-top:40px;">
       <div class="step">
         <div class="step-num">1</div>
         <div class="step-content">
           <h3>Write a governance.yaml next to your code</h3>
-          <p>Declare your model, expected usage, daily budget cap, fallback owner, and kill switch. Takes about 5 minutes &mdash; or use <code>release-gate init</code> for an interactive wizard.</p>
+          <p>Declare your model, expected usage, daily budget cap, kill switch, eval cases, and trace policies. Takes about 5 minutes &mdash; or use <code>release-gate init</code> for an interactive wizard.</p>
           <div class="terminal">
             <div class="terminal-bar"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div><span class="terminal-label">governance.yaml</span></div>
             <div class="terminal-body">
-              <span class="t-line t-muted"># Tell release-gate about your agent</span>
-              <span class="t-line"><span class="t-blue">agent</span>:</span>
-              <span class="t-line">  <span class="t-blue">model</span>: <span class="t-green">gpt-4-turbo</span></span>
-              <span class="t-line">  <span class="t-blue">daily_requests</span>: <span class="t-yellow">5000</span></span>
+              <span class="t-line"><span class="t-muted">agent:</span></span>
+              <span class="t-line">  <span class="t-muted">model: gpt-4-turbo    daily_requests: 5000</span></span>
               <span class="t-blank"></span>
-              <span class="t-line"><span class="t-blue">checks</span>:</span>
-              <span class="t-line">  <span class="t-blue">action_budget</span>:</span>
-              <span class="t-line">    <span class="t-blue">max_daily_cost</span>: <span class="t-yellow">500</span>   <span class="t-muted"># block if exceeded</span></span>
-              <span class="t-line">  <span class="t-blue">fallback_declared</span>:</span>
-              <span class="t-line">    <span class="t-blue">team_owner</span>: <span class="t-green">platform-team</span></span>
-              <span class="t-line">    <span class="t-blue">kill_switch</span>:</span>
-              <span class="t-line">      <span class="t-blue">type</span>: <span class="t-green">feature-flag</span></span>
+              <span class="t-line"><span class="t-muted">checks:</span></span>
+              <span class="t-line">  <span class="t-muted">action_budget:   {max_daily_cost: 500}</span></span>
+              <span class="t-line">  <span class="t-muted">fallback_declared:</span></span>
+              <span class="t-line">    <span class="t-muted">kill_switch: {type: feature-flag}</span></span>
+              <span class="t-line">    <span class="t-muted">team_owner:  platform-team</span></span>
+              <span class="t-blank"></span>
+              <span class="t-line"><span class="t-muted">trace_policies:</span></span>
+              <span class="t-line">  <span class="t-muted">forbidden_tools: [delete_database, export_data]</span></span>
+              <span class="t-line">  <span class="t-muted">max_tool_calls: 10    max_retries: 2</span></span>
             </div>
           </div>
         </div>
@@ -387,23 +412,24 @@
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-content">
-          <h3>Run the Impact Simulator before every deploy</h3>
-          <p>One command shows your normal cost, the runaway-loop worst case, and exactly what money is at risk if a safeguard is missing. Engineering leaders see dollars, not YAML warnings.</p>
+          <h3>Score every deploy candidate</h3>
+          <p>One command evaluates safety, cost, access control, fallback, eval quality, and observability. You get a 0&ndash;100 readiness score and a PROMOTE / HOLD / BLOCK decision &mdash; not just pass/fail YAML warnings.</p>
           <div class="terminal">
             <div class="terminal-bar"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
             <div class="terminal-body">
-              <span class="t-line t-muted">$ release-gate impact governance.yaml</span>
+              <span class="t-line t-muted">$ release-gate score governance.yaml --evals evals.yaml</span>
               <span class="t-blank"></span>
-              <span class="t-line t-bright">  Scenario               Daily        Monthly</span>
-              <span class="t-line t-muted">  &mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;</span>
-              <span class="t-line t-bright">  Normal operation  <span class="t-green">$132.00</span>      <span class="t-green">$3,960.00</span></span>
-              <span class="t-line t-bright">  Runaway loop   <span class="t-red">$5,000.00</span>    <span class="t-red">$150,000.00</span></span>
-              <span class="t-line t-muted">  &mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;</span>
-              <span class="t-line t-yellow t-bold">  Risk delta     $4,868.00    $146,040.00</span>
+              <span class="t-line t-bright">  Readiness Score   <span class="t-green t-bold">94 / 100</span>   confidence: high</span>
               <span class="t-blank"></span>
-              <span class="t-line t-bright">  No governance gaps detected.</span>
+              <span class="t-line t-bright">  Dimension Breakdown:</span>
+              <span class="t-line t-bright">    safety          <span class="t-green">100</span>  (weight 30%)</span>
+              <span class="t-line t-bright">    cost             <span class="t-green">90</span>  (weight 20%)</span>
+              <span class="t-line t-bright">    access_control  <span class="t-green">100</span>  (weight 20%)</span>
+              <span class="t-line t-bright">    fallback        <span class="t-green">100</span>  (weight 15%)</span>
+              <span class="t-line t-bright">    eval_quality     <span class="t-green">85</span>  (weight 10%)</span>
+              <span class="t-line t-bright">    observability    <span class="t-green">80</span>  (weight 5%)</span>
               <span class="t-blank"></span>
-              <span class="t-line t-green t-bold">  FINAL VERDICT:  &#x2713;  APPROVED</span>
+              <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)</span>
             </div>
           </div>
         </div>
@@ -412,16 +438,42 @@
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-content">
-          <h3>Gate every push automatically in CI</h3>
-          <p>Add release-gate to your GitHub Actions workflow. Exit code 0 = deploy. Exit code 1 = blocked. The HTML report is uploaded as a CI artifact &mdash; your team sees the full cost breakdown without leaving GitHub.</p>
+          <h3>Catch regressions before they ship</h3>
+          <p>Compare a baseline report against the candidate. Any dimension that drops more than 10 points &mdash; especially safety, fallback, or access control &mdash; is flagged as a regression and blocks the release automatically.</p>
           <div class="terminal">
-            <div class="terminal-bar"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div><span class="terminal-label">.github/workflows/governance.yml</span></div>
+            <div class="terminal-bar"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
             <div class="terminal-body">
-              <span class="t-line t-muted">- name: AI Agent Governance Gate</span>
-              <span class="t-line t-muted">  uses: VamsiSudhakaran1/release-gate@v0.5.0</span>
-              <span class="t-line t-muted">  with:</span>
-              <span class="t-line t-muted">    command: impact</span>
-              <span class="t-line t-muted">    html-report: report.html  # &rarr; CI artifact</span>
+              <span class="t-line t-muted">$ release-gate compare baseline.json candidate.json</span>
+              <span class="t-blank"></span>
+              <span class="t-line t-bright">  Baseline score    <span class="t-green">94/100</span>  (PROMOTE)</span>
+              <span class="t-line t-bright">  Candidate score   <span class="t-red">71/100</span>  (HOLD)</span>
+              <span class="t-line t-bright">  Score delta       <span class="t-red">&minus;23 points</span></span>
+              <span class="t-blank"></span>
+              <span class="t-line t-red">  Regressions detected:</span>
+              <span class="t-line t-red">    safety          100 &rarr; 60  (-40 pts)  CRITICAL</span>
+              <span class="t-line t-red">    fallback        100 &rarr; 75  (-25 pts)</span>
+              <span class="t-blank"></span>
+              <span class="t-line t-red t-bold">  Decision:  &#x2717;  BLOCK  &mdash; critical regression in safety</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>Generate an evidence pack for every release</h3>
+          <p>One command produces three audit artefacts &mdash; a machine-readable JSON report, an executive Markdown summary, and a full HTML dashboard &mdash; ready for compliance, security review, or stakeholder sign-off.</p>
+          <div class="terminal">
+            <div class="terminal-bar"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
+            <div class="terminal-body">
+              <span class="t-line t-muted">$ release-gate evidence-pack governance.yaml</span>
+              <span class="t-blank"></span>
+              <span class="t-line t-green">  &#x2713;  release-evidence/readiness_report.json</span>
+              <span class="t-line t-green">  &#x2713;  release-evidence/executive_summary.md</span>
+              <span class="t-line t-green">  &#x2713;  release-evidence/release-gate-evidence.html</span>
+              <span class="t-blank"></span>
+              <span class="t-line t-muted">  Upload as CI artifact or attach to release PR.</span>
             </div>
           </div>
         </div>
@@ -433,17 +485,102 @@
 <section id="demo">
   <div class="container">
     <p class="section-eyebrow">Live demo</p>
-    <h2 class="section-title">See what gets blocked &mdash; and why</h2>
-    <p class="section-subtitle">Two real configs. One passes. One gets blocked with a $52,920/day risk delta explained in plain English.</p>
+    <h2 class="section-title">Real commands. Real output.</h2>
+    <p class="section-subtitle">Four scenarios showing score, regression detection, trace violation, and the impact simulator.</p>
 
     <div style="margin-top:40px;">
       <div class="tab-nav">
-        <button class="tab-btn active" onclick="switchTab('safe', this)">&#x2713; Safe deployment (APPROVED)</button>
-        <button class="tab-btn" onclick="switchTab('unsafe', this)">&#x2717; Unsafe deployment (BLOCKED)</button>
-        <button class="tab-btn" onclick="switchTab('warn', this)">&#x26A0; Near budget (WARNING)</button>
+        <button class="tab-btn active" onclick="switchTab('score',   this)">&#x2713; Score (PROMOTE)</button>
+        <button class="tab-btn"        onclick="switchTab('compare', this)">&#x26A0; Compare (regression)</button>
+        <button class="tab-btn"        onclick="switchTab('traces',  this)">&#x2717; Traces (violations)</button>
+        <button class="tab-btn"        onclick="switchTab('impact',  this)">$ Impact simulator</button>
       </div>
 
-      <div id="tab-safe" class="tab-panel">
+      <div id="tab-score" class="tab-panel">
+        <div class="terminal">
+          <div class="terminal-body">
+            <span class="t-line t-muted">$ release-gate score examples/governance-safe-pass.yaml \</span>
+            <span class="t-line t-muted">      --evals examples/evals.yaml \</span>
+            <span class="t-line t-muted">      --traces examples/traces/safe-trace.json</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.6.0</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Project          customer-support-agent  v1.0.0</span>
+            <span class="t-line t-bright">  Checks run       5  (5 pass, 0 warn, 0 fail)</span>
+            <span class="t-line t-bright">  Evals run        7  (7 pass, 0 fail)  pass rate 100%</span>
+            <span class="t-line t-bright">  Traces checked   1  (0 violations)</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Score            <span class="t-green t-bold">94 / 100</span>   confidence: high</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Dimension Breakdown:</span>
+            <span class="t-line t-bright">    safety          <span class="t-green">100</span>  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;  (wt 30%)</span>
+            <span class="t-line t-bright">    cost             <span class="t-green">90</span>  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2591;  (wt 20%)</span>
+            <span class="t-line t-bright">    access_control  <span class="t-green">100</span>  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;  (wt 20%)</span>
+            <span class="t-line t-bright">    fallback        <span class="t-green">100</span>  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;  (wt 15%)</span>
+            <span class="t-line t-bright">    eval_quality     <span class="t-green">85</span>  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2591;&#x2591;  (wt 10%)</span>
+            <span class="t-line t-bright">    observability    <span class="t-green">80</span>  &#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2591;&#x2591;  (wt 5%)</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Critical failures  <span class="t-green">none</span></span>
+            <span class="t-blank"></span>
+            <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)  exit 0</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-compare" class="tab-panel" style="display:none;">
+        <div class="terminal">
+          <div class="terminal-body">
+            <span class="t-line t-muted">$ release-gate compare reports/v1.0-baseline.json reports/v1.1-candidate.json</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  release-gate  |  Regression Gate  v0.6.0</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Baseline score    <span class="t-green">94 / 100</span>   PROMOTE</span>
+            <span class="t-line t-bright">  Candidate score   <span class="t-yellow">71 / 100</span>   HOLD</span>
+            <span class="t-line t-bright">  Score delta       <span class="t-red">&minus;23 points</span></span>
+            <span class="t-blank"></span>
+            <span class="t-line t-red">  Regressions (dropped &gt; 10 pts):</span>
+            <span class="t-line t-red">    safety          100 &rarr; 60  (&minus;40)  <span class="t-bold">CRITICAL</span></span>
+            <span class="t-line t-red">    fallback        100 &rarr; 75  (&minus;25)</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-green">  Improvements:</span>
+            <span class="t-line t-green">    eval_quality     85 &rarr; 95  (+10)</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  New critical failures in candidate:</span>
+            <span class="t-line t-red">    FALLBACK_DECLARED &mdash; kill switch removed</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-red t-bold">  Decision:  &#x2717;  BLOCK  &mdash; critical regression in safety  exit 1</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-traces" class="tab-panel" style="display:none;">
+        <div class="terminal">
+          <div class="terminal-body">
+            <span class="t-line t-muted">$ release-gate score governance.yaml --traces examples/traces/unsafe-trace.json</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  release-gate  |  Trace Validator  v0.6.0</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Trace ID         unsafe-trace-001</span>
+            <span class="t-line t-bright">  Steps            10  (3 llm_calls, 6 tool_calls, 1 retry)</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-red">  Violations found: 5</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-red">  [FORBIDDEN_TOOL]    send_email &mdash; not in allowed list</span>
+            <span class="t-line t-muted">    &rarr; Step 3: args.to = "external@hacker.com"</span>
+            <span class="t-line t-red">  [FORBIDDEN_TOOL]    delete_database &mdash; explicitly forbidden</span>
+            <span class="t-line t-muted">    &rarr; Step 5: irreversible operation attempted</span>
+            <span class="t-line t-red">  [TOOL_LOOP]         search_docs called 3 times consecutively</span>
+            <span class="t-line t-muted">    &rarr; Possible infinite loop &mdash; agent stuck</span>
+            <span class="t-line t-red">  [TOKEN_BUDGET]      7,100 tokens used, limit 15,000</span>
+            <span class="t-line t-muted">    &rarr; On track but forbidden calls indicate runaway risk</span>
+            <span class="t-line t-red">  [RETRY_STORM]       1 retry detected</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-red t-bold">  Trace result:  FAIL  (5 violations)  exit 1</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-impact" class="tab-panel" style="display:none;">
         <div class="terminal">
           <div class="terminal-body">
             <span class="t-line t-muted">$ release-gate impact examples/governance-safe-pass.yaml</span>
@@ -454,71 +591,92 @@
             <span class="t-line t-bright">  Requests/day     5,000</span>
             <span class="t-line t-bright">  Tokens/request   800 in + 400 out</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  Scenario                            Daily       Monthly</span>
-            <span class="t-line t-bright">    Normal operation             <span class="t-green">$   132.00</span>  <span class="t-green">$   3,960.00</span></span>
-            <span class="t-line t-bright">  ! Runaway loop (15x retries)    <span class="t-yellow">$ 5,000.00</span>  <span class="t-yellow">$ 150,000.00</span></span>
-            <span class="t-line t-bright">  * Risk delta (money at stake)   <span class="t-yellow">$ 4,868.00</span>  <span class="t-yellow">$ 146,040.00</span></span>
+            <span class="t-line t-bright">  Scenario                            Daily        Monthly</span>
+            <span class="t-line t-bright">    Normal operation             <span class="t-green">$   132.00</span>   <span class="t-green">$   3,960.00</span></span>
+            <span class="t-line t-bright">  ! Runaway loop (15x retries)    <span class="t-yellow">$ 5,000.00</span>   <span class="t-yellow">$ 150,000.00</span></span>
+            <span class="t-line t-bright">  * Risk delta (money at stake)   <span class="t-yellow">$ 4,868.00</span>   <span class="t-yellow">$ 146,040.00</span></span>
             <span class="t-blank"></span>
             <span class="t-line t-bright">  Budget cap  $500.00/day  [<span class="t-green">&#x2713; PASS</span>]  headroom: $368.00/day</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  ACTION_BUDGET             <span class="t-green">&#x2713; PASS</span></span>
-            <span class="t-line t-bright">  FALLBACK_DECLARED         <span class="t-green">&#x2713; PASS</span></span>
-            <span class="t-line t-bright">  IDENTITY_BOUNDARY         <span class="t-green">&#x2713; PASS</span></span>
+            <span class="t-line t-bright">  ACTION_BUDGET     <span class="t-green">&#x2713; PASS</span></span>
+            <span class="t-line t-bright">  FALLBACK_DECLARED <span class="t-green">&#x2713; PASS</span></span>
+            <span class="t-line t-bright">  IDENTITY_BOUNDARY <span class="t-green">&#x2713; PASS</span></span>
             <span class="t-blank"></span>
-            <span class="t-line t-green t-bold">  FINAL VERDICT:  &#x2713;  APPROVED</span>
-          </div>
-        </div>
-      </div>
-
-      <div id="tab-unsafe" class="tab-panel" style="display:none;">
-        <div class="terminal">
-          <div class="terminal-body">
-            <span class="t-line t-muted">$ release-gate impact examples/governance-unsafe-fail.yaml</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  Model            gpt-4 (OpenAI)</span>
-            <span class="t-line t-bright">  Requests/day     10,000</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">    Normal operation             <span class="t-yellow">$  1,080.00</span>  <span class="t-yellow">$  32,400.00</span></span>
-            <span class="t-line t-bright">  ! Runaway loop (15x retries)    <span class="t-red">$ 54,000.00</span>  <span class="t-red">$1,620,000.00</span></span>
-            <span class="t-line t-red   t-bold">  * Risk delta (money at stake)   $ 52,920.00  $1,587,600.00</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-red">  1. [FALLBACK_DECLARED] KILL_SWITCH not declared</span>
-            <span class="t-line t-muted">     &rarr; No way to stop a runaway agent &mdash; manual intervention required</span>
-            <span class="t-line t-red">  2. [FALLBACK_DECLARED] TEAM_OWNER not declared</span>
-            <span class="t-line t-muted">     &rarr; No owner means no one gets paged when costs spike at 3 AM</span>
-            <span class="t-line t-red">  3. [IDENTITY_BOUNDARY] RATE_LIMIT not declared</span>
-            <span class="t-line t-muted">     &rarr; No rate limit &mdash; a single client can exhaust budget in minutes</span>
-            <span class="t-line t-red">  4. [ACTION_BUDGET] MAX_DAILY_COST not declared</span>
-            <span class="t-line t-muted">     &rarr; Unlimited spend &mdash; no circuit breaker on daily cost</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-red t-bold">  FINAL VERDICT:  &#x2717;  BLOCKED</span>
-          </div>
-        </div>
-      </div>
-
-      <div id="tab-warn" class="tab-panel" style="display:none;">
-        <div class="terminal">
-          <div class="terminal-body">
-            <span class="t-line t-muted">$ release-gate run governance.yaml --output-evidence evidence.json</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  CHECK                     STATUS    IMPACT</span>
-            <span class="t-line t-bright">  ACTION_BUDGET             <span class="t-green">&#x2713; PASS</span>    &mdash;</span>
-            <span class="t-line t-bright">  BUDGET_SIMULATION         <span class="t-yellow">&#x26A0; WARN</span>    HIGH</span>
-            <span class="t-line t-bright">  FALLBACK_DECLARED         <span class="t-green">&#x2713; PASS</span>    &mdash;</span>
-            <span class="t-line t-bright">  IDENTITY_BOUNDARY         <span class="t-green">&#x2713; PASS</span>    &mdash;</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-yellow">  &#x26A0; BUDGET_SIMULATION: 82% of daily budget used ($82/$100)</span>
-            <span class="t-line t-muted">    &rarr; Usage is high. Monitor closely after deployment.</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-yellow t-bold">  FINAL DECISION: WARN  (exit code 10)</span>
+            <span class="t-line t-green t-bold">  FINAL VERDICT:  &#x2713;  APPROVED  exit 0</span>
           </div>
         </div>
       </div>
 
       <div class="demo-note">
         <strong>Try it yourself:</strong>
-        <code>pip install release-gate</code> then
-        <code>release-gate impact examples/governance-unsafe-fail.yaml</code>
+        <code>pip install release-gate</code> &nbsp;then&nbsp;
+        <code>release-gate score examples/governance-safe-pass.yaml</code>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <p class="section-eyebrow">What&rsquo;s new in v0.6</p>
+    <h2 class="section-title">From governance linter to release decision engine</h2>
+    <p class="section-subtitle">Five new capabilities turn static YAML checks into a real AI deployment gate.</p>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <span class="tag tag-new">New v0.6</span>
+        <div class="feature-icon">&#x1F4CA;</div>
+        <h3>Readiness Scorer &mdash; 0&ndash;100</h3>
+        <p>Six weighted dimensions (safety 30%, cost 20%, access control 20%, fallback 15%, eval quality 10%, observability 5%) collapse into one number and one decision: <strong>PROMOTE</strong>, <strong>HOLD</strong>, or <strong>BLOCK</strong>.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-new">New v0.6</span>
+        <div class="feature-icon">&#x1F50D;</div>
+        <h3>Regression Gate</h3>
+        <p>Compare any two readiness report snapshots. Drops &gt;10 points in any dimension &mdash; especially safety, fallback, or access control &mdash; automatically BLOCK the release. Ship with a diff, not a guess.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-new">New v0.6</span>
+        <div class="feature-icon">&#x1F9EA;</div>
+        <h3>Eval Runner</h3>
+        <p>Declare behavior test cases in YAML: <em>refuse_or_mask</em>, <em>contains_keywords</em>, <em>valid_json</em>, <em>no_tool_calls</em>. Runs in static mode (CI-safe, no LLM key needed) or live mode with any agent callable.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-new">New v0.6</span>
+        <div class="feature-icon">&#x1F6E1;&#xFE0F;</div>
+        <h3>Trace Validator</h3>
+        <p>Feed your agent&rsquo;s execution trace (JSON or JSONL). Detects forbidden tool calls, allowed-list violations, retry storms, token budget overruns, and tool-call loops before they reach production.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-new">New v0.6</span>
+        <div class="feature-icon">&#x1F4C4;</div>
+        <h3>Evidence Pack</h3>
+        <p>One command generates three audit artefacts: <code>readiness_report.json</code>, <code>executive_summary.md</code>, and <code>release-gate-evidence.html</code>. Attach to PRs, compliance tickets, or security reviews.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-v5">v0.5</span>
+        <div class="feature-icon">&#x1F4B8;</div>
+        <h3>Impact Simulator</h3>
+        <p>Normal vs. runaway cost side-by-side. Engineering leaders see the dollars at risk, not YAML warnings. The HTML report uploads as a CI artifact automatically.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-v5">v0.5</span>
+        <div class="feature-icon">&#x1F512;</div>
+        <h3>Cryptographic Sign &amp; Verify</h3>
+        <p>Sign <code>governance.yaml</code> with RSA-PSS + SHA-256. Verify in CI that no one changed budget limits or policies after review.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-v5">v0.5</span>
+        <div class="feature-icon">&#x2699;&#xFE0F;</div>
+        <h3>GitHub Actions Native</h3>
+        <p>5 lines in your workflow. Exit code 0 = PROMOTE, 10 = HOLD, 1 = BLOCK. The HTML report is auto-uploaded as a CI artifact &mdash; your team reviews it without leaving GitHub.</p>
       </div>
     </div>
   </div>
@@ -527,45 +685,69 @@
 <section id="ci">
   <div class="container">
     <p class="section-eyebrow">CI/CD Integration</p>
-    <h2 class="section-title">5 lines in GitHub Actions</h2>
-    <p class="section-subtitle">Works with GitHub Actions, GitLab CI, Jenkins, and any shell. The HTML report is automatically uploaded as a CI artifact.</p>
+    <h2 class="section-title">Gate every push automatically</h2>
+    <p class="section-subtitle">Works with GitHub Actions, GitLab CI, Jenkins, and any shell. All commands return structured exit codes.</p>
 
     <div style="margin-top:36px; display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start;">
       <div>
         <div class="yaml-block">
 <span class="yaml-cmt"># .github/workflows/governance.yml</span>
-<span class="yaml-key">name</span>: <span class="yaml-str">AI Agent Governance</span>
+<span class="yaml-key">name</span>: <span class="yaml-str">AI Release Gate</span>
 <span class="yaml-key">on</span>: [push, pull_request]
 
 <span class="yaml-key">jobs</span>:
-  <span class="yaml-key">governance</span>:
+  <span class="yaml-key">release-gate</span>:
     <span class="yaml-key">runs-on</span>: <span class="yaml-str">ubuntu-latest</span>
     <span class="yaml-key">steps</span>:
       - <span class="yaml-key">uses</span>: <span class="yaml-str">actions/checkout@v4</span>
 
-      - <span class="yaml-key">name</span>: <span class="yaml-str">Impact check</span>
-        <span class="yaml-key">uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.5.0</span>
+      - <span class="yaml-key">name</span>: <span class="yaml-str">Score &amp; gate release</span>
+        <span class="yaml-key">uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.6.0</span>
         <span class="yaml-key">with</span>:
-          <span class="yaml-key">command</span>: <span class="yaml-str">impact</span>
-          <span class="yaml-key">html-report</span>: <span class="yaml-str">report.html</span>
-          <span class="yaml-cmt"># report is auto-uploaded as CI artifact</span>
+          <span class="yaml-key">command</span>: <span class="yaml-str">score</span>
+          <span class="yaml-key">config</span>: <span class="yaml-str">governance.yaml</span>
+          <span class="yaml-key">evals</span>: <span class="yaml-str">evals.yaml</span>
+          <span class="yaml-key">html-report</span>: <span class="yaml-str">evidence.html</span>
+          <span class="yaml-cmt"># evidence pack auto-uploaded as CI artifact</span>
+        </div>
+
+        <div class="command-grid" style="margin-top:16px;">
+          <div class="command-card">
+            <code>release-gate score</code>
+            <p>0&ndash;100 score + PROMOTE/HOLD/BLOCK</p>
+          </div>
+          <div class="command-card">
+            <code>release-gate compare</code>
+            <p>Regression detection vs baseline</p>
+          </div>
+          <div class="command-card">
+            <code>release-gate evidence-pack</code>
+            <p>JSON + Markdown + HTML artefacts</p>
+          </div>
+          <div class="command-card">
+            <code>release-gate impact</code>
+            <p>Cost simulation (v0.5)</p>
+          </div>
         </div>
       </div>
+
       <div>
         <div class="feature-card" style="margin-bottom:16px;">
-          <div class="feature-icon">&#x1F4CA;</div>
-          <h3>HTML report as CI artifact</h3>
-          <p>Every PR gets an Impact Simulator report &mdash; cost projections, risk delta, governance gaps &mdash; without leaving GitHub.</p>
+          <div class="feature-icon">&#x1F7E2;</div>
+          <h3>Exit codes your pipeline understands</h3>
+          <p><code>0</code> = PROMOTE / PASS &mdash; deploy it.<br>
+             <code>10</code> = HOLD / WARN &mdash; review before deploying.<br>
+             <code>1</code> = BLOCK / FAIL &mdash; do not deploy.</p>
         </div>
         <div class="feature-card" style="margin-bottom:16px;">
-          <div class="feature-icon">&#x2699;&#xFE0F;</div>
-          <h3>Exit codes your pipeline understands</h3>
-          <p><code>0</code> = PASS (deploy), <code>10</code> = WARN (review needed), <code>1</code> = FAIL (blocked).</p>
+          <div class="feature-icon">&#x1F4CB;</div>
+          <h3>Evidence pack as CI artifact</h3>
+          <p>Every PR gets a readiness report, executive summary, and HTML dashboard &mdash; attached automatically so reviewers see the full picture without running anything locally.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">&#x1F512;</div>
-          <h3>Cryptographic locking (v0.5)</h3>
-          <p>Sign <code>governance.yaml</code> with RSA-PSS + SHA256. Verify in CI that no one changed limits post-review.</p>
+          <div class="feature-icon">&#x1F504;</div>
+          <h3>Regression baseline in git</h3>
+          <p>Commit <code>readiness_report.json</code> as your baseline. Run <code>release-gate compare</code> on every PR to catch silent degradations in safety or fallback coverage.</p>
         </div>
       </div>
     </div>
@@ -575,12 +757,12 @@
 <section id="checks">
   <div class="container">
     <p class="section-eyebrow">Governance checks</p>
-    <h2 class="section-title">5 checks. One decision.</h2>
-    <p class="section-subtitle">Each check maps to a real failure mode &mdash; cost explosion, no kill switch, open access, bad inputs.</p>
+    <h2 class="section-title">5 checks + evals + traces. One decision.</h2>
+    <p class="section-subtitle">Each check maps to a real failure mode &mdash; cost explosion, no kill switch, open access, bad inputs, forbidden tool use.</p>
 
     <table class="checks-table">
       <thead>
-        <tr><th>Check</th><th>What it validates</th><th>Blocked when</th></tr>
+        <tr><th>Check / Layer</th><th>What it validates</th><th>Blocked when</th></tr>
       </thead>
       <tbody>
         <tr>
@@ -608,6 +790,16 @@
           <td>JSON Schema defined, valid &amp; invalid sample payloads provided</td>
           <td>Schema missing (FAIL) or no valid samples (WARN)</td>
         </tr>
+        <tr>
+          <td>Evals (behavior)</td>
+          <td>refuse_or_mask, contains_keywords, valid_json, no_tool_calls &mdash; declared in YAML</td>
+          <td>Critical evals fail (safety category)</td>
+        </tr>
+        <tr>
+          <td>Trace Validator</td>
+          <td>Forbidden tools, allowed-list violations, retry storms, token budget, tool loops</td>
+          <td>Any forbidden tool called or retry storm detected</td>
+        </tr>
       </tbody>
     </table>
 
@@ -626,7 +818,14 @@
     <div class="footer-inner">
       <div class="footer-col">
         <div class="logo" style="margin-bottom:12px;">&#x1F6AA; release-gate</div>
-        <p style="font-size:.85rem; max-width:260px;">The CI/CD pre-flight checklist for AI systems. Catch cost disasters before they reach production.</p>
+        <p style="font-size:.85rem; max-width:280px;">The CI/CD release decision engine for AI agents. Score, compare, validate traces, and generate evidence &mdash; before shipping.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Commands</h4>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate score</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate compare</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate evidence-pack</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate impact</a>
       </div>
       <div class="footer-col">
         <h4>Product</h4>
@@ -639,10 +838,6 @@
         <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">Documentation</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/CHANGELOG.md" target="_blank">Changelog</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate/issues" target="_blank">Report an Issue</a>
-      </div>
-      <div class="footer-col">
-        <h4>Connect</h4>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank">GitHub Profile</a>
         <a href="mailto:vamsi.sudhakaran@gmail.com">Email</a>
       </div>
     </div>
@@ -655,7 +850,7 @@
 
 <script>
   function switchTab(name, btn) {
-    ['safe','unsafe','warn'].forEach(id => {
+    ['score','compare','traces','impact'].forEach(id => {
       document.getElementById('tab-' + id).style.display = 'none';
     });
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
