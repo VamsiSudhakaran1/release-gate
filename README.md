@@ -315,6 +315,9 @@ release-gate validate-and-lock --governance governance.yaml --sign --private-key
 release-gate validate-and-lock --governance governance.yaml --verify --public-key key.pub
 ```
 
+> **Security:** Never commit private keys. `*.pem` is git-ignored; store private keys
+> in your secrets manager and commit only the public key. See `examples/keys/`.
+
 ---
 
 ## Supported Models

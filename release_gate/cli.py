@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-release-gate CLI - Governance enforcement for AI agents
-Version: 0.5.0 with Cryptographic Governance Validation
+release-gate CLI - AI release decision engine
+Version: 0.6.0 — readiness scoring, regression gate, evals, traces, evidence packs
 """
 import sys
 import yaml
@@ -49,6 +49,17 @@ try:
     IMPACT_AVAILABLE = True
 except ImportError:
     IMPACT_AVAILABLE = False
+
+# Import v0.6 release decision engine (scoring, regression, evals, traces, evidence)
+try:
+    from release_gate.readiness_scorer import ReadinessScorer, DIMENSION_WEIGHTS
+    from release_gate.regression_gate import RegressionGate
+    from release_gate.evals.runner import EvalRunner, load_evals
+    from release_gate.trace_validator import TraceValidator
+    from release_gate.evidence_pack import generate_evidence_pack, render_html_evidence
+    V6_AVAILABLE = True
+except ImportError:
+    V6_AVAILABLE = False
 
 
 GOVERNANCE_SCHEMA = {
@@ -398,27 +409,273 @@ def run_impact_command(config_path: str, html_report: str | None) -> None:
     sys.exit(get_exit_code(decision))
 
 
+def _flag(argv, name):
+    """Return the value following a --flag, or None if absent."""
+    if name in argv:
+        idx = argv.index(name)
+        if idx + 1 < len(argv):
+            return argv[idx + 1]
+    return None
+
+
+def _score_exit_code(decision):
+    """PROMOTE -> 0, HOLD -> 10, BLOCK -> 1."""
+    return {"PROMOTE": 0, "HOLD": 10, "BLOCK": 1}.get(decision, 1)
+
+
+def _gather_score_inputs(config_path, evals_path, traces_path):
+    """Run checks, impact, evals, and trace validation for a config."""
+    config = load_config(config_path)
+    check_results = run_checks(config)
+
+    impact = None
+    if IMPACT_AVAILABLE and config.get("simulation"):
+        try:
+            impact = ImpactSimulator().simulate(config)
+        except Exception:
+            impact = None
+
+    eval_results = None
+    if evals_path:
+        try:
+            eval_results = EvalRunner().run(load_evals(evals_path))
+        except FileNotFoundError:
+            print(f"Error: Evals file not found: {evals_path}")
+            sys.exit(1)
+
+    trace_results = None
+    if traces_path:
+        policies = config.get("trace_policies", {})
+        trace_results = TraceValidator().validate_file(traces_path, policies)
+
+    return config, check_results, impact, eval_results, trace_results
+
+
+def _print_score_report(scoring, project, evals, traces, impact):
+    """Render a readiness score report to the terminal."""
+    score = scoring["readiness_score"]
+    decision = scoring["decision"]
+    conf = scoring["confidence"]
+
+    print("\n" + "=" * 80)
+    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.6.0")
+    print("=" * 80 + "\n")
+
+    print(f"  Project          {project}")
+    if evals:
+        print(f"  Evals run        {evals['total']}  "
+              f"({evals['passed']} pass, {evals['failed']} fail)  "
+              f"pass rate {evals['pass_rate']}%  [{evals['mode']} mode]")
+    if traces:
+        print(f"  Traces checked   {traces.get('trace_count', 0)}  "
+              f"({len(traces.get('violations', []))} violations)")
+    if impact:
+        print(f"  Impact verdict   {impact.get('verdict', 'N/A')}")
+    print()
+
+    print(f"  Score            {score} / 100   confidence: {conf}\n")
+    print("  Dimension Breakdown:")
+    for dim, info in scoring["dimensions"].items():
+        s = info["score"]
+        bar = "█" * (s // 10) + "░" * (10 - s // 10)
+        weight = info.get("weight", DIMENSION_WEIGHTS.get(dim))
+        wtxt = f"(wt {int(weight * 100)}%)" if weight is not None else ""
+        print(f"    {dim:<16} {s:>3}  {bar}  {wtxt}")
+    print()
+
+    crits = scoring["critical_failures"]
+    if crits:
+        print("  Critical failures:")
+        for c in crits:
+            label = c.get("check", "unknown")
+            src = c.get("source")
+            src_txt = f" [{src}]" if src else ""
+            print(f"    ✗ {label}{src_txt} — {c.get('reason', '')}")
+    else:
+        print("  Critical failures  none")
+    print()
+
+    icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
+    print(f"  Decision:  {icon}  {decision}  (score {score}/100)")
+    print("\n" + "=" * 80 + "\n")
+
+
+def _build_evidence_data(scoring, project, evals, traces, impact):
+    """Flatten scoring output into the dict the evidence pack expects."""
+    from datetime import datetime, timezone
+    data = dict(scoring)
+    data["project"] = project
+    data["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    if evals:
+        data["eval_summary"] = {
+            "total": evals["total"], "passed": evals["passed"],
+            "failed": evals["failed"],
+            "critical_failed": evals.get("critical_failed", 0),
+            "pass_rate": evals["pass_rate"],
+        }
+    if traces:
+        data["trace_summary"] = {
+            "trace_count": traces.get("trace_count", 0),
+            "status": traces.get("status"),
+            "violations": traces.get("violations", []),
+            "unauthorized_tool_calls": traces.get("unauthorized_tool_calls", []),
+        }
+    if impact:
+        data["impact_summary"] = {
+            "verdict": impact.get("verdict", "N/A"),
+            "normal_daily": impact.get("normal", {}).get("daily", 0) or 0,
+            "runaway_daily": impact.get("runaway", {}).get("daily", 0) or 0,
+            "risk_delta_daily": impact.get("risk_delta", {}).get("daily", 0) or 0,
+        }
+    return data
+
+
+def run_score_command(config_path, evals_path, traces_path, html_report, evidence_path):
+    """Compute a 0-100 readiness score and emit PROMOTE / HOLD / BLOCK."""
+    if not V6_AVAILABLE:
+        print("Error: Scoring engine not available. Please reinstall release-gate.")
+        sys.exit(1)
+
+    config, check_results, impact, eval_results, trace_results = _gather_score_inputs(
+        config_path, evals_path, traces_path
+    )
+    project = config.get("project", {}).get("name", "AI Agent")
+
+    scoring = ReadinessScorer().score(check_results, impact, eval_results, trace_results)
+    _print_score_report(scoring, project, eval_results, trace_results, impact)
+
+    data = _build_evidence_data(scoring, project, eval_results, trace_results, impact)
+
+    if evidence_path:
+        try:
+            with open(evidence_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            print(f"Readiness report saved to: {evidence_path}\n")
+        except Exception as e:
+            print(f"Warning: could not save readiness report: {e}")
+
+    if html_report:
+        path = render_html_evidence(data, html_report)
+        print(f"HTML evidence saved to: {path}\n")
+
+    sys.exit(_score_exit_code(scoring["decision"]))
+
+
+def _print_regression_report(result):
+    """Render a regression comparison report to the terminal."""
+    print("\n" + "=" * 80)
+    print("\U0001f6aa release-gate  |  Regression Gate  v0.6.0")
+    print("=" * 80 + "\n")
+
+    print(f"  Baseline score    {result['previous_score']} / 100   {result['baseline_decision']}")
+    print(f"  Candidate score   {result['current_score']} / 100   {result['candidate_decision']}")
+    print(f"  Score delta       {result['score_delta']:+d} points\n")
+
+    if result["regressions"]:
+        print("  Regressions (dropped > threshold):")
+        for r in result["regressions"]:
+            tag = "  CRITICAL" if r.get("severity") == "critical" else ""
+            print(f"    ✗ {r['area']:<16} {r['baseline']} → {r['candidate']}  "
+                  f"({r['delta']:+d}){tag}")
+        print()
+
+    if result["improvements"]:
+        print("  Improvements:")
+        for r in result["improvements"]:
+            print(f"    ✓ {r['area']:<16} {r['baseline']} → {r['candidate']}  ({r['delta']:+d})")
+        print()
+
+    if result["new_critical_failures"]:
+        print("  New critical failures in candidate:")
+        for c in result["new_critical_failures"]:
+            print(f"    ✗ {c}")
+        print()
+
+    decision = result["decision"]
+    icon = {"PROMOTE": "✓", "PASS": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
+    print(f"  Decision:  {icon}  {decision}  — {result['reason']}")
+    print("\n" + "=" * 80 + "\n")
+
+
+def run_compare_command(baseline_path, candidate_path):
+    """Compare two readiness reports and gate on regressions."""
+    if not V6_AVAILABLE:
+        print("Error: Regression gate not available. Please reinstall release-gate.")
+        sys.exit(1)
+
+    def _load(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"Error: Report file not found: {path}")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON in {path}: {e}")
+            sys.exit(1)
+
+    baseline = _load(baseline_path)
+    candidate = _load(candidate_path)
+
+    result = RegressionGate().compare(baseline, candidate)
+    _print_regression_report(result)
+
+    sys.exit(1 if result["decision"] == "BLOCK" else
+             10 if result["decision"] == "HOLD" else 0)
+
+
+def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir):
+    """Generate the full evidence pack (JSON + Markdown + HTML)."""
+    if not V6_AVAILABLE:
+        print("Error: Evidence pack generator not available. Please reinstall release-gate.")
+        sys.exit(1)
+
+    config, check_results, impact, eval_results, trace_results = _gather_score_inputs(
+        config_path, evals_path, traces_path
+    )
+    project = config.get("project", {}).get("name", "AI Agent")
+
+    scoring = ReadinessScorer().score(check_results, impact, eval_results, trace_results)
+    data = _build_evidence_data(scoring, project, eval_results, trace_results, impact)
+
+    paths = generate_evidence_pack(data, output_dir)
+
+    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.6.0\n")
+    print(f"  Decision: {scoring['decision']}  (score {scoring['readiness_score']}/100)\n")
+    print(f"  ✓  {paths['json']}")
+    print(f"  ✓  {paths['markdown']}")
+    print(f"  ✓  {paths['html']}\n")
+
+    sys.exit(_score_exit_code(scoring["decision"]))
+
+
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print("\U0001f6aa release-gate v0.5.0")
+    print("\U0001f6aa release-gate v0.6.0  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
-    print("  release-gate init                       # Initialize new project (interactive)")
-    print("  release-gate run <config.yaml>          # Run governance checks")
+    print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
+    print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
+    print("  release-gate evidence-pack <config.yaml> # Generate JSON + Markdown + HTML evidence")
     print("  release-gate impact <config.yaml>       # Impact Simulator — show money at risk")
-    print("  release-gate validate-and-lock          # Cryptographic validation (v0.5)")
-    print("\nOptions for 'run' and 'impact':")
-    print("  --output-evidence <file.json>           Save detailed evidence as JSON")
-    print("  --html-report <file.html>               Save Impact Simulator as HTML report")
+    print("  release-gate run <config.yaml>          # Run governance checks (PASS/WARN/FAIL)")
+    print("  release-gate init                       # Initialize new project (interactive)")
+    print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
+    print("\nOptions for 'score' and 'evidence-pack':")
+    print("  --evals <evals.yaml>                    Run behavior eval cases")
+    print("  --traces <trace.json>                   Validate an agent execution trace")
+    print("  --html-report <file.html>               Write self-contained HTML evidence (score)")
+    print("  --output-evidence <file.json>           Save the JSON readiness report (score)")
+    print("  --output-dir <dir>                      Evidence pack output dir (evidence-pack)")
+    print("\nExit codes:  0 = PROMOTE/PASS   10 = HOLD/WARN   1 = BLOCK/FAIL")
     print("\nExamples:")
-    print("  release-gate init")
-    print("  release-gate impact governance.yaml")
+    print("  release-gate score governance.yaml")
+    print("  release-gate score governance.yaml --evals evals.yaml --traces trace.json")
+    print("  release-gate compare baseline.json candidate.json")
+    print("  release-gate evidence-pack governance.yaml")
     print("  release-gate impact governance.yaml --html-report report.html")
-    print("  release-gate run governance.yaml")
-    print("  release-gate run governance.yaml --output-evidence evidence.json")
     print("  release-gate validate-and-lock --governance governance.yaml --sign --private-key key.pem")
-    print("  release-gate validate-and-lock --governance governance.yaml --verify --public-key key.pub")
     print("\nMore info: https://github.com/VamsiSudhakaran1/release-gate")
     print("="*80 + "\n")
 
@@ -523,6 +780,38 @@ def main():
             save_evidence(results, decision, evidence_path)
 
         sys.exit(get_exit_code(decision))
+
+    elif command == 'score':
+        if len(sys.argv) < 3:
+            print("Usage: release-gate score <config.yaml> [--evals evals.yaml] "
+                  "[--traces trace.json] [--html-report report.html] "
+                  "[--output-evidence report.json]")
+            sys.exit(1)
+        run_score_command(
+            sys.argv[2],
+            _flag(sys.argv, '--evals'),
+            _flag(sys.argv, '--traces'),
+            _flag(sys.argv, '--html-report'),
+            _flag(sys.argv, '--output-evidence'),
+        )
+
+    elif command == 'compare':
+        if len(sys.argv) < 4:
+            print("Usage: release-gate compare <baseline.json> <candidate.json>")
+            sys.exit(1)
+        run_compare_command(sys.argv[2], sys.argv[3])
+
+    elif command == 'evidence-pack':
+        if len(sys.argv) < 3:
+            print("Usage: release-gate evidence-pack <config.yaml> [--evals evals.yaml] "
+                  "[--traces trace.json] [--output-dir release-evidence]")
+            sys.exit(1)
+        run_evidence_pack_command(
+            sys.argv[2],
+            _flag(sys.argv, '--evals'),
+            _flag(sys.argv, '--traces'),
+            _flag(sys.argv, '--output-dir') or 'release-evidence',
+        )
 
     else:
         print(f"Unknown command: {command}")

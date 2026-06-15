@@ -15,7 +15,7 @@ setup(
     python_requires=">=3.9",
     entry_points={
         "console_scripts": [
-            "release-gate=release_gate.cli:main",
+            "release-gate=release_gate.cli:unified_main",
         ],
     },
 )
