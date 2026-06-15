@@ -2,6 +2,43 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.6.0] - 2026-06-15
+
+### ✨ Features
+
+- **Readiness Scorer** (`release-gate score`): collapses checks, evals, traces, and cost
+  impact into a 0–100 score across six weighted dimensions (safety, cost, access_control,
+  fallback, eval_quality, observability) and a single decision: **PROMOTE / HOLD / BLOCK**.
+- **Regression Gate** (`release-gate compare`): diffs two readiness reports; a >10-point
+  drop in any dimension — critical in safety, fallback, or access_control — blocks the release.
+- **Eval Runner**: YAML-defined behavior test cases (`refuse_or_mask`, `contains_keywords`,
+  `valid_json`, `no_tool_calls`) in static (CI-safe) or live mode.
+- **Trace Validator**: validates agent execution traces against `trace_policies` — forbidden
+  tools, allowed-list violations, retry storms, token budgets, and tool-call loops.
+- **Evidence Pack** (`release-gate evidence-pack`): generates `readiness_report.json`,
+  `executive_summary.md`, and `release-gate-evidence.html` in one command.
+- **GitHub Action**: new `score`/`evidence-pack` commands plus `evals` and `traces` inputs.
+
+### 🔒 Security
+
+- Removed a committed RSA private key (`governance-key.pem`) from the repo root.
+- `*.pem` / `*.key` are now git-ignored; demo **public** key moved to `examples/keys/`.
+
+### 🔧 Fixes
+
+- Wired the v0.6 commands into the CLI (`score`, `compare`, `evidence-pack`) — previously
+  the modules shipped but the CLI fell through to help text.
+- Aligned version to `0.6.0` across `setup.py`, `pyproject.toml`, and the CLI; unified the
+  console-script entry point on `unified_main`.
+
+### 📦 Internal
+
+- Cleaned repo root: removed backup files, deduplicated `crypto/` and `pricing.json`, and
+  moved demo scripts to `scripts/` and stray configs to `examples/`.
+- Test suite now at 166 tests, all passing.
+
+---
+
 ## [0.5.0] - 2026-06-12
 
 ### ✨ Features

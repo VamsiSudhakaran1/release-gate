@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "release-gate"
-version = "0.5.0"
-description = "Governance enforcement for AI agents - Prevent cost explosions, ensure safety measures, and enforce access control before deployment."
+version = "0.6.0"
+description = "AI agent release decision engine - readiness scoring, regression gate, eval runner, trace validation, and evidence packs for CI/CD."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [

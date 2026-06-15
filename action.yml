@@ -1,5 +1,5 @@
 name: "release-gate"
-description: "Governance enforcement for AI agents — prevent cost explosions, enforce safety measures, and validate access control before deployment."
+description: "AI release decision engine — score, compare, validate traces, and generate evidence before deployment."
 author: "Vamsi Sudhakaran"
 
 branding:
@@ -12,15 +12,23 @@ inputs:
     required: false
     default: "governance.yaml"
   command:
-    description: "Command to run: 'run' (governance checks) or 'impact' (Impact Simulator)"
+    description: "Command: 'score', 'evidence-pack', 'impact', or 'run'"
     required: false
-    default: "run"
+    default: "score"
+  evals:
+    description: "Path to an evals.yaml of behavior test cases (score / evidence-pack)"
+    required: false
+    default: ""
+  traces:
+    description: "Path to an agent execution trace JSON/JSONL to validate (score / evidence-pack)"
+    required: false
+    default: ""
   html-report:
-    description: "If set, write an HTML impact report to this path (e.g. report.html)"
+    description: "If set, write an HTML evidence/impact report to this path (e.g. report.html)"
     required: false
     default: ""
   output-evidence:
-    description: "If set, write detailed JSON evidence to this path"
+    description: "If set, write the JSON readiness report to this path"
     required: false
     default: ""
   fail-on-warn:
@@ -34,7 +42,7 @@ inputs:
 
 outputs:
   decision:
-    description: "PASS, WARN, or BLOCK/FAIL"
+    description: "PROMOTE/HOLD/BLOCK (score) or PASS/WARN/FAIL (run, impact)"
   daily-cost:
     description: "Estimated daily cost in USD (from Impact Simulator)"
   runaway-cost:
@@ -57,6 +65,12 @@ runs:
       shell: bash
       run: |
         EXTRA_FLAGS=""
+        if [ -n "${{ inputs.evals }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --evals ${{ inputs.evals }}"
+        fi
+        if [ -n "${{ inputs.traces }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --traces ${{ inputs.traces }}"
+        fi
         if [ -n "${{ inputs.html-report }}" ]; then
           EXTRA_FLAGS="$EXTRA_FLAGS --html-report ${{ inputs.html-report }}"
         fi

@@ -1,3 +1,12 @@
+# Cryptographic keys — NEVER commit private keys.
+# Demo public keys live in examples/keys/ and are added explicitly.
+*.pem
+*.key
+*-key
+governance.proof
+governance.sig
+release-evidence/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
