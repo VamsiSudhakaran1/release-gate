@@ -1,0 +1,23 @@
+{
+  "fetched_at": "2026-06-10T00:00:00Z",
+  "hash": "sha256:a2765a2f23accd6718174ebfb8b80b75c8af9d53fedf36bfc1729eda693eaeef",
+  "models": {
+    "claude-3-opus": {
+      "input_per_1m": 15.0,
+      "output_per_1m": 75.0,
+      "provider": "anthropic"
+    },
+    "gemini-2.0-flash": {
+      "input_per_1m": 0.075,
+      "output_per_1m": 0.3,
+      "provider": "google"
+    },
+    "gpt-4-turbo": {
+      "input_per_1m": 10.0,
+      "output_per_1m": 30.0,
+      "provider": "openai"
+    }
+  },
+  "source": "static",
+  "version": 1
+}

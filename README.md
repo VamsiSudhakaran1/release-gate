@@ -195,6 +195,49 @@ release-gate evidence-pack governance.yaml
 
 Attach to PRs, compliance tickets, or security reviews.
 
+### Model Profile & Pricing Resolver
+
+Stop hardcoding model prices. A `model:` block declares **how** pricing should be
+discovered, so release-gate works across providers — and refuses to score an
+unpriced model silently.
+
+```yaml
+# governance.yaml
+model:
+  id: gpt-4-turbo
+  provider: openai
+  type: llm                 # llm | predictive_model | embedding | self_hosted
+  pricing:
+    source: locked          # static | custom | locked | openrouter | litellm
+    lock_path: pricing.lock.json
+    max_age_days: 30        # WARN if the snapshot is older than this
+    on_unknown: hold        # hold | warn | fail — never silently pass
+```
+
+| Source | Where pricing comes from |
+|--------|--------------------------|
+| `static` | Built-in table (good for pinned/demo models) |
+| `custom` | Inline `input_per_1m` / `output_per_1m` |
+| `locked` | A committed `pricing.lock.json` snapshot — reproducible CI |
+| `openrouter` | Live OpenRouter pricing; falls back to lock → static (downgrades to WARN) |
+| `litellm` | LiteLLM cost map (if installed) |
+
+**Reproducible pricing in CI** — snapshot live prices once, commit the lock,
+and score offline forever:
+
+```bash
+release-gate pricing-lock --models gpt-4-turbo,claude-3-opus --source openrouter
+#   ✓  gpt-4-turbo    in $10.0/1M  out $30.0/1M
+#   ✓  claude-3-opus  in $15.0/1M  out $75.0/1M
+#   Wrote 2 model(s) to pricing.lock.json
+```
+
+The lock file is hash-protected (tamper-evident) and carries a `fetched_at`
+timestamp, so a stale snapshot raises a **WARN** instead of drifting silently.
+Self-hosted / predictive models (`type: self_hosted`) skip token pricing
+entirely. If a price can't be resolved and `on_unknown: hold`, the budget check
+**fails** rather than assuming $0.
+
 ---
 
 ## The 5 Governance Checks

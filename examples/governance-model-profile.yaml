@@ -1,0 +1,94 @@
+# governance-model-profile.yaml
+# Demo: v0.6 Model Profile + Pricing Resolver
+#
+# The `model:` block declares HOW pricing should be discovered instead of
+# relying only on the built-in static table. Sources:
+#   static     -> built-in table (good for pinned/demo models)
+#   custom     -> inline input_per_1m / output_per_1m
+#   locked     -> committed pricing.lock.json snapshot (reproducible CI)
+#   openrouter -> live OpenRouter pricing, falls back to lock then static
+#   litellm    -> LiteLLM cost map (if installed)
+#
+# Run: release-gate score examples/governance-model-profile.yaml
+
+project:
+  name: invoice-extraction-agent
+  version: 2.1.0
+  description: Extracts structured data from invoices
+
+# --- v0.6 Model Profile -----------------------------------------------------
+model:
+  id: gpt-4-turbo
+  provider: openai
+  type: llm
+  pricing:
+    source: locked          # read price from pricing.lock.json
+    lock_path: examples/pricing.lock.json
+    max_age_days: 30        # WARN if the snapshot is older than 30 days
+    on_unknown: hold        # never silently pass an unpriced model
+
+agent:
+  model: gpt-4-turbo
+  daily_requests: 3000
+  avg_input_tokens: 1200
+  avg_output_tokens: 300
+
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+    - IDENTITY_BOUNDARY
+  warn_on:
+    - INPUT_CONTRACT
+    - BUDGET_SIMULATION
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 300
+  budget_simulation:
+    enabled: true
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: feature-flag
+      name: disable_invoice_agent
+    fallback_mode: manual-review
+    team_owner: finance-platform
+    runbook_url: https://wiki.example.com/runbooks/invoice-agent
+  identity_boundary:
+    enabled: true
+    authentication:
+      required: true
+      type: api-key
+    rate_limit:
+      requests_per_minute: 60
+    data_isolation:
+      - tenant_id
+  input_contract:
+    enabled: true
+    schema:
+      type: object
+      required:
+        - invoice_pdf_url
+      properties:
+        invoice_pdf_url:
+          type: string
+    samples:
+      valid:
+        - {invoice_pdf_url: "https://example.com/inv_001.pdf"}
+      invalid:
+        - {}
+
+simulation:
+  requests_per_day: 3000
+  tokens_per_request:
+    input: 1200
+    output: 300
+  factors:
+    retry_rate: 1.1
+    cache_hit_rate: 0.1
+    spiky_usage_multiplier: 1.5
+
+budget:
+  max_daily_cost: 300
