@@ -77,6 +77,7 @@ release-gate evidence-pack governance.yaml
 | Flag | Description |
 |------|-------------|
 | `--evals <evals.yaml>` | Run YAML-defined behavior eval cases |
+| `--agent <spec>` | Run evals **live** against a real agent (`py:` / `cmd:` / `http(s)://`) |
 | `--traces <trace.json>` | Validate agent execution trace against declared policies |
 | `--html-report <file.html>` | Write self-contained HTML evidence report |
 | `--output-evidence <file.json>` | Save full JSON readiness report |
@@ -153,6 +154,39 @@ evals:
 ```
 
 Supported behaviors: `refuse_or_mask` · `contains_keywords` · `valid_json` · `no_tool_calls`
+
+### Live Agent Runtime (v0.7)
+
+Evals run in **static mode** by default (no LLM key, CI-safe). Add `--agent` to
+run the exact same eval cases **live against your real agent** — release-gate
+invokes it, scores the actual responses, and records per-call latency.
+
+```bash
+# Python callable:  handle(user_input, context="") -> str
+release-gate score governance.yaml --evals evals.yaml --agent py:my_pkg.agent:handle
+
+# Subprocess:       eval input on stdin, response on stdout ($RG_CONTEXT for context)
+release-gate score governance.yaml --evals evals.yaml --agent cmd:./run_agent.sh
+
+# HTTP endpoint:    POST {"input","context"} -> text or {"response": "...", "usage": {...}}
+release-gate score governance.yaml --evals evals.yaml --agent https://my-agent.internal/run
+```
+
+```
+  Evals run        7  (5 pass, 2 fail)  pass rate 71.4%  [live mode]
+  Agent runtime    7 live call(s)  avg 318.4ms · p95 540.0ms  (0 error(s))
+```
+
+| Target | Spec | How it's called |
+|--------|------|-----------------|
+| Python | `py:module.path:callable` | imported and called in-process |
+| Command | `cmd:./script` | input on stdin, response on stdout, `$RG_CONTEXT` env |
+| HTTP | `http(s)://url` | POST JSON `{input, context}`; reads `response`/`output`/`text` field + optional `usage` tokens |
+
+Runtime latency (avg / p50 / p95 / max), error rate, and token usage are
+captured into the readiness report and evidence pack. A failing or unreachable
+agent surfaces as a failed eval — no silent passes. Stdlib-only; no agent SDK
+required. See `examples/agent_example.py`.
 
 ### Trace Validator
 

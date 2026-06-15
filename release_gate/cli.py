@@ -61,6 +61,13 @@ try:
 except ImportError:
     V6_AVAILABLE = False
 
+# Import live agent runtime (Phase 2)
+try:
+    from release_gate.agent import AgentClient, AgentSpecError, RuntimeProfile
+    AGENT_RUNTIME_AVAILABLE = True
+except ImportError:
+    AGENT_RUNTIME_AVAILABLE = False
+
 
 GOVERNANCE_SCHEMA = {
     "type": "object",
@@ -478,8 +485,28 @@ def _score_exit_code(decision):
     return {"PROMOTE": 0, "HOLD": 10, "BLOCK": 1}.get(decision, 1)
 
 
-def _gather_score_inputs(config_path, evals_path, traces_path):
-    """Run checks, impact, evals, and trace validation for a config."""
+def _build_agent_callable(agent_spec):
+    """Resolve an --agent spec into (callable, RuntimeProfile), or (None, None)."""
+    if not agent_spec:
+        return None, None
+    if not AGENT_RUNTIME_AVAILABLE:
+        print("Error: Live agent runtime not available. Please reinstall release-gate.")
+        sys.exit(1)
+    try:
+        client = AgentClient.from_spec(agent_spec)
+    except AgentSpecError as exc:
+        print(f"Error: invalid --agent spec — {exc}")
+        sys.exit(1)
+    profile = RuntimeProfile()
+    return client.as_eval_callable(profile), profile
+
+
+def _gather_score_inputs(config_path, evals_path, traces_path, agent_spec=None):
+    """Run checks, impact, evals, and trace validation for a config.
+
+    When agent_spec is set, evals run live against the real agent and a
+    runtime latency profile is returned as the sixth element.
+    """
     config = load_config(config_path)
     check_results = run_checks(config)
 
@@ -490,23 +517,29 @@ def _gather_score_inputs(config_path, evals_path, traces_path):
         except Exception:
             impact = None
 
+    agent_callable, runtime_profile = _build_agent_callable(agent_spec)
+
     eval_results = None
     if evals_path:
         try:
-            eval_results = EvalRunner().run(load_evals(evals_path))
+            eval_results = EvalRunner().run(load_evals(evals_path), agent_callable=agent_callable)
         except FileNotFoundError:
             print(f"Error: Evals file not found: {evals_path}")
             sys.exit(1)
+    elif agent_spec:
+        print("Note: --agent has no effect without --evals; nothing to run live.")
+
+    runtime = runtime_profile.summary() if (runtime_profile and eval_results) else None
 
     trace_results = None
     if traces_path:
         policies = config.get("trace_policies", {})
         trace_results = TraceValidator().validate_file(traces_path, policies)
 
-    return config, check_results, impact, eval_results, trace_results
+    return config, check_results, impact, eval_results, trace_results, runtime
 
 
-def _print_score_report(scoring, project, evals, traces, impact):
+def _print_score_report(scoring, project, evals, traces, impact, runtime=None):
     """Render a readiness score report to the terminal."""
     score = scoring["readiness_score"]
     decision = scoring["decision"]
@@ -521,6 +554,12 @@ def _print_score_report(scoring, project, evals, traces, impact):
         print(f"  Evals run        {evals['total']}  "
               f"({evals['passed']} pass, {evals['failed']} fail)  "
               f"pass rate {evals['pass_rate']}%  [{evals['mode']} mode]")
+    if runtime:
+        avg = runtime.get("avg_latency_ms")
+        p95 = runtime.get("p95_latency_ms")
+        lat = f"avg {avg}ms · p95 {p95}ms" if avg is not None else "no successful calls"
+        print(f"  Agent runtime    {runtime['calls']} live call(s)  "
+              f"{lat}  ({runtime['errors']} error(s))")
     if traces:
         print(f"  Traces checked   {traces.get('trace_count', 0)}  "
               f"({len(traces.get('violations', []))} violations)")
@@ -555,12 +594,14 @@ def _print_score_report(scoring, project, evals, traces, impact):
     print("\n" + "=" * 80 + "\n")
 
 
-def _build_evidence_data(scoring, project, evals, traces, impact):
+def _build_evidence_data(scoring, project, evals, traces, impact, runtime=None):
     """Flatten scoring output into the dict the evidence pack expects."""
     from datetime import datetime, timezone
     data = dict(scoring)
     data["project"] = project
     data["generated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    if runtime:
+        data["runtime_summary"] = runtime
     if evals:
         data["eval_summary"] = {
             "total": evals["total"], "passed": evals["passed"],
@@ -585,21 +626,22 @@ def _build_evidence_data(scoring, project, evals, traces, impact):
     return data
 
 
-def run_score_command(config_path, evals_path, traces_path, html_report, evidence_path):
+def run_score_command(config_path, evals_path, traces_path, html_report, evidence_path,
+                      agent_spec=None):
     """Compute a 0-100 readiness score and emit PROMOTE / HOLD / BLOCK."""
     if not V6_AVAILABLE:
         print("Error: Scoring engine not available. Please reinstall release-gate.")
         sys.exit(1)
 
-    config, check_results, impact, eval_results, trace_results = _gather_score_inputs(
-        config_path, evals_path, traces_path
+    config, check_results, impact, eval_results, trace_results, runtime = _gather_score_inputs(
+        config_path, evals_path, traces_path, agent_spec
     )
     project = config.get("project", {}).get("name", "AI Agent")
 
     scoring = ReadinessScorer().score(check_results, impact, eval_results, trace_results)
-    _print_score_report(scoring, project, eval_results, trace_results, impact)
+    _print_score_report(scoring, project, eval_results, trace_results, impact, runtime)
 
-    data = _build_evidence_data(scoring, project, eval_results, trace_results, impact)
+    data = _build_evidence_data(scoring, project, eval_results, trace_results, impact, runtime)
 
     if evidence_path:
         try:
@@ -679,19 +721,20 @@ def run_compare_command(baseline_path, candidate_path):
              10 if result["decision"] == "HOLD" else 0)
 
 
-def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir):
+def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
+                              agent_spec=None):
     """Generate the full evidence pack (JSON + Markdown + HTML)."""
     if not V6_AVAILABLE:
         print("Error: Evidence pack generator not available. Please reinstall release-gate.")
         sys.exit(1)
 
-    config, check_results, impact, eval_results, trace_results = _gather_score_inputs(
-        config_path, evals_path, traces_path
+    config, check_results, impact, eval_results, trace_results, runtime = _gather_score_inputs(
+        config_path, evals_path, traces_path, agent_spec
     )
     project = config.get("project", {}).get("name", "AI Agent")
 
     scoring = ReadinessScorer().score(check_results, impact, eval_results, trace_results)
-    data = _build_evidence_data(scoring, project, eval_results, trace_results, impact)
+    data = _build_evidence_data(scoring, project, eval_results, trace_results, impact, runtime)
 
     paths = generate_evidence_pack(data, output_dir)
 
@@ -721,6 +764,8 @@ def print_help():
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
+    print("  --agent <spec>                          Run evals LIVE against a real agent")
+    print("                                          (py:module:fn | cmd:./script | http(s)://url)")
     print("  --traces <trace.json>                   Validate an agent execution trace")
     print("  --html-report <file.html>               Write self-contained HTML evidence (score)")
     print("  --output-evidence <file.json>           Save the JSON readiness report (score)")
@@ -729,6 +774,7 @@ def print_help():
     print("\nExamples:")
     print("  release-gate score governance.yaml")
     print("  release-gate score governance.yaml --evals evals.yaml --traces trace.json")
+    print("  release-gate score governance.yaml --evals evals.yaml --agent py:my_pkg.agent:handle")
     print("  release-gate compare baseline.json candidate.json")
     print("  release-gate evidence-pack governance.yaml")
     print("  release-gate impact governance.yaml --html-report report.html")
@@ -850,6 +896,7 @@ def main():
     elif command == 'score':
         if len(sys.argv) < 3:
             print("Usage: release-gate score <config.yaml> [--evals evals.yaml] "
+                  "[--agent py:mod:fn|cmd:./script|http(s)://url] "
                   "[--traces trace.json] [--html-report report.html] "
                   "[--output-evidence report.json]")
             sys.exit(1)
@@ -859,6 +906,7 @@ def main():
             _flag(sys.argv, '--traces'),
             _flag(sys.argv, '--html-report'),
             _flag(sys.argv, '--output-evidence'),
+            _flag(sys.argv, '--agent'),
         )
 
     elif command == 'compare':
@@ -877,6 +925,7 @@ def main():
             _flag(sys.argv, '--evals'),
             _flag(sys.argv, '--traces'),
             _flag(sys.argv, '--output-dir') or 'release-evidence',
+            _flag(sys.argv, '--agent'),
         )
 
     elif command == 'pricing-lock':
