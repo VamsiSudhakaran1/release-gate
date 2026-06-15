@@ -321,8 +321,31 @@
     <h1>PROMOTE, HOLD, or <span style="color:var(--red)">BLOCK</span><br><span>&#x2014; with a score to prove it.</span></h1>
     <p class="tagline">release-gate runs evals, validates agent traces, checks cost budgets, and generates an evidence pack &mdash; then gives you one number (0&ndash;100) and one decision.</p>
     <div class="hero-btns">
-      <a href="#how-it-works" class="btn-primary">See how it works</a>
-      <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">View on GitHub</a>
+      <a href="#demo" class="btn-primary">&#x25B6; Run the demo</a>
+      <a href="#how-it-works" class="btn-secondary">How it works</a>
+      <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">GitHub &rarr;</a>
+    </div>
+
+    <div style="margin-bottom:40px;">
+      <div class="terminal" style="max-width:640px; margin:0 auto; text-align:left;">
+        <div class="terminal-bar">
+          <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
+          <span class="terminal-label">30 seconds after pip install</span>
+        </div>
+        <div class="terminal-body">
+          <span class="t-line t-muted">$ pip install release-gate &amp;&amp; release-gate demo</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-bright">  Two agents. Same model. Same cloud provider.</span>
+          <span class="t-line t-bright">  Different governance. Different outcome.</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-bright">  customer-support-agent   <span class="t-green t-bold">100/100  ✓  PROMOTE</span></span>
+          <span class="t-line t-bright">  data-export-agent         <span class="t-red t-bold"> 33/100  ✗  BLOCK</span></span>
+          <span class="t-blank"></span>
+          <span class="t-line t-red">  ✗ FALLBACK_DECLARED: No kill switch &mdash; loop runs until credit limit hit</span>
+          <span class="t-line t-red">  ✗ ACTION_BUDGET:     $22,500/day projected, no ceiling declared</span>
+          <span class="t-line t-red">  ✗ IDENTITY_BOUNDARY: No auth &mdash; anyone can exhaust your budget</span>
+        </div>
+      </div>
     </div>
 
     <div class="hero-terminals">
@@ -486,10 +509,55 @@
   <div class="container">
     <p class="section-eyebrow">Live demo</p>
     <h2 class="section-title">Real commands. Real output.</h2>
-    <p class="section-subtitle">Four scenarios showing score, regression detection, trace violation, and the impact simulator.</p>
+    <p class="section-subtitle">Run the interactive demo locally — no config file needed. Or explore individual commands below.</p>
 
-    <div style="margin-top:40px;">
-      <div class="tab-nav">
+    <!-- Terminal demo callout -->
+    <div style="margin-top:36px; margin-bottom:40px;">
+      <div class="terminal" style="max-width:720px;">
+        <div class="terminal-bar">
+          <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
+          <span class="terminal-label">Interactive walkthrough — no files needed</span>
+        </div>
+        <div class="terminal-body">
+          <span class="t-line t-muted">$ release-gate demo</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-bright">  &#x1F6AA; release-gate  &nbsp;|&nbsp;  Interactive Demo</span>
+          <span class="t-line t-muted">  The CI step your AI agent is missing before it goes to production.</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-bright">  SCENARIO A &mdash; customer-support-agent (full governance)</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-muted">  Checking FALLBACK_DECLARED ...</span>
+          <span class="t-line t-muted">    fallback_declared:</span>
+          <span class="t-line t-muted">      kill_switch: {type: feature-flag, name: disable_support_agent}</span>
+          <span class="t-line t-muted">      team_owner: platform-team   <span style="color:#484f58"># they get paged at 3am if costs spike</span></span>
+          <span class="t-line t-green">  &#x2713;  FALLBACK_DECLARED  kill switch declared, team owner assigned</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-muted">  Checking ACTION_BUDGET ...</span>
+          <span class="t-line t-muted">    action_budget:</span>
+          <span class="t-line t-muted">      max_daily_cost: 500   <span style="color:#484f58"># hard ceiling — agent pauses if hit</span></span>
+          <span class="t-line t-green">  &#x2713;  ACTION_BUDGET  projected $132/day &mdash; well within $500 cap</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-green t-bold">  Score: 100/100   Decision: &#x2713;  PROMOTE</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-bright">  SCENARIO B &mdash; data-export-agent (missing controls)</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-muted">  Checking FALLBACK_DECLARED ...</span>
+          <span class="t-line t-muted">    fallback_declared:</span>
+          <span class="t-line t-muted">      fallback_mode: retry   <span style="color:#484f58"># ← no kill_switch, no team_owner, no runbook</span></span>
+          <span class="t-line t-red">  &#x2717;  FALLBACK_DECLARED</span>
+          <span class="t-line t-muted">       Config gap:  No kill switch, no team owner, no runbook URL</span>
+          <span class="t-line t-muted">       Real risk:   Loop runs until OpenAI credit limit hit &mdash; could take hours</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-red t-bold">  Score:  33/100   Decision: &#x2717;  BLOCK</span>
+        </div>
+      </div>
+      <div class="demo-note" style="max-width:720px; margin-top:12px;">
+        <strong>Run it now:</strong> &nbsp;<code>pip install release-gate &amp;&amp; release-gate demo</code>
+        &nbsp;&mdash;&nbsp; no <code>governance.yaml</code> needed, works immediately after install.
+      </div>
+    </div>
+
+    <div class="tab-nav">
         <button class="tab-btn active" onclick="switchTab('score',   this)">&#x2713; Score (PROMOTE)</button>
         <button class="tab-btn"        onclick="switchTab('compare', this)">&#x26A0; Compare (regression)</button>
         <button class="tab-btn"        onclick="switchTab('traces',  this)">&#x2717; Traces (violations)</button>
@@ -618,9 +686,9 @@
 
 <section id="features">
   <div class="container">
-    <p class="section-eyebrow">What&rsquo;s new in v0.6</p>
+    <p class="section-eyebrow">Features</p>
     <h2 class="section-title">From governance linter to release decision engine</h2>
-    <p class="section-subtitle">Five new capabilities turn static YAML checks into a real AI deployment gate.</p>
+    <p class="section-subtitle">Score, compare, validate traces, resolve live pricing &mdash; one tool, one decision before every deploy.</p>
 
     <div class="feature-grid">
       <div class="feature-card">
@@ -656,6 +724,20 @@
         <div class="feature-icon">&#x1F4C4;</div>
         <h3>Evidence Pack</h3>
         <p>One command generates three audit artefacts: <code>readiness_report.json</code>, <code>executive_summary.md</code>, and <code>release-gate-evidence.html</code>. Attach to PRs, compliance tickets, or security reviews.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-new">New</span>
+        <div class="feature-icon">&#x1F9E9;</div>
+        <h3>Model Intelligence Layer</h3>
+        <p>Stop hardcoding prices. A <code>model:</code> block declares pricing source: <strong>static</strong>, <strong>custom</strong>, <strong>locked snapshot</strong>, <strong>OpenRouter live</strong>, or <strong>LiteLLM</strong>. Unknown pricing with <code>on_unknown: hold</code> fails the check &mdash; never assumes $0. Works for LLMs, embeddings, and self-hosted models.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag tag-new">New</span>
+        <div class="feature-icon">&#x1F512;</div>
+        <h3>Pricing Lock</h3>
+        <p>Snapshot live prices into a tamper-evident <code>pricing.lock.json</code> (sha256-protected). CI scores offline, reproducibly. Stale snapshots (&gt; <code>max_age_days</code>) surface as WARN so prices never drift silently.</p>
       </div>
 
       <div class="feature-card">
@@ -713,6 +795,10 @@
 
         <div class="command-grid" style="margin-top:16px;">
           <div class="command-card">
+            <code>release-gate demo</code>
+            <p>Interactive demo &mdash; no config needed</p>
+          </div>
+          <div class="command-card">
             <code>release-gate score</code>
             <p>0&ndash;100 score + PROMOTE/HOLD/BLOCK</p>
           </div>
@@ -725,8 +811,12 @@
             <p>JSON + Markdown + HTML artefacts</p>
           </div>
           <div class="command-card">
+            <code>release-gate pricing-lock</code>
+            <p>Snapshot live model prices to lock file</p>
+          </div>
+          <div class="command-card">
             <code>release-gate impact</code>
-            <p>Cost simulation (v0.5)</p>
+            <p>Cost simulation &amp; runaway scenario</p>
           </div>
         </div>
       </div>
@@ -800,13 +890,19 @@
           <td>Forbidden tools, allowed-list violations, retry storms, token budget, tool loops</td>
           <td>Any forbidden tool called or retry storm detected</td>
         </tr>
+        <tr>
+          <td>Pricing Resolver</td>
+          <td>Model token pricing from static table, custom inline, lock file, OpenRouter, or LiteLLM</td>
+          <td>Pricing unknown &amp; <code>on_unknown: hold</code> &mdash; never silently assumes $0</td>
+        </tr>
       </tbody>
     </table>
 
     <div class="install-strip">
       <div>
-        <p style="margin-bottom:6px; color:var(--bright); font-weight:600;">Get started in 60 seconds</p>
-        <code>pip install release-gate &amp;&amp; release-gate init</code>
+        <p style="margin-bottom:6px; color:var(--bright); font-weight:600;">See it live in 30 seconds</p>
+        <code>pip install release-gate &amp;&amp; release-gate demo</code>
+        <p style="margin-top:8px;">Then set up your own agent: <code>release-gate init</code></p>
       </div>
       <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-primary" target="_blank">View on GitHub &rarr;</a>
     </div>
@@ -822,9 +918,11 @@
       </div>
       <div class="footer-col">
         <h4>Commands</h4>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate demo</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate score</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate compare</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate evidence-pack</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate pricing-lock</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate impact</a>
       </div>
       <div class="footer-col">
