@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **v0.6.0** — Readiness scoring (0–100), regression gate, eval runner, trace validator, and evidence pack. One command. One decision: **PROMOTE**, **HOLD**, or **BLOCK**.
+> **v0.6.1** — Readiness scoring (0–100), regression gate, eval runner, trace validator, and evidence pack. One command. One decision: **PROMOTE**, **HOLD**, or **BLOCK**.
 
 ## What is release-gate?
 
@@ -15,7 +15,7 @@ release-gate sits between your tests and your deployment. It runs evals, validat
 ```
 $ release-gate score governance.yaml --evals evals.yaml
 
-  release-gate  |  Readiness Scorer  v0.6.0
+  release-gate  |  Readiness Scorer  v0.6.1
 
   Project          customer-support-agent  v1.0.0
   Checks run       5  (5 pass, 0 warn, 0 fail)
@@ -268,7 +268,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.6.0
+        uses: VamsiSudhakaran1/release-gate@v0.6.1
         with:
           command: score
           config: governance.yaml
@@ -280,7 +280,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.6.0
+- uses: VamsiSudhakaran1/release-gate@v0.6.1
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run
