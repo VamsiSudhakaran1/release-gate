@@ -710,6 +710,7 @@ def print_help():
     print("\U0001f6aa release-gate v0.6.0  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
+    print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
     print("  release-gate evidence-pack <config.yaml> # Generate JSON + Markdown + HTML evidence")
@@ -744,7 +745,16 @@ def main():
 
     command = sys.argv[1]
 
-    if command == 'init':
+    if command == 'demo':
+        fast = '--fast' in sys.argv
+        try:
+            from release_gate.demo import run_demo
+            run_demo(fast=fast)
+        except KeyboardInterrupt:
+            print("\nDemo cancelled.")
+            sys.exit(0)
+
+    elif command == 'init':
         if not INIT_AVAILABLE:
             print("Error: Init command not available.")
             sys.exit(1)
