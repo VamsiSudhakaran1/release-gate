@@ -14,13 +14,12 @@ authors = [
 keywords = ["ai", "governance", "cost-control", "safety", "deployment"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
     "jsonschema>=4.0",
