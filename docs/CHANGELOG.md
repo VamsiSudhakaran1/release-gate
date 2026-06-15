@@ -4,6 +4,24 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ Features — Live Agent Runtime (Phase 2)
+
+- **Live agent runner** (`release_gate.agent`): a new `--agent <spec>` flag on
+  `score` and `evidence-pack` runs the existing eval cases against a **real
+  agent** instead of static stubs. Three target types, stdlib-only (no agent SDK):
+  - `py:module.path:callable` — import and call a Python function in-process.
+  - `cmd:./script` — subprocess; eval input on stdin, response on stdout,
+    context via `$RG_CONTEXT`.
+  - `http(s)://url` — POST `{"input","context"}`; reads a
+    `response`/`output`/`text` field plus optional `usage` token counts.
+- **Runtime profiling** (`RuntimeProfile`): captures per-call latency
+  (avg / p50 / p95 / max), error rate, and token usage as evals run live;
+  surfaced in the score report and embedded in the evidence pack
+  (`runtime_summary`).
+- **No silent pass on a broken agent**: a failing or unreachable agent is
+  recorded as a failed eval and counted in the error rate.
+- 25 new tests.
+
 ### ✨ Features — Model Intelligence Layer (Phase 1)
 
 - **Model Profile** (`model:` block in `governance.yaml`): declare `id`, `provider`,
