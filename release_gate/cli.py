@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 release-gate CLI - AI release decision engine
-Version: 0.6.0 — readiness scoring, regression gate, evals, traces, evidence packs
+Version: 0.6.1 — readiness scoring, regression gate, evals, traces, evidence packs
 """
 import sys
 import yaml
@@ -513,7 +513,7 @@ def _print_score_report(scoring, project, evals, traces, impact):
     conf = scoring["confidence"]
 
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.6.0")
+    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.6.1")
     print("=" * 80 + "\n")
 
     print(f"  Project          {project}")
@@ -619,7 +619,7 @@ def run_score_command(config_path, evals_path, traces_path, html_report, evidenc
 def _print_regression_report(result):
     """Render a regression comparison report to the terminal."""
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Regression Gate  v0.6.0")
+    print("\U0001f6aa release-gate  |  Regression Gate  v0.6.1")
     print("=" * 80 + "\n")
 
     print(f"  Baseline score    {result['previous_score']} / 100   {result['baseline_decision']}")
@@ -695,7 +695,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir):
 
     paths = generate_evidence_pack(data, output_dir)
 
-    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.6.0\n")
+    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.6.1\n")
     print(f"  Decision: {scoring['decision']}  (score {scoring['readiness_score']}/100)\n")
     print(f"  ✓  {paths['json']}")
     print(f"  ✓  {paths['markdown']}")
@@ -707,7 +707,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir):
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print("\U0001f6aa release-gate v0.6.0  — AI release decision engine")
+    print("\U0001f6aa release-gate v0.6.1  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
