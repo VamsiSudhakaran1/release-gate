@@ -409,6 +409,61 @@ def run_impact_command(config_path: str, html_report: str | None) -> None:
     sys.exit(get_exit_code(decision))
 
 
+def run_pricing_lock_command(config_path, models, source, output, allow_network):
+    """Fetch live model pricing and write a reproducible pricing.lock.json.
+
+    Model ids come from --models (comma-separated) and/or the `model:` block
+    of a governance config, so CI can pin prices once and score offline.
+    """
+    from release_gate.pricing.resolver import fetch_pricing_snapshot
+    from release_gate.pricing.lock import PricingLock, DEFAULT_LOCK_FILENAME
+
+    model_ids = []
+    if models:
+        model_ids.extend([m.strip() for m in models.split(",") if m.strip()])
+    if config_path:
+        try:
+            cfg = load_config(config_path)
+            block = cfg.get("model", {}) or {}
+            mid = block.get("id") or block.get("model")
+            if mid:
+                model_ids.append(mid)
+        except Exception as exc:
+            print(f"Warning: could not read model from {config_path}: {exc}")
+
+    # De-duplicate while preserving order.
+    seen = set()
+    model_ids = [m for m in model_ids if not (m in seen or seen.add(m))]
+
+    if not model_ids:
+        print("Usage: release-gate pricing-lock --models gpt-4-turbo,claude-3-opus "
+              "[--source openrouter] [--output pricing.lock.json] [--offline]")
+        sys.exit(1)
+
+    out_path = output or DEFAULT_LOCK_FILENAME
+    print(f"release-gate  |  Pricing Lock\n")
+    print(f"  Source     {source}")
+    print(f"  Models     {', '.join(model_ids)}")
+    print(f"  Network    {'enabled' if allow_network else 'offline'}\n")
+
+    resolved = fetch_pricing_snapshot(model_ids, source=source, allow_network=allow_network)
+
+    if not resolved:
+        print("  ✗  No pricing could be resolved. Check the source or model ids.")
+        sys.exit(1)
+
+    payload = PricingLock.write(out_path, resolved, source=source)
+    for mid, entry in sorted(resolved.items()):
+        print(f"  ✓  {mid:32}  in ${entry['input_per_1m']}/1M  out ${entry['output_per_1m']}/1M")
+    missing = [m for m in model_ids if m not in resolved]
+    for mid in missing:
+        print(f"  ⚠  {mid:32}  not found at source — skipped")
+    print(f"\n  Wrote {len(resolved)} model(s) to {out_path}")
+    print(f"  fetched_at  {payload['fetched_at']}")
+    print(f"  hash        {payload['hash']}\n")
+    sys.exit(0)
+
+
 def _flag(argv, name):
     """Return the value following a --flag, or None if absent."""
     if name in argv:
@@ -662,6 +717,7 @@ def print_help():
     print("  release-gate run <config.yaml>          # Run governance checks (PASS/WARN/FAIL)")
     print("  release-gate init                       # Initialize new project (interactive)")
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
+    print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
     print("  --traces <trace.json>                   Validate an agent execution trace")
@@ -811,6 +867,18 @@ def main():
             _flag(sys.argv, '--evals'),
             _flag(sys.argv, '--traces'),
             _flag(sys.argv, '--output-dir') or 'release-evidence',
+        )
+
+    elif command == 'pricing-lock':
+        config_path = None
+        if len(sys.argv) >= 3 and not sys.argv[2].startswith('-'):
+            config_path = sys.argv[2]
+        run_pricing_lock_command(
+            config_path,
+            _flag(sys.argv, '--models'),
+            _flag(sys.argv, '--source') or 'openrouter',
+            _flag(sys.argv, '--output'),
+            '--offline' not in sys.argv,
         )
 
     else:

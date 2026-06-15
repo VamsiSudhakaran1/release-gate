@@ -72,6 +72,27 @@ class BudgetSimulator:
             
             # Extract parameters
             model = agent.get('model', 'gpt-4-turbo')
+
+            # v0.6: optional `model:` block resolves pricing from a source chain
+            # (static / custom / locked / openrouter / litellm) instead of only
+            # the hardcoded table. Purely additive — legacy configs are untouched.
+            model_block = config.get('model')
+            pricing_meta = None
+            if model_block:
+                resolved = self._resolve_model_block(model_block, config)
+                pricing_meta = resolved.as_dict()
+                model = model_block.get('id') or model_block.get('model') or model
+                if resolved.resolved:
+                    self.register_custom_pricing(
+                        model,
+                        resolved.input_per_1m,
+                        resolved.output_per_1m,
+                        resolved.provider,
+                    )
+                else:
+                    # Never let unknown cost silently pass.
+                    return self._unresolved_pricing_result(model, resolved)
+
             requests_per_day = simulation.get('requests_per_day', 1000)
             tokens = simulation.get('tokens_per_request', {})
             input_tokens = tokens.get('input', 800)
@@ -174,9 +195,16 @@ class BudgetSimulator:
                 },
                 'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
             }
-            
+
+            if pricing_meta is not None:
+                results['pricing'] = pricing_meta
+                # A WARN-level pricing signal (stale lock / fallback source)
+                # should not downgrade a passing budget, but it must be visible.
+                if pricing_meta.get('status') == 'WARN' and results['status'] == 'PASS':
+                    results['status'] = 'WARN'
+
             return results
-            
+
         except Exception as e:
             return {
                 'status': 'FAIL',
@@ -232,6 +260,31 @@ class BudgetSimulator:
             return 0
         return budget / estimated_cost
     
+    def _resolve_model_block(self, model_block: Dict, config: Dict):
+        """Resolve a `model:` block's pricing via the PricingResolver chain."""
+        # Imported lazily to avoid a hard dependency for legacy code paths.
+        from release_gate.pricing.resolver import PricingResolver
+
+        pricing = model_block.get('pricing', {}) or {}
+        lock_path = pricing.get('lock_path', 'pricing.lock.json')
+        # Live fetches are opt-in: a source of 'static'/'custom'/'locked' never
+        # touches the network, and config can force offline with allow_network.
+        allow_network = config.get('pricing', {}).get('allow_network', True)
+        resolver = PricingResolver(allow_network=allow_network)
+        return resolver.resolve(model_block, lock_path=lock_path)
+
+    def _unresolved_pricing_result(self, model: str, resolved) -> Dict:
+        """Return a non-passing result when pricing cannot be resolved."""
+        # on_unknown=warn -> WARN (review), otherwise FAIL (block / hold).
+        status = 'WARN' if resolved.status == 'WARN' else 'FAIL'
+        return {
+            'status': status,
+            'model': model,
+            'error': f'Pricing could not be resolved for {model}: {resolved.reason}',
+            'pricing': resolved.as_dict(),
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        }
+
     def _no_simulation_result(self) -> Dict:
         """Return result when no simulation is configured"""
         return {

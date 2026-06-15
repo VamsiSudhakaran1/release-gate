@@ -2,6 +2,28 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [Unreleased]
+
+### ✨ Features — Model Intelligence Layer (Phase 1)
+
+- **Model Profile** (`model:` block in `governance.yaml`): declare `id`, `provider`,
+  `type` (`llm` / `predictive_model` / `embedding` / `self_hosted`), and a pricing
+  source — instead of relying only on the hardcoded table.
+- **Pricing Resolver** (`release_gate.pricing.resolver`): resolves token pricing from a
+  source chain — `static`, `custom` (inline), `locked` (snapshot), `openrouter` (live),
+  and `litellm` (cost map). Live sources degrade gracefully to the lock file then the
+  static table, downgrading status to **WARN** instead of failing CI.
+- **Pricing Lock** (`pricing.lock.json` + `release-gate pricing-lock`): reproducible,
+  hash-protected (tamper-evident) pricing snapshots with a `fetched_at` timestamp so CI
+  can score offline. A snapshot older than `max_age_days` raises a **WARN**.
+- **No silent zero-cost**: if a model's price can't be resolved and `on_unknown: hold`,
+  the budget simulation **fails** rather than assuming free.
+- Self-hosted / predictive models skip token pricing entirely (Phase 2 will add a
+  runtime cost profile).
+- 27 new tests (193 total, all passing).
+
+---
+
 ## [0.6.0] - 2026-06-15
 
 ### ✨ Features
