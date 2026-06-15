@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="release-gate",
-    version="0.5.0",
-    description="Governance enforcement for AI agents",
+    version="0.6.0",
+    description="AI agent release decision engine — score, compare, trace, and generate evidence packs",
     author="Vamsi Sudhakaran",
     author_email="vamsi.sudhakaran@gmail.com",
     url="https://github.com/VamsiSudhakaran1/release-gate",
