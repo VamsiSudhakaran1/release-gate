@@ -760,7 +760,7 @@ def print_help():
     print("\U0001f6aa release-gate v0.6.1  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
-    print("  release-gate audit [path]                # Scan a repo for AI deployment readiness")
+    print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
@@ -804,12 +804,20 @@ def main():
             print("Error: Audit engine not available. Please reinstall release-gate.")
             sys.exit(1)
         from pathlib import Path as _Path
+        from release_gate.audit import _is_github_url, clone_and_audit
         target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
         as_json = '--json' in sys.argv
-        report = build_report(_Path(target))
+        try:
+            if _is_github_url(target):
+                print(f"  Cloning {target} ...")
+                report = clone_and_audit(target)
+            else:
+                report = build_report(_Path(target))
+        except RuntimeError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
         if as_json:
             import json as _json
-            # Strip non-serialisable objects before printing
             out = {k: v for k, v in report.items() if k != 'real_checks'}
             out['real_checks'] = {
                 name: {'status': r.get('status')}
@@ -818,6 +826,8 @@ def main():
             print(_json.dumps(out, indent=2))
         else:
             render_audit_terminal(report)
+        if not report.get('agent_detected', True):
+            sys.exit(0)  # not an agent repo — neutral exit
         decision = report['decision']
         sys.exit(1 if decision == 'BLOCK' else 10 if decision == 'HOLD' else 0)
 
