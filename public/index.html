@@ -320,31 +320,33 @@
   <div class="container">
     <div class="badge">v0.7.0 &mdash; Live Agent Runtime + Repo Audit</div>
     <h1>PROMOTE, HOLD, or <span style="color:var(--red)">BLOCK</span><br><span>&#x2014; against your real agent.</span></h1>
-    <p class="tagline">release-gate runs evals <strong style="color:var(--bright)">live against your actual agent</strong>, validates traces, checks cost budgets, and generates an evidence pack &mdash; then gives you one number (0&ndash;100) and one decision.</p>
+    <p class="tagline">Start with <code style="color:var(--bright)">release-gate audit</code> &mdash; scan any AI agent repo in 30 seconds, no config needed. Then score, eval live against your real agent, and gate every deploy.</p>
     <div class="hero-btns">
-      <a href="#demo" class="btn-primary">&#x25B6; Run the demo</a>
+      <a href="#demo" class="btn-primary">&#x25B6; See it in action</a>
       <a href="#how-it-works" class="btn-secondary">How it works</a>
       <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">GitHub &rarr;</a>
     </div>
 
     <div style="margin-bottom:40px;">
-      <div class="terminal" style="max-width:640px; margin:0 auto; text-align:left;">
+      <div class="terminal" style="max-width:700px; margin:0 auto; text-align:left;">
         <div class="terminal-bar">
           <div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div>
-          <span class="terminal-label">30 seconds after pip install</span>
+          <span class="terminal-label">Step 1 — audit any repo (no config needed)</span>
         </div>
         <div class="terminal-body">
-          <span class="t-line t-muted">$ pip install release-gate &amp;&amp; release-gate demo</span>
+          <span class="t-line t-muted">$ pip install release-gate</span>
+          <span class="t-line t-muted">$ release-gate audit https://github.com/your-org/your-agent</span>
           <span class="t-blank"></span>
-          <span class="t-line t-bright">  Two agents. Same model. Same cloud provider.</span>
-          <span class="t-line t-bright">  Different governance. Different outcome.</span>
+          <span class="t-line t-bright">  Agents  OpenAI / Agents SDK (4 files) &middot; LangChain (12 files)</span>
           <span class="t-blank"></span>
-          <span class="t-line t-bright">  customer-support-agent   <span class="t-green t-bold">100/100  ✓  PROMOTE</span></span>
-          <span class="t-line t-bright">  data-export-agent         <span class="t-red t-bold"> 33/100  ✗  BLOCK</span></span>
+          <span class="t-line t-bright">  Readiness Score   <span class="t-yellow t-bold">42 / 100</span>   ████░░░░░░</span>
+          <span class="t-line t-yellow t-bold">  Decision:  &#x26A0;  HOLD</span>
           <span class="t-blank"></span>
-          <span class="t-line t-red">  ✗ FALLBACK_DECLARED: No kill switch &mdash; loop runs until credit limit hit</span>
-          <span class="t-line t-red">  ✗ ACTION_BUDGET:     $22,500/day projected, no ceiling declared</span>
-          <span class="t-line t-red">  ✗ IDENTITY_BOUNDARY: No auth &mdash; anyone can exhaust your budget</span>
+          <span class="t-line t-red">  ✗  Budget / cost ceiling  &mdash;  runaway loop could exhaust API credits silently</span>
+          <span class="t-line t-red">  ✗  Kill switch / fallback  &mdash;  no way to stop a misbehaving agent at runtime</span>
+          <span class="t-line t-red">  ✗  Trace / tool policy     &mdash;  no record of which tools the agent called</span>
+          <span class="t-blank"></span>
+          <span class="t-line t-muted">  Next: release-gate audit . --emit-config -o governance.yaml</span>
         </div>
       </div>
     </div>
@@ -722,40 +724,47 @@
 <section id="features">
   <div class="container">
     <p class="section-eyebrow">Features</p>
-    <h2 class="section-title">From governance linter to release decision engine</h2>
-    <p class="section-subtitle">Score, compare, validate traces, resolve live pricing &mdash; one tool, one decision before every deploy.</p>
+    <h2 class="section-title">From zero to gated deploy in 4 steps</h2>
+    <p class="section-subtitle">Audit any repo in 30 seconds. Score, eval, and gate before every deploy.</p>
 
     <div class="feature-grid">
       <div class="feature-card">
-        <span class="tag tag-new">New v0.6</span>
+        <span class="tag tag-new">Start here</span>
+        <div class="feature-icon">&#x1F50E;</div>
+        <h3>Repo Audit &mdash; no config needed</h3>
+        <p>Run <code>release-gate audit https://github.com/org/repo</code> on any AI agent repo. Detects 11 agent frameworks, scores 7 deployment safeguards, returns PROMOTE / HOLD / BLOCK. Then <code>--emit-config</code> scaffolds a ready-to-commit <code>governance.yaml</code> from what it found.</p>
+      </div>
+
+      <div class="feature-card">
+        <span class="tag">Core</span>
         <div class="feature-icon">&#x1F4CA;</div>
         <h3>Readiness Scorer &mdash; 0&ndash;100</h3>
         <p>Six weighted dimensions (safety 30%, cost 20%, access control 20%, fallback 15%, eval quality 10%, observability 5%) collapse into one number and one decision: <strong>PROMOTE</strong>, <strong>HOLD</strong>, or <strong>BLOCK</strong>.</p>
       </div>
 
       <div class="feature-card">
-        <span class="tag tag-new">New v0.6</span>
+        <span class="tag">Core</span>
         <div class="feature-icon">&#x1F50D;</div>
         <h3>Regression Gate</h3>
         <p>Compare any two readiness report snapshots. Drops &gt;10 points in any dimension &mdash; especially safety, fallback, or access control &mdash; automatically BLOCK the release. Ship with a diff, not a guess.</p>
       </div>
 
       <div class="feature-card">
-        <span class="tag tag-new">New v0.6</span>
+        <span class="tag">Core</span>
         <div class="feature-icon">&#x1F9EA;</div>
         <h3>Eval Runner</h3>
         <p>Declare behavior test cases in YAML: <em>refuse_or_mask</em>, <em>contains_keywords</em>, <em>valid_json</em>, <em>no_tool_calls</em>. Runs in static mode (CI-safe, no LLM key needed) or live mode with any agent callable.</p>
       </div>
 
       <div class="feature-card">
-        <span class="tag tag-new">New v0.6</span>
+        <span class="tag">Core</span>
         <div class="feature-icon">&#x1F6E1;&#xFE0F;</div>
         <h3>Trace Validator</h3>
         <p>Feed your agent&rsquo;s execution trace (JSON or JSONL). Detects forbidden tool calls, allowed-list violations, retry storms, token budget overruns, and tool-call loops before they reach production.</p>
       </div>
 
       <div class="feature-card">
-        <span class="tag tag-new">New v0.6</span>
+        <span class="tag">Core</span>
         <div class="feature-icon">&#x1F4C4;</div>
         <h3>Evidence Pack</h3>
         <p>One command generates three audit artefacts: <code>readiness_report.json</code>, <code>executive_summary.md</code>, and <code>release-gate-evidence.html</code>. Attach to PRs, compliance tickets, or security reviews.</p>

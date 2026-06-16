@@ -1,12 +1,49 @@
 # release-gate
 
-**The CI/CD release decision engine for AI agents — score, compare, validate traces, and generate evidence before you ship.**
+**The CI/CD release decision engine for AI agents — audit, score, eval, and gate before you ship.**
 
 [![PyPI version](https://badge.fury.io/py/release-gate.svg)](https://badge.fury.io/py/release-gate)
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **v0.7.0** — Readiness scoring (0–100), regression gate, eval runner, trace validator, and evidence pack. One command. One decision: **PROMOTE**, **HOLD**, or **BLOCK**.
+> **v0.7.0** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
+
+## Try it in 30 seconds
+
+```bash
+pip install release-gate
+
+# Scan any AI agent repo — no config needed
+release-gate audit https://github.com/your-org/your-ai-agent
+```
+
+Output:
+
+```
+  Repo    https://github.com/your-org/your-ai-agent
+  Agents  OpenAI / Agents SDK (4 files), LangChain (12 files)
+
+  Readiness Score   42 / 100   ████░░░░░░
+  Decision:  ⚠  HOLD
+
+  Missing safeguards (3):
+  ✗  Governance config      No deployment policy — nothing to gate on.
+  ✗  Budget / cost ceiling  Runaway loop could exhaust API credits silently.
+  ✗  Trace / tool policy    No record of which tools the agent called or why.
+
+  Next step:
+  release-gate audit . --emit-config -o governance.yaml
+```
+
+Then scaffold a ready-to-commit governance config from the scan:
+
+```bash
+release-gate audit . --emit-config -o governance.yaml
+# Fill in the TODO lines, then gate every deploy:
+release-gate score governance.yaml
+```
+
+## What is release-gate?
 
 ## What is release-gate?
 
@@ -42,19 +79,18 @@ $ release-gate score governance.yaml --evals evals.yaml
 ## Quick Start
 
 ```bash
-# Install
 pip install release-gate
 
-# Interactive setup wizard
-release-gate init
+# Step 1: audit any repo — no config needed
+release-gate audit https://github.com/org/your-agent
+release-gate audit .                            # or scan locally
+release-gate audit . --emit-config -o governance.yaml  # scaffold a config
 
-# Score your agent before every deploy
+# Step 2: score before every deploy
 release-gate score governance.yaml
-
-# With evals and traces
 release-gate score governance.yaml --evals evals.yaml --traces traces/run.json
 
-# Generate a full evidence pack (JSON + Markdown + HTML)
+# Step 3: generate a full evidence pack (JSON + Markdown + HTML)
 release-gate evidence-pack governance.yaml
 ```
 
@@ -64,6 +100,10 @@ release-gate evidence-pack governance.yaml
 
 | Command | What it does |
 |---------|-------------|
+| `release-gate audit [path\|url]` | **Scan any repo** — detects agent frameworks, scores 7 deployment safeguards, returns PROMOTE / HOLD / BLOCK. No config needed. |
+| `release-gate audit . --emit-config` | **Scaffold governance.yaml** — generates a pre-filled config from what the scan found |
+| `release-gate audit . --badge` | **README badge** — shields.io snippet for your readiness score |
+| `release-gate audit . --markdown` | **CI job summary** — GitHub-flavored report, auto-written to `$GITHUB_STEP_SUMMARY` |
 | `release-gate score <config.yaml>` | **0–100 readiness score** — evaluates 6 dimensions, returns PROMOTE / HOLD / BLOCK |
 | `release-gate compare <baseline.json> <candidate.json>` | **Regression gate** — blocks if any dimension drops >10 pts vs baseline |
 | `release-gate evidence-pack <config.yaml>` | **Audit artefacts** — generates JSON report, Markdown summary, HTML dashboard |
@@ -397,12 +437,17 @@ release-gate validate-and-lock --governance governance.yaml --verify --public-ke
 
 ---
 
-## Supported Models
+## Supported model profiles
 
-**OpenAI:** gpt-4-turbo, gpt-4, gpt-3.5-turbo  
-**Anthropic:** claude-3-opus, claude-3-sonnet, claude-3-haiku  
-**Google:** gemini-2.0-flash  
-**XAI (Grok):** grok-2, grok-3
+release-gate prices and gates any model you deploy — not just a fixed list:
+
+- **Provider-priced LLMs** — OpenAI, Anthropic, Google, Mistral, Grok, Cohere, DeepSeek, and more via built-in pricing tables
+- **Custom-priced models** — set your own $/1k-token rate in the config
+- **Locked pricing snapshots** — freeze prices at audit time to prevent silent cost drift
+- **OpenRouter / LiteLLM live prices** — pull real-time rates at score time
+- **Self-hosted and open-weight models** — Llama, Mistral, Ollama; set cost to $0 or your infrastructure rate
+- **Predictive models and embedding workloads** — cost modeled per call, not per token
+- **Unknown model → HOLD** — unrecognised model IDs raise a warning instead of silently assuming zero cost
 
 ---
 
