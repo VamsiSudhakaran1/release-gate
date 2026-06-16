@@ -179,8 +179,9 @@
       text-transform: uppercase; letter-spacing: .05em;
       padding: 2px 8px; border-radius: 10px; margin-bottom: 10px;
     }
-    .tag-new { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.3); }
-    .tag-v5  { background: rgba(88,166,255,.12); color: var(--blue);  border: 1px solid rgba(88,166,255,.25); }
+    .tag-new   { background: rgba(63,185,80,.15); color: var(--green);  border: 1px solid rgba(63,185,80,.3); }
+    .tag-phase2{ background: rgba(188,140,255,.15); color: var(--purple); border: 1px solid rgba(188,140,255,.3); }
+    .tag-v5    { background: rgba(88,166,255,.12); color: var(--blue);  border: 1px solid rgba(88,166,255,.25); }
 
     .checks-table {
       width: 100%; border-collapse: collapse; margin-top: 32px;
@@ -317,9 +318,9 @@
 
 <section class="hero">
   <div class="container">
-    <div class="badge">v0.6.1 &mdash; AI release decision engine</div>
-    <h1>PROMOTE, HOLD, or <span style="color:var(--red)">BLOCK</span><br><span>&#x2014; with a score to prove it.</span></h1>
-    <p class="tagline">release-gate runs evals, validates agent traces, checks cost budgets, and generates an evidence pack &mdash; then gives you one number (0&ndash;100) and one decision.</p>
+    <div class="badge">v0.6.1 &mdash; Phase 2: Live Agent Runtime</div>
+    <h1>PROMOTE, HOLD, or <span style="color:var(--red)">BLOCK</span><br><span>&#x2014; against your real agent.</span></h1>
+    <p class="tagline">release-gate runs evals <strong style="color:var(--bright)">live against your actual agent</strong>, validates traces, checks cost budgets, and generates an evidence pack &mdash; then gives you one number (0&ndash;100) and one decision.</p>
     <div class="hero-btns">
       <a href="#demo" class="btn-primary">&#x25B6; Run the demo</a>
       <a href="#how-it-works" class="btn-secondary">How it works</a>
@@ -435,22 +436,23 @@
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-content">
-          <h3>Score every deploy candidate</h3>
-          <p>One command evaluates safety, cost, access control, fallback, eval quality, and observability. You get a 0&ndash;100 readiness score and a PROMOTE / HOLD / BLOCK decision &mdash; not just pass/fail YAML warnings.</p>
+          <h3>Score every deploy candidate &mdash; live or static</h3>
+          <p>Add <code>--agent</code> to run evals against your <em>actual</em> agent. release-gate calls it, scores the real responses, and captures latency. Without <code>--agent</code>, evals run in safe static mode &mdash; no LLM key, CI-friendly.</p>
           <div class="terminal">
             <div class="terminal-bar"><div class="dot dot-red"></div><div class="dot dot-yellow"></div><div class="dot dot-green"></div></div>
             <div class="terminal-body">
-              <span class="t-line t-muted">$ release-gate score governance.yaml --evals evals.yaml</span>
+              <span class="t-line t-muted">$ release-gate score governance.yaml \</span>
+              <span class="t-line t-muted">      --evals evals.yaml \</span>
+              <span class="t-line t-muted">      --agent py:my_pkg.agent:handle</span>
               <span class="t-blank"></span>
               <span class="t-line t-bright">  Readiness Score   <span class="t-green t-bold">94 / 100</span>   confidence: high</span>
               <span class="t-blank"></span>
-              <span class="t-line t-bright">  Dimension Breakdown:</span>
+              <span class="t-line t-bright">  Evals run        7  (7 pass, 0 fail)  pass rate 100%  <span class="t-purple">[live mode]</span></span>
+              <span class="t-line t-bright">  Agent runtime    7 live call(s)  <span class="t-purple">avg 312ms &middot; p95 480ms</span>  (0 error(s))</span>
+              <span class="t-blank"></span>
               <span class="t-line t-bright">    safety          <span class="t-green">100</span>  (weight 30%)</span>
               <span class="t-line t-bright">    cost             <span class="t-green">90</span>  (weight 20%)</span>
-              <span class="t-line t-bright">    access_control  <span class="t-green">100</span>  (weight 20%)</span>
-              <span class="t-line t-bright">    fallback        <span class="t-green">100</span>  (weight 15%)</span>
-              <span class="t-line t-bright">    eval_quality     <span class="t-green">85</span>  (weight 10%)</span>
-              <span class="t-line t-bright">    observability    <span class="t-green">80</span>  (weight 5%)</span>
+              <span class="t-line t-bright">    eval_quality     <span class="t-green">95</span>  (weight 10%)  <span class="t-muted">&uarr; live evals</span></span>
               <span class="t-blank"></span>
               <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)</span>
             </div>
@@ -558,10 +560,11 @@
     </div>
 
     <div class="tab-nav">
-        <button class="tab-btn active" onclick="switchTab('score',   this)">&#x2713; Score (PROMOTE)</button>
-        <button class="tab-btn"        onclick="switchTab('compare', this)">&#x26A0; Compare (regression)</button>
-        <button class="tab-btn"        onclick="switchTab('traces',  this)">&#x2717; Traces (violations)</button>
-        <button class="tab-btn"        onclick="switchTab('impact',  this)">$ Impact simulator</button>
+        <button class="tab-btn active" onclick="switchTab('score',     this)">&#x2713; Score (PROMOTE)</button>
+        <button class="tab-btn"        onclick="switchTab('liveagent', this)" style="color:var(--purple)">&#x26A1; Live Agent</button>
+        <button class="tab-btn"        onclick="switchTab('compare',   this)">&#x26A0; Compare (regression)</button>
+        <button class="tab-btn"        onclick="switchTab('traces',    this)">&#x2717; Traces (violations)</button>
+        <button class="tab-btn"        onclick="switchTab('impact',    this)">$ Impact simulator</button>
       </div>
 
       <div id="tab-score" class="tab-panel">
@@ -591,6 +594,38 @@
             <span class="t-line t-bright">  Critical failures  <span class="t-green">none</span></span>
             <span class="t-blank"></span>
             <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)  exit 0</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-liveagent" class="tab-panel" style="display:none;">
+        <div class="terminal">
+          <div class="terminal-body">
+            <span class="t-line t-muted">$ release-gate score governance.yaml --evals evals.yaml \</span>
+            <span class="t-line t-muted">      --agent py:my_pkg.agent:handle</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-muted">  # --agent also accepts:  cmd:./run_agent.sh</span>
+            <span class="t-line t-muted">  #                        https://my-agent.internal/run</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.6.1</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Project          customer-support-agent</span>
+            <span class="t-line t-bright">  Evals run        7  (6 pass, 1 fail)  pass rate 85.7%  <span class="t-purple">[live mode]</span></span>
+            <span class="t-line t-purple">  Agent runtime    7 live call(s)  avg 318ms &middot; p95 540ms  (0 error(s))</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-muted">  Eval details (live responses from your agent):</span>
+            <span class="t-line t-green">    &#x2713;  pii_not_leaked          &mdash; agent refused to reveal credit card</span>
+            <span class="t-line t-green">    &#x2713;  prompt_injection_blocked &mdash; agent declined suspicious instruction</span>
+            <span class="t-line t-green">    &#x2713;  order_summary_valid_json &mdash; response parsed &amp; schema matched</span>
+            <span class="t-line t-red">    &#x2717;  no_unsolicited_tools    &mdash; response contained unexpected tool_call</span>
+            <span class="t-line t-muted">         &rarr; Real agent output: "I'll call search_docs to look that up..."</span>
+            <span class="t-line t-muted">         &rarr; Expected:          no tool calls for this query</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">  Score            <span class="t-yellow t-bold">88 / 100</span>   confidence: medium</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-bright">    eval_quality     <span class="t-yellow">78</span>  (live mode surfaced a real failure)</span>
+            <span class="t-blank"></span>
+            <span class="t-line t-yellow t-bold">  Decision:  &#x26A0;  HOLD  (score 88/100)  &mdash; fix eval failure before promoting</span>
           </div>
         </div>
       </div>
@@ -726,6 +761,13 @@
         <p>One command generates three audit artefacts: <code>readiness_report.json</code>, <code>executive_summary.md</code>, and <code>release-gate-evidence.html</code>. Attach to PRs, compliance tickets, or security reviews.</p>
       </div>
 
+      <div class="feature-card" style="border-color: rgba(188,140,255,.35);">
+        <span class="tag tag-phase2">Phase 2</span>
+        <div class="feature-icon">&#x26A1;</div>
+        <h3>Live Agent Runtime</h3>
+        <p>Add <code>--agent py:module:fn</code>, <code>cmd:./script</code>, or an <code>https://</code> endpoint to run your eval suite <strong>live against the real agent</strong>. release-gate calls it, scores actual responses, and records per-call latency (avg / p50 / p95 / max). A failing or unreachable agent is a failed eval &mdash; no silent passes. Stdlib-only, no SDK required.</p>
+      </div>
+
       <div class="feature-card">
         <span class="tag tag-new">New</span>
         <div class="feature-icon">&#x1F9E9;</div>
@@ -810,6 +852,10 @@
             <code>release-gate evidence-pack</code>
             <p>JSON + Markdown + HTML artefacts</p>
           </div>
+          <div class="command-card" style="border-color:rgba(188,140,255,.35);">
+            <code style="color:var(--purple)">score --agent &lt;spec&gt;</code>
+            <p>Run evals live against your real agent (py: / cmd: / https://)</p>
+          </div>
           <div class="command-card">
             <code>release-gate pricing-lock</code>
             <p>Snapshot live model prices to lock file</p>
@@ -882,8 +928,13 @@
         </tr>
         <tr>
           <td>Evals (behavior)</td>
-          <td>refuse_or_mask, contains_keywords, valid_json, no_tool_calls &mdash; declared in YAML</td>
-          <td>Critical evals fail (safety category)</td>
+          <td>refuse_or_mask, contains_keywords, valid_json, no_tool_calls &mdash; static (CI-safe) or <strong>live</strong> against a real agent via <code>--agent</code></td>
+          <td>Critical evals fail (safety category), or agent raises an error</td>
+        </tr>
+        <tr>
+          <td>Live Agent Runtime</td>
+          <td>Per-call latency (avg / p50 / p95 / max), error rate, optional token usage &mdash; captured when <code>--agent</code> is set</td>
+          <td>Unreachable or error-throwing agent counts as failed eval</td>
         </tr>
         <tr>
           <td>Trace Validator</td>
@@ -900,9 +951,9 @@
 
     <div class="install-strip">
       <div>
-        <p style="margin-bottom:6px; color:var(--bright); font-weight:600;">See it live in 30 seconds</p>
+        <p style="margin-bottom:6px; color:var(--bright); font-weight:600;">Get started in 30 seconds</p>
         <code>pip install release-gate &amp;&amp; release-gate demo</code>
-        <p style="margin-top:8px;">Then set up your own agent: <code>release-gate init</code></p>
+        <p style="margin-top:8px;">Run evals live: <code>release-gate score governance.yaml --evals evals.yaml --agent py:my_pkg.agent:handle</code></p>
       </div>
       <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-primary" target="_blank">View on GitHub &rarr;</a>
     </div>
@@ -948,7 +999,7 @@
 
 <script>
   function switchTab(name, btn) {
-    ['score','compare','traces','impact'].forEach(id => {
+    ['score','liveagent','compare','traces','impact'].forEach(id => {
       document.getElementById('tab-' + id).style.display = 'none';
     });
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
