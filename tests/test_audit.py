@@ -321,3 +321,52 @@ def test_project_name_from_url():
     assert _project_name_from_path("https://github.com/org/my-agent") == "my-agent"
     assert _project_name_from_path("https://github.com/org/my-agent.git") == "my-agent"
     assert _project_name_from_path("/home/user/cool-bot/") == "cool-bot"
+
+
+# ─────────────────────────── badge + markdown (self-serve) ───────────────────
+
+def test_badge_url_block_is_red(tmp_path):
+    from release_gate.audit import badge_url
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    report = build_report(tmp_path)
+    url = badge_url(report)
+    assert url.startswith("https://img.shields.io/badge/")
+    assert "BLOCK" in url
+    assert url.endswith("-red")
+
+
+def test_badge_url_no_agent_is_grey(tmp_path):
+    from release_gate.audit import badge_url
+    report = build_report(tmp_path)  # empty repo, no agent
+    url = badge_url(report)
+    assert "no%20agent%20detected" in url
+    assert url.endswith("-lightgrey")
+
+
+def test_badge_markdown_links_to_repo(tmp_path):
+    from release_gate.audit import badge_markdown
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    report = build_report(tmp_path)
+    md = badge_markdown(report)
+    assert md.startswith("[![")
+    assert "github.com/VamsiSudhakaran1/release-gate" in md
+
+
+def test_render_markdown_has_score_and_table(tmp_path):
+    from release_gate.audit import render_markdown
+    make_repo(tmp_path, {"agent.py": 'from openai import OpenAI\nmodel="gpt-4-turbo"'})
+    report = build_report(tmp_path)
+    md = render_markdown(report)
+    assert "AI Release Readiness Audit" in md
+    assert "Score:" in md
+    assert "| Safeguard | Status | Risk if missing |" in md
+    assert "gpt-4-turbo" in md
+    assert "--emit-config" in md  # next-step guidance present when safeguards missing
+
+
+def test_render_markdown_no_agent_message(tmp_path):
+    from release_gate.audit import render_markdown
+    report = build_report(tmp_path)  # empty repo
+    md = render_markdown(report)
+    assert "No AI agent framework detected" in md
+    assert "| Safeguard |" not in md  # no score table for non-agent repos

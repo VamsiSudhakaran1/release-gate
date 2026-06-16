@@ -534,6 +534,94 @@ def emit_config(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ─────────────────────────── Badge + Markdown (self-serve) ──────────────────
+
+def badge_url(report: Dict[str, Any]) -> str:
+    """Return a shields.io badge URL reflecting the audit score/decision.
+
+    Drop the resulting markdown into a README so the readiness score is
+    visible on the repo front page — turning the audit into something a
+    maintainer runs on their *own* repo, not something done to them.
+    """
+    score = report.get("score", 0)
+    decision = report.get("decision", "BLOCK")
+    if not report.get("agent_detected", True):
+        return ("https://img.shields.io/badge/"
+                "release--gate-no%20agent%20detected-lightgrey")
+    color = {"PROMOTE": "brightgreen", "HOLD": "yellow", "BLOCK": "red"}.get(decision, "lightgrey")
+    label = "release--gate"
+    message = f"{score}%2F100 {decision}".replace(" ", "%20")
+    return f"https://img.shields.io/badge/{label}-{message}-{color}"
+
+
+def badge_markdown(report: Dict[str, Any]) -> str:
+    """A copy-paste README snippet: the badge linking to release-gate."""
+    return (f"[![AI deployment readiness]({badge_url(report)})]"
+            f"(https://github.com/VamsiSudhakaran1/release-gate)")
+
+
+def render_markdown(report: Dict[str, Any]) -> str:
+    """Render the audit as GitHub-flavored Markdown.
+
+    Used for CI job summaries ($GITHUB_STEP_SUMMARY) and PR comments so the
+    result is readable wherever a maintainer already works.
+    """
+    out: List[str] = []
+    out.append("## 🚪 release-gate — AI Release Readiness Audit")
+    out.append("")
+    out.append(f"**Repo:** `{report.get('path', '')}`")
+    out.append("")
+
+    fw = report.get("frameworks", {})
+    if not fw:
+        out.append("> ℹ️ No AI agent framework detected in this repo. "
+                   "release-gate audits are designed for repos using OpenAI, "
+                   "Anthropic, LangChain, LangGraph, CrewAI, AutoGen, LiteLLM, "
+                   "LlamaIndex, HuggingFace, or Ollama.")
+        out.append("")
+        return "\n".join(out)
+
+    names = ", ".join(f"{k} ({v})" for k, v in sorted(fw.items()))
+    out.append(f"**Agent frameworks:** {names}")
+    if report.get("detected_model"):
+        out.append(f"  •  **Model:** `{report['detected_model']}`")
+    out.append("")
+
+    score = report.get("score", 0)
+    decision = report.get("decision", "BLOCK")
+    emoji = {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(decision, "⚪")
+    out.append(f"### {emoji} Score: **{score} / 100** — {decision}")
+    out.append("")
+    out.append(badge_markdown(report))
+    out.append("")
+
+    missing = report.get("missing", [])
+    passing = report.get("passing", [])
+
+    out.append("| Safeguard | Status | Risk if missing |")
+    out.append("| --- | :---: | --- |")
+    for s in passing:
+        out.append(f"| {s['label']} | ✅ | — |")
+    for s in missing:
+        out.append(f"| {s['label']} | ❌ | {s['risk']} |")
+    out.append("")
+
+    if missing:
+        out.append("### Next step")
+        out.append("")
+        out.append("Scaffold a ready-to-commit governance config from this audit:")
+        out.append("")
+        out.append("```bash")
+        out.append("release-gate audit . --emit-config -o governance.yaml")
+        out.append("```")
+        out.append("")
+        out.append("Then fill in the `TODO` lines and gate every deploy with "
+                   "`release-gate score governance.yaml`.")
+        out.append("")
+
+    return "\n".join(out)
+
+
 # ─────────────────────────── Terminal renderer ───────────────────────────────
 
 _RESET  = "\033[0m"
