@@ -836,7 +836,6 @@ def main():
                 # Print to stdout so it can be piped:  ... --emit-config > governance.yaml
                 print(config_text)
             sys.exit(0)
-
         if as_json:
             import json as _json
             out = {k: v for k, v in report.items() if k != 'real_checks'}
