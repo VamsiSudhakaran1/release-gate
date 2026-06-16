@@ -118,7 +118,7 @@ def test_team_owner_not_inferred_from_code(tmp_path):
 def test_github_actions_integration(tmp_path):
     make_repo(tmp_path, {
         ".github/workflows/ci.yml":
-        "- uses: VamsiSudhakaran1/release-gate@v0.6.1\n  with:\n    config: governance.yaml\n"
+        "- uses: VamsiSudhakaran1/release-gate@v0.7.0\n  with:\n    config: governance.yaml\n"
     })
     from release_gate.audit import _has_github_actions_integration
     assert _has_github_actions_integration(tmp_path) is True
@@ -147,7 +147,6 @@ def test_all_missing_scores_0():
 
 
 def test_partial_score_hold(tmp_path):
-    # governance + budget + kill_switch present = 25+20+20 = 65/100 → BLOCK
     # governance + budget + kill_switch + team + auth = 25+20+20+10+10 = 85/100 → HOLD
     present = {
         "governance_file": True,
@@ -166,10 +165,33 @@ def test_partial_score_hold(tmp_path):
 def test_block_threshold():
     present = {s["id"]: False for s in SAFEGUARDS}
     present["governance_file"] = True   # 25 pts
-    present["budget_ceiling"]  = True   # 20 pts  → 45 total → BLOCK
+    present["budget_ceiling"]  = True   # 20 pts  → 45 total (<50) → BLOCK
     score, decision = compute_score(present)
     assert score == 45
     assert decision == "BLOCK"
+
+
+def test_no_governance_file_caps_at_hold():
+    # Every safeguard EXCEPT the governance file = 75/100. A repo that has done
+    # the real work but never wrote a governance.yaml should never PROMOTE.
+    present = {s["id"]: True for s in SAFEGUARDS}
+    present["governance_file"] = False
+    score, decision = compute_score(present)
+    assert score == 75
+    assert decision == "HOLD"
+
+
+def test_substantial_safeguards_is_hold_not_block():
+    # The gpt-researcher case: budget + kill_switch + auth + evals = 60/100.
+    # Already has most heavy safeguards → HOLD ("formalize it"), not BLOCK.
+    present = {s["id"]: False for s in SAFEGUARDS}
+    present["budget_ceiling"]  = True   # 20
+    present["kill_switch"]     = True   # 20
+    present["auth_rate_limit"] = True   # 10
+    present["eval_evidence"]   = True   # 10  → 60 total
+    score, decision = compute_score(present)
+    assert score == 60
+    assert decision == "HOLD"
 
 
 # ─────────────────────────── full report ────────────────────────────────────
