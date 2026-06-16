@@ -4,6 +4,20 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ Features — Self-serve audit (badge + CI summary)
+
+- **`release-gate audit --badge`**: prints a copy-paste shields.io Markdown
+  badge reflecting the readiness score/decision (green/yellow/red/grey) so a
+  maintainer can show it on their own repo's README.
+- **`release-gate audit --markdown`**: renders the audit as GitHub-flavored
+  Markdown — a score table of present/missing safeguards. In GitHub Actions it
+  is appended to `$GITHUB_STEP_SUMMARY` automatically so the result is visible
+  without opening logs.
+- **GitHub Action `command: audit`**: drop-in CI step (`path`, `fail-on-warn`)
+  that audits the checked-out repo and writes the summary. Audit exit codes:
+  `0` PROMOTE/no-agent · `10` HOLD · `1` BLOCK.
+- New docs: `docs/AUDIT_BADGE.md`. 5 new tests.
+
 ### ✨ Features — Live Agent Runtime (Phase 2)
 
 - **Live agent runner** (`release_gate.agent`): a new `--agent <spec>` flag on

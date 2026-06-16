@@ -12,9 +12,13 @@ inputs:
     required: false
     default: "governance.yaml"
   command:
-    description: "Command: 'score', 'evidence-pack', 'impact', or 'run'"
+    description: "Command: 'audit', 'score', 'evidence-pack', 'impact', or 'run'"
     required: false
     default: "score"
+  path:
+    description: "Repo path to audit (command: audit). Defaults to the checked-out repo."
+    required: false
+    default: "."
   evals:
     description: "Path to an evals.yaml of behavior test cases (score / evidence-pack)"
     required: false
@@ -60,7 +64,26 @@ runs:
       shell: bash
       run: pip install release-gate --quiet
 
+    - name: Run release-gate audit
+      if: inputs.command == 'audit'
+      id: audit
+      shell: bash
+      run: |
+        set +e
+        # Writes a Markdown report to the job summary automatically via
+        # $GITHUB_STEP_SUMMARY, and still prints to the log.
+        release-gate audit "${{ inputs.path }}" --markdown
+        EXIT_CODE=$?
+        set -e
+        # audit exit codes: 0 PROMOTE/no-agent · 10 HOLD · 1 BLOCK
+        if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then
+          echo "Audit decision: HOLD (allowed — set fail-on-warn: true to block)"
+          exit 0
+        fi
+        exit $EXIT_CODE
+
     - name: Run release-gate ${{ inputs.command }}
+      if: inputs.command != 'audit'
       id: gate
       shell: bash
       run: |

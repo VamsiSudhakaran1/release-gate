@@ -3,6 +3,7 @@
 release-gate CLI - AI release decision engine
 Version: 0.6.1 — readiness scoring, regression gate, evals, traces, evidence packs
 """
+import os
 import sys
 import yaml
 import json
@@ -762,6 +763,8 @@ def print_help():
     print("\nUsage:")
     print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
+    print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
+    print("  release-gate audit [path|url] --badge         # README badge snippet for your score")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
@@ -805,9 +808,14 @@ def main():
             print("Error: Audit engine not available. Please reinstall release-gate.")
             sys.exit(1)
         from pathlib import Path as _Path
-        from release_gate.audit import _is_github_url, clone_and_audit, emit_config
+        from release_gate.audit import (
+            _is_github_url, clone_and_audit, emit_config,
+            render_markdown, badge_markdown,
+        )
         target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
         as_json = '--json' in sys.argv
+        as_markdown = '--markdown' in sys.argv
+        as_badge = '--badge' in sys.argv
         emit = '--emit-config' in sys.argv
         out_path = _flag(sys.argv, '--output') or _flag(sys.argv, '-o')
         try:
@@ -836,7 +844,24 @@ def main():
                 # Print to stdout so it can be piped:  ... --emit-config > governance.yaml
                 print(config_text)
             sys.exit(0)
-        if as_json:
+        if as_badge:
+            print(badge_markdown(report))
+        elif as_markdown:
+            md = render_markdown(report)
+            # In GitHub Actions, append to the job summary too.
+            summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+            if summary_path:
+                try:
+                    with open(summary_path, 'a', encoding='utf-8') as f:
+                        f.write(md + "\n")
+                except OSError:
+                    pass
+            if out_path:
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(md)
+            else:
+                print(md)
+        elif as_json:
             import json as _json
             out = {k: v for k, v in report.items() if k != 'real_checks'}
             out['real_checks'] = {
