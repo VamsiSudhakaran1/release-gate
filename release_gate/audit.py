@@ -1,0 +1,435 @@
+"""
+release-gate audit — scan a local repo for AI agent deployment readiness.
+
+Detects agent frameworks in use, checks whether governance safeguards are
+declared, and produces a readiness score (0-100) with a PROMOTE/HOLD/BLOCK
+decision and a ranked list of missing safeguards.
+
+Usage:
+    release-gate audit               # scan current directory
+    release-gate audit ./my-repo     # scan a specific path
+    release-gate audit . --json      # machine-readable output
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+
+# ─────────────────────────── Framework detection ────────────────────────────
+
+FRAMEWORK_SIGNALS: Dict[str, List[str]] = {
+    "OpenAI / Agents SDK":      ["from openai",    "import openai",    "openai.agents", "openai.chat"],
+    "Anthropic / Claude":       ["from anthropic",  "import anthropic", "anthropic.messages"],
+    "LangChain":                ["from langchain",  "import langchain", "langchain_openai", "langchain_anthropic"],
+    "LangGraph":                ["from langgraph",  "import langgraph"],
+    "CrewAI":                   ["from crewai",     "import crewai"],
+    "AutoGen / AG2":            ["from autogen",    "import autogen",   "from ag2", "import ag2"],
+    "LiteLLM":                  ["from litellm",    "import litellm",   "litellm.completion"],
+    "LlamaIndex":               ["from llama_index","import llama_index","from llama_index.core"],
+    "Google Generative AI":     ["import google.generativeai", "from google.generativeai",
+                                 "import vertexai", "from vertexai"],
+    "HuggingFace Transformers": ["from transformers","import transformers"],
+    "Ollama":                   ["from ollama",     "import ollama",    "ollama.chat"],
+}
+
+PYTHON_EXTENSIONS = {".py"}
+MAX_FILES = 2000
+MAX_FILE_BYTES = 200_000
+
+
+# ─────────────────────────── Safeguard checklist ────────────────────────────
+
+SAFEGUARDS = [
+    {
+        "id":        "governance_file",
+        "label":     "Governance config (governance.yaml)",
+        "dimension": "safety",
+        "weight":    25,
+        "risk":      "No deployment policy — nothing to gate on.",
+    },
+    {
+        "id":        "budget_ceiling",
+        "label":     "Budget / cost ceiling",
+        "dimension": "cost",
+        "weight":    20,
+        "risk":      "Runaway loop could exhaust API credits silently.",
+    },
+    {
+        "id":        "kill_switch",
+        "label":     "Kill switch / fallback declared",
+        "dimension": "safety",
+        "weight":    20,
+        "risk":      "No way to stop a misbehaving agent at runtime.",
+    },
+    {
+        "id":        "team_owner",
+        "label":     "Team owner / on-call contact",
+        "dimension": "safety",
+        "weight":    10,
+        "risk":      "Nobody gets paged when it breaks at 3 AM.",
+    },
+    {
+        "id":        "auth_rate_limit",
+        "label":     "Auth & rate limiting",
+        "dimension": "access_control",
+        "weight":    10,
+        "risk":      "Anyone can call the agent and exhaust your budget.",
+    },
+    {
+        "id":        "eval_evidence",
+        "label":     "Eval evidence (evals.yaml or test suite)",
+        "dimension": "eval_quality",
+        "weight":    10,
+        "risk":      "No proof the agent behaves correctly before shipping.",
+    },
+    {
+        "id":        "trace_policy",
+        "label":     "Trace / tool policy declared",
+        "dimension": "observability",
+        "weight":    5,
+        "risk":      "No record of which tools the agent called or why.",
+    },
+]
+
+
+# ─────────────────────────── File scanner ───────────────────────────────────
+
+def _iter_source_files(root: Path):
+    """Yield Python source files under root, capped at MAX_FILES."""
+    count = 0
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", ".env",
+                 "dist", "build", "site-packages", ".tox"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            if Path(fname).suffix in PYTHON_EXTENSIONS:
+                fpath = Path(dirpath) / fname
+                count += 1
+                if count > MAX_FILES:
+                    return
+                yield fpath
+
+
+def _read_snippet(path: Path) -> str:
+    try:
+        return path.read_bytes()[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def detect_frameworks(root: Path) -> Dict[str, int]:
+    """Return {framework_name: file_count} for every detected framework."""
+    hits: Dict[str, int] = {}
+    for fpath in _iter_source_files(root):
+        content = _read_snippet(fpath).lower()
+        for framework, signals in FRAMEWORK_SIGNALS.items():
+            if any(sig.lower() in content for sig in signals):
+                hits[framework] = hits.get(framework, 0) + 1
+    return hits
+
+
+# ─────────────────────────── Governance detection ───────────────────────────
+
+GOVERNANCE_FILENAMES = [
+    "governance.yaml", "governance.yml",
+    ".release-gate.yaml", ".release-gate.yml",
+    "release-gate.yaml", "release-gate.yml",
+]
+
+EVALS_FILENAMES = ["evals.yaml", "evals.yml"]
+TRACE_FILENAMES = ["traces", "trace"]
+
+BUDGET_PATTERNS  = [r"max_daily_cost", r"budget", r"max_cost", r"cost_limit",
+                    r"rate_limit", r"max_tokens"]
+KILL_SW_PATTERNS = [r"kill_switch", r"fallback", r"disable_", r"feature.?flag",
+                    r"circuit.?break"]
+AUTH_PATTERNS    = [r"auth", r"api.?key", r"bearer", r"rate.?limit", r"identity"]
+OWNER_PATTERNS   = [r"team_owner", r"on.?call", r"runbook", r"owner", r"pagerduty",
+                    r"oncall"]
+TRACE_PATTERNS   = [r"trace_policies", r"forbidden_tools", r"allowed_tools",
+                    r"trace_id", r"tool_call"]
+ACTIONS_RG_PAT   = r"release-gate"
+
+
+def _yaml_contains(path: Path, patterns: List[str]) -> bool:
+    text = _read_snippet(path).lower()
+    return any(re.search(p, text) for p in patterns)
+
+
+def _has_github_actions_integration(root: Path) -> bool:
+    wf_dir = root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return False
+    for wf in wf_dir.glob("*.yml"):
+        if ACTIONS_RG_PAT in _read_snippet(wf).lower():
+            return True
+    for wf in wf_dir.glob("*.yaml"):
+        if ACTIONS_RG_PAT in _read_snippet(wf).lower():
+            return True
+    return False
+
+
+def detect_safeguards(root: Path) -> Tuple[Dict[str, bool], Optional[Path]]:
+    """Return (safeguard_present_map, governance_path_or_None)."""
+    gov_path: Optional[Path] = None
+    for name in GOVERNANCE_FILENAMES:
+        candidate = root / name
+        if candidate.is_file():
+            gov_path = candidate
+            break
+
+    evals_path: Optional[Path] = None
+    for name in EVALS_FILENAMES:
+        candidate = root / name
+        if candidate.is_file():
+            evals_path = candidate
+            break
+
+    has_traces = any((root / d).exists() for d in TRACE_FILENAMES)
+
+    present = {
+        "governance_file": gov_path is not None,
+        "eval_evidence":   evals_path is not None or _has_test_evals(root),
+        "trace_policy":    has_traces,
+    }
+
+    # For the remaining safeguards, look inside governance.yaml if it exists,
+    # otherwise scan Python files and requirements.
+    if gov_path:
+        present["budget_ceiling"]  = _yaml_contains(gov_path, BUDGET_PATTERNS)
+        present["kill_switch"]     = _yaml_contains(gov_path, KILL_SW_PATTERNS)
+        present["team_owner"]      = _yaml_contains(gov_path, OWNER_PATTERNS)
+        present["auth_rate_limit"] = _yaml_contains(gov_path, AUTH_PATTERNS)
+        if not present["trace_policy"]:
+            present["trace_policy"] = _yaml_contains(gov_path, TRACE_PATTERNS)
+    else:
+        # No governance file — scan source for any hints of these safeguards
+        combined = _scan_source_for_patterns(root)
+        present["budget_ceiling"]  = bool(re.search("|".join(BUDGET_PATTERNS),  combined))
+        present["kill_switch"]     = bool(re.search("|".join(KILL_SW_PATTERNS), combined))
+        present["team_owner"]      = False  # can't infer from code alone
+        present["auth_rate_limit"] = bool(re.search("|".join(AUTH_PATTERNS),    combined))
+
+    return present, gov_path
+
+
+def _has_test_evals(root: Path) -> bool:
+    """Check for test files that look like agent behavior tests."""
+    test_patterns = [r"def test.*agent", r"def test.*eval", r"pii", r"refuse",
+                     r"keywords_blocked"]
+    for dirpath, _, filenames in os.walk(root):
+        if any(skip in dirpath for skip in [".git", "__pycache__", ".venv"]):
+            continue
+        for fname in filenames:
+            if fname.startswith("test_") and fname.endswith(".py"):
+                content = _read_snippet(Path(dirpath) / fname).lower()
+                if any(re.search(p, content) for p in test_patterns):
+                    return True
+    return False
+
+
+def _scan_source_for_patterns(root: Path) -> str:
+    """Concatenate a sample of source content for quick pattern search."""
+    chunks: List[str] = []
+    for fpath in _iter_source_files(root):
+        chunks.append(_read_snippet(fpath))
+        if len(chunks) >= 50:
+            break
+    return "\n".join(chunks).lower()
+
+
+# ─────────────────────────── Scoring ────────────────────────────────────────
+
+PROMOTE_THRESHOLD = 90
+HOLD_THRESHOLD    = 75
+
+
+def compute_score(present: Dict[str, bool]) -> Tuple[int, str]:
+    """Return (score 0-100, decision)."""
+    total_weight = sum(s["weight"] for s in SAFEGUARDS)
+    earned = sum(s["weight"] for s in SAFEGUARDS if present.get(s["id"], False))
+    score = round(earned / total_weight * 100)
+
+    if score >= PROMOTE_THRESHOLD:
+        decision = "PROMOTE"
+    elif score >= HOLD_THRESHOLD:
+        decision = "HOLD"
+    else:
+        decision = "BLOCK"
+    return score, decision
+
+
+# ─────────────────────────── Report builder ─────────────────────────────────
+
+def build_report(root: Path) -> Dict[str, Any]:
+    """Full audit report for a repo path."""
+    root = root.resolve()
+    frameworks = detect_frameworks(root)
+    present, gov_path = detect_safeguards(root)
+    score, decision = compute_score(present)
+    has_ci = _has_github_actions_integration(root)
+
+    missing = [s for s in SAFEGUARDS if not present.get(s["id"], False)]
+    passing = [s for s in SAFEGUARDS if present.get(s["id"], False)]
+
+    # If governance.yaml exists, try to run real checks for richer output
+    real_check_results = None
+    if gov_path:
+        try:
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from release_gate.cli import run_checks, load_config
+            config = load_config(str(gov_path))
+            real_check_results = run_checks(config)
+        except Exception:
+            pass
+
+    return {
+        "path":               str(root),
+        "frameworks":         frameworks,
+        "governance_file":    str(gov_path) if gov_path else None,
+        "has_ci_integration": has_ci,
+        "safeguards":         present,
+        "missing":            missing,
+        "passing":            passing,
+        "score":              score,
+        "decision":           decision,
+        "real_checks":        real_check_results,
+    }
+
+
+# ─────────────────────────── Terminal renderer ───────────────────────────────
+
+_RESET  = "\033[0m"
+_BOLD   = "\033[1m"
+_GREEN  = "\033[32m"
+_YELLOW = "\033[33m"
+_RED    = "\033[31m"
+_BLUE   = "\033[34m"
+_MUTED  = "\033[90m"
+_PURPLE = "\033[35m"
+
+
+def _col(text, *codes):
+    return "".join(codes) + text + _RESET
+
+
+def render_terminal(report: Dict[str, Any]) -> None:
+    div = "─" * 72
+
+    print()
+    print(_col(f"  🚪 release-gate  |  AI Release Readiness Audit", _BOLD))
+    print(f"  {div}")
+    print()
+
+    # Path
+    print(f"  {_col('Repo', _MUTED)}  {report['path']}")
+
+    # Frameworks
+    fw = report["frameworks"]
+    if fw:
+        names = ", ".join(f"{k} ({v} file{'s' if v>1 else ''})" for k, v in sorted(fw.items()))
+        print(f"  {_col('Agents', _MUTED)}  {_col(names, _BLUE)}")
+    else:
+        print(f"  {_col('Agents', _MUTED)}  {_col('No agent frameworks detected', _MUTED)}")
+
+    if report["governance_file"]:
+        print(f"  {_col('Config', _MUTED)}  {_col(report['governance_file'], _GREEN)}")
+    else:
+        print(f"  {_col('Config', _MUTED)}  {_col('No governance.yaml found', _RED)}")
+
+    ci_txt = _col("GitHub Actions ✓", _GREEN) if report["has_ci_integration"] \
+        else _col("No CI integration", _MUTED)
+    print(f"  {_col('CI    ', _MUTED)}  {ci_txt}")
+    print()
+
+    # Score bar
+    score    = report["score"]
+    decision = report["decision"]
+    bar_fill = "█" * (score // 10)
+    bar_empty = "░" * (10 - score // 10)
+    score_col = _GREEN if decision == "PROMOTE" else (_YELLOW if decision == "HOLD" else _RED)
+    dec_col   = _GREEN if decision == "PROMOTE" else (_YELLOW if decision == "HOLD" else _RED)
+
+    print(f"  {_col('Readiness Score', _BOLD)}   "
+          f"{_col(f'{score} / 100', score_col, _BOLD)}   "
+          f"{_col(bar_fill, score_col)}{_col(bar_empty, _MUTED)}")
+    print()
+    icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
+    print(f"  {_col(f'Decision:  {icon}  {decision}', dec_col, _BOLD)}")
+    print()
+    print(f"  {div}")
+
+    # Missing safeguards
+    missing = report["missing"]
+    if missing:
+        print(f"\n  {_col('Missing safeguards  (' + str(len(missing)) + ')', _RED, _BOLD)}\n")
+        for s in missing:
+            print(f"  {_col('✗', _RED)}  {_col(s['label'], _BOLD)}")
+            print(f"     {_col('Risk:', _MUTED)} {s['risk']}")
+        print()
+
+    # Passing safeguards
+    passing = report["passing"]
+    if passing:
+        print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
+        for s in passing:
+            print(f"  {_col('✓', _GREEN)}  {s['label']}")
+        print()
+
+    # Real check results (if governance.yaml was found and parsed)
+    real = report.get("real_checks")
+    if real:
+        print(f"  {_col('Governance check results', _BOLD)}\n")
+        for name, result in sorted(real.items()):
+            status = result.get("status", "?")
+            sym = "✓" if status == "PASS" else ("⚠" if status == "WARN" else "✗")
+            col = _GREEN if status == "PASS" else (_YELLOW if status == "WARN" else _RED)
+            print(f"  {_col(sym, col)}  {name:<25} {_col(status, col)}")
+        print()
+
+    print(f"  {div}")
+
+    # Next steps
+    print(f"\n  {_col('Next steps', _BOLD)}\n")
+    step = 1
+
+    if not report["governance_file"]:
+        print(f"  {_col(str(step), _BLUE, _BOLD)}.  Run {_col('release-gate init', _BLUE)}")
+        print(f"     Generates a governance.yaml for your stack in ~5 minutes.")
+        step += 1
+
+    if missing:
+        unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
+        if unresolved_safeguards:
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
+            for s in missing:
+                if s["id"] != "governance_file":
+                    print(f"     • {s['label']}")
+            step += 1
+
+    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
+    print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
+    step += 1
+
+    if not report["governance_file"] or not report["safeguards"].get("eval_evidence"):
+        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
+        print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+        step += 1
+
+    if not report["has_ci_integration"]:
+        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
+        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.6.1', _BLUE)}")
+        step += 1
+
+    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
+    print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
+
+    print()
+    print(f"  {div}")
+    print()

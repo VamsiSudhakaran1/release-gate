@@ -61,6 +61,13 @@ try:
 except ImportError:
     V6_AVAILABLE = False
 
+# Import audit engine
+try:
+    from release_gate.audit import build_report, render_terminal as render_audit_terminal
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+
 # Import live agent runtime (Phase 2)
 try:
     from release_gate.agent import AgentClient, AgentSpecError, RuntimeProfile
@@ -753,6 +760,7 @@ def print_help():
     print("\U0001f6aa release-gate v0.6.1  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
+    print("  release-gate audit [path]                # Scan a repo for AI deployment readiness")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
@@ -791,7 +799,29 @@ def main():
 
     command = sys.argv[1]
 
-    if command == 'demo':
+    if command == 'audit':
+        if not AUDIT_AVAILABLE:
+            print("Error: Audit engine not available. Please reinstall release-gate.")
+            sys.exit(1)
+        from pathlib import Path as _Path
+        target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
+        as_json = '--json' in sys.argv
+        report = build_report(_Path(target))
+        if as_json:
+            import json as _json
+            # Strip non-serialisable objects before printing
+            out = {k: v for k, v in report.items() if k != 'real_checks'}
+            out['real_checks'] = {
+                name: {'status': r.get('status')}
+                for name, r in (report.get('real_checks') or {}).items()
+            }
+            print(_json.dumps(out, indent=2))
+        else:
+            render_audit_terminal(report)
+        decision = report['decision']
+        sys.exit(1 if decision == 'BLOCK' else 10 if decision == 'HOLD' else 0)
+
+    elif command == 'demo':
         fast = '--fast' in sys.argv
         try:
             from release_gate.demo import run_demo
