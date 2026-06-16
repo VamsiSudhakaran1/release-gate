@@ -8,7 +8,6 @@ decision and a ranked list of missing safeguards.
 Usage:
     release-gate audit               # scan current directory
     release-gate audit ./my-repo     # scan a specific path
-    release-gate audit https://github.com/org/repo   # clone and scan
     release-gate audit . --json      # machine-readable output
 """
 
@@ -17,9 +16,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -268,45 +264,12 @@ def compute_score(present: Dict[str, bool]) -> Tuple[int, str]:
     return score, decision
 
 
-# ─────────────────────────── URL / remote repo support ──────────────────────
-
-def _is_github_url(target: str) -> bool:
-    return target.startswith(("https://github.com", "http://github.com",
-                              "git@github.com", "https://gitlab.com",
-                              "http://gitlab.com"))
-
-
-def clone_and_audit(url: str) -> Dict[str, Any]:
-    """Clone a remote git repo to a temp dir, audit it, clean up."""
-    if not shutil.which("git"):
-        raise RuntimeError(
-            "git is required for remote audits but was not found on PATH.\n"
-            "Install git: https://git-scm.com/downloads"
-        )
-    tmpdir = tempfile.mkdtemp(prefix="rg-audit-")
-    try:
-        result = subprocess.run(
-            ["git", "clone", "--depth", "1", "--quiet", url, tmpdir],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode != 0:
-            err = result.stderr.strip() or "clone failed"
-            raise RuntimeError(f"git clone failed: {err}")
-        report = build_report(Path(tmpdir))
-        # Replace the temp path with the original URL for display
-        report["path"] = url
-        return report
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
 # ─────────────────────────── Report builder ─────────────────────────────────
 
 def build_report(root: Path) -> Dict[str, Any]:
     """Full audit report for a repo path."""
     root = root.resolve()
     frameworks = detect_frameworks(root)
-    agent_detected = len(frameworks) > 0
     present, gov_path = detect_safeguards(root)
     score, decision = compute_score(present)
     has_ci = _has_github_actions_integration(root)
@@ -328,7 +291,6 @@ def build_report(root: Path) -> Dict[str, Any]:
 
     return {
         "path":               str(root),
-        "agent_detected":     agent_detected,
         "frameworks":         frameworks,
         "governance_file":    str(gov_path) if gov_path else None,
         "has_ci_integration": has_ci,
@@ -375,19 +337,6 @@ def render_terminal(report: Dict[str, Any]) -> None:
         print(f"  {_col('Agents', _MUTED)}  {_col(names, _BLUE)}")
     else:
         print(f"  {_col('Agents', _MUTED)}  {_col('No agent frameworks detected', _MUTED)}")
-        print()
-        print(f"  {_col('ℹ  This repo does not appear to use an AI agent framework.', _MUTED)}")
-        print(f"  {_col('   release-gate audits are designed for repos using:', _MUTED)}")
-        print(f"  {_col('   OpenAI · Anthropic · LangChain · LangGraph · CrewAI', _MUTED)}")
-        print(f"  {_col('   AutoGen · LiteLLM · LlamaIndex · HuggingFace · Ollama', _MUTED)}")
-        print()
-        print(f"  {_col('   If this repo does use an agent, the framework may be in', _MUTED)}")
-        print(f"  {_col('   a subdirectory or use a custom wrapper. Try:', _MUTED)}")
-        print(f"  {_col('   release-gate audit ./path/to/agent/subdir', _BLUE)}")
-        print()
-        print(f"  {div}")
-        print()
-        return  # exit early — no point scoring a non-agent repo
 
     if report["governance_file"]:
         print(f"  {_col('Config', _MUTED)}  {_col(report['governance_file'], _GREEN)}")
