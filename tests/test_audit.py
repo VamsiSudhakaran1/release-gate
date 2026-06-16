@@ -13,7 +13,9 @@ from release_gate.audit import (
     build_report,
     compute_score,
     detect_frameworks,
+    detect_model,
     detect_safeguards,
+    emit_config,
     SAFEGUARDS,
 )
 
@@ -240,3 +242,82 @@ def test_render_terminal_does_not_crash(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Readiness Score" in captured.out
     assert "BLOCK" in captured.out or "HOLD" in captured.out or "PROMOTE" in captured.out
+
+
+# ─────────────────────────── model detection ────────────────────────────────
+
+def test_detect_model_openai(tmp_path):
+    make_repo(tmp_path, {"a.py": 'resp = client.chat.completions.create(model="gpt-4-turbo")'})
+    assert detect_model(tmp_path) == "gpt-4-turbo"
+
+
+def test_detect_model_claude(tmp_path):
+    make_repo(tmp_path, {"a.py": 'msg = client.messages.create(model="claude-3-opus-20240229")'})
+    assert detect_model(tmp_path) == "claude-3-opus-20240229"
+
+
+def test_detect_model_name_kwarg(tmp_path):
+    make_repo(tmp_path, {"a.py": 'llm = ChatOpenAI(model_name="gpt-4o")'})
+    assert detect_model(tmp_path) == "gpt-4o"
+
+
+def test_detect_model_picks_most_frequent(tmp_path):
+    make_repo(tmp_path, {
+        "a.py": 'model="gpt-4-turbo"\nmodel="gpt-4-turbo"',
+        "b.py": 'model="gpt-3.5-turbo"',
+    })
+    assert detect_model(tmp_path) == "gpt-4-turbo"
+
+
+def test_detect_model_ignores_unknown_strings(tmp_path):
+    make_repo(tmp_path, {"a.py": 'model="my-custom-thing"'})
+    assert detect_model(tmp_path) is None
+
+
+def test_detect_model_none_when_absent(tmp_path):
+    make_repo(tmp_path, {"a.py": "x = 1"})
+    assert detect_model(tmp_path) is None
+
+
+# ─────────────────────────── emit_config ────────────────────────────────────
+
+def test_emit_config_is_valid_yaml(tmp_path):
+    import yaml
+    make_repo(tmp_path, {"agent.py": 'from openai import OpenAI\nmodel="gpt-4-turbo"'})
+    report = build_report(tmp_path)
+    text = emit_config(report)
+    parsed = yaml.safe_load(text)
+    assert parsed["project"]["name"]
+    assert parsed["agent"]["model"] == "gpt-4-turbo"
+    assert "action_budget" in parsed["checks"]
+    assert "trace_policies" in parsed
+
+
+def test_emit_config_uses_detected_model(tmp_path):
+    make_repo(tmp_path, {"agent.py": 'from anthropic import Anthropic\nmodel="claude-3-opus-20240229"'})
+    report = build_report(tmp_path)
+    text = emit_config(report)
+    assert "claude-3-opus-20240229" in text
+
+
+def test_emit_config_todo_when_no_model(tmp_path):
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    report = build_report(tmp_path)
+    text = emit_config(report)
+    assert "TODO" in text
+    assert "could not auto-detect" in text
+
+
+def test_emit_config_flags_missing_safeguards(tmp_path):
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    report = build_report(tmp_path)
+    text = emit_config(report)
+    # bare repo has missing safeguards → should carry the MISSING marker
+    assert "MISSING" in text
+
+
+def test_project_name_from_url():
+    from release_gate.audit import _project_name_from_path
+    assert _project_name_from_path("https://github.com/org/my-agent") == "my-agent"
+    assert _project_name_from_path("https://github.com/org/my-agent.git") == "my-agent"
+    assert _project_name_from_path("/home/user/cool-bot/") == "cool-bot"
