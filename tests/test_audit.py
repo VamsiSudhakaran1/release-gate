@@ -177,7 +177,33 @@ def test_build_report_empty_repo(tmp_path):
     assert report["score"] == 0
     assert report["decision"] == "BLOCK"
     assert report["frameworks"] == {}
+    assert report["agent_detected"] is False
     assert len(report["missing"]) == len(SAFEGUARDS)
+
+
+def test_agent_detected_flag(tmp_path):
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    report = build_report(tmp_path)
+    assert report["agent_detected"] is True
+
+
+def test_is_github_url():
+    from release_gate.audit import _is_github_url
+    assert _is_github_url("https://github.com/org/repo") is True
+    assert _is_github_url("http://github.com/org/repo") is True
+    assert _is_github_url("git@github.com:org/repo.git") is True
+    assert _is_github_url("https://gitlab.com/org/repo") is True
+    assert _is_github_url("./local/path") is False
+    assert _is_github_url(".") is False
+
+
+def test_render_terminal_no_agent_exits_early(tmp_path, capsys):
+    from release_gate.audit import render_terminal
+    report = build_report(tmp_path)  # empty repo, no frameworks
+    render_terminal(report)
+    captured = capsys.readouterr()
+    assert "does not appear to use an AI agent" in captured.out
+    assert "Readiness Score" not in captured.out
 
 
 def test_build_report_with_governance(tmp_path):
@@ -208,6 +234,7 @@ def test_build_report_json_serialisable(tmp_path):
 
 def test_render_terminal_does_not_crash(tmp_path, capsys):
     from release_gate.audit import render_terminal
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
     report = build_report(tmp_path)
     render_terminal(report)
     captured = capsys.readouterr()
