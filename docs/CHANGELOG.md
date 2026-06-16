@@ -2,7 +2,15 @@
 
 All notable changes to release-gate will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] — 2026-06-16
+
+### 🔧 Changed — audit scoring thresholds
+
+- Audit `BLOCK`/`HOLD` boundary lowered from 75 to **50**. A repo that already
+  has the heavy safeguards (budget ceiling, kill switch, auth, evals) but no
+  formal `governance.yaml` now scores **HOLD** ("formalize it"), not BLOCK.
+  `PROMOTE` still requires ≥ 90, which is unreachable without a governance file
+  (the other six safeguards sum to 75) — so you can never PROMOTE without one.
 
 ### ✨ Features — Self-serve audit (badge + CI summary)
 

@@ -318,7 +318,7 @@
 
 <section class="hero">
   <div class="container">
-    <div class="badge">v0.6.1 &mdash; Phase 2: Live Agent Runtime</div>
+    <div class="badge">v0.7.0 &mdash; Live Agent Runtime + Repo Audit</div>
     <h1>PROMOTE, HOLD, or <span style="color:var(--red)">BLOCK</span><br><span>&#x2014; against your real agent.</span></h1>
     <p class="tagline">release-gate runs evals <strong style="color:var(--bright)">live against your actual agent</strong>, validates traces, checks cost budgets, and generates an evidence pack &mdash; then gives you one number (0&ndash;100) and one decision.</p>
     <div class="hero-btns">
@@ -574,7 +574,7 @@
             <span class="t-line t-muted">      --evals examples/evals.yaml \</span>
             <span class="t-line t-muted">      --traces examples/traces/safe-trace.json</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.6.1</span>
+            <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.7.0</span>
             <span class="t-blank"></span>
             <span class="t-line t-bright">  Project          customer-support-agent  v1.0.0</span>
             <span class="t-line t-bright">  Checks run       5  (5 pass, 0 warn, 0 fail)</span>
@@ -607,7 +607,7 @@
             <span class="t-line t-muted">  # --agent also accepts:  cmd:./run_agent.sh</span>
             <span class="t-line t-muted">  #                        https://my-agent.internal/run</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.6.1</span>
+            <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.7.0</span>
             <span class="t-blank"></span>
             <span class="t-line t-bright">  Project          customer-support-agent</span>
             <span class="t-line t-bright">  Evals run        7  (6 pass, 1 fail)  pass rate 85.7%  <span class="t-purple">[live mode]</span></span>
@@ -635,7 +635,7 @@
           <div class="terminal-body">
             <span class="t-line t-muted">$ release-gate compare reports/v1.0-baseline.json reports/v1.1-candidate.json</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  release-gate  |  Regression Gate  v0.6.1</span>
+            <span class="t-line t-bright">  release-gate  |  Regression Gate  v0.7.0</span>
             <span class="t-blank"></span>
             <span class="t-line t-bright">  Baseline score    <span class="t-green">94 / 100</span>   PROMOTE</span>
             <span class="t-line t-bright">  Candidate score   <span class="t-yellow">71 / 100</span>   HOLD</span>
@@ -661,7 +661,7 @@
           <div class="terminal-body">
             <span class="t-line t-muted">$ release-gate score governance.yaml --traces examples/traces/unsafe-trace.json</span>
             <span class="t-blank"></span>
-            <span class="t-line t-bright">  release-gate  |  Trace Validator  v0.6.1</span>
+            <span class="t-line t-bright">  release-gate  |  Trace Validator  v0.7.0</span>
             <span class="t-blank"></span>
             <span class="t-line t-bright">  Trace ID         unsafe-trace-001</span>
             <span class="t-line t-bright">  Steps            10  (3 llm_calls, 6 tool_calls, 1 retry)</span>
@@ -826,7 +826,7 @@
       - <span class="yaml-key">uses</span>: <span class="yaml-str">actions/checkout@v4</span>
 
       - <span class="yaml-key">name</span>: <span class="yaml-str">Score &amp; gate release</span>
-        <span class="yaml-key">uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.6.1</span>
+        <span class="yaml-key">uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.7.0</span>
         <span class="yaml-key">with</span>:
           <span class="yaml-key">command</span>: <span class="yaml-str">score</span>
           <span class="yaml-key">config</span>: <span class="yaml-str">governance.yaml</span>

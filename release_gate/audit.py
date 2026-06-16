@@ -289,8 +289,13 @@ def _scan_source_for_patterns(root: Path) -> str:
 
 # ─────────────────────────── Scoring ────────────────────────────────────────
 
+# PROMOTE requires a governance file: the other six safeguards sum to 75, so a
+# repo with no governance.yaml caps at HOLD no matter how much else it has in
+# place. BLOCK is reserved for repos missing more than half the weighted
+# safeguards (< 50) — a repo that already has budget/kill-switch/auth/evals but
+# no formal config is a HOLD ("formalize it"), not a BLOCK.
 PROMOTE_THRESHOLD = 90
-HOLD_THRESHOLD    = 75
+HOLD_THRESHOLD    = 50
 
 
 def compute_score(present: Dict[str, bool]) -> Tuple[int, str]:
@@ -756,7 +761,7 @@ def render_terminal(report: Dict[str, Any]) -> None:
 
     if not report["has_ci_integration"]:
         print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
-        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.6.1', _BLUE)}")
+        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.0', _BLUE)}")
         step += 1
 
     print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
