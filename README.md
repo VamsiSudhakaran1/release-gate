@@ -109,7 +109,7 @@ release-gate evidence-pack governance.yaml
 | `release-gate evidence-pack <config.yaml>` | **Audit artefacts** — generates JSON report, Markdown summary, HTML dashboard |
 | `release-gate impact <config.yaml>` | **Impact Simulator** — normal vs runaway cost, governance gaps |
 | `release-gate run <config.yaml>` | Governance checks — PASS/WARN/FAIL with exit codes for CI |
-| `release-gate init` | Interactive setup wizard |
+| `release-gate init` | Interactive setup wizard *(use `audit --emit-config` instead — pre-fills from your actual code)* |
 | `release-gate validate-and-lock` | Cryptographic sign/verify (RSA-PSS + SHA256) |
 
 ### Flags for `score`
