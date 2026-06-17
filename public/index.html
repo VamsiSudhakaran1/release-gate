@@ -70,7 +70,28 @@
 
     /* ── LAYOUT ── */
     .container { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
-    section { padding: 88px 0; }
+    section { padding: 60px 0; }
+
+    /* ── CARD STACKING ── */
+    /* Each non-hero section stacks on top of the previous like a deck of cards */
+    .stack-card {
+      position: sticky;
+      top: 58px; /* just below nav */
+      background: var(--bg);
+      border-radius: 24px 24px 0 0;
+      box-shadow: 0 -4px 32px rgba(99,102,241,.07);
+      overflow: hidden;
+    }
+    .stack-card.alt { background: var(--bg-alt); }
+    /* Each card sits higher in the stack */
+    .stack-card:nth-child(1)  { z-index: 2; }
+    .stack-card:nth-child(2)  { z-index: 3; }
+    .stack-card:nth-child(3)  { z-index: 4; }
+    .stack-card:nth-child(4)  { z-index: 5; }
+    .stack-card:nth-child(5)  { z-index: 6; }
+    .stack-card:nth-child(6)  { z-index: 7; }
+    .stack-card:nth-child(7)  { z-index: 8; }
+    .stack-card:nth-child(8)  { z-index: 9; }
 
     /* ── FADE-IN ── */
     .fade-in {
@@ -527,7 +548,7 @@
 <!-- ═══════════════════════ NAV ═══════════════════════ -->
 <header>
   <nav>
-    <div class="logo">&#x1F6AA; release-gate</div>
+    <a href="#" class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">&#x1F6AA; release-gate</a>
     <ul class="nav-links">
       <li><a href="#how-it-works">How it works</a></li>
       <li><a href="#demo">Live demo</a></li>
@@ -538,6 +559,7 @@
   </nav>
 </header>
 
+<div id="top"></div>
 <!-- ═══════════════════════ HERO ═══════════════════════ -->
 <section class="hero">
   <div class="container">
@@ -662,7 +684,7 @@
 </div>
 
 <!-- ═══════════════════════ HOW IT WORKS ═══════════════════════ -->
-<section id="how-it-works">
+<div class="stack-card alt" style="z-index:2"><section id="how-it-works">
   <div class="container">
     <p class="section-eyebrow">How it works</p>
     <h2 class="section-title">Four steps to a defensible release decision</h2>
@@ -796,10 +818,10 @@
 
     </div>
   </div>
-</section>
+</section></div>
 
 <!-- ═══════════════════════ DEMO ═══════════════════════ -->
-<section id="demo">
+<div class="stack-card" style="z-index:3"><section id="demo">
   <div class="container">
     <p class="section-eyebrow">Live demo</p>
     <h2 class="section-title">Real commands. Real output.</h2>
@@ -994,10 +1016,10 @@
       </div>
     </div>
   </div>
-</section>
+</section></div>
 
 <!-- ═══════════════════════ FEATURES ═══════════════════════ -->
-<section id="features">
+<div class="stack-card alt" style="z-index:4"><section id="features">
   <div class="container">
     <p class="section-eyebrow">Features</p>
     <h2 class="section-title">From zero to gated deploy in 4 steps</h2>
@@ -1091,10 +1113,10 @@
 
     </div>
   </div>
-</section>
+</section></div>
 
 <!-- ═══════════════════════ CI SECTION ═══════════════════════ -->
-<section id="ci">
+<div class="stack-card" style="z-index:5"><section id="ci">
   <div class="container">
     <p class="section-eyebrow">CI/CD Integration</p>
     <h2 class="section-title">Gate every push automatically</h2>
@@ -1176,10 +1198,10 @@
       </div>
     </div>
   </div>
-</section>
+</section></div>
 
 <!-- ═══════════════════════ CHECKS TABLE ═══════════════════════ -->
-<section id="checks">
+<div class="stack-card alt" style="z-index:6"><section id="checks">
   <div class="container">
     <p class="section-eyebrow">Governance checks</p>
     <h2 class="section-title">5 checks + evals + traces. One decision.</h2>
@@ -1247,10 +1269,10 @@
       <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-white" target="_blank">View on GitHub &rarr;</a>
     </div>
   </div>
-</section>
+</section></div>
 
 <!-- ═══════════════════════ CTA ═══════════════════════ -->
-<section class="cta-section fade-in">
+<div class="stack-card" style="z-index:7"><section class="cta-section fade-in">
   <div class="container">
     <h2>Your agent deserves a proper release gate.</h2>
     <p>No dashboard, no sign-up, no backend. Just one command between your agent and production.</p>
@@ -1261,7 +1283,7 @@
       <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">GitHub &rarr;</a>
     </div>
   </div>
-</section>
+</section></div>
 
 <!-- ═══════════════════════ FOOTER ═══════════════════════ -->
 <footer>
