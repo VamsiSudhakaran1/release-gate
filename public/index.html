@@ -75,15 +75,13 @@
     /* ── CARD STACKING ── */
     /* Each non-hero section stacks on top of the previous like a deck of cards */
     .stack-card {
-      position: sticky;
-      top: 58px; /* just below nav */
+      position: relative;
       background: var(--bg);
       border-radius: 24px 24px 0 0;
-      box-shadow: 0 -4px 32px rgba(99,102,241,.07);
-      overflow: hidden;
+      margin-top: -24px;
+      box-shadow: 0 -8px 40px rgba(99,102,241,.09);
     }
     .stack-card.alt { background: var(--bg-alt); }
-    /* Each card sits higher in the stack */
     .stack-card:nth-child(1)  { z-index: 2; }
     .stack-card:nth-child(2)  { z-index: 3; }
     .stack-card:nth-child(3)  { z-index: 4; }
