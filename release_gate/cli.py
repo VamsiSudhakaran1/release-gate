@@ -771,7 +771,7 @@ def print_help():
     print("  release-gate evidence-pack <config.yaml> # Generate JSON + Markdown + HTML evidence")
     print("  release-gate impact <config.yaml>       # Impact Simulator — show money at risk")
     print("  release-gate run <config.yaml>          # Run governance checks (PASS/WARN/FAIL)")
-    print("  release-gate init                       # Initialize new project (interactive)")
+    print("  release-gate init                       # Interactive wizard (use audit --emit-config instead)")
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("\nOptions for 'score' and 'evidence-pack':")

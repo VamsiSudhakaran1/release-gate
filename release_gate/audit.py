@@ -737,8 +737,9 @@ def render_terminal(report: Dict[str, Any]) -> None:
     step = 1
 
     if not report["governance_file"]:
-        print(f"  {_col(str(step), _BLUE, _BOLD)}.  Run {_col('release-gate init', _BLUE)}")
-        print(f"     Generates a governance.yaml for your stack in ~5 minutes.")
+        print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
+        print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
+        print(f"     Fill in the TODO lines, then score before every deploy.")
         step += 1
 
     if missing:
