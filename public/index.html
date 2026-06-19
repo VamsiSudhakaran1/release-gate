@@ -1621,7 +1621,8 @@
 
 <script>
   // TODO: update to production URL
-  var API_BASE = 'http://localhost:8001';
+  // Use relative URLs so the API works on any deployment (Vercel, local, etc.)
+  var API_BASE = '';
 
   var SAFEGUARD_LABELS = {
     governance_file:  'Governance config (governance.yaml)',
@@ -1837,6 +1838,29 @@
   }
 
   // ── Playground audit ──
+  function getMockReport(url) {
+    // Realistic demo report shown when backend is not yet reachable
+    var isKnownSafe = url.includes('litellm') || url.includes('gpt-researcher');
+    return {
+      score: isKnownSafe ? 60 : 42,
+      decision: isKnownSafe ? 'HOLD' : 'HOLD',
+      agent_detected: true,
+      frameworks: { 'OpenAI / Agents SDK': 4, 'LangChain': 12 },
+      safeguards: {
+        governance_file:  false,
+        eval_evidence:    isKnownSafe,
+        trace_policy:     { present: false, redacted: true },
+        budget_ceiling:   { present: isKnownSafe, redacted: true },
+        kill_switch:      { present: isKnownSafe, redacted: true },
+        team_owner:       { present: false, redacted: true },
+        auth_rate_limit:  { present: isKnownSafe, redacted: true },
+      },
+      _redacted: true,
+      _upgrade_message: 'Sign up free to see all safeguard details and track history.',
+      _demo: true,
+    };
+  }
+
   async function runPlaygroundAudit() {
     var urlInput = document.getElementById('pg-url-input');
     var url = urlInput.value.trim();
@@ -1855,17 +1879,26 @@
     try {
       var res = await fetch(API_BASE + '/api/audit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_url: url })
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          getToken() ? { 'Authorization': 'Bearer ' + getToken() } : {}
+        ),
+        body: JSON.stringify({ url: url })
       });
       var data = await res.json();
       if (!res.ok) {
         throw new Error((data && data.detail) ? data.detail : 'Audit failed (HTTP ' + res.status + ')');
       }
-      renderPlaygroundResults(data, url);
+      // API returns { report: {...}, plan: "..." }
+      renderPlaygroundResults(data.report || data, url);
     } catch(err) {
-      errEl.textContent = err.message || 'Unknown error.';
-      errEl.classList.add('active');
+      // If backend not yet deployed, show a realistic demo result
+      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+        renderPlaygroundResults(getMockReport(url), url);
+      } else {
+        errEl.textContent = err.message || 'Unknown error.';
+        errEl.classList.add('active');
+      }
     } finally {
       btn.disabled = false;
       spinner.classList.remove('active');
@@ -1886,7 +1919,8 @@
     badge.className = 'pg-decision-badge ' + decClass;
 
     var repoLabel = document.getElementById('pg-repo-label');
-    repoLabel.textContent = repoUrl.replace('https://github.com/', '');
+    repoLabel.innerHTML = escHtml(repoUrl.replace('https://github.com/', '')) +
+      (data._demo ? ' &nbsp;<span style="font-size:.75rem;color:var(--amber);font-weight:600">[demo mode — backend deploying]</span>' : '');
 
     var checklist = document.getElementById('pg-checklist');
     var safeguards = data.safeguards || {};
@@ -1896,14 +1930,15 @@
     Object.keys(SAFEGUARD_LABELS).forEach(function(key) {
       var label = SAFEGUARD_LABELS[key];
       var val = safeguards[key];
-      if (val === 'redacted' || val === null || val === undefined && !isLoggedIn) {
+      var isRedacted = val && typeof val === 'object' && val.redacted;
+      if (isRedacted || (val === null || val === undefined)) {
         html += '<li>' +
           '<span class="pg-check-icon">&#x1F512;</span>' +
           '<span class="pg-lock-row">' + escHtml(label) + '&nbsp;&nbsp;' +
           '<button class="pg-lock-btn" onclick="openAuthModal(\'signup\')">Sign up to unlock</button>' +
           '</span></li>';
       } else {
-        var passed = val === true || val === 'pass' || val === 'present';
+        var passed = val === true || (val && typeof val === 'object' && val.present === true);
         html += '<li>' +
           '<span class="pg-check-icon">' + (passed ? '&#x2705;' : '&#x274C;') + '</span>' +
           '<span>' + escHtml(label) + '</span></li>';
