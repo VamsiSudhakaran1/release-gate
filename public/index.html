@@ -570,18 +570,64 @@
     .pg-decision-badge.hold    { background: #fef3c7; color: #92400e; }
     .pg-decision-badge.block   { background: #fee2e2; color: #991b1b; }
 
-    .pg-checklist { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-    .pg-checklist li {
+    .pg-checklist { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .sg-item {
       display: flex; align-items: center; gap: 10px;
       font-size: .9rem; color: var(--text);
+      padding: 6px 10px; border-radius: 8px;
+      transition: background .15s;
+      position: relative;
     }
+    .sg-item:hover { background: rgba(99,102,241,.06); }
+    .sg-item:hover .sg-tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
     .pg-check-icon { font-size: 1rem; flex-shrink: 0; }
+
+    /* Tooltip */
+    .sg-label-wrap { position: relative; display: flex; align-items: center; gap: 6px; flex: 1; cursor: default; }
+    .sg-label { font-weight: 500; }
+    .sg-tooltip {
+      position: absolute;
+      left: 0; top: calc(100% + 8px);
+      width: 320px;
+      background: var(--heading);
+      color: #e2e8f0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: .8rem;
+      line-height: 1.55;
+      z-index: 200;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px);
+      transition: opacity .18s, transform .18s, visibility .18s;
+      pointer-events: none;
+      box-shadow: 0 8px 32px rgba(0,0,0,.25);
+    }
+    .sg-tooltip::before {
+      content: '';
+      position: absolute; top: -6px; left: 18px;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 6px solid var(--heading);
+    }
+    .sg-tip-why { font-weight: 600; color: #f1f5f9; margin-bottom: 8px; font-size: .82rem; }
+    .sg-tip-row { margin-top: 6px; }
+    .sg-tip-label { color: var(--accent); font-weight: 700; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; margin-right: 4px; }
+    .sg-tip-fix { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.1); }
+    .sg-tip-fix code { background: rgba(99,102,241,.3); padding: 1px 5px; border-radius: 4px; font-size: .78rem; }
+    .sg-tip-unlock { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.1); font-style: italic; color: #94a3b8; font-size: .78rem; }
+
+    .sg-fix-hint { margin-left: auto; font-size: .75rem; color: var(--accent); opacity: .7; white-space: nowrap; }
+    .sg-fail .sg-label { color: var(--red); }
+    .sg-pass .sg-label { color: #15803d; }
+    .sg-locked .sg-label { color: var(--text); }
+
     .pg-lock-row { display: flex; align-items: center; gap: 10px; }
     .pg-lock-btn {
       background: none; border: 1.5px solid var(--accent);
       color: var(--accent); border-radius: 6px; padding: 2px 10px;
       font-size: .8rem; font-weight: 700; cursor: pointer;
-      transition: background .15s;
+      transition: background .15s; white-space: nowrap; flex-shrink: 0;
     }
     .pg-lock-btn:hover { background: var(--accent-tint); }
 
@@ -908,6 +954,7 @@
           <div style="margin-top:6px;font-size:.85rem;color:var(--text)" id="pg-repo-label"></div>
         </div>
       </div>
+      <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
       <ul class="pg-checklist" id="pg-checklist"></ul>
     </div>
   </div>
@@ -1634,6 +1681,51 @@
     auth_rate_limit:  'Auth & rate limiting'
   };
 
+  var SAFEGUARD_INFO = {
+    governance_file: {
+      why: 'A single source of truth for every deployment decision — model, budget, fallback, owner.',
+      risk: 'Without it, governance lives in engineers\' heads and disappears when they leave.',
+      fix: 'Run <code>release-gate audit . --emit-config -o governance.yaml</code> to scaffold one from your code.',
+      weight: '20 pts'
+    },
+    eval_evidence: {
+      why: 'Proves the agent was tested before deploy — adversarial inputs, refusals, schema checks.',
+      risk: 'No evals = no signal that the agent behaves correctly under edge cases.',
+      fix: 'Add an <code>evals.yaml</code> with at least 3 test cases covering safety, schema, and a refusal.',
+      weight: '15 pts'
+    },
+    trace_policy: {
+      why: 'Declares which tools the agent can call and ensures every call is logged.',
+      risk: 'Without a trace policy, tool misuse (file writes, API calls) goes undetected in production.',
+      fix: 'Add a <code>trace_policy:</code> block to governance.yaml listing allowed tools and a log destination.',
+      weight: '10 pts'
+    },
+    budget_ceiling: {
+      why: 'Caps the maximum spend per request, per day, or per user to prevent runaway costs.',
+      risk: 'A single prompt injection or loop bug can generate $10k+ in LLM API charges overnight.',
+      fix: 'Set <code>action_budget.max_cost_usd</code> in governance.yaml or add a hard limit in your LLM client.',
+      weight: '20 pts'
+    },
+    kill_switch: {
+      why: 'A documented way to disable or fall back the agent instantly without a code deploy.',
+      risk: 'If the agent misbehaves in prod, you need a &lt;5 min recovery path — not a 45-min deploy.',
+      fix: 'Add <code>kill_switch: {type: feature-flag, name: disable_agent}</code> in governance.yaml.',
+      weight: '15 pts'
+    },
+    team_owner: {
+      why: 'Identifies who is on-call when the agent fails at 2am.',
+      risk: 'Incidents without a clear owner sit unresolved. MTTR explodes without a named responder.',
+      fix: 'Add <code>team_owner: your-team</code> and <code>on_call: your-pager-handle</code> to governance.yaml.',
+      weight: '10 pts'
+    },
+    auth_rate_limit: {
+      why: 'Prevents unauthenticated or abusive access from triggering unbounded agent runs.',
+      risk: 'An unprotected agent endpoint is one curl loop away from a denial-of-wallet attack.',
+      fix: 'Ensure your API gateway enforces auth (JWT/API key) and a per-user rate limit.',
+      weight: '10 pts'
+    }
+  };
+
   // ── Auth state ──
   var _currentUser = null;
   var _authMode = 'signup';
@@ -1936,22 +2028,68 @@
     Object.keys(SAFEGUARD_LABELS).forEach(function(key) {
       var label = SAFEGUARD_LABELS[key];
       var val = safeguards[key];
+      var info = SAFEGUARD_INFO[key] || {};
       var isRedacted = val && typeof val === 'object' && val.redacted;
+
       if (isRedacted || (val === null || val === undefined)) {
-        html += '<li>' +
+        var tipHtml = info.why ? (
+          '<div class="sg-tooltip">' +
+          '<div class="sg-tip-why">' + (info.why || '') + '</div>' +
+          '<div class="sg-tip-row"><span class="sg-tip-label">Risk:</span> ' + (info.risk || '') + '</div>' +
+          '<div class="sg-tip-row"><span class="sg-tip-label">Weight:</span> ' + (info.weight || '') + '</div>' +
+          '<div class="sg-tip-unlock">Sign up to see if this passes in your repo</div>' +
+          '</div>'
+        ) : '';
+        html += '<li class="sg-item sg-locked">' +
           '<span class="pg-check-icon">&#x1F512;</span>' +
-          '<span class="pg-lock-row">' + escHtml(label) + '&nbsp;&nbsp;' +
+          '<span class="sg-label-wrap">' +
+          '<span class="sg-label">' + escHtml(label) + '</span>' +
+          tipHtml +
+          '</span>' +
           '<button class="pg-lock-btn" onclick="openAuthModal(\'signup\')">Sign up to unlock</button>' +
-          '</span></li>';
+          '</li>';
       } else {
         var passed = val === true || (val && typeof val === 'object' && val.present === true);
-        html += '<li>' +
+        var tipHtml = info.why ? (
+          '<div class="sg-tooltip">' +
+          '<div class="sg-tip-why">' + (info.why || '') + '</div>' +
+          '<div class="sg-tip-row"><span class="sg-tip-label">Risk:</span> ' + (info.risk || '') + '</div>' +
+          (!passed ? '<div class="sg-tip-row sg-tip-fix"><span class="sg-tip-label">Fix:</span> ' + (info.fix || '') + '</div>' : '') +
+          '<div class="sg-tip-row"><span class="sg-tip-label">Weight:</span> ' + (info.weight || '') + '</div>' +
+          '</div>'
+        ) : '';
+        html += '<li class="sg-item ' + (passed ? 'sg-pass' : 'sg-fail') + '">' +
           '<span class="pg-check-icon">' + (passed ? '&#x2705;' : '&#x274C;') + '</span>' +
-          '<span>' + escHtml(label) + '</span></li>';
+          '<span class="sg-label-wrap">' +
+          '<span class="sg-label">' + escHtml(label) + '</span>' +
+          tipHtml +
+          '</span>' +
+          (!passed ? '<span class="sg-fix-hint">hover for fix &rarr;</span>' : '') +
+          '</li>';
       }
     });
 
     checklist.innerHTML = html || '<li class="dash-empty">No safeguard data returned.</li>';
+
+    // Score explanation
+    var scoreNote = document.getElementById('pg-score-note');
+    if (scoreNote) {
+      var missing = Object.entries(safeguards).filter(function(e) {
+        var v = e[1];
+        if (v && typeof v === 'object' && v.redacted) return false;
+        return v === false || (v && typeof v === 'object' && !v.present);
+      }).length;
+      var lockedCount = Object.values(safeguards).filter(function(v) {
+        return v && typeof v === 'object' && v.redacted;
+      }).length;
+      scoreNote.innerHTML = missing > 0
+        ? '<strong>' + missing + ' safeguard' + (missing > 1 ? 's' : '') + ' missing</strong> — each costs points. ' +
+          (lockedCount > 0 ? '<a href="#" onclick="openAuthModal(\'signup\');return false">Sign up free</a> to see all ' + lockedCount + ' locked checks.' : 'Fix them to improve your score.')
+        : lockedCount > 0
+          ? '<a href="#" onclick="openAuthModal(\'signup\');return false">Sign up free</a> to see ' + lockedCount + ' more checks.'
+          : 'All visible safeguards passed.';
+    }
+
     document.getElementById('playground-results').style.display = 'block';
   }
 
