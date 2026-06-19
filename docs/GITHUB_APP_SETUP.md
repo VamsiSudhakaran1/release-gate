@@ -18,7 +18,11 @@ Fill in:
 
 | Field | Value |
 |---|---|
+<<<<<<< HEAD
+| **App name** | `release-gate-ai` |
+=======
 | **App name** | `release-gate` |
+>>>>>>> origin/main
 | **Homepage URL** | `https://release-gate.com` |
 | **Webhook URL** | `https://release-gate.com/api/github/webhook` |
 | **Webhook secret** | Generate a random string (save it — this is `GITHUB_WEBHOOK_SECRET`) |
@@ -68,7 +72,11 @@ Redeploy: `vercel --prod`
 
 ## Step 4 — Install the app
 
+<<<<<<< HEAD
+Go to: `https://github.com/apps/release-gate-ai` → Install → choose repos.
+=======
 Go to: `https://github.com/apps/release-gate` → Install → choose repos.
+>>>>>>> origin/main
 
 After install, open a PR on any installed repo — you'll see:
 - A **release-gate check** in the PR status bar
