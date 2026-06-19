@@ -31,8 +31,10 @@
       --term-purple: #c084fc;
     }
 
+    html { scroll-behavior: smooth; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
       line-height: 1.6;
@@ -46,8 +48,9 @@
       background: #fff;
       border-bottom: 1px solid var(--border);
       position: sticky; top: 0; z-index: 100;
-      backdrop-filter: blur(8px);
+      transition: box-shadow .2s;
     }
+    header.scrolled { box-shadow: 0 2px 16px rgba(99,102,241,.10); }
     nav {
       max-width: 1140px; margin: 0 auto;
       display: flex; align-items: center;
@@ -57,7 +60,9 @@
     .logo {
       font-size: 1.1rem; font-weight: 800;
       color: var(--heading); letter-spacing: -.3px;
+      cursor: pointer;
     }
+    .logo:hover { text-decoration: none; color: var(--accent); }
     .nav-links { display: flex; gap: 28px; list-style: none; align-items: center; }
     .nav-links a { font-size: .875rem; color: var(--text); transition: color .15s; }
     .nav-links a:hover { color: var(--heading); text-decoration: none; }
@@ -70,488 +75,92 @@
 
     /* ── LAYOUT ── */
     .container { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
-    section { padding: 60px 0; }
-
-    /* ── CARD STACKING ── */
-    /* Each non-hero section stacks on top of the previous like a deck of cards */
-    .stack-card {
-      position: relative;
-      background: var(--bg);
-      border-radius: 24px 24px 0 0;
-      margin-top: -24px;
-      box-shadow: 0 -8px 40px rgba(99,102,241,.09);
-    }
-    .stack-card.alt { background: var(--bg-alt); }
-    .stack-card:nth-child(1)  { z-index: 2; }
-    .stack-card:nth-child(2)  { z-index: 3; }
-    .stack-card:nth-child(3)  { z-index: 4; }
-    .stack-card:nth-child(4)  { z-index: 5; }
-    .stack-card:nth-child(5)  { z-index: 6; }
-    .stack-card:nth-child(6)  { z-index: 7; }
-    .stack-card:nth-child(7)  { z-index: 8; }
-    .stack-card:nth-child(8)  { z-index: 9; }
-
-    /* ── FADE-IN ── */
-    .fade-in {
-      opacity: 0; transform: translateY(20px);
-      transition: opacity .55s ease, transform .55s ease;
-    }
-    .fade-in.visible { opacity: 1; transform: translateY(0); }
+    section { padding: 80px 0; }
 
     /* ── HERO ── */
     .hero {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
       text-align: center;
       background: var(--bg);
-      padding: 96px 0 80px;
+      padding: 80px 0 60px;
     }
-    .badge {
-      display: inline-block;
-      background: var(--accent-tint); color: var(--accent);
-      font-size: .72rem; font-weight: 700;
-      padding: 4px 14px; border-radius: 20px;
-      border: 1px solid rgba(99,102,241,.25);
-      margin-bottom: 28px; letter-spacing: .05em; text-transform: uppercase;
-    }
+    .hero-inner { width: 100%; }
     .hero h1 {
-      font-size: clamp(2.2rem, 5vw, 3.75rem);
-      font-weight: 900; color: var(--heading);
+      font-size: clamp(2.2rem, 5vw, 3.6rem);
+      font-weight: 900; color: var(--accent);
       letter-spacing: -1.5px; line-height: 1.1;
       margin-bottom: 22px;
     }
-    .hero h1 .block-word { color: var(--red); }
-    .tagline {
+    .hero-sub {
       font-size: 1.125rem; color: var(--text);
-      max-width: 620px; margin: 0 auto 36px;
+      max-width: 560px; margin: 0 auto 40px;
       line-height: 1.7;
     }
-    .tagline code {
-      background: var(--accent-tint); color: var(--accent);
-      padding: 2px 8px; border-radius: 5px; font-size: .95em;
-      font-family: 'SF Mono', 'Fira Code', monospace;
+
+    /* ── HERO PLAYGROUND INPUT ── */
+    .hero-scan-row {
+      display: flex; gap: 10px; justify-content: center;
+      max-width: 680px; margin: 0 auto 18px;
+      flex-wrap: wrap;
     }
-    .hero-btns {
-      display: flex; gap: 12px; justify-content: center;
-      margin-bottom: 64px; flex-wrap: wrap;
+    .hero-scan-row input {
+      flex: 1; min-width: 240px;
+      padding: 16px 24px;
+      border-radius: 50px;
+      border: 1.5px solid var(--border);
+      font-size: 1rem; color: var(--heading);
+      background: #fff; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+      box-shadow: 0 2px 8px rgba(99,102,241,.06);
     }
-    .btn-primary {
+    .hero-scan-row input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(99,102,241,.12);
+    }
+    .hero-scan-row button {
       background: var(--accent); color: #fff;
-      padding: 12px 26px; border-radius: 10px;
-      font-weight: 700; font-size: .95rem;
-      transition: opacity .15s; display: inline-block;
+      padding: 16px 32px; border-radius: 50px; border: none;
+      font-weight: 700; font-size: 1rem; cursor: pointer;
+      transition: opacity .15s; white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(99,102,241,.25);
     }
-    .btn-primary:hover { opacity: .88; text-decoration: none; }
-    .btn-secondary {
-      background: #fff; color: var(--accent);
-      padding: 12px 26px; border-radius: 10px;
-      font-weight: 700; font-size: .95rem;
-      border: 1.5px solid var(--accent);
-      transition: background .15s; display: inline-block;
-    }
-    .btn-secondary:hover { background: var(--accent-tint); text-decoration: none; }
+    .hero-scan-row button:hover { opacity: .88; }
+    .hero-scan-row button:disabled { opacity: .5; cursor: not-allowed; }
 
-    /* ── TERMINAL WINDOW ── */
-    .term-wrap {
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 8px 40px rgba(99,102,241,.12), 0 2px 8px rgba(0,0,0,.06);
-      overflow: hidden;
+    /* ── PLAYGROUND RESULTS (hero-centered) ── */
+    .pg-wrap {
+      max-width: 640px; margin: 0 auto;
     }
-    .term-titlebar {
-      background: var(--border); padding: 10px 16px;
-      display: flex; align-items: center; gap: 8px;
+    .pg-spinner {
+      display: none; text-align: center; padding: 32px 0; color: var(--text);
+      font-size: .9rem;
     }
-    .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-    .dot-r { background: #ff5f57; }
-    .dot-y { background: #febc2e; }
-    .dot-g { background: #28c840; }
-    .term-title { color: #888; font-size: .75rem; margin-left: 8px; font-family: 'SF Mono', monospace; }
-    .terminal {
-      background: var(--term-bg);
-      font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
-      font-size: .82rem; line-height: 1.7;
-      padding: 22px 26px;
-      text-align: left;
-      overflow-x: auto;
-    }
-    .t-line   { display: block; }
-    .t-blank  { display: block; height: .7em; }
-    .t-cmd    { color: var(--term-blue); }
-    .t-green  { color: var(--term-green); }
-    .t-red    { color: var(--term-red); }
-    .t-yellow { color: var(--term-yellow); }
-    .t-purple { color: var(--term-purple); }
-    .t-muted  { color: var(--term-muted); }
-    .t-bright { color: var(--term-bright); }
-    .t-bold   { font-weight: 700; }
-
-    /* ── HERO TERMINALS ── */
-    .hero-main-terminal { max-width: 720px; margin: 0 auto 40px; }
-    .hero-terminals {
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: 20px; max-width: 980px; margin: 0 auto;
-    }
-    .hero-terminal-label {
-      font-size: .78rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .06em;
+    .pg-spinner.active { display: block; }
+    .pg-spinner-ring {
+      display: inline-block; width: 36px; height: 36px;
+      border: 4px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: rgspin .7s linear infinite;
       margin-bottom: 10px;
     }
-    .hero-terminal-label.safe  { color: var(--green); }
-    .hero-terminal-label.unsafe { color: var(--red); }
+    @keyframes rgspin { to { transform: rotate(360deg); } }
 
-    /* ── STATS ROW ── */
-    .stats-section {
-      background: #fff;
-      padding: 0;
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
+    .pg-error {
+      display: none; background: #fee2e2; color: #991b1b;
+      border-radius: 10px; padding: 12px 16px; margin-top: 10px;
+      font-size: .875rem; text-align: left;
     }
-    .stats-row {
-      display: grid; grid-template-columns: repeat(4, 1fr);
-      gap: 0;
-    }
-    .stat-card {
-      padding: 40px 32px; text-align: center;
-      border-right: 1px solid var(--border);
-    }
-    .stat-card:last-child { border-right: none; }
-    .stat-icon {
-      width: 52px; height: 52px; border-radius: 50%;
-      background: var(--accent-tint); display: flex;
-      align-items: center; justify-content: center;
-      margin: 0 auto 16px; font-size: 1.5rem;
-    }
-    .stat-number {
-      font-size: 2.2rem; font-weight: 900;
-      color: var(--heading); letter-spacing: -1px;
-      margin-bottom: 4px;
-    }
-    .stat-label {
-      font-size: .85rem; color: var(--text); font-weight: 500;
-    }
-    .stat-sub {
-      font-size: .78rem; color: #9ca3af; margin-top: 2px;
-    }
-
-    /* ── SECTION HEADERS ── */
-    .section-eyebrow {
-      font-size: .72rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .1em;
-      color: var(--accent); margin-bottom: 10px;
-    }
-    .section-title {
-      font-size: clamp(1.6rem, 3vw, 2.25rem);
-      font-weight: 900; color: var(--heading);
-      letter-spacing: -.5px; margin-bottom: 14px; line-height: 1.2;
-    }
-    .section-subtitle {
-      color: var(--text); font-size: 1rem;
-      max-width: 560px; line-height: 1.7;
-    }
-
-    /* ── HOW IT WORKS ── */
-    #how-it-works { background: var(--bg-alt); }
-    .steps { display: flex; flex-direction: column; gap: 0; margin-top: 48px; }
-    .step {
-      display: grid; grid-template-columns: 60px 1fr;
-      gap: 24px; padding: 32px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .step:last-child { border-bottom: none; }
-    .step-num {
-      width: 44px; height: 44px; border-radius: 50%;
-      background: var(--accent); color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: 1rem; flex-shrink: 0;
-      box-shadow: 0 4px 12px rgba(99,102,241,.3);
-    }
-    .step-content h3 {
-      color: var(--heading); font-size: 1.1rem;
-      font-weight: 700; margin-bottom: 8px;
-    }
-    .step-content p {
-      color: var(--text); font-size: .9rem;
-      margin-bottom: 18px; line-height: 1.7;
-    }
-    .step-content p code {
-      background: var(--accent-tint); color: var(--accent);
-      padding: 1px 6px; border-radius: 4px;
-      font-family: 'SF Mono', monospace; font-size: .88em;
-    }
-
-    /* ── FEATURES ── */
-    #features { background: var(--bg); }
-    .feature-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
-      gap: 20px; margin-top: 44px;
-    }
-    .feature-card {
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: 14px; padding: 26px;
-      box-shadow: var(--card-shadow);
-      transition: box-shadow .2s, transform .2s;
-    }
-    .feature-card:hover {
-      box-shadow: 0 6px 28px rgba(99,102,241,.14);
-      transform: translateY(-2px);
-    }
-    .feature-icon-wrap {
-      width: 48px; height: 48px; border-radius: 12px;
-      background: var(--accent-tint);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.4rem; margin-bottom: 14px;
-    }
-    .feature-card h3 {
-      color: var(--heading); font-size: 1rem;
-      font-weight: 700; margin-bottom: 8px;
-    }
-    .feature-card p {
-      color: var(--text); font-size: .875rem; line-height: 1.75;
-    }
-    .feature-card p code {
-      background: var(--accent-tint); color: var(--accent);
-      padding: 1px 5px; border-radius: 4px;
-      font-family: 'SF Mono', monospace; font-size: .88em;
-    }
-    .tag {
-      display: inline-block; font-size: .68rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: .05em;
-      padding: 3px 9px; border-radius: 20px; margin-bottom: 10px;
-    }
-    .tag-default { background: var(--accent-tint); color: var(--accent); border: 1px solid rgba(99,102,241,.25); }
-    .tag-new   { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-    .tag-phase2{ background: #f3e8ff; color: #7c3aed; border: 1px solid #ddd6fe; }
-    .tag-v5    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
-
-    /* ── DEMO SECTION ── */
-    #demo { background: var(--bg-alt); }
-    .tab-nav {
-      display: flex; gap: 4px; flex-wrap: wrap;
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: 12px 12px 0 0;
-      padding: 8px 8px 0;
-      margin-top: 40px;
-    }
-    .tab-btn {
-      background: none; border: none;
-      color: var(--text); cursor: pointer;
-      font-size: .875rem; font-weight: 600;
-      padding: 9px 18px 11px;
-      border-radius: 8px 8px 0 0;
-      transition: color .15s, background .15s;
-    }
-    .tab-btn.active { color: var(--accent); background: var(--accent-tint); }
-    .tab-btn:hover:not(.active) { color: var(--heading); }
-    .tab-panel {
-      border: 1px solid var(--border); border-top: none;
-      border-radius: 0 0 12px 12px; overflow: hidden;
-    }
-    .tab-panel .term-wrap { border-radius: 0; box-shadow: none; }
-    .tab-panel .term-titlebar { display: none; }
-    .demo-note {
-      background: #fff; border: 1px solid var(--border);
-      border-radius: 10px; padding: 14px 20px; margin-top: 16px;
-      font-size: .875rem; color: var(--text);
-    }
-    .demo-note strong { color: var(--heading); }
-    .demo-note code {
-      background: var(--accent-tint); color: var(--accent);
-      padding: 1px 6px; border-radius: 4px;
-      font-family: 'SF Mono', monospace; font-size: .88em;
-    }
-
-    /* ── CI SECTION ── */
-    #ci { background: var(--bg); }
-    .yaml-block {
-      background: var(--term-bg);
-      border-radius: 14px;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: .82rem; line-height: 1.75;
-      padding: 24px 28px; overflow-x: auto;
-      color: var(--term-bright);
-      box-shadow: 0 4px 24px rgba(0,0,0,.12);
-    }
-    .yaml-key   { color: var(--term-blue); }
-    .yaml-str   { color: var(--term-green); }
-    .yaml-cmt   { color: var(--term-muted); font-style: italic; }
-
-    .command-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px; margin-top: 20px;
-    }
-    .command-card {
-      background: #fff; border: 1px solid var(--border);
-      border-radius: 10px; padding: 16px 18px;
-      box-shadow: var(--card-shadow);
-    }
-    .command-card code {
-      color: var(--accent); font-size: .82rem;
-      font-family: 'SF Mono', monospace; display: block; margin-bottom: 6px; font-weight: 600;
-    }
-    .command-card p { color: var(--text); font-size: .82rem; }
-    .command-card.phase2 code { color: #7c3aed; }
-
-    .ci-cards { display: flex; flex-direction: column; gap: 16px; }
-    .ci-card {
-      background: #fff; border: 1px solid var(--border);
-      border-radius: 14px; padding: 22px 24px;
-      box-shadow: var(--card-shadow);
-    }
-    .ci-card .ci-icon {
-      width: 40px; height: 40px; border-radius: 10px;
-      background: var(--accent-tint); display: flex;
-      align-items: center; justify-content: center;
-      font-size: 1.2rem; margin-bottom: 10px;
-    }
-    .ci-card h3 { color: var(--heading); font-size: .95rem; font-weight: 700; margin-bottom: 6px; }
-    .ci-card p  { color: var(--text); font-size: .875rem; line-height: 1.7; }
-    .ci-card p code {
-      background: var(--accent-tint); color: var(--accent);
-      padding: 1px 5px; border-radius: 4px;
-      font-family: 'SF Mono', monospace; font-size: .88em;
-    }
-
-    /* ── CHECKS TABLE ── */
-    #checks { background: var(--bg-alt); }
-    .checks-table {
-      width: 100%; border-collapse: collapse; margin-top: 36px;
-      background: #fff; border-radius: 14px; overflow: hidden;
-      box-shadow: var(--card-shadow);
-    }
-    .checks-table th {
-      text-align: left; color: var(--text); font-size: .78rem;
-      font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
-      padding: 14px 20px; background: var(--accent-tint);
-      border-bottom: 1px solid var(--border);
-    }
-    .checks-table td {
-      padding: 15px 20px; border-bottom: 1px solid var(--border);
-      vertical-align: top; font-size: .875rem;
-    }
-    .checks-table tr:last-child td { border-bottom: none; }
-    .checks-table td:first-child {
-      color: var(--heading); font-family: 'SF Mono', monospace;
-      font-size: .82rem; font-weight: 700; white-space: nowrap;
-    }
-    .checks-table td:nth-child(2) { color: var(--text); }
-    .checks-table td:last-child   { color: var(--text); font-size: .82rem; }
-    .checks-table td code {
-      background: var(--accent-tint); color: var(--accent);
-      padding: 1px 5px; border-radius: 4px;
-      font-family: 'SF Mono', monospace; font-size: .88em;
-    }
-    .checks-table tr:hover td { background: #faf9ff; }
-
-    /* ── INSTALL STRIP ── */
-    .install-strip {
-      background: var(--accent);
-      border-radius: 16px; padding: 32px 36px;
-      display: flex; align-items: center;
-      justify-content: space-between; gap: 24px;
-      flex-wrap: wrap; margin-top: 44px;
-      box-shadow: 0 8px 32px rgba(99,102,241,.25);
-    }
-    .install-strip p { color: rgba(255,255,255,.8); font-size: .9rem; margin-bottom: 0; }
-    .install-strip p strong { color: #fff; display: block; margin-bottom: 6px; font-size: 1.1rem; }
-    .install-strip code {
-      background: rgba(255,255,255,.15); color: #fff;
-      padding: 3px 10px; border-radius: 6px;
-      font-family: 'SF Mono', monospace; font-size: .9rem;
-    }
-    .btn-white {
-      background: #fff; color: var(--accent);
-      padding: 12px 24px; border-radius: 10px;
-      font-weight: 700; font-size: .95rem;
-      white-space: nowrap; display: inline-block;
-      transition: opacity .15s;
-    }
-    .btn-white:hover { opacity: .88; text-decoration: none; }
-
-    /* ── CTA SECTION ── */
-    .cta-section {
-      background: var(--bg);
-      text-align: center;
-      padding: 100px 24px;
-    }
-    .cta-section h2 {
-      font-size: clamp(1.8rem, 3.5vw, 2.5rem);
-      font-weight: 900; color: var(--heading);
-      letter-spacing: -.5px; margin-bottom: 16px;
-    }
-    .cta-section p {
-      color: var(--text); font-size: 1.05rem;
-      max-width: 520px; margin: 0 auto 36px; line-height: 1.7;
-    }
-    .cta-section .pip-badge {
-      display: inline-block;
-      background: var(--term-bg); color: var(--term-green);
-      font-family: 'SF Mono', monospace; font-size: .95rem;
-      padding: 12px 24px; border-radius: 10px;
-      margin-bottom: 28px; border: 1px solid var(--term-border);
-    }
-
-    /* ── FOOTER ── */
-    footer {
-      background: #f5f4fd;
-      border-top: 1px solid var(--border);
-      padding: 60px 0 32px;
-      color: var(--text);
-    }
-    .footer-inner {
-      display: flex; justify-content: space-between;
-      gap: 40px; flex-wrap: wrap; margin-bottom: 48px;
-    }
-    .footer-brand p {
-      font-size: .875rem; max-width: 260px; line-height: 1.7;
-      margin-top: 10px; color: var(--text);
-    }
-    .footer-col h4 {
-      color: var(--heading); font-size: .875rem;
-      font-weight: 700; margin-bottom: 14px;
-    }
-    .footer-col a {
-      display: block; color: var(--text); font-size: .875rem;
-      margin-bottom: 9px; transition: color .15s;
-    }
-    .footer-col a:hover { color: var(--accent); text-decoration: none; }
-    .footer-bottom {
-      padding-top: 24px;
-      border-top: 1px solid var(--border);
-      font-size: .8rem; color: #9ca3af;
-    }
-    .footer-bottom a { color: #9ca3af; }
-    .footer-bottom a:hover { color: var(--accent); }
-
-    /* ── PLAYGROUND ── */
-    .playground-input-row {
-      display: flex; gap: 10px; margin: 24px 0 20px;
-    }
-    .playground-input-row input {
-      flex: 1; padding: 11px 16px; border-radius: 10px;
-      border: 1.5px solid var(--border); font-size: .95rem;
-      color: var(--heading); background: #fff; outline: none;
-      transition: border-color .15s;
-    }
-    .playground-input-row input:focus { border-color: var(--accent); }
-    .playground-input-row button {
-      background: var(--accent); color: #fff;
-      padding: 11px 22px; border-radius: 10px; border: none;
-      font-weight: 700; font-size: .95rem; cursor: pointer;
-      transition: opacity .15s; white-space: nowrap;
-    }
-    .playground-input-row button:hover { opacity: .88; }
-    .playground-input-row button:disabled { opacity: .5; cursor: not-allowed; }
+    .pg-error.active { display: block; }
 
     #playground-results {
       display: none;
-      background: #fff; border-radius: 14px;
-      box-shadow: 0 2px 16px rgba(99,102,241,.08);
-      padding: 28px 32px; margin-top: 8px;
+      background: #fff; border-radius: 18px;
+      box-shadow: 0 4px 32px rgba(99,102,241,.12);
+      padding: 28px 32px; margin-top: 16px;
+      text-align: left;
     }
     .pg-score-row {
-      display: flex; align-items: center; gap: 20px; margin-bottom: 24px;
+      display: flex; align-items: center; gap: 20px; margin-bottom: 18px;
     }
     .pg-score-circle {
       width: 80px; height: 80px; border-radius: 50%;
@@ -570,7 +179,7 @@
     .pg-decision-badge.hold    { background: #fef3c7; color: #92400e; }
     .pg-decision-badge.block   { background: #fee2e2; color: #991b1b; }
 
-    .pg-checklist { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .pg-checklist { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
     .sg-item {
       display: flex; align-items: center; gap: 10px;
       font-size: .9rem; color: var(--text);
@@ -582,7 +191,6 @@
     .sg-item:hover .sg-tooltip { opacity: 1; visibility: visible; transform: translateY(0); }
     .pg-check-icon { font-size: 1rem; flex-shrink: 0; }
 
-    /* Tooltip */
     .sg-label-wrap { position: relative; display: flex; align-items: center; gap: 6px; flex: 1; cursor: default; }
     .sg-label { font-weight: 500; }
     .sg-tooltip {
@@ -631,25 +239,200 @@
     }
     .pg-lock-btn:hover { background: var(--accent-tint); }
 
-    .pg-spinner {
-      display: none; text-align: center; padding: 32px 0; color: var(--text);
-      font-size: .9rem;
+    .pg-cta-row {
+      margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border);
+      text-align: center;
     }
-    .pg-spinner.active { display: block; }
-    .pg-spinner-ring {
-      display: inline-block; width: 36px; height: 36px;
-      border: 4px solid var(--border); border-top-color: var(--accent);
-      border-radius: 50%; animation: rgspin .7s linear infinite;
-      margin-bottom: 10px;
+    .pg-cta-row a {
+      display: inline-block; background: var(--accent); color: #fff;
+      padding: 10px 24px; border-radius: 50px; font-weight: 700;
+      font-size: .9rem; transition: opacity .15s;
     }
-    @keyframes rgspin { to { transform: rotate(360deg); } }
+    .pg-cta-row a:hover { opacity: .88; text-decoration: none; }
 
-    .pg-error {
-      display: none; background: #fee2e2; color: #991b1b;
-      border-radius: 10px; padding: 12px 16px; margin-top: 10px;
-      font-size: .875rem;
+    /* ── SECTION HEADERS ── */
+    .section-title {
+      font-size: clamp(1.6rem, 3vw, 2.25rem);
+      font-weight: 900; color: var(--heading);
+      letter-spacing: -.5px; margin-bottom: 12px; line-height: 1.2;
     }
-    .pg-error.active { display: block; }
+    .section-subtitle {
+      color: var(--text); font-size: 1rem;
+      max-width: 600px; line-height: 1.7; margin-bottom: 0;
+    }
+    .section-header { margin-bottom: 48px; }
+
+    /* ── CHECKS EXPLAINED ── */
+    #checks-explained { background: var(--bg-alt); }
+    .checks-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    }
+    .check-card {
+      background: #fff; border-radius: 14px;
+      padding: 22px 24px; border: 1px solid var(--border);
+      box-shadow: var(--card-shadow);
+      border-left: 4px solid var(--border);
+      transition: box-shadow .2s;
+    }
+    .check-card:hover { box-shadow: 0 4px 24px rgba(99,102,241,.12); }
+    .check-card.danger { border-left-color: var(--red); }
+    .check-card.ops    { border-left-color: var(--amber); }
+    .check-card.quality { border-left-color: var(--accent); }
+    .check-card-icon { font-size: 1.5rem; margin-bottom: 8px; }
+    .check-card h3 { color: var(--heading); font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
+    .check-card p  { color: var(--text); font-size: .875rem; line-height: 1.6; }
+
+    /* ── CLI SECTION ── */
+    #cli-section { background: var(--surface); }
+    .cli-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px;
+    }
+    .cli-col h3 {
+      color: var(--heading); font-size: 1rem; font-weight: 700;
+      margin-bottom: 14px;
+    }
+    .cli-col-label {
+      margin-top: 12px; font-size: .8rem; color: var(--text);
+      font-style: italic;
+    }
+    .term-block {
+      background: var(--term-bg);
+      border-radius: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: .78rem; line-height: 1.75;
+      padding: 18px 20px; overflow-x: auto;
+      color: var(--term-bright);
+      box-shadow: 0 4px 20px rgba(0,0,0,.12);
+    }
+    .t-muted  { color: var(--term-muted); }
+    .t-green  { color: var(--term-green); }
+    .t-red    { color: var(--term-red); }
+    .t-yellow { color: var(--term-yellow); }
+    .t-blue   { color: var(--term-blue); }
+    .yaml-key { color: var(--term-blue); }
+    .yaml-str { color: var(--term-green); }
+    .yaml-cmt { color: var(--term-muted); font-style: italic; }
+
+    /* ── ENTERPRISE TIERS ── */
+    #enterprise { background: var(--bg-alt); }
+    .tier-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px;
+    }
+    .tier-card {
+      background: #fff; border-radius: 18px;
+      border: 1px solid var(--border); padding: 32px 28px;
+      box-shadow: var(--card-shadow);
+      display: flex; flex-direction: column;
+    }
+    .tier-card.featured {
+      border-color: var(--accent);
+      box-shadow: 0 4px 32px rgba(99,102,241,.14);
+    }
+    .tier-name {
+      font-size: .8rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .1em; color: var(--accent); margin-bottom: 10px;
+    }
+    .tier-price {
+      font-size: 2rem; font-weight: 900; color: var(--heading);
+      letter-spacing: -1px; margin-bottom: 4px;
+    }
+    .tier-price-sub { font-size: .8rem; color: var(--text); margin-bottom: 20px; }
+    .tier-features {
+      list-style: none; flex: 1; margin-bottom: 24px;
+    }
+    .tier-features li {
+      font-size: .875rem; color: var(--text);
+      padding: 6px 0; border-bottom: 1px solid var(--border);
+      display: flex; gap: 8px; align-items: flex-start;
+    }
+    .tier-features li:last-child { border-bottom: none; }
+    .tier-features li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
+    .tier-btn {
+      display: block; text-align: center;
+      padding: 12px 20px; border-radius: 50px;
+      font-weight: 700; font-size: .9rem;
+      transition: opacity .15s;
+    }
+    .tier-btn.primary { background: var(--accent); color: #fff; }
+    .tier-btn.secondary { background: var(--accent-tint); color: var(--accent); border: 1.5px solid var(--accent); }
+    .tier-btn:hover { opacity: .85; text-decoration: none; }
+    .coming-badge {
+      display: inline-block; background: #fef3c7; color: #92400e;
+      font-size: .68rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .06em; padding: 2px 8px; border-radius: 10px;
+      margin-left: 8px; vertical-align: middle;
+    }
+    .pip-snippet {
+      background: var(--term-bg); color: var(--term-green);
+      font-family: 'SF Mono', monospace; font-size: .85rem;
+      padding: 10px 16px; border-radius: 8px;
+      margin-top: 12px; border: 1px solid var(--term-border);
+      display: block;
+    }
+
+    /* ── CTA SECTION ── */
+    .cta-section {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      text-align: center;
+      padding: 100px 24px;
+    }
+    .cta-section h2 {
+      font-size: clamp(1.8rem, 3.5vw, 2.4rem);
+      font-weight: 900; color: #fff;
+      letter-spacing: -.5px; margin-bottom: 14px;
+    }
+    .cta-section .cta-sub {
+      color: rgba(255,255,255,.8); font-size: 1rem;
+      margin-bottom: 36px;
+    }
+    .cta-scan-row {
+      display: flex; gap: 10px; justify-content: center;
+      max-width: 600px; margin: 0 auto;
+      flex-wrap: wrap;
+    }
+    .cta-scan-row input {
+      flex: 1; min-width: 220px;
+      padding: 14px 22px;
+      border-radius: 50px;
+      border: none; outline: none;
+      font-size: .95rem; color: var(--heading);
+      background: #fff;
+      box-shadow: 0 2px 12px rgba(0,0,0,.15);
+    }
+    .cta-scan-row button {
+      background: #fff; color: var(--accent);
+      padding: 14px 28px; border-radius: 50px; border: none;
+      font-weight: 800; font-size: .95rem; cursor: pointer;
+      transition: opacity .15s; white-space: nowrap;
+      box-shadow: 0 2px 12px rgba(0,0,0,.15);
+    }
+    .cta-scan-row button:hover { opacity: .88; }
+    .cta-scan-row button:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── FOOTER ── */
+    footer {
+      background: #f5f4fd;
+      border-top: 1px solid var(--border);
+      padding: 48px 0 28px;
+      color: var(--text);
+    }
+    .footer-row {
+      display: flex; justify-content: space-between;
+      gap: 32px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 24px;
+    }
+    .footer-logo {
+      font-size: 1.05rem; font-weight: 800; color: var(--heading);
+    }
+    .footer-links { display: flex; gap: 24px; flex-wrap: wrap; align-items: center; }
+    .footer-links a { color: var(--text); font-size: .875rem; transition: color .15s; }
+    .footer-links a:hover { color: var(--accent); text-decoration: none; }
+    .footer-bottom {
+      padding-top: 20px; border-top: 1px solid var(--border);
+      font-size: .8rem; color: #9ca3af;
+    }
+    .footer-bottom a { color: #9ca3af; }
+    .footer-bottom a:hover { color: var(--accent); }
 
     /* ── AUTH MODAL ── */
     #auth-modal {
@@ -706,9 +489,7 @@
     .auth-msg.success { color: var(--green); }
 
     /* ── NAV AUTH ── */
-    .nav-user-chip {
-      display: flex; align-items: center; gap: 10px;
-    }
+    .nav-user-chip { display: flex; align-items: center; gap: 10px; }
     .nav-user-email {
       font-size: .82rem; color: var(--text); max-width: 160px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -720,9 +501,7 @@
       cursor: pointer; transition: background .15s;
     }
     .nav-btn:hover { background: var(--accent-tint); }
-    .nav-btn.primary {
-      background: var(--accent); color: #fff;
-    }
+    .nav-btn.primary { background: var(--accent); color: #fff; }
     .nav-btn.primary:hover { opacity: .88; background: var(--accent); }
 
     /* ── DASHBOARD ── */
@@ -730,23 +509,15 @@
       display: none; max-width: 1140px; margin: 0 auto; padding: 48px 24px;
     }
     #dashboard-page.active { display: block; }
-    .dash-welcome {
-      margin-bottom: 32px;
-    }
-    .dash-welcome h2 {
-      font-size: 1.6rem; font-weight: 800; color: var(--heading);
-      margin-bottom: 6px;
-    }
+    .dash-welcome { margin-bottom: 32px; }
+    .dash-welcome h2 { font-size: 1.6rem; font-weight: 800; color: var(--heading); margin-bottom: 6px; }
     .dash-welcome p { color: var(--text); }
     .dash-card {
       background: #fff; border-radius: 14px;
       box-shadow: 0 2px 16px rgba(99,102,241,.08);
       padding: 28px 32px; margin-bottom: 28px;
     }
-    .dash-card h3 {
-      font-size: 1rem; font-weight: 700; color: var(--heading);
-      margin-bottom: 18px;
-    }
+    .dash-card h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin-bottom: 18px; }
     .dash-table { width: 100%; border-collapse: collapse; }
     .dash-table th {
       text-align: left; font-size: .8rem; font-weight: 700;
@@ -760,836 +531,275 @@
     .dash-table tr:last-child td { border-bottom: none; }
     .dash-table a { color: var(--accent); font-weight: 600; }
     .dash-sparkline { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
-    .dash-spark-bar {
-      width: 10px; border-radius: 3px 3px 0 0;
-      background: var(--accent); opacity: .7;
-    }
+    .dash-spark-bar { width: 10px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: .7; }
     .dash-empty { color: var(--text); font-size: .9rem; padding: 8px 0; }
+    .btn-primary {
+      display: inline-block; background: var(--accent); color: #fff;
+      padding: 12px 26px; border-radius: 10px;
+      font-weight: 700; font-size: .95rem;
+      transition: opacity .15s;
+    }
+    .btn-primary:hover { opacity: .88; text-decoration: none; }
 
     /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .tier-grid { grid-template-columns: 1fr; max-width: 480px; margin: 0 auto; }
+      .cli-grid  { grid-template-columns: 1fr; }
+      .checks-grid { grid-template-columns: 1fr; }
+    }
     @media (max-width: 768px) {
       .nav-links { display: none; }
-      .hero-terminals { grid-template-columns: 1fr; }
-      .stats-row { grid-template-columns: 1fr 1fr; }
-      .stat-card { border-right: none; border-bottom: 1px solid var(--border); }
-      .stat-card:nth-child(odd) { border-right: 1px solid var(--border); }
-      .stat-card:last-child, .stat-card:nth-last-child(2):nth-child(odd) { border-bottom: none; }
-      .ci-grid { grid-template-columns: 1fr !important; }
-      section { padding: 60px 0; }
+      .hero { padding: 60px 0 40px; }
     }
     @media (max-width: 500px) {
-      .stats-row { grid-template-columns: 1fr; }
-      .stat-card { border-right: none !important; }
+      .hero-scan-row { flex-direction: column; }
+      .hero-scan-row input, .hero-scan-row button { width: 100%; }
+      .cta-scan-row { flex-direction: column; }
+      .cta-scan-row input, .cta-scan-row button { width: 100%; }
     }
   </style>
 </head>
 <body>
 
 <!-- ═══════════════════════ NAV ═══════════════════════ -->
-<header>
+<header id="site-header">
   <nav>
-    <a href="#" class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">&#x1F6AA; release-gate</a>
+    <a class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;" href="#">&#x1F6AA; release-gate</a>
     <ul class="nav-links">
-      <li><a href="#playground">Try Live</a></li>
-      <li><a href="#how-it-works">How it works</a></li>
-      <li><a href="#demo">Live demo</a></li>
-      <li><a href="#features">Features</a></li>
-      <li><a href="#checks">Checks</a></li>
-      <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" class="nav-cta">GitHub &rarr;</a></li>
+      <li><a href="#cli-section">CLI docs</a></li>
+      <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a></li>
     </ul>
     <div id="nav-auth-area" class="nav-user-chip">
-      <!-- populated by JS on load -->
       <button class="nav-btn primary" onclick="openAuthModal('signup')">Sign up free</button>
     </div>
   </nav>
 </header>
 
-<div id="top"></div>
 <!-- ═══════════════════════ HERO ═══════════════════════ -->
 <section class="hero">
-  <div class="container">
-    <div class="badge">v0.7.0 &mdash; Live Agent Runtime + Repo Audit</div>
-    <h1>PROMOTE, HOLD, or <span class="block-word">BLOCK</span><br>&#x2014; against your real agent.</h1>
-    <p class="tagline">
-      Start with <code>release-gate audit</code> &mdash; scan any AI agent repo in 30&nbsp;seconds,
-      no config needed. Then score, eval live against your real agent, and gate every deploy.
-    </p>
-    <div class="hero-btns">
-      <a href="#demo" class="btn-primary">&#x25B6;&nbsp; See it in action</a>
-      <a href="#how-it-works" class="btn-secondary">How it works</a>
-      <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">GitHub &rarr;</a>
+  <div class="container hero-inner">
+    <h1>Does your AI agent deserve to ship?</h1>
+    <p class="hero-sub">Paste any public GitHub repo URL. release-gate scans for 7 deployment safeguards and gives you a PROMOTE / HOLD / BLOCK decision in seconds. No install. No infrastructure.</p>
+
+    <!-- Hero playground input -->
+    <div class="hero-scan-row">
+      <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
+      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Scan repo &rarr;</button>
     </div>
 
-    <!-- main audit terminal -->
-    <div class="hero-main-terminal fade-in">
-      <div class="term-wrap">
-        <div class="term-titlebar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="term-title">Step 1 — audit any repo (no config needed)</span>
-        </div>
-        <div class="terminal">
-          <span class="t-line t-muted">$ pip install release-gate</span>
-          <span class="t-line t-muted">$ release-gate audit https://github.com/your-org/your-agent</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Agents  OpenAI / Agents SDK (4 files) &middot; LangChain (12 files)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Readiness Score   <span class="t-yellow t-bold">42 / 100</span>   ████░░░░░░</span>
-          <span class="t-line t-yellow t-bold">  Decision:  &#x26A0;  HOLD</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red">  ✗  Budget / cost ceiling  &mdash;  runaway loop could exhaust API credits silently</span>
-          <span class="t-line t-red">  ✗  Kill switch / fallback  &mdash;  no way to stop a misbehaving agent at runtime</span>
-          <span class="t-line t-red">  ✗  Trace / tool policy     &mdash;  no record of which tools the agent called</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-muted">  Next: release-gate audit . --emit-config -o governance.yaml</span>
-        </div>
+    <div class="pg-wrap">
+      <div class="pg-spinner" id="pg-spinner">
+        <div class="pg-spinner-ring"></div>
+        <p>Running audit&hellip;</p>
       </div>
-    </div>
+      <div class="pg-error" id="pg-error"></div>
 
-    <!-- two comparison terminals -->
-    <div class="hero-terminals fade-in" style="margin-top:24px;">
-      <div>
-        <div class="hero-terminal-label safe">&#x2713; Fully governed &mdash; PROMOTE</div>
-        <div class="term-wrap">
-          <div class="term-titlebar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="term-title">governance-safe-pass.yaml</span>
-          </div>
-          <div class="terminal">
-            <span class="t-line t-muted">$ release-gate score governance.yaml</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  Readiness Score   <span class="t-green t-bold">94 / 100</span></span>
-            <span class="t-line t-bright">  Confidence        high</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  safety            <span class="t-green">100</span>   access_control  <span class="t-green">100</span></span>
-            <span class="t-line t-bright">  cost               <span class="t-green">90</span>   fallback        <span class="t-green">100</span></span>
-            <span class="t-line t-bright">  eval_quality       <span class="t-green">85</span>   observability    <span class="t-green">80</span></span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  Critical failures  <span class="t-green">none</span></span>
-            <span class="t-blank"></span>
-            <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)</span>
+      <div id="playground-results">
+        <div class="pg-score-row">
+          <div class="pg-score-circle" id="pg-score-circle"></div>
+          <div>
+            <div id="pg-decision-badge" class="pg-decision-badge"></div>
+            <div style="margin-top:6px;font-size:.85rem;color:var(--text)" id="pg-repo-label"></div>
           </div>
         </div>
-      </div>
-      <div>
-        <div class="hero-terminal-label unsafe">&#x2717; Missing safeguards &mdash; BLOCK</div>
-        <div class="term-wrap">
-          <div class="term-titlebar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="term-title">governance-unsafe-fail.yaml</span>
-          </div>
-          <div class="terminal">
-            <span class="t-line t-muted">$ release-gate score governance.yaml</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  Readiness Score   <span class="t-red t-bold">41 / 100</span></span>
-            <span class="t-line t-bright">  Confidence        low</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-bright">  safety             <span class="t-red">20</span>   access_control   <span class="t-red">30</span></span>
-            <span class="t-line t-bright">  cost               <span class="t-red">40</span>   fallback          <span class="t-red">0</span></span>
-            <span class="t-blank"></span>
-            <span class="t-line t-red">  Critical failures:</span>
-            <span class="t-line t-red">    FALLBACK_DECLARED &mdash; kill switch missing</span>
-            <span class="t-line t-red">    ACTION_BUDGET     &mdash; no budget cap set</span>
-            <span class="t-blank"></span>
-            <span class="t-line t-red t-bold">  Decision:  &#x2717;  BLOCK  (score 41/100)</span>
-          </div>
+        <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
+        <ul class="pg-checklist" id="pg-checklist"></ul>
+        <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
+          <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ═══════════════════════ STATS ═══════════════════════ -->
-<div class="stats-section">
-  <div class="stats-row fade-in">
-    <div class="stat-card">
-      <div class="stat-icon">&#x1F6E1;&#xFE0F;</div>
-      <div class="stat-number">7</div>
-      <div class="stat-label">safeguards</div>
-      <div class="stat-sub">checked per audit</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon">&#x1F9E9;</div>
-      <div class="stat-number">11</div>
-      <div class="stat-label">frameworks</div>
-      <div class="stat-sub">detected</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon">&#x1F4CA;</div>
-      <div class="stat-number">0–100</div>
-      <div class="stat-label">score</div>
-      <div class="stat-sub">readiness</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon">&#x2705;</div>
-      <div class="stat-number">1</div>
-      <div class="stat-label">decision</div>
-      <div class="stat-sub">PROMOTE / HOLD / BLOCK</div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════ PLAYGROUND ═══════════════════════ -->
-<div class="stack-card" style="z-index:1" id="playground"><section>
+<!-- ═══════════════════════ CHECKS EXPLAINED ═══════════════════════ -->
+<section id="checks-explained">
   <div class="container">
-    <p class="section-eyebrow">Live playground</p>
-    <h2 class="section-title">Try it live &mdash; no install needed</h2>
-    <p class="section-subtitle">Paste any public GitHub repo URL and run a release-gate audit in seconds.</p>
-
-    <div class="playground-input-row">
-      <input type="url" id="pg-url-input" placeholder="https://github.com/owner/repo" autocomplete="off" />
-      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Run Audit</button>
+    <div class="section-header">
+      <h2 class="section-title">Why these 7 checks?</h2>
+      <p class="section-subtitle">Every check maps to a real production failure. No checkbox theater.</p>
     </div>
 
-    <div class="pg-spinner" id="pg-spinner">
-      <div class="pg-spinner-ring"></div>
-      <p>Running audit&hellip;</p>
-    </div>
-    <div class="pg-error" id="pg-error"></div>
+    <div class="checks-grid">
 
-    <div id="playground-results">
-      <div class="pg-score-row">
-        <div class="pg-score-circle" id="pg-score-circle"></div>
-        <div>
-          <div id="pg-decision-badge" class="pg-decision-badge"></div>
-          <div style="margin-top:6px;font-size:.85rem;color:var(--text)" id="pg-repo-label"></div>
-        </div>
+      <div class="check-card quality">
+        <div class="check-card-icon">&#x1F3DB;&#xFE0F;</div>
+        <h3>Governance config</h3>
+        <p>Governance lives in heads, not docs. Knowledge walks out the door.</p>
       </div>
-      <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
-      <ul class="pg-checklist" id="pg-checklist"></ul>
+
+      <div class="check-card quality">
+        <div class="check-card-icon">&#x1F4CA;</div>
+        <h3>Eval evidence</h3>
+        <p>No tests = no signal. You're guessing in prod.</p>
+      </div>
+
+      <div class="check-card ops">
+        <div class="check-card-icon">&#x1F50D;</div>
+        <h3>Trace / tool policy</h3>
+        <p>Silent tool misuse. No audit trail when something goes wrong.</p>
+      </div>
+
+      <div class="check-card danger">
+        <div class="check-card-icon">&#x1F4B0;</div>
+        <h3>Budget ceiling</h3>
+        <p>One prompt injection &rarr; $10k overnight. No ceiling = no floor.</p>
+      </div>
+
+      <div class="check-card ops">
+        <div class="check-card-icon">&#x1F534;</div>
+        <h3>Kill switch / fallback</h3>
+        <p>Agent misbehaves at 2am. No kill switch = 45-min deploy to fix it.</p>
+      </div>
+
+      <div class="check-card ops">
+        <div class="check-card-icon">&#x1F464;</div>
+        <h3>Team owner</h3>
+        <p>Incident at 3am. Who do you page? "The team" is not an answer.</p>
+      </div>
+
+      <div class="check-card danger">
+        <div class="check-card-icon">&#x1F510;</div>
+        <h3>Auth &amp; rate limiting</h3>
+        <p>Unprotected endpoint = denial-of-wallet attack in minutes.</p>
+      </div>
+
     </div>
   </div>
-</section></div>
+</section>
 
-<!-- ═══════════════════════ HOW IT WORKS ═══════════════════════ -->
-<div class="stack-card alt" style="z-index:2"><section id="how-it-works">
+<!-- ═══════════════════════ CLI / WORKS EVERYWHERE ═══════════════════════ -->
+<section id="cli-section">
   <div class="container">
-    <p class="section-eyebrow">How it works</p>
-    <h2 class="section-title">Four steps to a defensible release decision</h2>
-    <p class="section-subtitle">release-gate slots into your CI/CD pipeline. No backend, no dashboard, no sign-up.</p>
+    <div class="section-header">
+      <h2 class="section-title">Zero extra infrastructure</h2>
+      <p class="section-subtitle">One pip install. Works in your terminal, your CI, or via API. No cloud containers, no agents to host, no SaaS dependency for the core tool.</p>
+    </div>
 
-    <div class="steps">
+    <div class="cli-grid">
 
-      <div class="step fade-in">
-        <div class="step-num">1</div>
-        <div class="step-content">
-          <h3>Audit your repo &mdash; no config needed</h3>
-          <p>Run <code>release-gate audit</code> on any AI agent repo. Detects 11 frameworks, scores 7 deployment safeguards, and returns a decision in seconds. Use <code>--emit-config</code> to scaffold a ready-to-commit <code>governance.yaml</code>.</p>
-          <div class="term-wrap">
-            <div class="term-titlebar">
-              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-              <span class="term-title">$ release-gate audit .</span>
-            </div>
-            <div class="terminal">
-              <span class="t-line t-muted">$ release-gate audit https://github.com/your-org/your-agent</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-bright">  Agents  OpenAI / Agents SDK (4 files) &middot; LangChain (12 files)</span>
-              <span class="t-line t-bright">  Readiness Score   <span class="t-yellow t-bold">42 / 100</span>   ████░░░░░░</span>
-              <span class="t-line t-yellow t-bold">  Decision:  &#x26A0;  HOLD</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-muted">  Next: release-gate audit . --emit-config -o governance.yaml</span>
-            </div>
-          </div>
-        </div>
+      <!-- Column 1: CLI -->
+      <div class="cli-col">
+        <h3>&#x1F4BB; CLI (Terminal)</h3>
+        <div class="term-block">
+<span class="t-muted">$ pip install release-gate</span>
+<span class="t-muted">$ release-gate audit https://github.com/org/agent</span>
+&nbsp;
+  Score  <span class="t-yellow">60/100</span>  HOLD
+  <span class="t-red">&#x2717; governance_file</span>
+  <span class="t-green">&#x2713; budget_ceiling</span>
+  ...
+<span class="t-muted">$ release-gate audit . --emit-config -o governance.yaml</span></div>
+        <p class="cli-col-label">Your machine. Your terminal. No account needed.</p>
       </div>
 
-      <div class="step fade-in">
-        <div class="step-num">2</div>
-        <div class="step-content">
-          <h3>Scaffold a <code>governance.yaml</code> next to your code</h3>
-          <p>Declare your model, budget cap, kill switch, eval cases, and trace policies. Takes 5 minutes &mdash; or use <code>release-gate init</code> for an interactive wizard.</p>
-          <div class="term-wrap">
-            <div class="term-titlebar">
-              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-              <span class="term-title">governance.yaml</span>
-            </div>
-            <div class="terminal">
-              <span class="t-line t-bright">agent:</span>
-              <span class="t-line t-bright">  model: gpt-4-turbo    daily_requests: 5000</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-bright">checks:</span>
-              <span class="t-line t-bright">  action_budget:   {max_daily_cost: 500}</span>
-              <span class="t-line t-bright">  fallback_declared:</span>
-              <span class="t-line t-bright">    kill_switch: {type: feature-flag}</span>
-              <span class="t-line t-bright">    team_owner:  platform-team</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-bright">trace_policies:</span>
-              <span class="t-line t-bright">  forbidden_tools: [delete_database, export_data]</span>
-              <span class="t-line t-bright">  max_tool_calls: 10    max_retries: 2</span>
-            </div>
-          </div>
-        </div>
+      <!-- Column 2: GitHub Actions -->
+      <div class="cli-col">
+        <h3>&#x2699;&#xFE0F; GitHub Actions</h3>
+        <div class="term-block">
+<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.7.0</span>
+  <span class="yaml-key">with</span>:
+    <span class="yaml-key">command</span>: <span class="yaml-str">audit</span>
+    <span class="yaml-key">path</span>: <span class="yaml-str">.</span>
+<span class="yaml-cmt"># Exit 0=PROMOTE · 10=HOLD · 1=BLOCK</span></div>
+        <p class="cli-col-label">5 lines in your workflow. Score appears in PR summary.</p>
       </div>
 
-      <div class="step fade-in">
-        <div class="step-num">3</div>
-        <div class="step-content">
-          <h3>Score every deploy candidate &mdash; live or static</h3>
-          <p>Add <code>--agent</code> to run evals against your <em>actual</em> agent. release-gate calls it, scores real responses, and captures latency. Without <code>--agent</code>, evals run in safe static mode &mdash; no LLM key, CI-friendly.</p>
-          <div class="term-wrap">
-            <div class="term-titlebar">
-              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            </div>
-            <div class="terminal">
-              <span class="t-line t-muted">$ release-gate score governance.yaml \</span>
-              <span class="t-line t-muted">      --evals evals.yaml \</span>
-              <span class="t-line t-muted">      --agent py:my_pkg.agent:handle</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-bright">  Readiness Score   <span class="t-green t-bold">94 / 100</span>   confidence: high</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-bright">  Evals run        7  (7 pass, 0 fail)  pass rate 100%  <span class="t-purple">[live mode]</span></span>
-              <span class="t-line t-bright">  Agent runtime    7 live call(s)  <span class="t-purple">avg 312ms &middot; p95 480ms</span>  (0 errors)</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="step fade-in">
-        <div class="step-num">4</div>
-        <div class="step-content">
-          <h3>Catch regressions, then gate in CI</h3>
-          <p>Compare a baseline report against the candidate. Any dimension that drops &gt;10 points &mdash; especially safety or fallback &mdash; is flagged as a regression and blocks the release automatically.</p>
-          <div class="term-wrap">
-            <div class="term-titlebar">
-              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            </div>
-            <div class="terminal">
-              <span class="t-line t-muted">$ release-gate compare baseline.json candidate.json</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-bright">  Baseline score    <span class="t-green">94/100</span>  (PROMOTE)</span>
-              <span class="t-line t-bright">  Candidate score   <span class="t-red">71/100</span>  (HOLD)</span>
-              <span class="t-line t-bright">  Score delta       <span class="t-red">&minus;23 points</span></span>
-              <span class="t-blank"></span>
-              <span class="t-line t-red">  Regressions detected:</span>
-              <span class="t-line t-red">    safety          100 &rarr; 60  (-40 pts)  CRITICAL</span>
-              <span class="t-line t-red">    fallback        100 &rarr; 75  (-25 pts)</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-red t-bold">  Decision:  &#x2717;  BLOCK  &mdash; critical regression in safety</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="step fade-in">
-        <div class="step-num">5</div>
-        <div class="step-content">
-          <h3>Generate an evidence pack for every release</h3>
-          <p>One command produces three audit artefacts &mdash; a machine-readable JSON report, an executive Markdown summary, and a full HTML dashboard &mdash; ready for compliance, security review, or stakeholder sign-off.</p>
-          <div class="term-wrap">
-            <div class="term-titlebar">
-              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            </div>
-            <div class="terminal">
-              <span class="t-line t-muted">$ release-gate evidence-pack governance.yaml</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-green">  &#x2713;  release-evidence/readiness_report.json</span>
-              <span class="t-line t-green">  &#x2713;  release-evidence/executive_summary.md</span>
-              <span class="t-line t-green">  &#x2713;  release-evidence/release-gate-evidence.html</span>
-              <span class="t-blank"></span>
-              <span class="t-line t-muted">  Upload as CI artifact or attach to release PR.</span>
-            </div>
-          </div>
-        </div>
+      <!-- Column 3: API -->
+      <div class="cli-col">
+        <h3>&#x1F310; SaaS API</h3>
+        <div class="term-block">
+<span class="t-muted">POST /api/audit</span>
+<span class="t-muted">{ "url": "https://github.com/org/agent" }</span>
+&nbsp;
+<span class="t-green">&rarr; { score: 60, decision: "HOLD",</span>
+<span class="t-green">    safeguards: { ... } }</span></div>
+        <p class="cli-col-label">Use from any language. Full history + dashboard for teams.</p>
       </div>
 
     </div>
   </div>
-</section></div>
+</section>
 
-<!-- ═══════════════════════ DEMO ═══════════════════════ -->
-<div class="stack-card" style="z-index:3"><section id="demo">
+<!-- ═══════════════════════ ENTERPRISE ═══════════════════════ -->
+<section id="enterprise">
   <div class="container">
-    <p class="section-eyebrow">Live demo</p>
-    <h2 class="section-title">Real commands. Real output.</h2>
-    <p class="section-subtitle">Run the interactive demo locally &mdash; no config file needed. Or explore individual commands below.</p>
-
-    <!-- walkthrough terminal -->
-    <div style="margin-top:40px; margin-bottom:8px;" class="fade-in">
-      <div class="term-wrap" style="max-width:740px;">
-        <div class="term-titlebar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="term-title">Interactive walkthrough &mdash; no files needed</span>
-        </div>
-        <div class="terminal">
-          <span class="t-line t-muted">$ release-gate demo</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  &#x1F6AA; release-gate  &nbsp;|&nbsp;  Interactive Demo</span>
-          <span class="t-line t-muted">  The CI step your AI agent is missing before it goes to production.</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  SCENARIO A &mdash; customer-support-agent (full governance)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-muted">  Checking FALLBACK_DECLARED ...</span>
-          <span class="t-line t-muted">    kill_switch: {type: feature-flag, name: disable_support_agent}</span>
-          <span class="t-line t-muted">    team_owner: platform-team</span>
-          <span class="t-line t-green">  &#x2713;  FALLBACK_DECLARED  kill switch declared, team owner assigned</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-muted">  Checking ACTION_BUDGET ...</span>
-          <span class="t-line t-muted">    action_budget:  max_daily_cost: 500</span>
-          <span class="t-line t-green">  &#x2713;  ACTION_BUDGET  projected $132/day &mdash; well within $500 cap</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-green t-bold">  Score: 100/100   Decision: &#x2713;  PROMOTE</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  SCENARIO B &mdash; data-export-agent (missing controls)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-muted">  Checking FALLBACK_DECLARED ...</span>
-          <span class="t-line t-muted">    fallback_mode: retry   <span style="color:#374151;"># no kill_switch, no team_owner, no runbook</span></span>
-          <span class="t-line t-red">  &#x2717;  FALLBACK_DECLARED</span>
-          <span class="t-line t-muted">       Real risk: Loop runs until OpenAI credit limit hit &mdash; could take hours</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red t-bold">  Score:  33/100   Decision: &#x2717;  BLOCK</span>
-        </div>
-      </div>
-      <div class="demo-note" style="max-width:740px; margin-top:12px;">
-        <strong>Run it now:</strong>&nbsp; <code>pip install release-gate &amp;&amp; release-gate demo</code>
-        &nbsp;&mdash;&nbsp; no <code>governance.yaml</code> needed, works immediately after install.
-      </div>
+    <div class="section-header">
+      <h2 class="section-title">Built for teams, not just individuals</h2>
+      <p class="section-subtitle">The CLI is free forever. The platform adds the coordination layer your team needs.</p>
     </div>
 
-    <!-- tabbed output -->
-    <div class="fade-in">
-      <div class="tab-nav">
-        <button class="tab-btn active" onclick="switchTab('score',     this)">&#x2713; Score (PROMOTE)</button>
-        <button class="tab-btn"        onclick="switchTab('liveagent', this)">&#x26A1; Live Agent</button>
-        <button class="tab-btn"        onclick="switchTab('compare',   this)">&#x26A0; Compare (regression)</button>
-        <button class="tab-btn"        onclick="switchTab('traces',    this)">&#x2717; Traces (violations)</button>
-        <button class="tab-btn"        onclick="switchTab('impact',    this)">$ Impact simulator</button>
+    <div class="tier-grid">
+
+      <!-- Free -->
+      <div class="tier-card">
+        <div class="tier-name">Free (CLI)</div>
+        <div class="tier-price">$0</div>
+        <div class="tier-price-sub">forever</div>
+        <ul class="tier-features">
+          <li>Unlimited local audits</li>
+          <li>Full safeguard detail</li>
+          <li>emit-config scaffold</li>
+          <li>GitHub Actions integration</li>
+        </ul>
+        <code class="pip-snippet">pip install release-gate</code>
       </div>
 
-      <div id="tab-score" class="tab-panel">
-        <div class="term-wrap"><div class="terminal">
-          <span class="t-line t-muted">$ release-gate score examples/governance-safe-pass.yaml \</span>
-          <span class="t-line t-muted">      --evals examples/evals.yaml \</span>
-          <span class="t-line t-muted">      --traces examples/traces/safe-trace.json</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.7.0</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Project          customer-support-agent  v1.0.0</span>
-          <span class="t-line t-bright">  Checks run       5  (5 pass, 0 warn, 0 fail)</span>
-          <span class="t-line t-bright">  Evals run        7  (7 pass, 0 fail)  pass rate 100%</span>
-          <span class="t-line t-bright">  Traces checked   1  (0 violations)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Score            <span class="t-green t-bold">94 / 100</span>   confidence: high</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Dimension Breakdown:</span>
-          <span class="t-line t-bright">    safety          <span class="t-green">100</span>  ██████████  (wt 30%)</span>
-          <span class="t-line t-bright">    cost             <span class="t-green">90</span>  █████████░  (wt 20%)</span>
-          <span class="t-line t-bright">    access_control  <span class="t-green">100</span>  ██████████  (wt 20%)</span>
-          <span class="t-line t-bright">    fallback        <span class="t-green">100</span>  ██████████  (wt 15%)</span>
-          <span class="t-line t-bright">    eval_quality     <span class="t-green">85</span>  ████████░░  (wt 10%)</span>
-          <span class="t-line t-bright">    observability    <span class="t-green">80</span>  ████████░░  (wt 5%)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Critical failures  <span class="t-green">none</span></span>
-          <span class="t-blank"></span>
-          <span class="t-line t-green t-bold">  Decision:  &#x2713;  PROMOTE  (score 94/100)  exit 0</span>
-        </div></div>
+      <!-- Pro -->
+      <div class="tier-card featured">
+        <div class="tier-name">Pro <span class="coming-badge">Coming soon</span></div>
+        <div class="tier-price">$29</div>
+        <div class="tier-price-sub">per month</div>
+        <ul class="tier-features">
+          <li>Everything in Free</li>
+          <li>Dashboard with release history</li>
+          <li>Score trend charts</li>
+          <li>API tokens for CI</li>
+          <li>Team sharing</li>
+        </ul>
+        <a href="#" onclick="openAuthModal('signup');return false;" class="tier-btn secondary">Join waitlist &rarr;</a>
       </div>
 
-      <div id="tab-liveagent" class="tab-panel" style="display:none;">
-        <div class="term-wrap"><div class="terminal">
-          <span class="t-line t-muted">$ release-gate score governance.yaml --evals evals.yaml \</span>
-          <span class="t-line t-muted">      --agent py:my_pkg.agent:handle</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-muted">  # --agent also accepts:  cmd:./run_agent.sh</span>
-          <span class="t-line t-muted">  #                        https://my-agent.internal/run</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  release-gate  |  Readiness Scorer  v0.7.0</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Project          customer-support-agent</span>
-          <span class="t-line t-bright">  Evals run        7  (6 pass, 1 fail)  pass rate 85.7%  <span class="t-purple">[live mode]</span></span>
-          <span class="t-line t-purple">  Agent runtime    7 live call(s)  avg 318ms &middot; p95 540ms  (0 errors)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-muted">  Eval details (live responses from your agent):</span>
-          <span class="t-line t-green">    &#x2713;  pii_not_leaked          &mdash; agent refused to reveal credit card</span>
-          <span class="t-line t-green">    &#x2713;  prompt_injection_blocked &mdash; agent declined suspicious instruction</span>
-          <span class="t-line t-green">    &#x2713;  order_summary_valid_json &mdash; response parsed &amp; schema matched</span>
-          <span class="t-line t-red">    &#x2717;  no_unsolicited_tools    &mdash; response contained unexpected tool_call</span>
-          <span class="t-line t-muted">         &rarr; Real agent output: "I'll call search_docs to look that up..."</span>
-          <span class="t-line t-muted">         &rarr; Expected:          no tool calls for this query</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Score            <span class="t-yellow t-bold">88 / 100</span>   confidence: medium</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-yellow t-bold">  Decision:  &#x26A0;  HOLD  (score 88/100)  &mdash; fix eval failure before promoting</span>
-        </div></div>
-      </div>
-
-      <div id="tab-compare" class="tab-panel" style="display:none;">
-        <div class="term-wrap"><div class="terminal">
-          <span class="t-line t-muted">$ release-gate compare reports/v1.0-baseline.json reports/v1.1-candidate.json</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  release-gate  |  Regression Gate  v0.7.0</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Baseline score    <span class="t-green">94 / 100</span>   PROMOTE</span>
-          <span class="t-line t-bright">  Candidate score   <span class="t-yellow">71 / 100</span>   HOLD</span>
-          <span class="t-line t-bright">  Score delta       <span class="t-red">&minus;23 points</span></span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red">  Regressions (dropped &gt; 10 pts):</span>
-          <span class="t-line t-red">    safety          100 &rarr; 60  (&minus;40)  CRITICAL</span>
-          <span class="t-line t-red">    fallback        100 &rarr; 75  (&minus;25)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-green">  Improvements:</span>
-          <span class="t-line t-green">    eval_quality     85 &rarr; 95  (+10)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  New critical failures in candidate:</span>
-          <span class="t-line t-red">    FALLBACK_DECLARED &mdash; kill switch removed</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red t-bold">  Decision:  &#x2717;  BLOCK  &mdash; critical regression in safety  exit 1</span>
-        </div></div>
-      </div>
-
-      <div id="tab-traces" class="tab-panel" style="display:none;">
-        <div class="term-wrap"><div class="terminal">
-          <span class="t-line t-muted">$ release-gate score governance.yaml --traces examples/traces/unsafe-trace.json</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  release-gate  |  Trace Validator  v0.7.0</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Trace ID         unsafe-trace-001</span>
-          <span class="t-line t-bright">  Steps            10  (3 llm_calls, 6 tool_calls, 1 retry)</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red">  Violations found: 5</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red">  [FORBIDDEN_TOOL]    send_email &mdash; not in allowed list</span>
-          <span class="t-line t-muted">    &rarr; Step 3: args.to = "external@hacker.com"</span>
-          <span class="t-line t-red">  [FORBIDDEN_TOOL]    delete_database &mdash; explicitly forbidden</span>
-          <span class="t-line t-muted">    &rarr; Step 5: irreversible operation attempted</span>
-          <span class="t-line t-red">  [TOOL_LOOP]         search_docs called 3 times consecutively</span>
-          <span class="t-line t-muted">    &rarr; Possible infinite loop &mdash; agent stuck</span>
-          <span class="t-line t-red">  [TOKEN_BUDGET]      7,100 tokens used, limit 15,000</span>
-          <span class="t-line t-red">  [RETRY_STORM]       1 retry detected</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-red t-bold">  Trace result:  FAIL  (5 violations)  exit 1</span>
-        </div></div>
-      </div>
-
-      <div id="tab-impact" class="tab-panel" style="display:none;">
-        <div class="term-wrap"><div class="terminal">
-          <span class="t-line t-muted">$ release-gate impact examples/governance-safe-pass.yaml</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  release-gate  |  Impact Simulator</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Model            gpt-4-turbo (OpenAI)</span>
-          <span class="t-line t-bright">  Requests/day     5,000</span>
-          <span class="t-line t-bright">  Tokens/request   800 in + 400 out</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Scenario                            Daily        Monthly</span>
-          <span class="t-line t-bright">    Normal operation             <span class="t-green">$   132.00</span>   <span class="t-green">$   3,960.00</span></span>
-          <span class="t-line t-bright">  ! Runaway loop (15x retries)    <span class="t-yellow">$ 5,000.00</span>   <span class="t-yellow">$ 150,000.00</span></span>
-          <span class="t-line t-bright">  * Risk delta (money at stake)   <span class="t-yellow">$ 4,868.00</span>   <span class="t-yellow">$ 146,040.00</span></span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  Budget cap  $500.00/day  [<span class="t-green">&#x2713; PASS</span>]  headroom: $368.00/day</span>
-          <span class="t-blank"></span>
-          <span class="t-line t-bright">  ACTION_BUDGET     <span class="t-green">&#x2713; PASS</span></span>
-          <span class="t-line t-bright">  FALLBACK_DECLARED <span class="t-green">&#x2713; PASS</span></span>
-          <span class="t-line t-bright">  IDENTITY_BOUNDARY <span class="t-green">&#x2713; PASS</span></span>
-          <span class="t-blank"></span>
-          <span class="t-line t-green t-bold">  FINAL VERDICT:  &#x2713;  APPROVED  exit 0</span>
-        </div></div>
-      </div>
-
-      <div class="demo-note">
-        <strong>Try it yourself:</strong>
-        <code>pip install release-gate</code> &nbsp;then&nbsp;
-        <code>release-gate score examples/governance-safe-pass.yaml</code>
-      </div>
-    </div>
-  </div>
-</section></div>
-
-<!-- ═══════════════════════ FEATURES ═══════════════════════ -->
-<div class="stack-card alt" style="z-index:4"><section id="features">
-  <div class="container">
-    <p class="section-eyebrow">Features</p>
-    <h2 class="section-title">From zero to gated deploy in 4 steps</h2>
-    <p class="section-subtitle">Audit any repo in 30 seconds. Score, eval, and gate before every deploy.</p>
-
-    <div class="feature-grid">
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-new">Start here</span>
-        <div class="feature-icon-wrap">&#x1F50E;</div>
-        <h3>Repo Audit &mdash; no config needed</h3>
-        <p>Run <code>release-gate audit https://github.com/org/repo</code> on any AI agent repo. Detects 11 agent frameworks, scores 7 deployment safeguards, returns PROMOTE / HOLD / BLOCK. Then <code>--emit-config</code> scaffolds a ready-to-commit <code>governance.yaml</code> from what it found.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-default">Core</span>
-        <div class="feature-icon-wrap">&#x1F4CA;</div>
-        <h3>Readiness Scorer &mdash; 0&ndash;100</h3>
-        <p>Six weighted dimensions (safety 30%, cost 20%, access control 20%, fallback 15%, eval quality 10%, observability 5%) collapse into one number and one decision: <strong>PROMOTE</strong>, <strong>HOLD</strong>, or <strong>BLOCK</strong>.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-default">Core</span>
-        <div class="feature-icon-wrap">&#x1F50D;</div>
-        <h3>Regression Gate</h3>
-        <p>Compare any two readiness report snapshots. Drops &gt;10 points in any dimension &mdash; especially safety, fallback, or access control &mdash; automatically BLOCK the release. Ship with a diff, not a guess.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-default">Core</span>
-        <div class="feature-icon-wrap">&#x1F9EA;</div>
-        <h3>Eval Runner</h3>
-        <p>Declare behavior test cases in YAML: <em>refuse_or_mask</em>, <em>contains_keywords</em>, <em>valid_json</em>, <em>no_tool_calls</em>. Runs in static mode (CI-safe, no LLM key needed) or live mode with any agent callable.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-default">Core</span>
-        <div class="feature-icon-wrap">&#x1F6E1;&#xFE0F;</div>
-        <h3>Trace Validator</h3>
-        <p>Feed your agent&rsquo;s execution trace (JSON or JSONL). Detects forbidden tool calls, allowed-list violations, retry storms, token budget overruns, and tool-call loops before they reach production.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-default">Core</span>
-        <div class="feature-icon-wrap">&#x1F4C4;</div>
-        <h3>Evidence Pack</h3>
-        <p>One command generates three audit artefacts: <code>readiness_report.json</code>, <code>executive_summary.md</code>, and <code>release-gate-evidence.html</code>. Attach to PRs, compliance tickets, or security reviews.</p>
-      </div>
-
-      <div class="feature-card fade-in" style="border-color: #ddd6fe;">
-        <span class="tag tag-phase2">Phase 2</span>
-        <div class="feature-icon-wrap" style="background:#f3e8ff;">&#x26A1;</div>
-        <h3>Live Agent Runtime</h3>
-        <p>Add <code>--agent py:module:fn</code>, <code>cmd:./script</code>, or an <code>https://</code> endpoint to run your eval suite <strong>live against the real agent</strong>. release-gate calls it, scores actual responses, and records per-call latency. A failing or unreachable agent is a failed eval. Stdlib-only, no SDK required.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-new">New</span>
-        <div class="feature-icon-wrap">&#x1F9E9;</div>
-        <h3>Model Intelligence Layer</h3>
-        <p>Stop hardcoding prices. A <code>model:</code> block declares pricing source: <strong>static</strong>, <strong>custom</strong>, <strong>locked snapshot</strong>, <strong>OpenRouter live</strong>, or <strong>LiteLLM</strong>. Unknown pricing with <code>on_unknown: hold</code> fails the check &mdash; never assumes $0.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-new">New</span>
-        <div class="feature-icon-wrap">&#x1F512;</div>
-        <h3>Pricing Lock</h3>
-        <p>Snapshot live prices into a tamper-evident <code>pricing.lock.json</code> (sha256-protected). CI scores offline, reproducibly. Stale snapshots (&gt; <code>max_age_days</code>) surface as WARN so prices never drift silently.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-v5">v0.5</span>
-        <div class="feature-icon-wrap" style="background:#eff6ff;">&#x1F4B8;</div>
-        <h3>Impact Simulator</h3>
-        <p>Normal vs. runaway cost side-by-side. Engineering leaders see the dollars at risk, not YAML warnings. The HTML report uploads as a CI artifact automatically.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-v5">v0.5</span>
-        <div class="feature-icon-wrap" style="background:#eff6ff;">&#x1F512;</div>
-        <h3>Cryptographic Sign &amp; Verify</h3>
-        <p>Sign <code>governance.yaml</code> with RSA-PSS + SHA-256. Verify in CI that no one changed budget limits or policies after review.</p>
-      </div>
-
-      <div class="feature-card fade-in">
-        <span class="tag tag-v5">v0.5</span>
-        <div class="feature-icon-wrap" style="background:#eff6ff;">&#x2699;&#xFE0F;</div>
-        <h3>GitHub Actions Native</h3>
-        <p>5 lines in your workflow. Exit code 0 = PROMOTE, 10 = HOLD, 1 = BLOCK. The HTML report is auto-uploaded as a CI artifact &mdash; your team reviews it without leaving GitHub.</p>
+      <!-- Enterprise -->
+      <div class="tier-card">
+        <div class="tier-name">Enterprise <span class="coming-badge">Coming soon</span></div>
+        <div class="tier-price">Custom</div>
+        <div class="tier-price-sub">contact us</div>
+        <ul class="tier-features">
+          <li>Everything in Pro</li>
+          <li>SSO / SAML</li>
+          <li>PDF evidence reports</li>
+          <li>Slack / PagerDuty alerts</li>
+          <li>On-call integration</li>
+          <li>SLA + support</li>
+        </ul>
+        <a href="mailto:vamsi.sudhakaran@gmail.com" class="tier-btn secondary">Contact us &rarr;</a>
       </div>
 
     </div>
   </div>
-</section></div>
-
-<!-- ═══════════════════════ CI SECTION ═══════════════════════ -->
-<div class="stack-card" style="z-index:5"><section id="ci">
-  <div class="container">
-    <p class="section-eyebrow">CI/CD Integration</p>
-    <h2 class="section-title">Gate every push automatically</h2>
-    <p class="section-subtitle">Works with GitHub Actions, GitLab CI, Jenkins, and any shell. All commands return structured exit codes.</p>
-
-    <div style="margin-top:44px; display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start;" class="ci-grid fade-in">
-      <div>
-        <div class="yaml-block">
-<span class="yaml-cmt"># .github/workflows/governance.yml</span>
-<span class="yaml-key">name</span>: <span class="yaml-str">AI Release Gate</span>
-<span class="yaml-key">on</span>: [push, pull_request]
-
-<span class="yaml-key">jobs</span>:
-  <span class="yaml-key">release-gate</span>:
-    <span class="yaml-key">runs-on</span>: <span class="yaml-str">ubuntu-latest</span>
-    <span class="yaml-key">steps</span>:
-      - <span class="yaml-key">uses</span>: <span class="yaml-str">actions/checkout@v4</span>
-
-      - <span class="yaml-key">name</span>: <span class="yaml-str">Score &amp; gate release</span>
-        <span class="yaml-key">uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.7.0</span>
-        <span class="yaml-key">with</span>:
-          <span class="yaml-key">command</span>: <span class="yaml-str">score</span>
-          <span class="yaml-key">config</span>: <span class="yaml-str">governance.yaml</span>
-          <span class="yaml-key">evals</span>: <span class="yaml-str">evals.yaml</span>
-          <span class="yaml-key">html-report</span>: <span class="yaml-str">evidence.html</span>
-          <span class="yaml-cmt"># evidence pack auto-uploaded as CI artifact</span>
-        </div>
-
-        <div class="command-grid">
-          <div class="command-card">
-            <code>release-gate demo</code>
-            <p>Interactive demo &mdash; no config needed</p>
-          </div>
-          <div class="command-card">
-            <code>release-gate score</code>
-            <p>0&ndash;100 score + PROMOTE/HOLD/BLOCK</p>
-          </div>
-          <div class="command-card">
-            <code>release-gate compare</code>
-            <p>Regression detection vs baseline</p>
-          </div>
-          <div class="command-card">
-            <code>release-gate evidence-pack</code>
-            <p>JSON + Markdown + HTML artefacts</p>
-          </div>
-          <div class="command-card phase2">
-            <code>score --agent &lt;spec&gt;</code>
-            <p>Run evals live against your real agent (py: / cmd: / https://)</p>
-          </div>
-          <div class="command-card">
-            <code>release-gate pricing-lock</code>
-            <p>Snapshot live model prices to lock file</p>
-          </div>
-          <div class="command-card">
-            <code>release-gate impact</code>
-            <p>Cost simulation &amp; runaway scenario</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="ci-cards">
-        <div class="ci-card">
-          <div class="ci-icon">&#x1F7E2;</div>
-          <h3>Exit codes your pipeline understands</h3>
-          <p><code>0</code> = PROMOTE / PASS &mdash; deploy it.<br>
-             <code>10</code> = HOLD / WARN &mdash; review before deploying.<br>
-             <code>1</code> = BLOCK / FAIL &mdash; do not deploy.</p>
-        </div>
-        <div class="ci-card">
-          <div class="ci-icon">&#x1F4CB;</div>
-          <h3>Evidence pack as CI artifact</h3>
-          <p>Every PR gets a readiness report, executive summary, and HTML dashboard &mdash; attached automatically so reviewers see the full picture without running anything locally.</p>
-        </div>
-        <div class="ci-card">
-          <div class="ci-icon">&#x1F504;</div>
-          <h3>Regression baseline in git</h3>
-          <p>Commit <code>readiness_report.json</code> as your baseline. Run <code>release-gate compare</code> on every PR to catch silent degradations in safety or fallback coverage.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section></div>
-
-<!-- ═══════════════════════ CHECKS TABLE ═══════════════════════ -->
-<div class="stack-card alt" style="z-index:6"><section id="checks">
-  <div class="container">
-    <p class="section-eyebrow">Governance checks</p>
-    <h2 class="section-title">5 checks + evals + traces. One decision.</h2>
-    <p class="section-subtitle">Each check maps to a real failure mode &mdash; cost explosion, no kill switch, open access, bad inputs, forbidden tool use.</p>
-
-    <table class="checks-table fade-in">
-      <thead>
-        <tr><th>Check / Layer</th><th>What it validates</th><th>Blocked when</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>ACTION_BUDGET</td>
-          <td>Estimated daily cost vs. declared budget cap</td>
-          <td>Cost exceeds <code>max_daily_cost</code> or no budget set</td>
-        </tr>
-        <tr>
-          <td>BUDGET_SIMULATION</td>
-          <td>Projected cost with retries, caching &amp; spike multipliers across 10+ models</td>
-          <td>Projected cost exceeds budget or multipliers are out of range</td>
-        </tr>
-        <tr>
-          <td>FALLBACK_DECLARED</td>
-          <td>Kill switch, fallback mode, team owner, runbook URL</td>
-          <td>Any field missing &mdash; no owner means no one gets paged at 3 AM</td>
-        </tr>
-        <tr>
-          <td>IDENTITY_BOUNDARY</td>
-          <td>Auth required, rate limit configured, data isolation rules</td>
-          <td>Auth is optional or rate limit absent &mdash; anyone can exhaust budget</td>
-        </tr>
-        <tr>
-          <td>INPUT_CONTRACT</td>
-          <td>JSON Schema defined, valid &amp; invalid sample payloads provided</td>
-          <td>Schema missing (FAIL) or no valid samples (WARN)</td>
-        </tr>
-        <tr>
-          <td>Evals (behavior)</td>
-          <td>refuse_or_mask, contains_keywords, valid_json, no_tool_calls &mdash; static (CI-safe) or <strong>live</strong> against a real agent via <code>--agent</code></td>
-          <td>Critical evals fail (safety category), or agent raises an error</td>
-        </tr>
-        <tr>
-          <td>Live Agent Runtime</td>
-          <td>Per-call latency (avg / p50 / p95 / max), error rate, optional token usage &mdash; captured when <code>--agent</code> is set</td>
-          <td>Unreachable or error-throwing agent counts as failed eval</td>
-        </tr>
-        <tr>
-          <td>Trace Validator</td>
-          <td>Forbidden tools, allowed-list violations, retry storms, token budget, tool loops</td>
-          <td>Any forbidden tool called or retry storm detected</td>
-        </tr>
-        <tr>
-          <td>Pricing Resolver</td>
-          <td>Model token pricing from static table, custom inline, lock file, OpenRouter, or LiteLLM</td>
-          <td>Pricing unknown &amp; <code>on_unknown: hold</code> &mdash; never silently assumes $0</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="install-strip fade-in">
-      <div>
-        <p><strong>Get started in 30 seconds</strong>
-          <code>pip install release-gate &amp;&amp; release-gate demo</code></p>
-        <p style="margin-top:8px;">Run evals live: <code>release-gate score governance.yaml --evals evals.yaml --agent py:my_pkg.agent:handle</code></p>
-      </div>
-      <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-white" target="_blank">View on GitHub &rarr;</a>
-    </div>
-  </div>
-</section></div>
+</section>
 
 <!-- ═══════════════════════ CTA ═══════════════════════ -->
-<div class="stack-card" style="z-index:7"><section class="cta-section fade-in">
+<section class="cta-section">
   <div class="container">
-    <h2>Your agent deserves a proper release gate.</h2>
-    <p>No dashboard, no sign-up, no backend. Just one command between your agent and production.</p>
-    <div class="pip-badge">pip install release-gate</div>
-    <br>
-    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
-      <a href="#demo" class="btn-primary">&#x25B6;&nbsp; See live output</a>
-      <a href="https://github.com/VamsiSudhakaran1/release-gate" class="btn-secondary" target="_blank">GitHub &rarr;</a>
+    <h2>Scan your repo now &mdash; takes 10 seconds</h2>
+    <p class="cta-sub">No sign-up required for the first scan.</p>
+    <div class="cta-scan-row">
+      <input type="url" id="cta-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
+      <button id="cta-run-btn" onclick="runCtaScan()">Scan &rarr;</button>
     </div>
   </div>
-</section></div>
+</section>
 
 <!-- ═══════════════════════ FOOTER ═══════════════════════ -->
 <footer>
   <div class="container">
-    <div class="footer-inner">
-      <div class="footer-brand">
-        <div class="logo">&#x1F6AA; release-gate</div>
-        <p>The CI/CD release decision engine for AI agents. Score, compare, validate traces, and generate evidence &mdash; before shipping.</p>
-      </div>
-      <div class="footer-col">
-        <h4>Commands</h4>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate demo</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate score</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate compare</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate evidence-pack</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate pricing-lock</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">release-gate impact</a>
-      </div>
-      <div class="footer-col">
-        <h4>Product</h4>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank">GitHub</a>
-        <a href="https://pypi.org/project/release-gate/" target="_blank">PyPI</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate/releases" target="_blank">Releases</a>
-      </div>
-      <div class="footer-col">
-        <h4>Resources</h4>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate#readme" target="_blank">Documentation</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/CHANGELOG.md" target="_blank">Changelog</a>
-        <a href="https://github.com/VamsiSudhakaran1/release-gate/issues" target="_blank">Report an Issue</a>
+    <div class="footer-row">
+      <div class="footer-logo">&#x1F6AA; release-gate</div>
+      <div class="footer-links">
+        <a href="#cli-section">CLI docs</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a>
         <a href="mailto:vamsi.sudhakaran@gmail.com">Email</a>
       </div>
     </div>
@@ -1636,39 +846,17 @@
     <div id="dash-trend-wrap"></div>
   </div>
   <div style="margin-top:8px">
-    <button class="btn-primary" onclick="showPlayground()">&#x25B6;&nbsp; Run new audit</button>
+    <button class="btn-primary" onclick="showMainContent()">&#x25B6;&nbsp; Run new audit</button>
   </div>
 </div>
 
 <script>
-  // ── Tab switching ──
-  function switchTab(name, btn) {
-    ['score','liveagent','compare','traces','impact'].forEach(function(id) {
-      document.getElementById('tab-' + id).style.display = 'none';
-    });
-    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-    document.getElementById('tab-' + name).style.display = 'block';
-    btn.classList.add('active');
-  }
-
-  // ── Fade-in on scroll ──
-  var observer = new IntersectionObserver(function(entries) {
-    entries.forEach(function(entry) {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
-        observer.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.08 });
-
-  document.querySelectorAll('.fade-in').forEach(function(el) {
-    observer.observe(el);
+  // ── Nav shadow on scroll ──
+  window.addEventListener('scroll', function() {
+    document.getElementById('site-header').classList.toggle('scrolled', window.scrollY > 10);
   });
-</script>
 
-<script>
-  // TODO: update to production URL
-  // Use relative URLs so the API works on any deployment (Vercel, local, etc.)
+  // ── API base ──
   var API_BASE = '';
 
   var SAFEGUARD_LABELS = {
@@ -1708,7 +896,7 @@
     },
     kill_switch: {
       why: 'A documented way to disable or fall back the agent instantly without a code deploy.',
-      risk: 'If the agent misbehaves in prod, you need a &lt;5 min recovery path — not a 45-min deploy.',
+      risk: 'If the agent misbehaves in prod, you need a <5 min recovery path — not a 45-min deploy.',
       fix: 'Add <code>kill_switch: {type: feature-flag, name: disable_agent}</code> in governance.yaml.',
       weight: '15 pts'
     },
@@ -1734,6 +922,10 @@
   function setToken(t) { localStorage.setItem('rg_token', t); }
   function clearToken() { localStorage.removeItem('rg_token'); }
 
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
   function updateNav(user) {
     var area = document.getElementById('nav-auth-area');
     if (user) {
@@ -1744,10 +936,6 @@
     } else {
       area.innerHTML = '<button class="nav-btn primary" onclick="openAuthModal(\'signup\')">Sign up free</button>';
     }
-  }
-
-  function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
   async function checkAuth() {
@@ -1837,36 +1025,32 @@
     }
   }
 
-  // close modal on backdrop click
   document.getElementById('auth-modal').addEventListener('click', function(e) {
     if (e.target === this) closeAuthModal();
   });
 
   // ── Page switching ──
+  var _mainSections = null;
+
+  function getMainSections() {
+    if (!_mainSections) {
+      _mainSections = document.querySelectorAll('section, footer');
+    }
+    return _mainSections;
+  }
+
   function showMainContent() {
+    getMainSections().forEach(function(el) { el.style.display = ''; });
     document.getElementById('dashboard-page').classList.remove('active');
-    document.querySelector('section.hero') && (document.querySelector('section.hero').style.display = '');
-    // show all stack-cards and stats
-    document.querySelectorAll('.stack-card, .stats-section, section.hero, .hero').forEach(function(el) {
-      el.style.display = '';
-    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function showDashboard() {
-    document.querySelectorAll('.stack-card, .stats-section').forEach(function(el) {
-      el.style.display = 'none';
-    });
-    var hero = document.querySelector('section.hero');
-    if (hero) hero.style.display = 'none';
-    var footer = document.querySelector('footer');
+    getMainSections().forEach(function(el) { el.style.display = 'none'; });
     document.getElementById('dashboard-page').classList.add('active');
     document.getElementById('dash-email').textContent = _currentUser ? _currentUser.email : '';
     loadDashboard();
-  }
-
-  function showPlayground() {
-    showMainContent();
-    document.getElementById('playground').scrollIntoView({ behavior: 'smooth' });
+    window.scrollTo({ top: 0 });
   }
 
   // ── Dashboard data ──
@@ -1908,12 +1092,10 @@
       html += '</tbody></table>';
       wrap.innerHTML = html;
 
-      // sparklines
       var trendWrap = document.getElementById('dash-trend-wrap');
       var trendHtml = '';
       Object.keys(trendMap).forEach(function(repo) {
         var scores = trendMap[repo];
-        var max = Math.max.apply(null, scores.concat([1]));
         trendHtml += '<div style="margin-bottom:18px"><div style="font-size:.8rem;font-weight:700;color:var(--heading);margin-bottom:6px">' + escHtml(repo) + '</div>';
         trendHtml += '<div class="dash-sparkline">';
         scores.forEach(function(s) {
@@ -1931,11 +1113,10 @@
 
   // ── Playground audit ──
   function getMockReport(url) {
-    // Realistic demo report shown when backend is not yet reachable
     var isKnownSafe = url.includes('litellm') || url.includes('gpt-researcher');
     return {
       score: isKnownSafe ? 60 : 42,
-      decision: isKnownSafe ? 'HOLD' : 'HOLD',
+      decision: 'HOLD',
       agent_detected: true,
       frameworks: { 'OpenAI / Agents SDK': 4, 'LangChain': 12 },
       safeguards: {
@@ -1977,7 +1158,6 @@
         ),
         body: JSON.stringify({ url: url })
       });
-      // If the backend isn't deployed yet, Vercel returns an HTML 404 page
       var contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         renderPlaygroundResults(getMockReport(url), url);
@@ -1987,10 +1167,8 @@
       if (!res.ok) {
         throw new Error((data && data.detail) ? data.detail : 'Audit failed (HTTP ' + res.status + ')');
       }
-      // API returns { report: {...}, plan: "..." }
       renderPlaygroundResults(data.report || data, url);
     } catch(err) {
-      // If backend not yet deployed, fall back to demo result
       if (err.name === 'TypeError' || err.name === 'SyntaxError') {
         renderPlaygroundResults(getMockReport(url), url);
       } else {
@@ -2001,6 +1179,16 @@
       btn.disabled = false;
       spinner.classList.remove('active');
     }
+  }
+
+  // CTA section scan — fills hero input and scrolls up to show results
+  function runCtaScan() {
+    var ctaInput = document.getElementById('cta-url-input');
+    var url = ctaInput.value.trim();
+    if (!url) { ctaInput.focus(); return; }
+    document.getElementById('pg-url-input').value = url;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(function() { runPlaygroundAudit(); }, 400);
   }
 
   function renderPlaygroundResults(data, repoUrl) {
@@ -2022,7 +1210,6 @@
 
     var checklist = document.getElementById('pg-checklist');
     var safeguards = data.safeguards || {};
-    var isLoggedIn = !!getToken();
     var html = '';
 
     Object.keys(SAFEGUARD_LABELS).forEach(function(key) {
@@ -2089,6 +1276,10 @@
           ? '<a href="#" onclick="openAuthModal(\'signup\');return false">Sign up free</a> to see ' + lockedCount + ' more checks.'
           : 'All visible safeguards passed.';
     }
+
+    // Show anon CTA only if not logged in
+    var anonCta = document.getElementById('pg-anon-cta');
+    if (anonCta) anonCta.style.display = getToken() ? 'none' : 'block';
 
     document.getElementById('playground-results').style.display = 'block';
   }
