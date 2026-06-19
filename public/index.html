@@ -1885,6 +1885,12 @@
         ),
         body: JSON.stringify({ url: url })
       });
+      // If the backend isn't deployed yet, Vercel returns an HTML 404 page
+      var contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        renderPlaygroundResults(getMockReport(url), url);
+        return;
+      }
       var data = await res.json();
       if (!res.ok) {
         throw new Error((data && data.detail) ? data.detail : 'Audit failed (HTTP ' + res.status + ')');
@@ -1892,8 +1898,8 @@
       // API returns { report: {...}, plan: "..." }
       renderPlaygroundResults(data.report || data, url);
     } catch(err) {
-      // If backend not yet deployed, show a realistic demo result
-      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+      // If backend not yet deployed, fall back to demo result
+      if (err.name === 'TypeError' || err.name === 'SyntaxError') {
         renderPlaygroundResults(getMockReport(url), url);
       } else {
         errEl.textContent = err.message || 'Unknown error.';
