@@ -322,7 +322,13 @@ def _is_github_url(target: str) -> bool:
 
 
 def clone_and_audit(url: str) -> Dict[str, Any]:
-    """Clone a remote git repo to a temp dir, audit it, clean up."""
+    """Audit a GitHub repo — uses GitHub API first (serverless-friendly), falls back to git clone."""
+    if "github.com" in url:
+        try:
+            return _github_api_audit(url)
+        except Exception:
+            pass  # fall through to git clone
+
     if not shutil.which("git"):
         raise RuntimeError(
             "git is required for remote audits but was not found on PATH.\n"
@@ -342,6 +348,110 @@ def clone_and_audit(url: str) -> Dict[str, Any]:
         return report
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _github_api_audit(url: str) -> Dict[str, Any]:
+    """Audit a GitHub repo using the public GitHub API — no git required, works on serverless."""
+    import json as _json
+    import urllib.request
+
+    # Parse owner/repo from URL
+    parts = url.rstrip("/").replace("https://github.com/", "").replace("http://github.com/", "").split("/")
+    if len(parts) < 2:
+        raise ValueError(f"Cannot parse GitHub owner/repo from: {url}")
+    owner, repo = parts[0], parts[1]
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "release-gate/0.7"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def gh_get(path: str):
+        req = urllib.request.Request(f"https://api.github.com{path}", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"GitHub API {path} → HTTP {e.code}") from e
+
+    # Get default branch
+    repo_meta = gh_get(f"/repos/{owner}/{repo}")
+    default_branch = repo_meta.get("default_branch", "main")
+
+    # Get full file tree (recursive)
+    tree_data = gh_get(f"/repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1")
+    tree = tree_data.get("tree", [])
+
+    # Build in-memory view of the repo for pattern scanning
+    file_paths = [item["path"] for item in tree if item["type"] == "blob"]
+
+    # Fetch key files content (governance, ci, requirements, selected source)
+    def fetch_file(path: str) -> str:
+        try:
+            data = gh_get(f"/repos/{owner}/{repo}/contents/{path}?ref={default_branch}")
+            import base64
+            return base64.b64decode(data.get("content", "")).decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    # Detect frameworks from file names + fetched source snippets
+    frameworks: Dict[str, int] = {}
+    source_files = [p for p in file_paths if p.endswith((".py", ".ts", ".js", ".tsx", ".jsx")) and not p.startswith(".")][:50]
+    combined_source = ""
+    for fp in source_files:
+        combined_source += fetch_file(fp) + "\n"
+
+    for fw, signals in FRAMEWORK_SIGNALS.items():
+        hits = sum(1 for s in signals if s.lower() in combined_source.lower())
+        if hits:
+            frameworks[fw] = hits
+
+    # Governance file
+    gov_path = next((p for p in file_paths if Path(p).name in ("governance.yaml", "governance.yml")), None)
+    gov_content = fetch_file(gov_path) if gov_path else ""
+
+    # CI
+    has_ci = any(p.startswith(".github/workflows") for p in file_paths)
+
+    # Evals
+    has_evals = any(Path(p).name in ("evals.yaml", "evals.yml") or "test" in p.lower() for p in file_paths)
+
+    # Requirements / package files for budget/kill-switch/auth signals
+    req_content = ""
+    for req_file in ("requirements.txt", "package.json", "pyproject.toml", "setup.py"):
+        if req_file in file_paths:
+            req_content += fetch_file(req_file) + "\n"
+
+    all_text = combined_source + gov_content + req_content
+
+    # Safeguard detection (mirrors detect_safeguards logic)
+    safeguards = {
+        "governance_file":  bool(gov_content),
+        "eval_evidence":    has_evals,
+        "trace_policy":     any(kw in all_text.lower() for kw in ("trace", "tool_policy", "trace_policy", "langsmith", "opentelemetry")),
+        "budget_ceiling":   any(kw in all_text.lower() for kw in ("max_cost", "budget", "spending_limit", "cost_limit", "max_tokens_per")),
+        "kill_switch":      any(kw in all_text.lower() for kw in ("kill_switch", "fallback", "disable_", "feature_flag", "circuit_breaker")),
+        "team_owner":       any(kw in all_text.lower() for kw in ("team_owner", "on_call", "oncall", "owner:", "maintainer")),
+        "auth_rate_limit":  any(kw in all_text.lower() for kw in ("rate_limit", "ratelimit", "api_key", "auth", "bearer", "jwt", "oauth")),
+    }
+
+    score, decision = compute_score(safeguards)
+    detected_model = detect_model(Path("."))  # best effort — skip for API audit
+
+    return {
+        "path": url,
+        "agent_detected": bool(frameworks),
+        "frameworks": frameworks,
+        "safeguards": safeguards,
+        "score": score,
+        "decision": decision,
+        "governance_file": gov_path,
+        "ci_detected": has_ci,
+        "detected_model": None,
+        "checks": [],
+        "next_steps": [],
+        "source": "github-api",
+    }
 
 
 # ─────────────────────────── Report builder ─────────────────────────────────
