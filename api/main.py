@@ -32,6 +32,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GitHub App webhook router
+from api.github_app import router as github_router
+app.include_router(github_router)
+
 
 @app.on_event("startup")
 def startup():
