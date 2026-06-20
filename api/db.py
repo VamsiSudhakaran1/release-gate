@@ -96,6 +96,15 @@ def init_db():
             )""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repo_url)")
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS usage (
+                user_id     TEXT NOT NULL,
+                month       TEXT NOT NULL,
+                scan_count  INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, month)
+            )""")
+            cur.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS version TEXT")
+            cur.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS prev_score INTEGER")
         else:
             cur.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -112,9 +121,25 @@ def init_db():
                 token TEXT PRIMARY KEY, user_id TEXT NOT NULL,
                 label TEXT, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS usage (
+                user_id TEXT NOT NULL,
+                month TEXT NOT NULL,
+                scan_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, month)
+            );
             CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id);
             CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repo_url);
             """)
+            # SQLite: add columns if they don't exist yet (ignore errors if already present)
+            for col_sql in [
+                "ALTER TABLE runs ADD COLUMN version TEXT",
+                "ALTER TABLE runs ADD COLUMN prev_score INTEGER",
+            ]:
+                try:
+                    cur.execute(col_sql)
+                    db.commit()
+                except Exception:
+                    pass
 
 
 # ── Users ──────────────────────────────────────────────────────────────────
@@ -216,7 +241,7 @@ def get_repo_history(user_id: str, repo_url: str) -> List[Dict]:
             import psycopg2.extras
             cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            f"SELECT id, score, decision, created_at FROM runs "
+            f"SELECT id, score, decision, version, created_at FROM runs "
             f"WHERE user_id={ph} AND repo_url={ph} ORDER BY created_at ASC",
             (user_id, repo_url),
         )
@@ -252,3 +277,93 @@ def get_user_by_token(token: str) -> Optional[Dict]:
         )
         row = cur.fetchone()
     return _row_to_dict(row) if row else None
+
+
+# ── Usage tracking ──────────────────────────────────────────────────────────
+
+def _current_month() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def increment_usage(user_id: str) -> int:
+    """Increment this month's scan count, return new total."""
+    ph = _ph()
+    month = _current_month()
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            cur.execute(
+                f"INSERT INTO usage (user_id, month, scan_count) VALUES ({ph},{ph},1) "
+                f"ON CONFLICT (user_id, month) DO UPDATE SET scan_count = usage.scan_count + 1 "
+                f"RETURNING scan_count",
+                (user_id, month),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 1
+        else:
+            cur.execute(
+                f"INSERT INTO usage (user_id, month, scan_count) VALUES ({ph},{ph},1) "
+                f"ON CONFLICT (user_id, month) DO UPDATE SET scan_count = scan_count + 1",
+                (user_id, month),
+            )
+            cur.execute(
+                f"SELECT scan_count FROM usage WHERE user_id={ph} AND month={ph}",
+                (user_id, month),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 1
+
+
+def get_usage(user_id: str) -> int:
+    """Get this month's scan count."""
+    ph = _ph()
+    month = _current_month()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(
+            f"SELECT scan_count FROM usage WHERE user_id={ph} AND month={ph}",
+            (user_id, month),
+        )
+        row = cur.fetchone()
+    return row[0] if row else 0
+
+
+def get_dashboard_stats(user_id: str) -> Dict:
+    """Return aggregated dashboard stats for a user."""
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            import psycopg2.extras
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute(
+            f"SELECT score, decision, repo_url, created_at FROM runs "
+            f"WHERE user_id={ph} ORDER BY created_at ASC",
+            (user_id,),
+        )
+        rows = [_row_to_dict(r) for r in cur.fetchall()]
+
+    total_runs = len(rows)
+    repos_tracked = len(set(r["repo_url"] for r in rows))
+    scores = [r["score"] for r in rows if r.get("score") is not None]
+    avg_score = round(sum(scores) / len(scores)) if scores else None
+    best_score = max(scores) if scores else None
+    latest_decision = rows[-1]["decision"] if rows else None
+
+    # Score improvement: latest minus first
+    score_improvement = None
+    if len(scores) >= 2:
+        score_improvement = scores[-1] - scores[0]
+
+    this_month_scans = get_usage(user_id)
+
+    return {
+        "total_runs": total_runs,
+        "repos_tracked": repos_tracked,
+        "avg_score": avg_score,
+        "best_score": best_score,
+        "latest_decision": latest_decision,
+        "this_month_scans": this_month_scans,
+        "score_improvement": score_improvement,
+    }

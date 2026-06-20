@@ -825,52 +825,77 @@
   <div class="container">
     <div class="section-header">
       <h2 class="section-title">Built for teams, not just individuals</h2>
-      <p class="section-subtitle">The CLI is free forever. The platform adds the coordination layer your team needs.</p>
+      <p class="section-subtitle">The CLI is always 100% free and unlimited. The platform adds what CLI can&rsquo;t: persistence, team visibility, and compliance trail.</p>
     </div>
 
     <div class="tier-grid">
 
-      <!-- Free -->
-      <div class="tier-card">
-        <div class="tier-name">Free (CLI)</div>
+      <!-- Visitor (no account) -->
+      <div class="tier-card" style="opacity:.7">
+        <div class="tier-name" style="color:var(--muted,#888)">Visitor</div>
         <div class="tier-price">$0</div>
-        <div class="tier-price-sub">forever</div>
+        <div class="tier-price-sub">no account needed</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">3 playground scans/day</div>
         <ul class="tier-features">
-          <li>Unlimited local audits</li>
-          <li>Full safeguard detail</li>
-          <li>emit-config scaffold</li>
-          <li>GitHub Actions integration</li>
+          <li>Score &amp; decision</li>
+          <li>2 safeguards visible</li>
+          <li>No history</li>
+          <li>Partial results only</li>
         </ul>
-        <code class="pip-snippet">pip install release-gate</code>
+        <span class="tier-btn secondary" style="opacity:.5;cursor:default;pointer-events:none">No sign-up needed</span>
+      </div>
+
+      <!-- Starter -->
+      <div class="tier-card">
+        <div class="tier-name">Starter</div>
+        <div class="tier-price">$0</div>
+        <div class="tier-price-sub">free account</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">10 scans/month</div>
+        <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> History &amp; full results in the browser.</p>
+        <ul class="tier-features">
+          <li>Full safeguard detail</li>
+          <li>Last 5 runs history</li>
+          <li>1 repo tracked</li>
+          <li>Dashboard access</li>
+        </ul>
+        <a href="#" onclick="openAuthModal('signup');return false;" class="tier-btn secondary">Sign up free &rarr;</a>
       </div>
 
       <!-- Pro -->
       <div class="tier-card featured">
-        <div class="tier-name">Pro <span class="coming-badge">Coming soon</span></div>
+        <div class="tier-name">Pro</div>
         <div class="tier-price">$29</div>
         <div class="tier-price-sub">per month</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Unlimited scans</div>
+        <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> Score trends, team API tokens, email alerts when score drops.</p>
         <ul class="tier-features">
-          <li>Everything in Free</li>
-          <li>Dashboard with release history</li>
-          <li>Score trend charts</li>
+          <li>Everything in Starter</li>
+          <li>50 runs history</li>
+          <li>5 repos tracked</li>
           <li>API tokens for CI</li>
-          <li>Team sharing</li>
+          <li>Badge embed</li>
+          <li>Score trend charts</li>
+          <li>Email alerts</li>
         </ul>
         <a href="#" onclick="openAuthModal('signup');return false;" class="tier-btn secondary">Join waitlist &rarr;</a>
       </div>
 
       <!-- Enterprise -->
       <div class="tier-card">
-        <div class="tier-name">Enterprise <span class="coming-badge">Coming soon</span></div>
-        <div class="tier-price">Custom</div>
-        <div class="tier-price-sub">contact us</div>
+        <div class="tier-name">Enterprise</div>
+        <div class="tier-price">$199</div>
+        <div class="tier-price-sub">per month</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Unlimited scans &amp; repos</div>
+        <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> Org-wide governance policy, compliance audit trail, SSO.</p>
         <ul class="tier-features">
           <li>Everything in Pro</li>
+          <li>Unlimited repos &amp; members</li>
+          <li>Org policy (min score)</li>
+          <li>PDF compliance reports</li>
           <li>SSO / SAML</li>
-          <li>PDF evidence reports</li>
-          <li>Slack / PagerDuty alerts</li>
-          <li>On-call integration</li>
-          <li>SLA + support</li>
+          <li>Slack alerts</li>
+          <li>Audit trail</li>
+          <li>GitHub App org-wide</li>
         </ul>
         <a href="mailto:vamsi.sudhakaran@gmail.com" class="tier-btn secondary">Contact us &rarr;</a>
       </div>
@@ -1117,7 +1142,11 @@
         msgEl.className = 'auth-msg error';
       }
     } catch(err) {
-      msgEl.textContent = 'Network error — is the API running?';
+      if (err.name === 'TypeError' || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+        msgEl.innerHTML = 'Our server is warming up. Your account will be ready shortly — try again in 30 seconds. <button onclick="submitAuth(event)" style="margin-left:6px;padding:2px 10px;cursor:pointer;border:1px solid currentColor;border-radius:4px;background:transparent;color:inherit;font-size:.85rem">Retry</button>';
+      } else {
+        msgEl.textContent = err.message;
+      }
       msgEl.className = 'auth-msg error';
     } finally {
       btn.disabled = false;
@@ -1163,19 +1192,46 @@
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var data = await res.json();
-      var runs = data.runs || [];
+
+      // Stats row
+      var statsHtml = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
+      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
+        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.total_runs != null ? data.total_runs : '—') + '</div>' +
+        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">Total scans</div></div>';
+      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
+        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.repos_tracked != null ? data.repos_tracked : '—') + '</div>' +
+        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">Repos tracked</div></div>';
+      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
+        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.avg_score != null ? data.avg_score : '—') + '</div>' +
+        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">Avg score</div></div>';
+      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
+        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.this_month_scans != null ? data.this_month_scans : '—') + '</div>' +
+        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">This month</div></div>';
+      statsHtml += '</div>';
+
+      // Score improvement highlight
+      if (data.score_improvement != null) {
+        var imp = data.score_improvement;
+        var impColor = imp >= 0 ? '#4ade80' : '#f87171';
+        var impArrow = imp >= 0 ? '↑' : '↓';
+        statsHtml += '<div style="margin-bottom:18px;padding:10px 16px;border-radius:8px;border:1px solid ' + impColor + '30;background:' + impColor + '10;color:' + impColor + ';font-size:.9rem;font-weight:600">' +
+          impArrow + ' ' + (imp >= 0 ? '+' : '') + imp + ' pts since first scan' +
+          '</div>';
+      }
+
+      var runs = data.recent_runs || [];
       if (!runs.length) {
-        wrap.innerHTML = '<p class="dash-empty">No runs yet. Try the playground!</p>';
+        wrap.innerHTML = statsHtml + '<p class="dash-empty">No runs yet. Try the playground!</p>';
         return;
       }
-      var html = '<table class="dash-table"><thead><tr>' +
+      var html = statsHtml + '<table class="dash-table"><thead><tr>' +
         '<th>Repo</th><th>Score</th><th>Decision</th><th>Date</th><th></th>' +
         '</tr></thead><tbody>';
       var trendMap = {};
       runs.forEach(function(r) {
         var dec = (r.decision || '').toLowerCase();
         var badgeClass = dec === 'promote' ? 'promote' : dec === 'hold' ? 'hold' : 'block';
-        var dateStr = r.date ? new Date(r.date).toLocaleDateString() : '—';
+        var dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString() : (r.date ? new Date(r.date).toLocaleDateString() : '—');
         var repoShort = (r.repo_url || '').replace('https://github.com/', '');
         html += '<tr>' +
           '<td title="' + escHtml(r.repo_url || '') + '">' + escHtml(repoShort) + '</td>' +
