@@ -251,6 +251,10 @@
     .pg-cta-row a:hover { opacity: .88; text-decoration: none; }
 
     /* ── SECTION HEADERS ── */
+    .section-eyebrow {
+      font-size: .75rem; font-weight: 700; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--accent); margin-bottom: 10px;
+    }
     .section-title {
       font-size: clamp(1.6rem, 3vw, 2.25rem);
       font-weight: 900; color: var(--heading);
@@ -284,6 +288,39 @@
 
     /* ── CLI SECTION ── */
     #cli-section { background: var(--surface); }
+
+    /* ── WHO IT'S FOR ── */
+    #who-its-for { background: var(--bg); }
+    .personas-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-top: 48px;
+    }
+    .persona-card {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 28px 24px;
+      border: 1px solid var(--border);
+      box-shadow: var(--card-shadow);
+      transition: box-shadow .2s, transform .2s;
+    }
+    .persona-card:hover {
+      box-shadow: 0 8px 32px rgba(99,102,241,.13);
+      transform: translateY(-2px);
+    }
+    .persona-icon { font-size: 2rem; margin-bottom: 14px; }
+    .persona-title { font-size: 1rem; font-weight: 700; color: var(--heading); margin-bottom: 6px; }
+    .persona-role  { font-size: .78rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 12px; }
+    .persona-desc  { font-size: .875rem; color: var(--text); line-height: 1.65; }
+    .persona-benefit {
+      margin-top: 14px; padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: .8rem; color: #15803d; font-weight: 600;
+    }
+    .persona-benefit::before { content: "✓ "; }
+    @media (max-width: 900px) { .personas-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 600px) { .personas-grid { grid-template-columns: 1fr; } }
     .cli-grid {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px;
     }
@@ -566,6 +603,7 @@
   <nav>
     <a class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;" href="#">&#x1F6AA; release-gate</a>
     <ul class="nav-links">
+      <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
       <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a></li>
     </ul>
@@ -662,6 +700,67 @@
         <div class="check-card-icon">&#x1F510;</div>
         <h3>Auth &amp; rate limiting</h3>
         <p>Unprotected endpoint = denial-of-wallet attack in minutes.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ WHO IT'S FOR ═══════════════════════ -->
+<section id="who-its-for">
+  <div class="container">
+    <p class="section-eyebrow">Who it's for</p>
+    <h2 class="section-title">Built for every team shipping AI into production</h2>
+    <p class="section-subtitle">Whether you're a solo engineer or a platform team governing dozens of agents — release-gate fits into how you already work.</p>
+
+    <div class="personas-grid">
+
+      <div class="persona-card">
+        <div class="persona-icon">🤖</div>
+        <div class="persona-role">AI / ML Engineers</div>
+        <div class="persona-title">Teams shipping AI agents</div>
+        <div class="persona-desc">You built a LangChain, CrewAI, or Agents SDK app and you're about to push it to prod. release-gate checks that budget ceilings, fallback logic, and eval evidence are actually in place — not just planned.</div>
+        <div class="persona-benefit">Catch missing safeguards before your manager does</div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-icon">💬</div>
+        <div class="persona-role">Product & Platform Teams</div>
+        <div class="persona-title">LLM-powered apps &amp; copilots</div>
+        <div class="persona-desc">Your app calls GPT-4 or Claude on every user request. One bad prompt, one rate-limit gap, or one missing kill switch and you're dealing with a public incident. release-gate makes the checklist automatic.</div>
+        <div class="persona-benefit">Ship with confidence, not crossed fingers</div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-icon">🔧</div>
+        <div class="persona-role">Backend Engineers</div>
+        <div class="persona-title">Tool-calling &amp; agentic systems</div>
+        <div class="persona-desc">Your agent reads files, calls APIs, writes to databases. Without a declared tool policy and rate limits, one loop bug costs you real money and real data. release-gate surfaces those gaps before deploy.</div>
+        <div class="persona-benefit">Know which tools are allowed before they're abused</div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-icon">🏢</div>
+        <div class="persona-role">Enterprise &amp; Security Teams</div>
+        <div class="persona-title">Internal copilots &amp; assistants</div>
+        <div class="persona-desc">You're deploying an internal AI assistant to thousands of employees. Legal wants an audit trail. Security wants auth enforced. release-gate gives you a machine-readable evidence pack for every release.</div>
+        <div class="persona-benefit">Audit trail ready for compliance review</div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-icon">⚙️</div>
+        <div class="persona-role">Infrastructure &amp; MLOps</div>
+        <div class="persona-title">Self-hosted &amp; open-weight models</div>
+        <div class="persona-desc">You're running Llama, Mistral, or a fine-tuned model on your own infra. No managed guardrails, no built-in cost control. release-gate checks that you've declared your own — because nobody else will.</div>
+        <div class="persona-benefit">Governance that works without a cloud provider</div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-icon">📊</div>
+        <div class="persona-role">Data Science &amp; Analytics</div>
+        <div class="persona-title">Prediction &amp; scoring models</div>
+        <div class="persona-desc">Your model scores loan applications, flags fraud, or ranks candidates. release-gate checks for eval evidence and team ownership — the two things regulators ask about first when something goes wrong.</div>
+        <div class="persona-benefit">Evidence pack ready before the auditor asks</div>
       </div>
 
     </div>
