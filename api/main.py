@@ -21,9 +21,19 @@ from api.db import (
     create_user, get_run, get_runs_for_user, get_repo_history,
     get_user_by_email, get_user_by_id, get_user_by_token,
     init_db, save_run, create_api_token,
+    increment_usage, get_usage, get_dashboard_stats,
 )
 
 app = FastAPI(title="release-gate API", version="0.7.0")
+
+# ── Plan limits ────────────────────────────────────────────────────────────
+PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999}
+
+# Anonymous IP-based rate limiting (in-memory, resets hourly)
+import time as _time
+_anon_counters: Dict[str, Dict] = {}  # ip -> {"count": int, "window_start": float}
+_ANON_LIMIT = 3
+_ANON_WINDOW = 3600  # 1 hour in seconds
 
 app.add_middleware(
     CORSMiddleware,
@@ -118,25 +128,61 @@ def _redact_for_free(report: Dict) -> Dict:
 
 
 @app.post("/api/audit")
-async def audit_public(body: AuditRequest, authorization: Optional[str] = Header(default=None)):
+async def audit_public(body: AuditRequest, request: Request, authorization: Optional[str] = Header(default=None)):
     """
     Run audit on any public GitHub repo or local path.
-    - Unauthenticated: partial results (score + decision + 2 safeguards)
-    - Authenticated (any plan): full results + stored in history
+    - Unauthenticated: partial results, IP-limited 3/hour
+    - Starter (free): full results, 10/month limit
+    - Pro/Enterprise: unlimited
     """
     url = body.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
+
+    user = _current_user(authorization)
+
+    if user:
+        plan = user.get("plan", "free")
+        limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+        if limit < 999999:
+            current_usage = get_usage(user["id"])
+            if current_usage >= limit:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "limit_reached": True,
+                        "upgrade_url": "/pricing",
+                        "detail": f"Monthly scan limit of {limit} reached. Upgrade for unlimited scans.",
+                    },
+                )
+    else:
+        # Anonymous: IP-based rate limiting
+        ip = request.client.host if request.client else "unknown"
+        now = _time.time()
+        entry = _anon_counters.get(ip)
+        if entry and (now - entry["window_start"]) < _ANON_WINDOW:
+            if entry["count"] >= _ANON_LIMIT:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "limit_reached": True,
+                        "upgrade_url": "/pricing",
+                        "detail": f"Anonymous scan limit of {_ANON_LIMIT}/hour reached. Sign up free for more.",
+                    },
+                )
+            entry["count"] += 1
+        else:
+            _anon_counters[ip] = {"count": 1, "window_start": now}
 
     try:
         report = _run_audit(url)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    user = _current_user(authorization)
     run_id = None
 
     if user:
+        increment_usage(user["id"])
         run_id = save_run(url, report, user_id=user["id"])
         return {"run_id": run_id, "report": report, "plan": user["plan"]}
     else:
@@ -202,9 +248,12 @@ async def me(authorization: Optional[str] = Header(default=None)):
 @app.get("/api/dashboard")
 async def dashboard(authorization: Optional[str] = Header(default=None)):
     user = _require_user(authorization)
-    runs = get_runs_for_user(user["id"])
+    plan = user.get("plan", "free")
+    history_limit = 5 if plan == "free" else 50 if plan == "pro" else 1000
+    runs = get_runs_for_user(user["id"], limit=history_limit)
+    stats = get_dashboard_stats(user["id"])
 
-    # Aggregate: unique repos, avg score, decision distribution
+    # Aggregate: unique repos, decision distribution
     repos = {}
     for r in runs:
         repo = r["repo_url"]
@@ -222,7 +271,7 @@ async def dashboard(authorization: Optional[str] = Header(default=None)):
         decisions[d] = decisions.get(d, 0) + 1
 
     return {
-        "total_runs": len(runs),
+        **stats,
         "repos": list(repos.values()),
         "decision_distribution": decisions,
         "recent_runs": runs[:10],
@@ -231,6 +280,14 @@ async def dashboard(authorization: Optional[str] = Header(default=None)):
 
 @app.get("/api/dashboard/repo")
 async def repo_history(repo_url: str, authorization: Optional[str] = Header(default=None)):
+    user = _require_user(authorization)
+    history = get_repo_history(user["id"], repo_url)
+    return {"repo_url": repo_url, "history": history}
+
+
+@app.get("/api/dashboard/repo-history")
+async def repo_history_alias(repo_url: str, authorization: Optional[str] = Header(default=None)):
+    """Returns all runs for a repo with score, decision, version, created_at — for score trend sparkline."""
     user = _require_user(authorization)
     history = get_repo_history(user["id"], repo_url)
     return {"repo_url": repo_url, "history": history}
