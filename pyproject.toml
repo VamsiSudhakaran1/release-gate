@@ -20,10 +20,23 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 requires-python = ">=3.10"
+# Vercel's Python runtime resolves dependencies from pyproject.toml, so the
+# FastAPI backend's deps must live here (not only in requirements.txt) or the
+# serverless function crashes on import with FUNCTION_INVOCATION_FAILED.
 dependencies = [
+    # Core CLI
     "pyyaml>=6.0",
     "jsonschema>=4.0",
 	"cryptography>=41.0.0",
+    # Web / SaaS backend
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt==4.0.1",
+    "httpx>=0.27.0",
+    "psycopg2-binary>=2.9.9",
+    "PyJWT>=2.8.0",
 ]
 
 [project.optional-dependencies]
