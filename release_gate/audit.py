@@ -321,12 +321,24 @@ def _is_github_url(target: str) -> bool:
                               "http://gitlab.com"))
 
 
-def clone_and_audit(url: str) -> Dict[str, Any]:
-    """Audit a GitHub repo — uses GitHub API first (serverless-friendly), falls back to git clone."""
+class PrivateRepoError(RuntimeError):
+    """Raised when a repo can't be accessed (private or non-existent) with the
+    current credentials. The web layer catches this to retry with a GitHub App
+    installation token, or to prompt the user to install the App."""
+
+
+def clone_and_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
+    """Audit a GitHub repo — uses GitHub API first (serverless-friendly), falls back to git clone.
+
+    ``token`` is an optional GitHub access token (e.g. an App installation
+    token) used to read private repos.
+    """
     api_error: Optional[Exception] = None
     if "github.com" in url:
         try:
-            return _github_api_audit(url)
+            return _github_api_audit(url, token=token)
+        except PrivateRepoError:
+            raise  # let the caller decide whether to retry with credentials
         except Exception as exc:
             api_error = exc  # remember the real reason before trying git
 
@@ -355,13 +367,16 @@ def clone_and_audit(url: str) -> Dict[str, Any]:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _github_api_audit(url: str) -> Dict[str, Any]:
+def _github_api_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
     """Audit a GitHub repo with no git binary required (serverless-friendly).
 
     Downloads the repository tarball in a single request and runs the full
     local audit on the extracted files. Using the tarball (1-2 API calls)
     instead of fetching files individually (50+ calls) keeps us well under
     GitHub's unauthenticated rate limit of 60 requests/hour per IP.
+
+    ``token`` is an optional access token (App installation token or PAT) for
+    reading private repos.
     """
     import io
     import tarfile
@@ -379,8 +394,9 @@ def _github_api_audit(url: str) -> Dict[str, Any]:
         raise ValueError(f"Cannot parse GitHub owner/repo from: {url}")
     owner, repo = parts[0], parts[1]
 
-    # Authentication: prefer a PAT for higher limits, else unauthenticated.
-    token = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", "")
+    # Authentication: explicit token (App installation / caller) wins, else a
+    # server PAT for higher limits, else unauthenticated public access.
+    token = token or os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", "")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "release-gate/0.7"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -402,8 +418,10 @@ def _github_api_audit(url: str) -> Dict[str, Any]:
                 "GitHub API rate limit reached. Set a GITHUB_TOKEN env var "
                 "(a personal access token) for higher limits."
             ) from e
-        if e.code == 404:
-            raise RuntimeError(f"Repo not found or private: {owner}/{repo}") from e
+        if e.code in (404, 403, 401):
+            # Private or non-existent for the current credentials. Distinct
+            # error so the web layer can retry with an App installation token.
+            raise PrivateRepoError(f"{owner}/{repo}") from e
         raise RuntimeError(f"GitHub API {tarball_url} → HTTP {e.code} {detail}".strip()) from e
 
     # Extract the tarball into a temp dir and run the full local audit on it.

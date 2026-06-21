@@ -1320,7 +1320,16 @@
       }
       var data = await res.json();
       if (!res.ok) {
-        throw new Error((data && data.detail) ? data.detail : 'Audit failed (HTTP ' + res.status + ')');
+        var detail = data && data.detail;
+        // Private repo: prompt to install the GitHub App
+        if (detail && typeof detail === 'object' && detail.private_repo) {
+          errEl.innerHTML = (detail.message || 'This repo is private.') +
+            ' <a href="' + detail.install_url + '" target="_blank" rel="noopener" ' +
+            'style="color:#6366f1;font-weight:600;text-decoration:underline;">Install release-gate-ai →</a>';
+          errEl.classList.add('active');
+          return;
+        }
+        throw new Error((detail && typeof detail === 'string') ? detail : 'Audit failed (HTTP ' + res.status + ')');
       }
       renderPlaygroundResults(data.report || data, url);
     } catch(err) {
