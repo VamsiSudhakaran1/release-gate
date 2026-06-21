@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "release_gate_api/main.py": {
+      "includeFiles": "public/**"
+    }
+  }
+}
