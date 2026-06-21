@@ -66,6 +66,34 @@ def _installation_token(installation_id: int) -> str:
         return json.loads(resp.read())["token"]
 
 
+def installation_token_for_repo(owner: str, repo: str) -> Optional[str]:
+    """Return an installation access token for owner/repo if the App is
+    installed there, else None.
+
+    Used to score private repos: the user installs release-gate-ai on the
+    repo (granting read access), and we mint a short-lived token scoped to
+    exactly that installation. Returns None if the App isn't configured or
+    isn't installed on the repo, so callers can fall back to public access.
+    """
+    if not (APP_ID and PRIVATE_KEY_RAW):
+        return None
+    try:
+        jwt_token = _make_jwt()
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/installation",
+            headers={
+                "Authorization": f"Bearer {jwt_token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "release-gate-app",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            installation_id = json.loads(resp.read())["id"]
+        return _installation_token(installation_id)
+    except Exception:
+        return None
+
+
 # ── GitHub API helpers ─────────────────────────────────────────────────────
 
 def _gh(method: str, path: str, token: str, body: Optional[Dict] = None) -> Dict:

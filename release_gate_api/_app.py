@@ -100,14 +100,48 @@ class AuditRequest(BaseModel):
     url: str
 
 
+def _parse_owner_repo(url: str):
+    parts = (
+        url.rstrip("/").replace(".git", "")
+        .replace("https://github.com/", "").replace("http://github.com/", "")
+        .split("/")
+    )
+    return (parts[0], parts[1]) if len(parts) >= 2 else (None, None)
+
+
 def _run_audit(url: str) -> Dict[str, Any]:
-    """Run release-gate audit and return the raw report dict."""
+    """Run release-gate audit and return the raw report dict.
+
+    For private repos, retry with a GitHub App installation token if the
+    release-gate-ai App is installed on the target repo.
+    """
     from release_gate.audit import (
         _is_github_url, clone_and_audit, build_report,
-        badge_url, badge_markdown,
+        badge_url, badge_markdown, PrivateRepoError,
     )
     if _is_github_url(url):
-        report = clone_and_audit(url)
+        try:
+            report = clone_and_audit(url)
+        except PrivateRepoError:
+            # Repo is private (or doesn't exist). Try an App installation token.
+            owner, repo = _parse_owner_repo(url)
+            token = None
+            if owner and repo:
+                from release_gate_api.github_app import installation_token_for_repo
+                token = installation_token_for_repo(owner, repo)
+            if not token:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "private_repo": True,
+                        "install_url": "https://github.com/apps/release-gate-ai/installations/new",
+                        "message": (
+                            "This repo is private or not found. Install the "
+                            "release-gate-ai GitHub App on it to enable scanning."
+                        ),
+                    },
+                )
+            report = clone_and_audit(url, token=token)
     else:
         from pathlib import Path
         report = build_report(Path(url))
@@ -187,6 +221,8 @@ async def audit_public(body: AuditRequest, request: Request, authorization: Opti
 
     try:
         report = _run_audit(url)
+    except HTTPException:
+        raise  # already a structured error (e.g. private-repo prompt)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
