@@ -323,13 +323,18 @@ def _is_github_url(target: str) -> bool:
 
 def clone_and_audit(url: str) -> Dict[str, Any]:
     """Audit a GitHub repo — uses GitHub API first (serverless-friendly), falls back to git clone."""
+    api_error: Optional[Exception] = None
     if "github.com" in url:
         try:
             return _github_api_audit(url)
-        except Exception:
-            pass  # fall through to git clone
+        except Exception as exc:
+            api_error = exc  # remember the real reason before trying git
 
     if not shutil.which("git"):
+        # Serverless / no-git environment: surface the actual GitHub API error
+        # instead of a misleading "install git" message.
+        if api_error is not None:
+            raise RuntimeError(f"Could not audit repo: {api_error}") from api_error
         raise RuntimeError(
             "git is required for remote audits but was not found on PATH.\n"
             "Install git: https://git-scm.com/downloads"
@@ -351,107 +356,75 @@ def clone_and_audit(url: str) -> Dict[str, Any]:
 
 
 def _github_api_audit(url: str) -> Dict[str, Any]:
-    """Audit a GitHub repo using the public GitHub API — no git required, works on serverless."""
-    import json as _json
+    """Audit a GitHub repo with no git binary required (serverless-friendly).
+
+    Downloads the repository tarball in a single request and runs the full
+    local audit on the extracted files. Using the tarball (1-2 API calls)
+    instead of fetching files individually (50+ calls) keeps us well under
+    GitHub's unauthenticated rate limit of 60 requests/hour per IP.
+    """
+    import io
+    import tarfile
     import urllib.request
+    import urllib.error
 
     # Parse owner/repo from URL
-    parts = url.rstrip("/").replace("https://github.com/", "").replace("http://github.com/", "").split("/")
+    parts = (
+        url.rstrip("/").replace(".git", "")
+        .replace("https://github.com/", "")
+        .replace("http://github.com/", "")
+        .split("/")
+    )
     if len(parts) < 2:
         raise ValueError(f"Cannot parse GitHub owner/repo from: {url}")
     owner, repo = parts[0], parts[1]
 
-    token = os.environ.get("GITHUB_TOKEN", "")
+    # Authentication: prefer a PAT for higher limits, else unauthenticated.
+    token = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_TOKEN", "")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "release-gate/0.7"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    def gh_get(path: str):
-        req = urllib.request.Request(f"https://api.github.com{path}", headers=headers)
+    tarball_url = f"https://api.github.com/repos/{owner}/{repo}/tarball"
+    req = urllib.request.Request(tarball_url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        detail = ""
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                return _json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(f"GitHub API {path} → HTTP {e.code}") from e
-
-    # Get default branch
-    repo_meta = gh_get(f"/repos/{owner}/{repo}")
-    default_branch = repo_meta.get("default_branch", "main")
-
-    # Get full file tree (recursive)
-    tree_data = gh_get(f"/repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1")
-    tree = tree_data.get("tree", [])
-
-    # Build in-memory view of the repo for pattern scanning
-    file_paths = [item["path"] for item in tree if item["type"] == "blob"]
-
-    # Fetch key files content (governance, ci, requirements, selected source)
-    def fetch_file(path: str) -> str:
-        try:
-            data = gh_get(f"/repos/{owner}/{repo}/contents/{path}?ref={default_branch}")
-            import base64
-            return base64.b64decode(data.get("content", "")).decode("utf-8", errors="ignore")
+            import json as _json
+            detail = _json.loads(e.read()).get("message", "")
         except Exception:
-            return ""
+            pass
+        if e.code in (403, 429) and "rate limit" in detail.lower():
+            raise RuntimeError(
+                "GitHub API rate limit reached. Set a GITHUB_TOKEN env var "
+                "(a personal access token) for higher limits."
+            ) from e
+        if e.code == 404:
+            raise RuntimeError(f"Repo not found or private: {owner}/{repo}") from e
+        raise RuntimeError(f"GitHub API {tarball_url} → HTTP {e.code} {detail}".strip()) from e
 
-    # Detect frameworks from file names + fetched source snippets
-    frameworks: Dict[str, int] = {}
-    source_files = [p for p in file_paths if p.endswith((".py", ".ts", ".js", ".tsx", ".jsx")) and not p.startswith(".")][:50]
-    combined_source = ""
-    for fp in source_files:
-        combined_source += fetch_file(fp) + "\n"
-
-    for fw, signals in FRAMEWORK_SIGNALS.items():
-        hits = sum(1 for s in signals if s.lower() in combined_source.lower())
-        if hits:
-            frameworks[fw] = hits
-
-    # Governance file
-    gov_path = next((p for p in file_paths if Path(p).name in ("governance.yaml", "governance.yml")), None)
-    gov_content = fetch_file(gov_path) if gov_path else ""
-
-    # CI
-    has_ci = any(p.startswith(".github/workflows") for p in file_paths)
-
-    # Evals
-    has_evals = any(Path(p).name in ("evals.yaml", "evals.yml") or "test" in p.lower() for p in file_paths)
-
-    # Requirements / package files for budget/kill-switch/auth signals
-    req_content = ""
-    for req_file in ("requirements.txt", "package.json", "pyproject.toml", "setup.py"):
-        if req_file in file_paths:
-            req_content += fetch_file(req_file) + "\n"
-
-    all_text = combined_source + gov_content + req_content
-
-    # Safeguard detection (mirrors detect_safeguards logic)
-    safeguards = {
-        "governance_file":  bool(gov_content),
-        "eval_evidence":    has_evals,
-        "trace_policy":     any(kw in all_text.lower() for kw in ("trace", "tool_policy", "trace_policy", "langsmith", "opentelemetry")),
-        "budget_ceiling":   any(kw in all_text.lower() for kw in ("max_cost", "budget", "spending_limit", "cost_limit", "max_tokens_per")),
-        "kill_switch":      any(kw in all_text.lower() for kw in ("kill_switch", "fallback", "disable_", "feature_flag", "circuit_breaker")),
-        "team_owner":       any(kw in all_text.lower() for kw in ("team_owner", "on_call", "oncall", "owner:", "maintainer")),
-        "auth_rate_limit":  any(kw in all_text.lower() for kw in ("rate_limit", "ratelimit", "api_key", "auth", "bearer", "jwt", "oauth")),
-    }
-
-    score, decision = compute_score(safeguards)
-    detected_model = detect_model(Path("."))  # best effort — skip for API audit
-
-    return {
-        "path": url,
-        "agent_detected": bool(frameworks),
-        "frameworks": frameworks,
-        "safeguards": safeguards,
-        "score": score,
-        "decision": decision,
-        "governance_file": gov_path,
-        "ci_detected": has_ci,
-        "detected_model": None,
-        "checks": [],
-        "next_steps": [],
-        "source": "github-api",
-    }
+    # Extract the tarball into a temp dir and run the full local audit on it.
+    tmpdir = tempfile.mkdtemp(prefix="rg-tarball-")
+    try:
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+            # Guard against path traversal in archive members
+            safe_members = [
+                m for m in tf.getmembers()
+                if not (m.name.startswith("/") or ".." in Path(m.name).parts)
+            ]
+            tf.extractall(tmpdir, members=safe_members)
+        # GitHub tarballs wrap everything in a single top-level dir
+        entries = [p for p in Path(tmpdir).iterdir() if p.is_dir()]
+        repo_root = entries[0] if entries else Path(tmpdir)
+        report = build_report(repo_root)
+        report["path"] = url
+        report["source"] = "github-tarball"
+        return report
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ─────────────────────────── Report builder ─────────────────────────────────
