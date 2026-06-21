@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 # Ensure release_gate package is importable
@@ -324,18 +324,28 @@ async def health():
 
 # ── Static frontend ──────────────────────────────────────────────────────────
 # This FastAPI app is the single Vercel entrypoint, so it must also serve the
-# static site. API routes are registered above and take precedence; anything
-# else falls through to index.html.
+# site. The HTML is embedded as a Python module (release_gate_api/_frontend.py)
+# so it bundles with the serverless function — files under public/ are not
+# traced/bundled with a pyproject entrypoint. Local dev reads the live file so
+# edits show up without regenerating; production falls back to the embedded copy.
 
 _PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
 _INDEX_HTML = _PUBLIC_DIR / "index.html"
 
 
+def _index_html() -> str:
+    try:
+        if _INDEX_HTML.exists():
+            return _INDEX_HTML.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    from release_gate_api._frontend import INDEX_HTML
+    return INDEX_HTML
+
+
 @app.get("/")
 async def _serve_index():
-    if _INDEX_HTML.exists():
-        return FileResponse(str(_INDEX_HTML))
-    return JSONResponse({"status": "ok", "version": "0.7.0"})
+    return HTMLResponse(_index_html())
 
 
 @app.get("/{full_path:path}")
@@ -344,12 +354,10 @@ async def _serve_spa(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found")
     candidate = (_PUBLIC_DIR / full_path).resolve()
-    # Serve an existing static asset if it's safely inside public/
+    # Serve an existing static asset if it's safely inside public/ (local dev)
     if candidate.is_file() and str(candidate).startswith(str(_PUBLIC_DIR)):
         return FileResponse(str(candidate))
-    if _INDEX_HTML.exists():
-        return FileResponse(str(_INDEX_HTML))
-    raise HTTPException(status_code=404, detail="Not found")
+    return HTMLResponse(_index_html())
 
 
 # Initialise the DB schema at import time. Vercel's ASGI bridge does not always
