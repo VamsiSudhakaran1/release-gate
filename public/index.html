@@ -152,6 +152,12 @@
     }
     .pg-error.active { display: block; }
 
+    .hero-scan-hint {
+      margin-top: 12px; font-size: .8rem; color: #94a3b8; text-align: center;
+    }
+    .hero-scan-hint a { color: #6366f1; font-weight: 600; text-decoration: none; }
+    .hero-scan-hint a:hover { text-decoration: underline; }
+
     #playground-results {
       display: none;
       background: #fff; border-radius: 18px;
@@ -624,6 +630,11 @@
       <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
       <button id="pg-run-btn" onclick="runPlaygroundAudit()">Scan repo &rarr;</button>
     </div>
+    <p class="hero-scan-hint">
+      🔒 Scanning a private repo?
+      <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
+      to grant read access — public repos work without it.
+    </p>
 
     <div class="pg-wrap">
       <div class="pg-spinner" id="pg-spinner">
