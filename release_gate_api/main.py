@@ -8,8 +8,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
+from fastapi.responses import JSONResponse, FileResponse
+from pydantic import BaseModel
 
 # Ensure release_gate package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -49,7 +49,18 @@ app.include_router(github_router)
 
 @app.on_event("startup")
 def startup():
-    init_db()
+    try:
+        init_db()
+    except Exception as exc:  # don't let a DB hiccup crash the whole function
+        print(f"[startup] init_db failed: {exc}", file=sys.stderr)
+
+
+# Ensure the schema exists even if the startup hook didn't run (serverless cold start)
+def _ensure_db():
+    try:
+        init_db()
+    except Exception as exc:
+        print(f"[ensure_db] init_db failed: {exc}", file=sys.stderr)
 
 
 # ── Auth helpers ───────────────────────────────────────────────────────────
@@ -309,3 +320,39 @@ async def create_token(authorization: Optional[str] = Header(default=None)):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "0.7.0"}
+
+
+# ── Static frontend ──────────────────────────────────────────────────────────
+# This FastAPI app is the single Vercel entrypoint, so it must also serve the
+# static site. API routes are registered above and take precedence; anything
+# else falls through to index.html.
+
+_PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
+_INDEX_HTML = _PUBLIC_DIR / "index.html"
+
+
+@app.get("/")
+async def _serve_index():
+    if _INDEX_HTML.exists():
+        return FileResponse(str(_INDEX_HTML))
+    return JSONResponse({"status": "ok", "version": "0.7.0"})
+
+
+@app.get("/{full_path:path}")
+async def _serve_spa(full_path: str):
+    # Never let the SPA fallback swallow API routes
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    candidate = (_PUBLIC_DIR / full_path).resolve()
+    # Serve an existing static asset if it's safely inside public/
+    if candidate.is_file() and str(candidate).startswith(str(_PUBLIC_DIR)):
+        return FileResponse(str(candidate))
+    if _INDEX_HTML.exists():
+        return FileResponse(str(_INDEX_HTML))
+    raise HTTPException(status_code=404, detail="Not found")
+
+
+# Initialise the DB schema at import time. Vercel's ASGI bridge does not always
+# fire FastAPI startup/lifespan events, so relying on the startup hook alone
+# leaves tables missing and crashes the first request.
+_ensure_db()
