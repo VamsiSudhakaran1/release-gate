@@ -47,5 +47,3 @@ packages = ["release_gate", "release_gate.checks", "release_gate.pricing", "rele
 [tool.setuptools.package-data]
 release_gate = ["*.yaml", "*.json"]
 
-[tool.vercel]
-entrypoint = "release_gate_api.main:app"
