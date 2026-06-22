@@ -42,8 +42,19 @@ FRAMEWORK_SIGNALS: Dict[str, List[str]] = {
 }
 
 PYTHON_EXTENSIONS = {".py"}
+JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs"}
 MAX_FILES = 2000
 MAX_FILE_BYTES = 200_000
+
+JS_FRAMEWORK_SIGNALS: Dict[str, List[str]] = {
+    "OpenAI / Agents SDK": ["from 'openai'", 'from "openai"', "require('openai')", 'require("openai")', "@openai/agents"],
+    "Anthropic / Claude":  ["from '@anthropic-ai", 'from "@anthropic-ai', "require('@anthropic-ai"],
+    "LangChain.js":        ["from 'langchain'", 'from "@langchain', "langchain/"],
+    "LangGraph.js":        ["from '@langchain/langgraph'", "langgraph"],
+    "Vercel AI SDK":       ["from 'ai'", 'from "ai"', "@ai-sdk/"],
+    "Mastra":              ["from '@mastra'", 'from "mastra"', "@mastra/core"],
+    "Google Generative AI":["@google/generative-ai", "google-generativeai"],
+}
 
 
 # ─────────────────────────── Safeguard checklist ────────────────────────────
@@ -147,6 +158,23 @@ def _iter_source_files(root: Path):
                 yield fpath
 
 
+def _iter_all_source_files(root: Path):
+    """Yield Python and JS/TS source files under root, capped at MAX_FILES."""
+    count = 0
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", ".env",
+                 "dist", "build", "site-packages", ".tox"}
+    all_extensions = PYTHON_EXTENSIONS | JS_EXTENSIONS
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            if Path(fname).suffix in all_extensions:
+                fpath = Path(dirpath) / fname
+                count += 1
+                if count > MAX_FILES:
+                    return
+                yield fpath
+
+
 def _read_snippet(path: Path) -> str:
     try:
         return path.read_bytes()[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
@@ -157,11 +185,28 @@ def _read_snippet(path: Path) -> str:
 def detect_frameworks(root: Path) -> Dict[str, int]:
     """Return {framework_name: file_count} for every detected framework."""
     hits: Dict[str, int] = {}
+    # Python frameworks: scan .py files
     for fpath in _iter_source_files(root):
         content = _read_snippet(fpath).lower()
         for framework, signals in FRAMEWORK_SIGNALS.items():
             if any(sig.lower() in content for sig in signals):
                 hits[framework] = hits.get(framework, 0) + 1
+    # JS/TS frameworks: scan .ts/.tsx/.js/.jsx/.mjs files
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", ".env",
+                 "dist", "build", "site-packages", ".tox"}
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            if Path(fname).suffix in JS_EXTENSIONS:
+                fpath = Path(dirpath) / fname
+                count += 1
+                if count > MAX_FILES:
+                    break
+                content = _read_snippet(fpath)
+                for framework, signals in JS_FRAMEWORK_SIGNALS.items():
+                    if any(sig in content for sig in signals):
+                        hits[framework] = hits.get(framework, 0) + 1
     return hits
 
 

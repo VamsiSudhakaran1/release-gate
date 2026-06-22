@@ -462,7 +462,10 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
             except OSError:
                 continue
             rel = str(fpath.relative_to(root))
-            findings.extend(_scan_file(rel, text))
+            if any(fname.endswith(ext) for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs")):
+                findings.extend(_scan_js_file(rel, text))
+            else:
+                findings.extend(_scan_file(rel, text))
     # De-dup identical (file, line, title)
     seen = set()
     unique = []
@@ -553,6 +556,111 @@ def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "medium", "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
                 "Template literal with ${} inside a system-role message is a "
                 "prompt-injection vector. Keep user-controlled data in user-role messages.",
+            ))
+
+    return findings
+
+
+_JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs"}
+
+# Patterns for JS/TS-specific scanning
+_JS_UNBOUNDED_LOOP_RE = re.compile(
+    r"\b(?:while|for)\b", re.IGNORECASE
+)
+_JS_LLM_SINK_RE = re.compile(
+    r"(?:streamText|generateText|chat\.completions|messages\.create|\.invoke\s*\(|\.stream\s*\()"
+)
+_JS_GENERATE_CALL_RE = re.compile(
+    r"(?:generateText|streamText|chat\.completions\.create|messages\.create)\s*\("
+)
+_JS_MAX_TOKENS_NEARBY_RE = re.compile(r"(?:maxTokens|max_tokens)")
+_JS_TEMPLATE_INJECTION_RE = re.compile(
+    r"`[^`]*\$\{(?:req|params|body)\.[^}]+\}[^`]*`"
+)
+_JS_MESSAGES_CONTEXT_RE = re.compile(
+    r"(?:messages\s*[=:]\s*\[|systemPrompt\s*[=:])"
+)
+_JS_SECRET_RE = re.compile(
+    r"sk-[A-Za-z0-9]{20,}"
+    r"|ANTHROPIC_API_KEY\s*=\s*[\"'][a-zA-Z0-9]{20,}[\"']"
+)
+_JS_EXEC_SINK_RE = re.compile(
+    r"\beval\s*\("
+    r"|new\s+Function\s*\("
+    r"|child_process"
+    r"|execSync\s*\("
+    r"|spawnSync\s*\("
+)
+
+
+def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
+    """Detect AI-specific risks in JS/TS source files."""
+    findings: List[Dict[str, Any]] = []
+    lines = text.splitlines()
+
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        # Skip comment lines
+        if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
+            continue
+
+        # Hardcoded API key
+        if _JS_SECRET_RE.search(line):
+            findings.append(_finding(
+                "high", "Hardcoded secret / API key", rel, i, "<redacted>",
+                "Move secrets to environment variables or a secrets manager — never commit them.",
+            ))
+
+        # exec/eval sink
+        if _JS_EXEC_SINK_RE.search(line):
+            findings.append(_finding(
+                "high", "Dangerous execution sink", rel, i, stripped[:120],
+                "eval/new Function/child_process/execSync near LLM output is a remote-code-execution risk. "
+                "Remove it or strictly validate inputs before passing to these sinks.",
+            ))
+
+        # Unbounded LLM loop: while/for loop containing LLM call within a nearby window
+        if _JS_UNBOUNDED_LOOP_RE.match(stripped):
+            window = "\n".join(lines[i - 1:i + 8])
+            if _JS_LLM_SINK_RE.search(window):
+                findings.append(_finding(
+                    "high", "Unbounded loop around an LLM call", rel, i, stripped[:120],
+                    "A loop wrapping an LLM call with no iteration cap can spin forever, "
+                    "burning tokens and budget. Add a max-iterations ceiling.",
+                ))
+
+    # Missing max tokens: generateText/streamText/etc. without maxTokens nearby
+    for m in _JS_GENERATE_CALL_RE.finditer(text):
+        start = m.start()
+        line_no = text.count("\n", 0, start) + 1
+        # Check 5 lines after the call
+        line_end = start
+        newlines_found = 0
+        while line_end < len(text) and newlines_found < 5:
+            if text[line_end] == "\n":
+                newlines_found += 1
+            line_end += 1
+        window = text[start:line_end]
+        if not _JS_MAX_TOKENS_NEARBY_RE.search(window):
+            snippet = text[start:text.find("\n", start) if text.find("\n", start) != -1 else start + 80].strip()
+            findings.append(_finding(
+                "medium", "LLM call with no token ceiling", rel, line_no, snippet[:120],
+                "No maxTokens on this call — a single response can run away on length and cost. "
+                "Set an explicit maxTokens.",
+            ))
+
+    # Prompt injection risk: template literal with req./params./body. near messages array or systemPrompt
+    for m in _JS_TEMPLATE_INJECTION_RE.finditer(text):
+        start = m.start()
+        line_no = text.count("\n", 0, start) + 1
+        context_window = text[max(0, start - 300):start + 300]
+        if _JS_MESSAGES_CONTEXT_RE.search(context_window):
+            line_text = lines[line_no - 1].strip() if line_no - 1 < len(lines) else ""
+            findings.append(_finding(
+                "high", "Prompt injection risk (template literal with user input)", rel, line_no, line_text[:120],
+                "Template literal interpolating request parameters (req., params., body.) inside a messages "
+                "array or systemPrompt is a prompt-injection vector. Sanitize or keep untrusted input "
+                "in user-role messages only.",
             ))
 
     return findings
