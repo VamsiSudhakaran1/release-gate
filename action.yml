@@ -55,6 +55,8 @@ inputs:
 outputs:
   decision:
     description: "PROMOTE/HOLD/BLOCK (score) or PASS/WARN/FAIL (run, impact)"
+  audit-score:
+    description: "Readiness score 0-100 from the audit command"
   daily-cost:
     description: "Estimated daily cost in USD (from Impact Simulator)"
   runaway-cost:
