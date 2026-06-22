@@ -101,6 +101,26 @@ SAFEGUARDS = [
 ]
 
 
+# ─────────────────────────── Compliance mapping ─────────────────────────────
+
+COMPLIANCE_TAGS: Dict[str, List[str]] = {
+    # Safeguard ids
+    "governance_file":  ["NIST-AI-RMF:GOVERN-1.1", "EU-AI-Act:Art.9", "OWASP-LLM:LLM09"],
+    "budget_ceiling":   ["OWASP-LLM:LLM10", "NIST-AI-RMF:MANAGE-2.2", "EU-AI-Act:Art.9"],
+    "kill_switch":      ["NIST-AI-RMF:MANAGE-4.1", "EU-AI-Act:Art.14", "OWASP-LLM:LLM08"],
+    "team_owner":       ["NIST-AI-RMF:GOVERN-6.1", "EU-AI-Act:Art.17"],
+    "auth_rate_limit":  ["OWASP-LLM:LLM01", "NIST-AI-RMF:MANAGE-1.3"],
+    "eval_evidence":    ["NIST-AI-RMF:MEASURE-2.5", "EU-AI-Act:Art.9", "OWASP-LLM:LLM09"],
+    "trace_policy":     ["NIST-AI-RMF:MEASURE-1.1", "EU-AI-Act:Art.12"],
+    # Code finding type keys
+    "unbounded_llm_loop":    ["OWASP-LLM:LLM10", "NIST-AI-RMF:MANAGE-2.2"],
+    "exec_sink":             ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"],
+    "hardcoded_secret":      ["OWASP-LLM:LLM07"],
+    "missing_max_tokens":    ["OWASP-LLM:LLM10"],
+    "prompt_injection_risk": ["OWASP-LLM:LLM01"],
+}
+
+
 # ─────────────────────────── File scanner ───────────────────────────────────
 
 def _iter_source_files(root: Path):
@@ -471,7 +491,12 @@ def build_report(root: Path) -> Dict[str, Any]:
 
     # Tier 3: AI-specific static analysis of the code.
     from release_gate.verify import scan_code_findings
-    code_findings = scan_code_findings(root) if agent_detected else []
+    raw_findings = scan_code_findings(root) if agent_detected else []
+    # Enrich findings with compliance tags
+    code_findings = [
+        {**f, "compliance_tags": COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), [])}
+        for f in raw_findings
+    ]
 
     score, decision = compute_score(present, code_findings)
     has_ci = _has_github_actions_integration(root)
@@ -482,7 +507,8 @@ def build_report(root: Path) -> Dict[str, Any]:
         return {**s,
                 "present": bool(r.get("present")),
                 "evidence": r.get("evidence", ""),
-                "issues": r.get("issues", [])}
+                "issues": r.get("issues", []),
+                "compliance_tags": COMPLIANCE_TAGS.get(s["id"], [])}
 
     missing = [_enriched(s) for s in SAFEGUARDS if not present.get(s["id"], False)]
     passing = [_enriched(s) for s in SAFEGUARDS if present.get(s["id"], False)]
@@ -495,6 +521,7 @@ def build_report(root: Path) -> Dict[str, Any]:
             "status": r.get("status"),
             "evidence": r.get("evidence", ""),
             "issues": r.get("issues", []),
+            "compliance_tags": COMPLIANCE_TAGS.get(sid, []),
         }
         for sid, r in verify_results.items()
     }
@@ -525,6 +552,45 @@ def build_report(root: Path) -> Dict[str, Any]:
         "score":              score,
         "decision":           decision,
         "real_checks":        real_check_results,
+    }
+
+
+# ─────────────────────────── Baseline / diff-aware mode ─────────────────────
+
+def compare_to_baseline(current: Dict[str, Any],
+                        baseline: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare current audit report to a baseline; return a diff summary.
+
+    Returns a dict with:
+      new_code_findings, resolved_code_findings,
+      new_safeguard_failures, resolved_safeguards
+    """
+    def _finding_key(f: Dict[str, Any]) -> tuple:
+        return (f.get("title", ""), f.get("file", ""), f.get("line", 0))
+
+    baseline_keys = {_finding_key(f) for f in (baseline.get("code_findings") or [])}
+    current_keys  = {_finding_key(f) for f in (current.get("code_findings") or [])}
+
+    new_findings = [f for f in (current.get("code_findings") or [])
+                    if _finding_key(f) not in baseline_keys]
+    resolved_findings = [f for f in (baseline.get("code_findings") or [])
+                         if _finding_key(f) not in current_keys]
+
+    baseline_missing = {s.get("id") for s in (baseline.get("missing") or [])}
+    current_missing  = {s.get("id") for s in (current.get("missing") or [])}
+
+    # Safeguards that are newly failing (were passing in baseline)
+    new_sg_failures = [s for s in (current.get("missing") or [])
+                       if s.get("id") not in baseline_missing]
+    # Safeguards that were failing in baseline but now pass
+    resolved_sgs = [s for s in (baseline.get("missing") or [])
+                    if s.get("id") not in current_missing]
+
+    return {
+        "new_code_findings":       new_findings,
+        "resolved_code_findings":  resolved_findings,
+        "new_safeguard_failures":  new_sg_failures,
+        "resolved_safeguards":     resolved_sgs,
     }
 
 
@@ -753,6 +819,135 @@ def emit_evals(report: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ─────────────────────────── SARIF output ───────────────────────────────────
+
+def _slugify(title: str) -> str:
+    """Turn a finding title into a safe rule id, e.g. 'rg/unbounded-llm-loop'."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return f"rg/{slug}"
+
+
+def emit_sarif(report: Dict[str, Any], path: str) -> None:
+    """Write a SARIF 2.1.0 file to *path* representing the findings in *report*."""
+
+    # Build unique rules from code findings + missing safeguards
+    rules: List[Dict[str, Any]] = []
+    rule_ids_seen: Dict[str, int] = {}  # rule_id -> index in rules list
+
+    def _get_or_add_rule(rule_id: str, name: str, short_desc: str,
+                         help_text: str, tags: List[str],
+                         severity_score: str = "5.0") -> None:
+        if rule_id not in rule_ids_seen:
+            rule_ids_seen[rule_id] = len(rules)
+            rules.append({
+                "id": rule_id,
+                "name": _to_pascal(name),
+                "shortDescription": {"text": short_desc},
+                "help": {"text": help_text},
+                "properties": {
+                    "tags": tags,
+                    "security-severity": severity_score,
+                },
+            })
+
+    def _to_pascal(s: str) -> str:
+        return "".join(w.capitalize() for w in re.split(r"[\s\-_/]+", s))
+
+    results: List[Dict[str, Any]] = []
+
+    # Code findings → results
+    sev_map = {"high": "error", "medium": "warning", "low": "note"}
+    sev_score = {"high": "8.0", "medium": "5.0", "low": "2.0"}
+
+    for f in report.get("code_findings", []) or []:
+        rule_id = _slugify(f["title"])
+        compliance = COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), ["OWASP-LLM:LLM10"])
+        tags = ["ai-safety"] + compliance
+        _get_or_add_rule(
+            rule_id, f["title"], f["title"],
+            f["recommendation"], tags,
+            sev_score.get(f.get("severity", "medium"), "5.0"),
+        )
+        level = sev_map.get(f.get("severity", "medium"), "warning")
+        results.append({
+            "ruleId": rule_id,
+            "level": level,
+            "message": {"text": f["recommendation"]},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": f["file"]},
+                    "region": {"startLine": f["line"]},
+                },
+            }],
+        })
+
+    # Missing safeguards → results
+    gov_file = report.get("governance_file")
+    gov_uri = gov_file if gov_file else "."
+    critical_sgs = {"governance_file", "kill_switch", "budget_ceiling"}
+
+    for s in report.get("missing", []) or []:
+        sg_id = s["id"]
+        rule_id = f"rg/missing-{sg_id.replace('_', '-')}"
+        compliance = COMPLIANCE_TAGS.get(sg_id, ["NIST-AI-RMF:GOVERN-1.1"])
+        tags = ["ai-safety", "safeguard"] + compliance
+        _get_or_add_rule(
+            rule_id, f"Missing {s['label']}", s["label"],
+            s["risk"], tags,
+            "8.0" if sg_id in critical_sgs else "5.0",
+        )
+        level = "error" if sg_id in critical_sgs else "warning"
+        results.append({
+            "ruleId": rule_id,
+            "level": level,
+            "message": {"text": s["risk"]},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": gov_uri},
+                    "region": {"startLine": 1},
+                },
+            }],
+        })
+
+    sarif = {
+        "version": "2.1.0",
+        "$schema": (
+            "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
+            "master/Schemata/sarif-schema-2.1.0.json"
+        ),
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "release-gate",
+                    "version": "0.7.0",
+                    "informationUri": "https://release-gate.com",
+                    "rules": rules,
+                },
+            },
+            "results": results,
+        }],
+    }
+
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(sarif, fh, indent=2)
+
+
+def _finding_type_key(title: str) -> str:
+    """Map a human-readable finding title to a COMPLIANCE_TAGS key."""
+    t = title.lower()
+    if "unbounded" in t or "infinite loop" in t:
+        return "unbounded_llm_loop"
+    if "exec" in t or "execution sink" in t:
+        return "exec_sink"
+    if "secret" in t or "api key" in t:
+        return "hardcoded_secret"
+    if "token ceiling" in t or "max_tokens" in t:
+        return "missing_max_tokens"
+    if "injection" in t or "interpolated" in t:
+        return "prompt_injection_risk"
+    return "unbounded_llm_loop"
+
+
 # ─────────────────────────── Badge + Markdown (self-serve) ──────────────────
 
 def badge_url(report: Dict[str, Any]) -> str:
@@ -817,13 +1012,17 @@ def render_markdown(report: Dict[str, Any]) -> str:
     missing = report.get("missing", [])
     passing = report.get("passing", [])
 
-    out.append("| Safeguard | Status | Why |")
-    out.append("| --- | :---: | --- |")
+    out.append("| Safeguard | Status | Why | Compliance |")
+    out.append("| --- | :---: | --- | --- |")
     for s in passing:
-        out.append(f"| {s['label']} | ✅ | {s.get('evidence') or '—'} |")
+        ctags = s.get("compliance_tags") or COMPLIANCE_TAGS.get(s["id"], [])
+        ctag_str = ", ".join(t.split(":")[0] for t in ctags[:2]) if ctags else "—"
+        out.append(f"| {s['label']} | ✅ | {s.get('evidence') or '—'} | {ctag_str} |")
     for s in missing:
         reason = (s.get("issues") or [s.get("risk", "")])[0]
-        out.append(f"| {s['label']} | ❌ | {reason} |")
+        ctags = s.get("compliance_tags") or COMPLIANCE_TAGS.get(s["id"], [])
+        ctag_str = ", ".join(t.split(":")[0] for t in ctags[:2]) if ctags else "—"
+        out.append(f"| {s['label']} | ❌ | {reason} | {ctag_str} |")
     out.append("")
 
     # Tier 3: AI-specific code findings

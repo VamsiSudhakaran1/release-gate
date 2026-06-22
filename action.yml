@@ -43,6 +43,14 @@ inputs:
     description: "Python version to use"
     required: false
     default: "3.11"
+  sarif-output:
+    description: "If set, write a SARIF 2.1.0 file to this path and upload it to GitHub Code Scanning (e.g. release-gate.sarif)"
+    required: false
+    default: ""
+  pr-comment:
+    description: "Post/update a sticky summary comment on the PR (default: false)"
+    required: false
+    default: "false"
 
 outputs:
   decision:
@@ -70,9 +78,16 @@ runs:
       shell: bash
       run: |
         set +e
+        SARIF_FLAGS=""
+        if [ -n "${{ inputs.sarif-output }}" ]; then
+          SARIF_FLAGS="--sarif ${{ inputs.sarif-output }}"
+        fi
         # Writes a Markdown report to the job summary automatically via
         # $GITHUB_STEP_SUMMARY, and still prints to the log.
-        release-gate audit "${{ inputs.path }}" --markdown
+        # Also emit JSON for downstream steps (PR comment, commit status).
+        release-gate audit "${{ inputs.path }}" --markdown $SARIF_FLAGS \
+          --json > /tmp/rg-audit-report.json 2>/dev/null || true
+        release-gate audit "${{ inputs.path }}" --markdown $SARIF_FLAGS
         EXIT_CODE=$?
         set -e
         # audit exit codes: 0 PROMOTE/no-agent · 10 HOLD · 1 BLOCK
