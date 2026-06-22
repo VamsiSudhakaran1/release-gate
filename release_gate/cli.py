@@ -765,6 +765,8 @@ def print_help():
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
     print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
     print("  release-gate audit [path|url] --badge         # README badge snippet for your score")
+    print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
+    print("  release-gate audit [path|url] --baseline BRANCH|FILE  # Only fail on net-new issues")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
