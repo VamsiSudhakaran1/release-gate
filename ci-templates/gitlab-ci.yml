@@ -1,0 +1,14 @@
+release-gate:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install release-gate --quiet
+  script:
+    - release-gate audit . --sarif release-gate.sarif
+  artifacts:
+    reports:
+      sast: release-gate.sarif
+    paths:
+      - release-gate.sarif
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

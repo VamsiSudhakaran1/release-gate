@@ -1,0 +1,19 @@
+version: 2.1
+jobs:
+  release-gate:
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - run:
+          name: Install release-gate
+          command: pip install release-gate
+      - run:
+          name: AI safeguard audit
+          command: release-gate audit . --sarif release-gate.sarif --json release-gate.json
+      - store_artifacts:
+          path: release-gate.sarif
+workflows:
+  release-gate:
+    jobs:
+      - release-gate

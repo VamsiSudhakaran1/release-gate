@@ -1,0 +1,17 @@
+pipeline {
+    agent any
+    stages {
+        stage('AI Safeguard Audit') {
+            steps {
+                sh 'pip install release-gate'
+                sh 'release-gate audit . --sarif release-gate.sarif --json release-gate.json'
+                archiveArtifacts artifacts: 'release-gate.sarif', allowEmptyArchive: true
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'release-gate.sarif'
+        }
+    }
+}

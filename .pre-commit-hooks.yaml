@@ -1,0 +1,8 @@
+- id: release-gate-audit
+  name: release-gate AI safeguard audit
+  language: python
+  entry: release-gate audit
+  args: ["--fail-on: block"]
+  pass_filenames: false
+  stages: [pre-push]
+  additional_dependencies: [release-gate]
