@@ -5,6 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/release-gate.svg)](https://badge.fury.io/py/release-gate)
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 
 > **v0.7.0** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
 

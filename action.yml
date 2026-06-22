@@ -66,7 +66,7 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@0a5c61591373683505ea898e09424647f5f1c7db # v5.4.0
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -132,14 +132,14 @@ runs:
 
     - name: Upload HTML report
       if: inputs.html-report != '' && always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.6.0
       with:
         name: release-gate-report
         path: ${{ inputs.html-report }}
 
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.sarif-output != '' && inputs.command == 'audit' && always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@65c74964a9ed8c44ed9f19d4bbc5757a6a8af9e4 # v3.25.0
       with:
         sarif_file: ${{ inputs.sarif-output }}
         category: release-gate
