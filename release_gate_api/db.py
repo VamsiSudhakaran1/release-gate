@@ -328,6 +328,57 @@ def get_usage(user_id: str) -> int:
     return row[0] if row else 0
 
 
+def get_findings_summary(user_id: str) -> List[Dict]:
+    """Per-repo code-finding severity counts from each repo's most recent run.
+
+    Returns one entry per repo (latest scan wins), sorted by risk weight
+    (high*100 + medium*10 + low). Powers the dashboard severity heatmap.
+    """
+    import json
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            import psycopg2.extras
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"SELECT repo_url, score, decision, report_json, created_at FROM runs "
+            f"WHERE user_id={ph} ORDER BY created_at ASC",
+            (user_id,),
+        )
+        rows = [_row_to_dict(r) for r in cur.fetchall()]
+
+    latest: Dict[str, Dict] = {}  # repo_url -> latest row (asc order => last write wins)
+    for r in rows:
+        latest[r["repo_url"]] = r
+
+    out: List[Dict] = []
+    for repo, r in latest.items():
+        report = {}
+        if r.get("report_json"):
+            try:
+                report = json.loads(r["report_json"])
+            except Exception:
+                report = {}
+        counts = {"high": 0, "medium": 0, "low": 0}
+        for f in (report.get("code_findings") or []):
+            sev = f.get("severity")
+            if sev in counts:
+                counts[sev] += 1
+        out.append({
+            "repo_url": repo,
+            "score": r.get("score"),
+            "decision": r.get("decision"),
+            "high": counts["high"],
+            "medium": counts["medium"],
+            "low": counts["low"],
+            "total": counts["high"] + counts["medium"] + counts["low"],
+        })
+
+    out.sort(key=lambda e: e["high"] * 100 + e["medium"] * 10 + e["low"], reverse=True)
+    return out
+
+
 def get_dashboard_stats(user_id: str) -> Dict:
     """Return aggregated dashboard stats for a user."""
     ph = _ph()

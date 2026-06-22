@@ -552,6 +552,54 @@
       display: none; max-width: 1140px; margin: 0 auto; padding: 48px 24px;
     }
     #dashboard-page.active { display: block; }
+
+    /* ── Report detail drawer ── */
+    .report-modal {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(15,17,23,.55); backdrop-filter: blur(2px);
+      justify-content: flex-end;
+    }
+    .report-modal.active { display: flex; }
+    .report-modal-panel {
+      width: min(860px, 100%); height: 100%; overflow-y: auto;
+      background: var(--bg); box-shadow: -8px 0 40px rgba(15,17,23,.25);
+      padding: 32px 36px 80px; position: relative;
+      animation: report-slide .22s ease;
+    }
+    @keyframes report-slide { from { transform: translateX(40px); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
+    .report-modal-close {
+      position: absolute; top: 18px; right: 22px; border: none; background: none;
+      font-size: 1.8rem; line-height: 1; color: var(--term-muted); cursor: pointer;
+    }
+    .report-modal-close:hover { color: var(--heading); }
+    .rpt-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+    .rpt-metric {
+      flex: 1; min-width: 130px; background: #fff; border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px;
+    }
+    .rpt-metric .v { font-size: 1.5rem; font-weight: 800; color: var(--heading); }
+    .rpt-metric .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin-top: 2px; }
+    .rpt-section-title { font-size: .82rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--heading); margin: 26px 0 12px; }
+    .rpt-sg { display: flex; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: #fff; }
+    .rpt-sg.pass { border-left: 4px solid var(--green); }
+    .rpt-sg.fail { border-left: 4px solid var(--red); }
+    .rpt-sg .ico { font-size: 1.05rem; }
+    .rpt-sg .lbl { font-weight: 700; color: var(--heading); font-size: .92rem; }
+    .rpt-sg .ev { font-size: .82rem; margin-top: 3px; color: var(--text); }
+    .rpt-sg .iss { font-size: .82rem; margin-top: 3px; color: #b91c1c; }
+    .rpt-finding { border-left: 3px solid #6b7280; background: #fff; border:1px solid var(--border); padding: 10px 14px; margin-bottom: 8px; border-radius: 0 8px 8px 0; }
+    .rpt-finding .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .rpt-sev { color:#fff; font-size:.64rem; font-weight:800; padding:2px 7px; border-radius:5px; letter-spacing:.03em; }
+    .rpt-finding .loc { font-family: ui-monospace, monospace; font-size:.74rem; color: var(--term-muted); margin-left:auto; }
+    .rpt-finding pre { background: var(--term-bg); color: var(--term-bright); font-size:.74rem; padding:8px 10px; border-radius:6px; margin-top:7px; overflow-x:auto; }
+    .rpt-finding .rec { font-size:.8rem; color: var(--text); margin-top:6px; }
+    .rpt-export { display:flex; gap:10px; margin-top:18px; }
+    .rpt-export button { font-size:.82rem; padding:7px 14px; border:1px solid var(--border); background:#fff; border-radius:8px; cursor:pointer; color:var(--heading); font-weight:600; }
+    .rpt-export button:hover { border-color: var(--accent); color: var(--accent); }
+    .dash-table tbody tr.clickable { cursor: pointer; }
+    .dash-table tbody tr.clickable:hover { background: var(--bg-alt); }
+    .sev-bar { display:flex; height:10px; border-radius:6px; overflow:hidden; background:var(--border); }
+
     .dash-welcome { margin-bottom: 32px; }
     .dash-welcome h2 { font-size: 1.6rem; font-weight: 800; color: var(--heading); margin-bottom: 6px; }
     .dash-welcome p { color: var(--text); }
@@ -999,6 +1047,16 @@
   </div>
 </div>
 
+<!-- ── Report detail drawer ── -->
+<div id="report-modal" class="report-modal">
+  <div class="report-modal-panel">
+    <button class="report-modal-close" onclick="closeRunReport()" aria-label="Close">&times;</button>
+    <div id="report-modal-body">
+      <p class="dash-empty">Loading report&hellip;</p>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── Nav shadow on scroll ──
   window.addEventListener('scroll', function() {
@@ -1244,6 +1302,52 @@
           '</div>';
       }
 
+      // ── Security posture card (decision distribution) ──
+      var dist = data.decision_distribution || {};
+      var distTotal = (dist.PROMOTE || 0) + (dist.HOLD || 0) + (dist.BLOCK || 0);
+      if (distTotal > 0) {
+        var pPct = Math.round((dist.PROMOTE || 0) / distTotal * 100);
+        var hPct = Math.round((dist.HOLD || 0) / distTotal * 100);
+        var bPct = 100 - pPct - hPct;
+        statsHtml += '<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:20px">' +
+          '<div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-bottom:8px">Decision posture</div>' +
+          '<div class="sev-bar">' +
+            '<div style="width:' + pPct + '%;background:var(--green)" title="PROMOTE: ' + (dist.PROMOTE||0) + '"></div>' +
+            '<div style="width:' + hPct + '%;background:var(--amber)" title="HOLD: ' + (dist.HOLD||0) + '"></div>' +
+            '<div style="width:' + bPct + '%;background:var(--red)" title="BLOCK: ' + (dist.BLOCK||0) + '"></div>' +
+          '</div>' +
+          '<div style="display:flex;gap:18px;margin-top:8px;font-size:.78rem">' +
+            '<span style="color:var(--green);font-weight:600">&#x25CF; ' + (dist.PROMOTE||0) + ' promote</span>' +
+            '<span style="color:var(--amber);font-weight:600">&#x25CF; ' + (dist.HOLD||0) + ' hold</span>' +
+            '<span style="color:var(--red);font-weight:600">&#x25CF; ' + (dist.BLOCK||0) + ' block</span>' +
+          '</div></div>';
+      }
+
+      // ── Severity heatmap across repos ──
+      var fsum = (data.findings_summary || []).filter(function(e){ return e.total > 0; });
+      if (fsum.length) {
+        function cell(n, color) {
+          var bg = n > 0 ? color : 'transparent';
+          var fg = n > 0 ? '#fff' : 'var(--term-muted)';
+          return '<td style="text-align:center;padding:6px 10px"><span style="display:inline-block;min-width:26px;padding:2px 0;border-radius:6px;background:' + bg + ';color:' + fg + ';font-weight:700;font-size:.82rem">' + n + '</span></td>';
+        }
+        var hm = '<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:20px">' +
+          '<div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-bottom:10px">Code-risk heatmap &middot; latest scan per repo</div>' +
+          '<table class="dash-table" style="margin:0"><thead><tr>' +
+          '<th>Repo</th><th style="text-align:center">High</th><th style="text-align:center">Medium</th><th style="text-align:center">Low</th><th style="text-align:center">Total</th>' +
+          '</tr></thead><tbody>';
+        fsum.forEach(function(e){
+          var repoShort = (e.repo_url || '').replace('https://github.com/', '');
+          hm += '<tr>' +
+            '<td title="' + escHtml(e.repo_url || '') + '">' + escHtml(repoShort) + '</td>' +
+            cell(e.high, 'var(--red)') + cell(e.medium, 'var(--amber)') + cell(e.low, 'var(--term-muted)') +
+            '<td style="text-align:center;font-weight:700">' + e.total + '</td>' +
+            '</tr>';
+        });
+        hm += '</tbody></table></div>';
+        statsHtml += hm;
+      }
+
       var runs = data.recent_runs || [];
       if (!runs.length) {
         wrap.innerHTML = statsHtml + '<p class="dash-empty">No runs yet. Try the playground!</p>';
@@ -1258,12 +1362,16 @@
         var badgeClass = dec === 'promote' ? 'promote' : dec === 'hold' ? 'hold' : 'block';
         var dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString() : (r.date ? new Date(r.date).toLocaleDateString() : '—');
         var repoShort = (r.repo_url || '').replace('https://github.com/', '');
-        html += '<tr>' +
+        var rowAttr = r.id ? ' class="clickable" onclick="openRunReport(\'' + escHtml(r.id) + '\')"' : '';
+        var viewCell = r.id
+          ? '<a href="#" onclick="openRunReport(\'' + escHtml(r.id) + '\');return false">View report &rarr;</a>'
+          : '<a href="' + escHtml(r.repo_url || '#') + '" target="_blank" rel="noopener">View</a>';
+        html += '<tr' + rowAttr + '>' +
           '<td title="' + escHtml(r.repo_url || '') + '">' + escHtml(repoShort) + '</td>' +
           '<td><strong>' + (r.score !== undefined ? r.score : '—') + '</strong></td>' +
           '<td><span class="pg-decision-badge ' + badgeClass + '" style="font-size:.75rem;padding:3px 10px">' + escHtml(r.decision || '—') + '</span></td>' +
           '<td>' + dateStr + '</td>' +
-          '<td><a href="' + escHtml(r.repo_url || '#') + '" target="_blank" rel="noopener">View</a></td>' +
+          '<td>' + viewCell + '</td>' +
           '</tr>';
         var key = repoShort;
         if (!trendMap[key]) trendMap[key] = [];
@@ -1289,6 +1397,185 @@
     } catch(err) {
       wrap.innerHTML = '<p class="dash-empty" style="color:var(--red)">Failed to load runs: ' + escHtml(err.message) + '</p>';
     }
+  }
+
+  // ── Report detail drawer ──
+  var _reportCache = null;
+
+  function closeRunReport() {
+    document.getElementById('report-modal').classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeRunReport();
+  });
+  document.getElementById('report-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeRunReport();
+  });
+
+  async function openRunReport(runId) {
+    var modal = document.getElementById('report-modal');
+    var body = document.getElementById('report-modal-body');
+    body.innerHTML = '<p class="dash-empty">Loading report&hellip;</p>';
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    try {
+      var res = await fetch(API_BASE + '/api/run/' + encodeURIComponent(runId), {
+        headers: { 'Authorization': 'Bearer ' + getToken() }
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      _reportCache = data;
+      renderReportDetail(data);
+    } catch(err) {
+      body.innerHTML = '<p class="dash-empty" style="color:var(--red)">Could not load report: ' + escHtml(err.message) + '</p>';
+    }
+  }
+
+  function renderReportDetail(data) {
+    var rpt = data.report || {};
+    var score = (data.score != null ? data.score : (rpt.score != null ? rpt.score : '—'));
+    var decision = (data.decision || rpt.decision || 'HOLD').toUpperCase();
+    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
+    var repoShort = (data.repo_url || '').replace('https://github.com/', '');
+    var dateStr = data.created_at ? new Date(data.created_at).toLocaleString() : '—';
+
+    var safeguards = rpt.safeguards || {};
+    var findings = rpt.code_findings || [];
+    var sgVals = Object.keys(SAFEGUARD_LABELS).map(function(k){ return safeguards[k]; });
+    var passCount = sgVals.filter(function(v){ return v && typeof v === 'object' ? v.present : v === true; }).length;
+    var sgTotal = Object.keys(SAFEGUARD_LABELS).length;
+    var sevCount = { high:0, medium:0, low:0 };
+    findings.forEach(function(f){ if (sevCount[f.severity] != null) sevCount[f.severity]++; });
+
+    var frameworks = rpt.frameworks || {};
+    var fwNames = Object.keys(frameworks);
+
+    var h = '';
+    // Header
+    h += '<div style="display:flex;align-items:center;gap:18px;margin-bottom:8px">' +
+      '<div class="pg-score-circle ' + decClass + '" style="width:74px;height:74px;font-size:1.7rem">' + score + '</div>' +
+      '<div><div style="font-size:1.15rem;font-weight:800;color:var(--heading)">' + escHtml(repoShort || 'Report') + '</div>' +
+      '<div style="margin-top:4px"><span class="pg-decision-badge ' + decClass + '">' + escHtml(decision) + '</span>' +
+      ' <span style="font-size:.8rem;opacity:.7;margin-left:8px">' + escHtml(dateStr) + '</span></div></div></div>';
+
+    // Metrics row
+    h += '<div class="rpt-row" style="margin-top:18px">' +
+      '<div class="rpt-metric"><div class="v">' + passCount + '/' + sgTotal + '</div><div class="k">Safeguards passing</div></div>' +
+      '<div class="rpt-metric"><div class="v" style="color:' + (findings.length ? 'var(--red)' : 'var(--green)') + '">' + findings.length + '</div><div class="k">Code risks</div></div>' +
+      '<div class="rpt-metric"><div class="v" style="color:var(--red)">' + sevCount.high + '</div><div class="k">High severity</div></div>' +
+      '<div class="rpt-metric"><div class="v">' + (rpt.detected_model ? escHtml(rpt.detected_model) : (fwNames.length ? fwNames.length : '—')) + '</div><div class="k">' + (rpt.detected_model ? 'Detected model' : 'Frameworks') + '</div></div>' +
+      '</div>';
+
+    // Frameworks
+    if (fwNames.length) {
+      h += '<div class="rpt-section-title">Detected stack</div><div style="display:flex;gap:8px;flex-wrap:wrap">';
+      fwNames.forEach(function(n){
+        h += '<span style="background:var(--accent-tint);color:var(--accent);font-size:.78rem;font-weight:600;padding:4px 10px;border-radius:20px">' + escHtml(n) + ' &middot; ' + frameworks[n] + '</span>';
+      });
+      h += '</div>';
+    }
+
+    // Safeguards
+    h += '<div class="rpt-section-title">Safeguard checklist</div>';
+    Object.keys(SAFEGUARD_LABELS).forEach(function(key){
+      var label = SAFEGUARD_LABELS[key];
+      var v = safeguards[key];
+      var passed = v && typeof v === 'object' ? v.present : v === true;
+      var evidence = (v && typeof v === 'object' && v.evidence) || '';
+      var issues = (v && typeof v === 'object' && v.issues) || [];
+      h += '<div class="rpt-sg ' + (passed ? 'pass' : 'fail') + '">' +
+        '<span class="ico">' + (passed ? '&#x2705;' : '&#x274C;') + '</span>' +
+        '<div style="flex:1"><div class="lbl">' + escHtml(label) + '</div>' +
+        (passed && evidence ? '<div class="ev">' + escHtml(evidence) + '</div>' : '') +
+        (!passed && issues.length ? issues.map(function(i){ return '<div class="iss">&#x2192; ' + escHtml(i) + '</div>'; }).join('') : '') +
+        (!passed && !issues.length && evidence ? '<div class="ev">' + escHtml(evidence) + '</div>' : '') +
+        '</div></div>';
+    });
+
+    // Code findings
+    h += '<div class="rpt-section-title">Code vulnerabilities &amp; AI-specific risks (' + findings.length + ')</div>';
+    if (!findings.length) {
+      h += '<p class="dash-empty" style="text-align:left">No AI-specific code risks detected in the scanned source.</p>';
+    } else {
+      var sevColor = { high:'#dc2626', medium:'#d97706', low:'#6b7280' };
+      var sevLabel = { high:'HIGH', medium:'MEDIUM', low:'LOW' };
+      var order = { high:0, medium:1, low:2 };
+      findings.slice().sort(function(a,b){ return (order[a.severity]||9) - (order[b.severity]||9); }).forEach(function(f){
+        var c = sevColor[f.severity] || '#6b7280';
+        h += '<div class="rpt-finding" style="border-left-color:' + c + '">' +
+          '<div class="head"><span class="rpt-sev" style="background:' + c + '">' + (sevLabel[f.severity] || '?') + '</span>' +
+          '<span style="font-weight:700;color:var(--heading);font-size:.88rem">' + escHtml(f.title) + '</span>' +
+          (f.file ? '<span class="loc">' + escHtml(f.file) + ':' + (f.line != null ? f.line : '?') + '</span>' : '') +
+          '</div>' +
+          (f.snippet ? '<pre>' + escHtml(f.snippet) + '</pre>' : '') +
+          (f.recommendation ? '<div class="rec">&#x1F6E0;&#xFE0F; ' + escHtml(f.recommendation) + '</div>' : '') +
+          '</div>';
+      });
+    }
+
+    // Export
+    h += '<div class="rpt-export">' +
+      '<button onclick="exportReportJson()">&#x2B07;&nbsp; Download JSON</button>' +
+      '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
+      (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
+      '</div>';
+
+    document.getElementById('report-modal-body').innerHTML = h;
+  }
+
+  function _downloadBlob(name, content, type) {
+    var blob = new Blob([content], { type: type });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  }
+
+  function exportReportJson() {
+    if (!_reportCache) return;
+    var slug = (_reportCache.repo_url || 'report').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+    _downloadBlob('release-gate-' + slug + '.json', JSON.stringify(_reportCache, null, 2), 'application/json');
+  }
+
+  function exportReportMarkdown() {
+    if (!_reportCache) return;
+    var d = _reportCache, rpt = d.report || {};
+    var lines = [];
+    lines.push('# release-gate report — ' + (d.repo_url || ''));
+    lines.push('');
+    lines.push('- **Score:** ' + (d.score != null ? d.score : '—') + '/100');
+    lines.push('- **Decision:** ' + (d.decision || ''));
+    lines.push('- **Scanned:** ' + (d.created_at || ''));
+    if (rpt.detected_model) lines.push('- **Model:** ' + rpt.detected_model);
+    lines.push('');
+    lines.push('## Safeguards');
+    lines.push('');
+    lines.push('| Safeguard | Status | Detail |');
+    lines.push('|---|---|---|');
+    Object.keys(SAFEGUARD_LABELS).forEach(function(k){
+      var v = (rpt.safeguards || {})[k];
+      var passed = v && typeof v === 'object' ? v.present : v === true;
+      var detail = passed ? ((v && v.evidence) || '') : ((v && v.issues && v.issues[0]) || (v && v.evidence) || '');
+      lines.push('| ' + SAFEGUARD_LABELS[k] + ' | ' + (passed ? '✅' : '❌') + ' | ' + String(detail).replace(/\|/g,'\\|') + ' |');
+    });
+    var findings = rpt.code_findings || [];
+    lines.push('');
+    lines.push('## Code vulnerabilities (' + findings.length + ')');
+    lines.push('');
+    if (findings.length) {
+      lines.push('| Severity | Issue | Location | Recommendation |');
+      lines.push('|---|---|---|---|');
+      findings.forEach(function(f){
+        lines.push('| ' + (f.severity||'').toUpperCase() + ' | ' + (f.title||'') + ' | ' + (f.file||'') + ':' + (f.line!=null?f.line:'') + ' | ' + String(f.recommendation||'').replace(/\|/g,'\\|') + ' |');
+      });
+    } else {
+      lines.push('No AI-specific code risks detected.');
+    }
+    var slug = (d.repo_url || 'report').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+    _downloadBlob('release-gate-' + slug + '.md', lines.join('\n'), 'text/markdown');
   }
 
   // ── Playground audit ──

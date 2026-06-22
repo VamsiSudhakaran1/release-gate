@@ -21,7 +21,7 @@ from release_gate_api.db import (
     create_user, get_run, get_runs_for_user, get_repo_history,
     get_user_by_email, get_user_by_id, get_user_by_token,
     init_db, save_run, create_api_token,
-    increment_usage, get_usage, get_dashboard_stats,
+    increment_usage, get_usage, get_dashboard_stats, get_findings_summary,
 )
 
 app = FastAPI(title="release-gate API", version="0.7.0")
@@ -331,6 +331,7 @@ async def dashboard(authorization: Optional[str] = Header(default=None)):
         **stats,
         "repos": list(repos.values()),
         "decision_distribution": decisions,
+        "findings_summary": get_findings_summary(user["id"]),
         "recent_runs": runs[:10],
     }
 
@@ -348,6 +349,25 @@ async def repo_history_alias(repo_url: str, authorization: Optional[str] = Heade
     user = _require_user(authorization)
     history = get_repo_history(user["id"], repo_url)
     return {"repo_url": repo_url, "history": history}
+
+
+@app.get("/api/run/{run_id}")
+async def run_detail(run_id: str, authorization: Optional[str] = Header(default=None)):
+    """Full stored report for a single run. Owner-only — this is the detailed
+    vulnerability report behind each dashboard row."""
+    user = _require_user(authorization)
+    run = get_run(run_id)
+    if not run or run.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Run not found")
+    report = run.get("report") or {}
+    return {
+        "id": run.get("id"),
+        "repo_url": run.get("repo_url"),
+        "score": run.get("score"),
+        "decision": run.get("decision"),
+        "created_at": run.get("created_at"),
+        "report": report,
+    }
 
 
 # ── API tokens ─────────────────────────────────────────────────────────────
