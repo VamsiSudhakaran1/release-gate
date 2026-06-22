@@ -414,9 +414,32 @@ _LLM_CALL_RE = re.compile(
     r"\.(?:chat\.completions\.create|completions\.create|messages\.create|"
     r"create_message|generate|complete|invoke|run|chat)\s*\(",
 )
-_EXEC_SINK_RE = re.compile(r"\b(?:eval|exec)\s*\(|os\.system\s*\(|subprocess\.[A-Za-z_]+\([^)]*shell\s*=\s*True")
-_SECRET_RE = re.compile(r"sk-[A-Za-z0-9]{16,}|(?:api[_\-]?key|secret|token)\s*=\s*['\"][A-Za-z0-9_\-]{12,}['\"]", re.IGNORECASE)
+_EXEC_SINK_RE = re.compile(
+    r"\b(?:eval|exec)\s*\("
+    r"|os\.system\s*\("
+    r"|subprocess\.[A-Za-z_]+\([^)]*shell\s*=\s*True"
+    r"|child_process\.exec\s*\("                # Node.js
+    r"|child_process\.execSync\s*\("
+    r"|vm\.runInNewContext\s*\("                 # Node vm escape
+)
+_SECRET_RE = re.compile(
+    r"sk-[A-Za-z0-9]{16,}"
+    r"|(?:api[_\-]?key|secret|token)\s*[:=]\s*['\"][A-Za-z0-9_\-]{12,}['\"]"
+    r"|OPENAI_API_KEY\s*=\s*['\"][^'\"]{12,}['\"]"
+    r"|anthropic[_\-]api[_\-]key\s*[:=]\s*['\"][^'\"]{12,}['\"]",
+    re.IGNORECASE
+)
 _SYSTEM_PROMPT_FSTRING_RE = re.compile(r"""(["'])(?:system|developer)\1""", re.IGNORECASE)
+# JS/TS: template literals used as system prompts  e.g. role:"system", content:`...${userInput}`
+_JS_SYSTEM_TMPL_RE = re.compile(r"""role\s*:\s*["']system["'][^}]*content\s*:\s*`[^`]*\$\{""", re.DOTALL)
+# JS/TS: LLM calls without maxTokens / max_tokens
+_JS_LLM_CALL_RE = re.compile(
+    r"\.(?:chat\.completions\.create|messages\.create|generate|complete|invoke)\s*\(",
+)
+# JS/TS unbounded loop near LLM call
+_JS_WHILE_RE = re.compile(r"\bwhile\s*\(\s*true\s*\)", re.IGNORECASE)
+
+_SCANNABLE_EXTS = {".py", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"}
 
 
 def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_000) -> List[Dict[str, Any]]:
@@ -428,7 +451,7 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fname in filenames:
-            if not fname.endswith(".py"):
+            if not any(fname.endswith(ext) for ext in _SCANNABLE_EXTS):
                 continue
             count += 1
             if count > max_files:
@@ -454,18 +477,20 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
 def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
     findings: List[Dict[str, Any]] = []
     lines = text.splitlines()
+    is_js = rel.endswith((".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"))
 
     for i, line in enumerate(lines, start=1):
         stripped = line.strip()
-        if stripped.startswith("#"):
+        # skip Python/JS comment lines
+        if stripped.startswith("#") or stripped.startswith("//"):
             continue
 
-        # Dangerous execution sinks
+        # Dangerous execution sinks (Python + Node)
         if _EXEC_SINK_RE.search(line):
             findings.append(_finding(
                 "high", "Dangerous execution sink", rel, i, stripped,
-                "eval/exec/os.system/shell=True can execute arbitrary input. If any "
-                "model output or user input reaches this, it's remote code execution. "
+                "eval/exec/shell=True/child_process.exec can execute arbitrary input. "
+                "If any model output reaches this, it's remote code execution. "
                 "Remove it or strictly validate inputs.",
             ))
 
@@ -476,23 +501,26 @@ def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "Move secrets to environment variables or a secrets manager — never commit them.",
             ))
 
-        # Unbounded loop near an LLM call
-        if re.match(r"while\s+True\s*:", stripped):
+        # Unbounded loop near an LLM call (Python: while True:  JS: while(true))
+        py_infinite = re.match(r"while\s+True\s*:", stripped)
+        js_infinite = is_js and _JS_WHILE_RE.match(stripped)
+        if py_infinite or js_infinite:
             window = "\n".join(lines[i - 1:i + 6])
-            if _LLM_CALL_RE.search(window):
+            if _LLM_CALL_RE.search(window) or (is_js and _JS_LLM_CALL_RE.search(window)):
                 findings.append(_finding(
                     "high", "Unbounded loop around an LLM call", rel, i, stripped,
-                    "A `while True` wrapping an LLM call with no iteration cap can spin "
+                    "An infinite loop wrapping an LLM call with no iteration cap can spin "
                     "forever, burning tokens and budget. Add a max-iterations ceiling.",
                 ))
 
-    # LLM calls without a token ceiling (look at the call + a small window)
-    for m in _LLM_CALL_RE.finditer(text):
+    # LLM calls without a token ceiling
+    call_re = _JS_LLM_CALL_RE if is_js else _LLM_CALL_RE
+    for m in call_re.finditer(text):
         start = m.start()
         line_no = text.count("\n", 0, start) + 1
         window = text[start:start + 400]
-        if "max_tokens" not in window and "max_output_tokens" not in window \
-                and "max_completion_tokens" not in window:
+        token_keys = ("max_tokens", "max_output_tokens", "max_completion_tokens", "maxTokens", "maxOutputTokens")
+        if not any(k in window for k in token_keys):
             snippet = text[start:text.find("\n", start) if text.find("\n", start) != -1 else start + 80].strip()
             findings.append(_finding(
                 "medium", "LLM call with no token ceiling", rel, line_no, snippet[:120],
@@ -500,18 +528,31 @@ def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "and cost. Set an explicit max_tokens/max_output_tokens.",
             ))
 
-    # Prompt-injection surface: an f-string used for a system/developer prompt
-    for m in _SYSTEM_PROMPT_FSTRING_RE.finditer(text):
-        start = m.start()
-        line_no = text.count("\n", 0, start) + 1
-        window = text[max(0, start - 200):start + 200]
-        if re.search(r"f['\"][^'\"]*\{", window):
+    # Prompt-injection surface: Python f-string system prompt
+    if not is_js:
+        for m in _SYSTEM_PROMPT_FSTRING_RE.finditer(text):
+            start = m.start()
+            line_no = text.count("\n", 0, start) + 1
+            window = text[max(0, start - 200):start + 200]
+            if re.search(r"f['\"][^'\"]*\{", window):
+                line_text = text.splitlines()[line_no - 1].strip() if line_no - 1 < len(text.splitlines()) else ""
+                findings.append(_finding(
+                    "medium", "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
+                    "User-controlled values interpolated into a system/developer prompt are "
+                    "a prompt-injection vector. Keep untrusted input in user-role messages "
+                    "and validate it.",
+                ))
+
+    # JS/TS: template literal in system prompt role
+    if is_js:
+        for m in _JS_SYSTEM_TMPL_RE.finditer(text):
+            start = m.start()
+            line_no = text.count("\n", 0, start) + 1
             line_text = text.splitlines()[line_no - 1].strip() if line_no - 1 < len(text.splitlines()) else ""
             findings.append(_finding(
                 "medium", "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
-                "User-controlled values interpolated into a system/developer prompt are "
-                "a prompt-injection vector. Keep untrusted input in user-role messages "
-                "and validate it.",
+                "Template literal with ${} inside a system-role message is a "
+                "prompt-injection vector. Keep user-controlled data in user-role messages.",
             ))
 
     return findings

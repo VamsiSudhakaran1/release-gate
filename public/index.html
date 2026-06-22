@@ -795,9 +795,22 @@
       to grant read access — public repos work without it.
     </p>
 
-    <!-- Sample output — makes value visible before signup -->
-    <p style="font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--term-muted);font-weight:700;margin:30px 0 10px">Sample output</p>
-    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;margin:0 auto 8px;font-family:ui-monospace,monospace;font-size:.82rem;max-width:560px;text-align:left">
+    <div class="pg-wrap">
+      <div class="pg-spinner" id="pg-spinner">
+        <div class="pg-spinner-ring"></div>
+        <p>Running audit&hellip;</p>
+      </div>
+      <div class="pg-error" id="pg-error"></div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ SAMPLE OUTPUT ═══════════════════════ -->
+<section style="padding:40px 0 60px;background:var(--bg)">
+  <div class="container" style="max-width:600px;text-align:center">
+    <p style="font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--term-muted);font-weight:700;margin-bottom:14px">Sample output</p>
+    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;font-family:ui-monospace,monospace;font-size:.82rem;text-align:left">
       <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--term-border)">
         <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
         <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
@@ -806,9 +819,7 @@
       </div>
       <div style="padding:14px 16px;line-height:1.9">
         <div style="color:var(--term-muted)">Scanning <span style="color:var(--term-blue)">myorg/my-ai-agent</span> &middot; 7 checks &middot; code analysis&hellip;</div>
-        <div style="margin-top:8px">
-          <span style="color:var(--term-yellow);font-weight:700">AI Release Readiness: 42/100 &mdash; HOLD</span>
-        </div>
+        <div style="margin-top:8px"><span style="color:var(--term-yellow);font-weight:700">AI Release Readiness: 42/100 &mdash; HOLD</span></div>
         <div style="margin-top:10px;color:var(--term-muted)">Safeguards:</div>
         <div style="color:var(--term-red)">  ✗ governance config &nbsp;<span style="color:#4b5563;font-size:.75rem">project.name still a placeholder</span></div>
         <div style="color:var(--term-red)">  ✗ eval evidence &nbsp;<span style="color:#4b5563;font-size:.75rem">no evals.yaml found</span></div>
@@ -820,15 +831,6 @@
         <div style="margin-top:8px;color:var(--term-red)">  &#x26A0; 1 high-severity code risk: LLM call inside unbounded loop (agent.py:42)</div>
         <div style="margin-top:4px;color:var(--term-muted);font-size:.75rem">  Run <span style="color:var(--term-blue)">release-gate audit . --fix</span> to scaffold missing governance files</div>
       </div>
-    </div>
-
-    <div class="pg-wrap">
-      <div class="pg-spinner" id="pg-spinner">
-        <div class="pg-spinner-ring"></div>
-        <p>Running audit&hellip;</p>
-      </div>
-      <div class="pg-error" id="pg-error"></div>
-
     </div>
   </div>
 </section>
