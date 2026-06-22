@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://release-gate.com/schema/evals.schema.json",
+  "title": "release-gate evals.yaml",
+  "type": "object",
+  "required": ["evals"],
+  "properties": {
+    "evals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "input", "expected"],
+        "properties": {
+          "name":     { "type": "string" },
+          "input":    { "type": "string" },
+          "expected": { "type": "string" },
+          "tags":     { "type": "array", "items": { "type": "string" } },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] }
+        }
+      }
+    }
+  }
+}
