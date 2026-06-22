@@ -726,7 +726,7 @@
 <!-- ═══════════════════════ NAV ═══════════════════════ -->
 <header id="site-header">
   <nav>
-    <a class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;" href="#">&#x1F6AA; release-gate</a>
+    <a class="logo" onclick="goHome();return false;" href="#">&#x1F6AA; release-gate</a>
     <ul class="nav-links">
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
@@ -746,8 +746,20 @@
     <p class="hero-sub">Paste any public GitHub repo URL — release-gate scans for 7 deployment safeguards and shows you exactly what's in place and what's missing. Takes 10 seconds. No install needed.</p>
     <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">release-gate starts as a 10-second repo audit, then becomes a CI gate that blocks unsafe AI releases before they reach production.</p>
 
+    <!-- Hero playground input -->
+    <div class="hero-scan-row">
+      <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
+      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Audit in 10 seconds &rarr;</button>
+    </div>
+    <p class="hero-scan-hint">
+      🔒 Scanning a private repo?
+      <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
+      to grant read access — public repos work without it.
+    </p>
+
     <!-- Sample output — makes value visible before signup -->
-    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;margin-bottom:24px;font-family:ui-monospace,monospace;font-size:.82rem;max-width:560px">
+    <p style="font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--term-muted);font-weight:700;margin:30px 0 10px">Sample output</p>
+    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;margin:0 auto 8px;font-family:ui-monospace,monospace;font-size:.82rem;max-width:560px;text-align:left">
       <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--term-border)">
         <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
         <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
@@ -771,17 +783,6 @@
         <div style="margin-top:4px;color:var(--term-muted);font-size:.75rem">  Run <span style="color:var(--term-blue)">release-gate audit . --fix</span> to scaffold missing governance files</div>
       </div>
     </div>
-
-    <!-- Hero playground input -->
-    <div class="hero-scan-row">
-      <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
-      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Audit in 10 seconds &rarr;</button>
-    </div>
-    <p class="hero-scan-hint">
-      🔒 Scanning a private repo?
-      <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
-      to grant read access — public repos work without it.
-    </p>
 
     <div class="pg-wrap">
       <div class="pg-spinner" id="pg-spinner">
@@ -1508,6 +1509,13 @@
     getMainSections().forEach(function(el) { el.style.display = ''; });
     document.getElementById('dashboard-page').classList.remove('active');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // Logo click — always return to the marketing homepage (works from dashboard too)
+  function goHome() {
+    closeRunReport();
+    closeSafeguardDoc();
+    showMainContent();
   }
 
   function showDashboard() {
