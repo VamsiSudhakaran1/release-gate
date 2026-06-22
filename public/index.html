@@ -158,16 +158,6 @@
     .hero-scan-hint a { color: #6366f1; font-weight: 600; text-decoration: none; }
     .hero-scan-hint a:hover { text-decoration: underline; }
 
-    #playground-results {
-      display: none;
-      background: #fff; border-radius: 18px;
-      box-shadow: 0 4px 32px rgba(99,102,241,.12);
-      padding: 28px 32px; margin-top: 16px;
-      text-align: left;
-    }
-    .pg-score-row {
-      display: flex; align-items: center; gap: 20px; margin-bottom: 18px;
-    }
     .pg-score-circle {
       width: 80px; height: 80px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
@@ -757,9 +747,48 @@
       to grant read access — public repos work without it.
     </p>
 
-    <!-- Sample output — makes value visible before signup -->
-    <p style="font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--term-muted);font-weight:700;margin:30px 0 10px">Sample output</p>
-    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;margin:0 auto 8px;font-family:ui-monospace,monospace;font-size:.82rem;max-width:560px;text-align:left">
+    <div class="pg-wrap">
+      <div class="pg-spinner" id="pg-spinner">
+        <div class="pg-spinner-ring"></div>
+        <p>Running audit&hellip;</p>
+      </div>
+      <div class="pg-error" id="pg-error"></div>
+
+      <!-- Inline results — shown here once a scan completes -->
+      <div id="playground-results" style="display:none;background:#fff;border-radius:18px;box-shadow:0 4px 32px rgba(99,102,241,.12);padding:28px 32px;margin-top:20px;text-align:left;">
+        <div style="display:flex;align-items:center;gap:20px;margin-bottom:18px;">
+          <div class="pg-score-circle" id="pg-score-circle"></div>
+          <div>
+            <div id="pg-decision-badge" class="pg-decision-badge"></div>
+            <div id="pg-repo-label" style="margin-top:6px;font-size:.85rem;color:var(--text);"></div>
+          </div>
+        </div>
+        <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
+        <ul class="pg-checklist" id="pg-checklist"></ul>
+        <div id="pg-findings" style="margin-top:14px;"></div>
+        <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
+          <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
+        </div>
+        <div id="pg-fix-cta" style="display:none;margin-top:16px;padding:16px;background:linear-gradient(135deg,#f0f0ff 0%,#e8f0ff 100%);border:1px solid #c7d2fe;border-radius:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:700;color:#3730a3;font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
+              <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
+            </div>
+            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Create fix PR &rarr;</button>
+          </div>
+          <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ SAMPLE OUTPUT ═══════════════════════ -->
+<section id="sample-output-section" style="padding:40px 0 60px;background:var(--bg)">
+  <div class="container" style="max-width:600px;text-align:center">
+    <p style="font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--term-muted);font-weight:700;margin-bottom:14px">Sample output</p>
+    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;font-family:ui-monospace,monospace;font-size:.82rem;text-align:left">
       <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--term-border)">
         <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
         <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
@@ -768,9 +797,7 @@
       </div>
       <div style="padding:14px 16px;line-height:1.9">
         <div style="color:var(--term-muted)">Scanning <span style="color:var(--term-blue)">myorg/my-ai-agent</span> &middot; 7 checks &middot; code analysis&hellip;</div>
-        <div style="margin-top:8px">
-          <span style="color:var(--term-yellow);font-weight:700">AI Release Readiness: 42/100 &mdash; HOLD</span>
-        </div>
+        <div style="margin-top:8px"><span style="color:var(--term-yellow);font-weight:700">AI Release Readiness: 42/100 &mdash; HOLD</span></div>
         <div style="margin-top:10px;color:var(--term-muted)">Safeguards:</div>
         <div style="color:var(--term-red)">  ✗ governance config &nbsp;<span style="color:#4b5563;font-size:.75rem">project.name still a placeholder</span></div>
         <div style="color:var(--term-red)">  ✗ eval evidence &nbsp;<span style="color:#4b5563;font-size:.75rem">no evals.yaml found</span></div>
@@ -781,43 +808,6 @@
         <div style="color:var(--term-green)">  ✓ trace policy</div>
         <div style="margin-top:8px;color:var(--term-red)">  &#x26A0; 1 high-severity code risk: LLM call inside unbounded loop (agent.py:42)</div>
         <div style="margin-top:4px;color:var(--term-muted);font-size:.75rem">  Run <span style="color:var(--term-blue)">release-gate audit . --fix</span> to scaffold missing governance files</div>
-      </div>
-    </div>
-
-    <div class="pg-wrap">
-      <div class="pg-spinner" id="pg-spinner">
-        <div class="pg-spinner-ring"></div>
-        <p>Running audit&hellip;</p>
-      </div>
-      <div class="pg-error" id="pg-error"></div>
-
-      <div id="playground-results">
-        <div class="pg-score-row">
-          <div class="pg-score-circle" id="pg-score-circle"></div>
-          <div>
-            <div id="pg-decision-badge" class="pg-decision-badge"></div>
-            <div style="margin-top:6px;font-size:.85rem;color:var(--text)" id="pg-repo-label"></div>
-          </div>
-        </div>
-        <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
-        <ul class="pg-checklist" id="pg-checklist"></ul>
-        <div id="pg-findings" style="margin-top:14px;"></div>
-        <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
-          <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
-        </div>
-        <!-- Fix CTA — shown when logged in + score < 100 + github repo -->
-        <div id="pg-fix-cta" style="display:none;margin-top:16px;padding:16px;background:linear-gradient(135deg,#f0f0ff 0%,#e8f0ff 100%);border:1px solid #c7d2fe;border-radius:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <div>
-              <div style="font-weight:700;color:#3730a3;font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
-              <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
-            </div>
-            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">
-              Create fix PR &rarr;
-            </button>
-          </div>
-          <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
-        </div>
       </div>
     </div>
   </div>
@@ -2028,12 +2018,9 @@
     var btn = document.getElementById('pg-run-btn');
     var spinner = document.getElementById('pg-spinner');
     var errEl = document.getElementById('pg-error');
-    var results = document.getElementById('playground-results');
-
     btn.disabled = true;
     spinner.classList.add('active');
     errEl.classList.remove('active');
-    results.style.display = 'none';
 
     try {
       var res = await fetch(API_BASE + '/api/audit', {
@@ -2246,6 +2233,11 @@
     }
 
     document.getElementById('playground-results').style.display = 'block';
+    // Hide sample output once a real scan has run
+    var sampleSection = document.getElementById('sample-output-section');
+    if (sampleSection) sampleSection.style.display = 'none';
+    // Scroll results into view
+    document.getElementById('playground-results').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   async function runAutoFix() {
