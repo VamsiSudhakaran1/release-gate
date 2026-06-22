@@ -158,21 +158,6 @@
     .hero-scan-hint a { color: #6366f1; font-weight: 600; text-decoration: none; }
     .hero-scan-hint a:hover { text-decoration: underline; }
 
-    #playground-results {
-      display: none;
-      background: #fff; border-radius: 18px;
-      box-shadow: 0 4px 32px rgba(99,102,241,.12);
-      padding: 28px 32px; margin-top: 16px;
-      text-align: left;
-    }
-    .pg-score-row {
-      display: flex; align-items: center; gap: 20px; margin-bottom: 18px;
-    }
-    .pg-score-circle {
-      width: 80px; height: 80px; border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.7rem; font-weight: 900; color: #fff; flex-shrink: 0;
-    }
     .pg-score-circle.promote { background: var(--green); }
     .pg-score-circle.hold    { background: var(--amber); }
     .pg-score-circle.block   { background: var(--red); }
@@ -255,6 +240,59 @@
       font-size: .9rem; transition: opacity .15s;
     }
     .pg-cta-row a:hover { opacity: .88; text-decoration: none; }
+
+    /* ── PLAYGROUND RESULTS MODAL ── */
+    #pg-modal {
+      display: none;
+      position: fixed; inset: 0; z-index: 1100;
+      background: rgba(15,17,23,.65);
+      backdrop-filter: blur(4px);
+      overflow-y: auto;
+      padding: 32px 16px;
+    }
+    #pg-modal.open { display: block; }
+    .pg-modal-box {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 8px 64px rgba(0,0,0,.22);
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 0;
+      overflow: hidden;
+      animation: pgSlideIn .22s ease;
+    }
+    @keyframes pgSlideIn {
+      from { opacity: 0; transform: translateY(28px) scale(.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .pg-modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 28px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .pg-modal-title { font-size: 1rem; font-weight: 700; color: var(--heading); }
+    .pg-modal-close {
+      background: none; border: none; cursor: pointer;
+      font-size: 1.3rem; color: #94a3b8; line-height: 1;
+      padding: 4px 8px; border-radius: 8px; transition: background .15s;
+    }
+    .pg-modal-close:hover { background: #f1f5f9; color: var(--heading); }
+    .pg-modal-score-banner {
+      display: flex; align-items: center; justify-content: center; gap: 24px;
+      padding: 32px 28px 24px;
+      background: linear-gradient(135deg, #f8f7ff 0%, #eef2ff 100%);
+    }
+    .pg-modal-score-circle {
+      width: 96px; height: 96px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2.2rem; font-weight: 900; color: #fff; flex-shrink: 0;
+      box-shadow: 0 4px 20px rgba(0,0,0,.18);
+    }
+    .pg-modal-score-circle.promote { background: var(--green); }
+    .pg-modal-score-circle.hold    { background: var(--amber); }
+    .pg-modal-score-circle.block   { background: var(--red); }
+    .pg-modal-score-meta { text-align: left; }
+    .pg-modal-body { padding: 24px 28px 28px; }
 
     /* ── SECTION HEADERS ── */
     .section-eyebrow {
@@ -791,37 +829,49 @@
       </div>
       <div class="pg-error" id="pg-error"></div>
 
-      <div id="playground-results">
-        <div class="pg-score-row">
-          <div class="pg-score-circle" id="pg-score-circle"></div>
-          <div>
-            <div id="pg-decision-badge" class="pg-decision-badge"></div>
-            <div style="margin-top:6px;font-size:.85rem;color:var(--text)" id="pg-repo-label"></div>
-          </div>
-        </div>
-        <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
-        <ul class="pg-checklist" id="pg-checklist"></ul>
-        <div id="pg-findings" style="margin-top:14px;"></div>
-        <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
-          <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
-        </div>
-        <!-- Fix CTA — shown when logged in + score < 100 + github repo -->
-        <div id="pg-fix-cta" style="display:none;margin-top:16px;padding:16px;background:linear-gradient(135deg,#f0f0ff 0%,#e8f0ff 100%);border:1px solid #c7d2fe;border-radius:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <div>
-              <div style="font-weight:700;color:#3730a3;font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
-              <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
-            </div>
-            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">
-              Create fix PR &rarr;
-            </button>
-          </div>
-          <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
-        </div>
-      </div>
     </div>
   </div>
 </section>
+
+<!-- ═══════════════════ PLAYGROUND RESULTS MODAL ═══════════════════ -->
+<div id="pg-modal" onclick="closePgModal(event)">
+  <div class="pg-modal-box" onclick="event.stopPropagation()">
+    <div class="pg-modal-header">
+      <span class="pg-modal-title">Audit Results</span>
+      <button class="pg-modal-close" onclick="closePgModal()" aria-label="Close">&times;</button>
+    </div>
+    <!-- Score banner -->
+    <div class="pg-modal-score-banner">
+      <div class="pg-modal-score-circle" id="pg-score-circle"></div>
+      <div class="pg-modal-score-meta">
+        <div id="pg-decision-badge" class="pg-decision-badge" style="font-size:1.15rem;padding:8px 22px;"></div>
+        <div id="pg-repo-label" style="margin-top:8px;font-size:.875rem;color:var(--text);font-weight:500;"></div>
+        <div id="pg-score-note" style="margin-top:6px;font-size:.82rem;color:var(--text);min-height:1.2em;"></div>
+      </div>
+    </div>
+    <!-- Body -->
+    <div class="pg-modal-body">
+      <ul class="pg-checklist" id="pg-checklist"></ul>
+      <div id="pg-findings" style="margin-top:18px;"></div>
+      <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
+        <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
+      </div>
+      <!-- Fix CTA -->
+      <div id="pg-fix-cta" style="display:none;margin-top:18px;padding:16px;background:linear-gradient(135deg,#f0f0ff 0%,#e8f0ff 100%);border:1px solid #c7d2fe;border-radius:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:700;color:#3730a3;font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
+            <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
+          </div>
+          <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+            Create fix PR &rarr;
+          </button>
+        </div>
+        <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════════════ CHECKS EXPLAINED ═══════════════════════ -->
 <section id="checks-explained">
@@ -2028,12 +2078,9 @@
     var btn = document.getElementById('pg-run-btn');
     var spinner = document.getElementById('pg-spinner');
     var errEl = document.getElementById('pg-error');
-    var results = document.getElementById('playground-results');
-
     btn.disabled = true;
     spinner.classList.add('active');
     errEl.classList.remove('active');
-    results.style.display = 'none';
 
     try {
       var res = await fetch(API_BASE + '/api/audit', {
@@ -2096,7 +2143,7 @@
 
     var circle = document.getElementById('pg-score-circle');
     circle.textContent = score;
-    circle.className = 'pg-score-circle ' + decClass;
+    circle.className = 'pg-modal-score-circle ' + decClass;
 
     var badge = document.getElementById('pg-decision-badge');
     badge.textContent = decision;
@@ -2245,7 +2292,14 @@
       }
     }
 
-    document.getElementById('playground-results').style.display = 'block';
+    document.getElementById('pg-modal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closePgModal(e) {
+    if (e && e.target !== document.getElementById('pg-modal')) return;
+    document.getElementById('pg-modal').classList.remove('open');
+    document.body.style.overflow = '';
   }
 
   async function runAutoFix() {
