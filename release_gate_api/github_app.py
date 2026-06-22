@@ -402,7 +402,7 @@ def create_fix_pr(
 
     try:
         pr_data = _gh("POST", f"/repos/{owner}/{repo}/pulls", token, {
-            "title": f"chore: add release-gate governance files (score {score}/100 → PROMOTE)",
+            "title": f"chore: add release-gate governance scaffold (fill TODOs to raise score from {score}/100)",
             "body": pr_body,
             "head": branch_name,
             "base": default_branch,

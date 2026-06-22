@@ -79,6 +79,13 @@ def test_governance_file_detected(tmp_path):
     assert gov_path is not None
 
 
+def test_governance_file_with_placeholder_name_fails(tmp_path):
+    # Strict: a project name that's a placeholder doesn't count.
+    make_repo(tmp_path, {"governance.yaml": "project:\n  name: TODO\n"})
+    present, _ = detect_safeguards(tmp_path)
+    assert present["governance_file"] is False
+
+
 def test_no_governance_file(tmp_path):
     make_repo(tmp_path, {"main.py": "print('hi')"})
     present, gov_path = detect_safeguards(tmp_path)
@@ -244,8 +251,8 @@ def test_build_report_with_governance(tmp_path):
         "agent.py": "from openai import OpenAI",
     })
     report = build_report(tmp_path)
-    assert report["safeguards"]["governance_file"] is True
-    assert report["safeguards"]["eval_evidence"] is True
+    assert report["safeguards"]["governance_file"]["present"] is True
+    assert report["safeguards"]["eval_evidence"]["present"] is True
     assert report["frameworks"].get("OpenAI / Agents SDK", 0) >= 1
     assert report["score"] > 0
 
@@ -264,6 +271,107 @@ def test_render_terminal_does_not_crash(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Readiness Score" in captured.out
     assert "BLOCK" in captured.out or "HOLD" in captured.out or "PROMOTE" in captured.out
+
+
+# ──────────────────── strict verification (the gate) ─────────────────────────
+
+def test_untouched_scaffold_does_not_score_100(tmp_path):
+    """The core bug: committing an unfilled emit_config() scaffold must NOT pass."""
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    report = build_report(tmp_path)
+    scaffold = emit_config(report)
+    make_repo(tmp_path, {"governance.yaml": scaffold})
+
+    report2 = build_report(tmp_path)
+    assert report2["score"] < 90
+    assert report2["decision"] != "PROMOTE"
+    assert report2["safeguards"]["team_owner"]["present"] is False
+    assert report2["safeguards"]["trace_policy"]["present"] is False
+
+
+def test_placeholder_team_owner_rejected(tmp_path):
+    make_repo(tmp_path, {
+        "governance.yaml": (
+            "project:\n  name: real-bot\n"
+            "checks:\n"
+            "  fallback_declared:\n"
+            "    team_owner: \"TODO-your-team\"\n"
+            "    runbook_url: \"https://TODO/runbook\"\n"
+        ),
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present["team_owner"] is False
+
+
+def test_kill_switch_location_must_exist(tmp_path):
+    make_repo(tmp_path, {
+        "governance.yaml": (
+            "project:\n  name: real-bot\n"
+            "checks:\n"
+            "  fallback_declared:\n"
+            "    kill_switch:\n"
+            "      type: feature-flag\n"
+            "      location: config/does-not-exist\n"
+        ),
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present["kill_switch"] is False
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "does-not-exist").write_text("flags")
+    present2, _ = detect_safeguards(tmp_path)
+    assert present2["kill_switch"] is True
+
+
+def test_model_mismatch_flagged(tmp_path):
+    make_repo(tmp_path, {
+        "agent.py": 'from anthropic import Anthropic\nmodel="claude-3-opus-20240229"',
+        "governance.yaml": "project:\n  name: real-bot\nagent:\n  model: gpt-4o\n",
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present["governance_file"] is False
+
+
+def test_budget_below_projected_spend_fails(tmp_path):
+    make_repo(tmp_path, {
+        "governance.yaml": (
+            "project:\n  name: real-bot\n"
+            "agent:\n  model: gpt-4\n  daily_requests: 100000\n"
+            "  avg_input_tokens: 800\n  avg_output_tokens: 400\n"
+            "checks:\n  action_budget:\n    max_daily_cost: 5\n"
+        ),
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present["budget_ceiling"] is False
+
+
+def test_code_findings_exec_sink(tmp_path):
+    from release_gate.verify import scan_code_findings
+    make_repo(tmp_path, {"agent.py": "from openai import OpenAI\nx = eval(user_input)\n"})
+    findings = scan_code_findings(tmp_path)
+    assert any(f["title"] == "Dangerous execution sink" for f in findings)
+
+
+def test_code_findings_llm_no_token_ceiling(tmp_path):
+    from release_gate.verify import scan_code_findings
+    make_repo(tmp_path, {
+        "agent.py": (
+            "from openai import OpenAI\n"
+            "client = OpenAI()\n"
+            "r = client.chat.completions.create(model='gpt-4o', messages=msgs)\n"
+        ),
+    })
+    findings = scan_code_findings(tmp_path)
+    assert any(f["title"] == "LLM call with no token ceiling" for f in findings)
+
+
+def test_high_severity_findings_block_promote(tmp_path):
+    from release_gate.audit import compute_score, SAFEGUARDS
+    present = {s["id"]: True for s in SAFEGUARDS}
+    findings = [{"severity": "high"}, {"severity": "high"}, {"severity": "high"}]
+    score, decision = compute_score(present, findings)
+    assert score == 100
+    assert decision == "BLOCK"
 
 
 # ─────────────────────────── model detection ────────────────────────────────
@@ -381,7 +489,7 @@ def test_render_markdown_has_score_and_table(tmp_path):
     md = render_markdown(report)
     assert "AI Release Readiness Audit" in md
     assert "Score:" in md
-    assert "| Safeguard | Status | Risk if missing |" in md
+    assert "| Safeguard | Status | Why |" in md
     assert "gpt-4-turbo" in md
     assert "--emit-config" in md  # next-step guidance present when safeguards missing
 
