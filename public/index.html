@@ -600,9 +600,40 @@
     .dash-table tbody tr.clickable:hover { background: var(--bg-alt); }
     .sev-bar { display:flex; height:10px; border-radius:6px; overflow:hidden; background:var(--border); }
 
+    /* ── DASHBOARD STAT BOXES ── */
     .dash-welcome { margin-bottom: 32px; }
     .dash-welcome h2 { font-size: 1.6rem; font-weight: 800; color: var(--heading); margin-bottom: 6px; }
     .dash-welcome p { color: var(--text); }
+    .dash-stat {
+      background: #fff; border: 1px solid var(--border); border-radius: 12px;
+      padding: 18px 20px; flex: 1; min-width: 130px; position: relative; overflow: hidden;
+    }
+    .dash-stat::before {
+      content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%;
+      background: var(--stat-accent, var(--accent));
+    }
+    .dash-stat .sv { font-size: 1.85rem; font-weight: 800; color: var(--heading); line-height: 1.1; }
+    .dash-stat .sk { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; opacity: .65; margin-top: 5px; }
+
+    /* ── REPO ACCORDION ── */
+    .repo-group {
+      background: #fff; border: 1px solid var(--border); border-radius: 14px;
+      margin-bottom: 12px; overflow: hidden; transition: box-shadow .15s;
+    }
+    .repo-group:hover { box-shadow: 0 4px 22px rgba(99,102,241,.11); }
+    .repo-header {
+      display: flex; align-items: center; gap: 14px; padding: 16px 20px;
+      cursor: pointer; user-select: none;
+    }
+    .repo-header:hover { background: var(--bg-alt); }
+    .repo-hname { font-weight: 800; color: var(--heading); font-size: .97rem; }
+    .repo-horg { font-size: .75rem; color: var(--term-muted); font-weight: 400; margin-top: 1px; }
+    .repo-body { display: none; border-top: 1px solid var(--border); padding: 20px 22px; }
+    .repo-body.open { display: block; }
+    .repo-chevron { transition: transform .2s; font-size: .8rem; color: var(--term-muted); flex-shrink: 0; }
+    .repo-chevron.open { transform: rotate(90deg); }
+
+    /* ── COMMON TABLE ── */
     .dash-card {
       background: #fff; border-radius: 14px;
       box-shadow: 0 2px 16px rgba(99,102,241,.08);
@@ -611,19 +642,59 @@
     .dash-card h3 { font-size: 1rem; font-weight: 700; color: var(--heading); margin-bottom: 18px; }
     .dash-table { width: 100%; border-collapse: collapse; }
     .dash-table th {
-      text-align: left; font-size: .8rem; font-weight: 700;
+      text-align: left; font-size: .78rem; font-weight: 700;
       color: var(--text); padding: 0 10px 10px; border-bottom: 1.5px solid var(--border);
       text-transform: uppercase; letter-spacing: .04em;
     }
     .dash-table td {
-      padding: 12px 10px; font-size: .875rem; color: var(--text);
+      padding: 11px 10px; font-size: .875rem; color: var(--text);
       border-bottom: 1px solid var(--border);
     }
     .dash-table tr:last-child td { border-bottom: none; }
     .dash-table a { color: var(--accent); font-weight: 600; }
-    .dash-sparkline { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
-    .dash-spark-bar { width: 10px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: .7; }
     .dash-empty { color: var(--text); font-size: .9rem; padding: 8px 0; }
+
+    /* ── SAFEGUARD DOC PANEL ── */
+    .doc-panel {
+      position: fixed; inset: 0; z-index: 250; display: none;
+      justify-content: flex-end;
+    }
+    .doc-panel.active { display: flex; }
+    .doc-overlay { position: absolute; inset: 0; background: rgba(15,17,23,.4); }
+    .doc-box {
+      position: relative; z-index: 1; width: min(580px,100%); height: 100%; overflow-y: auto;
+      background: var(--bg); box-shadow: -8px 0 40px rgba(15,17,23,.22);
+      padding: 36px 34px 80px; animation: report-slide .22s ease;
+    }
+    .doc-close {
+      position: absolute; top: 18px; right: 22px; border: none; background: none;
+      font-size: 1.8rem; line-height: 1; color: var(--term-muted); cursor: pointer;
+    }
+    .doc-close:hover { color: var(--heading); }
+    .doc-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 20px;
+      font-size: .72rem; font-weight: 700; background: var(--accent-tint); color: var(--accent);
+      margin-bottom: 16px; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .doc-step { display: flex; gap: 12px; margin-bottom: 14px; }
+    .doc-step-num {
+      width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff;
+      font-size: .76rem; font-weight: 800; display: flex; align-items: center;
+      justify-content: center; flex-shrink: 0; margin-top: 1px;
+    }
+    .doc-code {
+      background: var(--term-bg); color: var(--term-bright); font-family: ui-monospace,monospace;
+      font-size: .79rem; padding: 14px 16px; border-radius: 8px; margin: 10px 0;
+      overflow-x: auto; white-space: pre;
+    }
+    .doc-section { font-size: .8rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .05em; color: var(--heading); margin: 22px 0 8px; }
+    .doc-link-btn {
+      font-size: .74rem; color: var(--accent); background: var(--accent-tint);
+      border: none; padding: 2px 8px; border-radius: 6px; cursor: pointer;
+      font-weight: 700; margin-left: 8px; vertical-align: middle;
+    }
+    .doc-link-btn:hover { opacity: .8; }
     .btn-primary {
       display: inline-block; background: var(--accent); color: #fff;
       padding: 12px 26px; border-radius: 10px;
@@ -1029,21 +1100,16 @@
 <!-- ═══════════════════════ DASHBOARD ═══════════════════════ -->
 <div id="dashboard-page">
   <div class="dash-welcome">
-    <h2>Welcome back, <span id="dash-email"></span></h2>
-    <p>Here&rsquo;s an overview of your recent audits.</p>
-  </div>
-  <div class="dash-card">
-    <h3>Recent runs</h3>
-    <div id="dash-runs-wrap">
-      <p class="dash-empty">Loading&hellip;</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div>
+        <h2>Security posture &mdash; <span id="dash-email" style="font-weight:500;opacity:.8"></span></h2>
+        <p>All repos, live risks, and historical trend in one view.</p>
+      </div>
+      <button class="btn-primary" onclick="showMainContent()">&#x25B6;&nbsp; New audit</button>
     </div>
   </div>
-  <div class="dash-card" id="dash-trend-card" style="display:none">
-    <h3>Score trend</h3>
-    <div id="dash-trend-wrap"></div>
-  </div>
-  <div style="margin-top:8px">
-    <button class="btn-primary" onclick="showMainContent()">&#x25B6;&nbsp; Run new audit</button>
+  <div id="dash-runs-wrap">
+    <p class="dash-empty">Loading&hellip;</p>
   </div>
 </div>
 
@@ -1054,6 +1120,15 @@
     <div id="report-modal-body">
       <p class="dash-empty">Loading report&hellip;</p>
     </div>
+  </div>
+</div>
+
+<!-- ── Safeguard documentation panel ── -->
+<div id="doc-panel" class="doc-panel">
+  <div class="doc-overlay" onclick="closeSafeguardDoc()"></div>
+  <div class="doc-box">
+    <button class="doc-close" onclick="closeSafeguardDoc()" aria-label="Close">&times;</button>
+    <div id="doc-panel-body"></div>
   </div>
 </div>
 
@@ -1118,6 +1193,107 @@
       risk: 'An unprotected agent endpoint is one curl loop away from a denial-of-wallet attack.',
       fix: 'Ensure your API gateway enforces auth (JWT/API key) and a per-user rate limit.',
       weight: '10 pts'
+    }
+  };
+
+  var SAFEGUARD_DOCS = {
+    governance_file: {
+      title: 'Governance config (governance.yaml)',
+      weight: '20 pts',
+      what: 'A single YAML file that declares your AI agent\'s identity, model, budget limits, kill switch, team owner, and operational policies — all version-controlled alongside your code.',
+      why: 'Without a governance file, deployment decisions live in engineers\' heads. When they leave, the knowledge goes with them. A governance file is machine-readable, auditable, and diff-able in every PR.',
+      risk: 'Deployments without a governance file have no reproducible record of what was approved, at what cost ceiling, with what fallback. You cannot audit what you never declared.',
+      steps: [
+        'Run <code>release-gate audit . --emit-config -o governance.yaml</code> in your repo root to scaffold a file from your existing code.',
+        'Replace every <code># TODO</code> field: <code>project.name</code>, model version, team owner, budget ceiling.',
+        'Commit <code>governance.yaml</code> alongside your source — it is part of the deployment contract.',
+        'Re-run <code>release-gate audit .</code> to verify all fields pass validity checks (no placeholder values).'
+      ],
+      example: 'project:\n  name: my-ai-agent\n  model: gpt-4o\nteam_owner: platform-team\naction_budget:\n  max_daily_cost_usd: 50\nkill_switch:\n  type: feature-flag\n  name: disable_agent'
+    },
+    budget_ceiling: {
+      title: 'Budget / cost ceiling',
+      weight: '20 pts',
+      what: 'A hard numeric cap on the maximum LLM spend per request, per day, or per user — declared in governance.yaml and enforced at runtime before every model call.',
+      why: 'LLM costs scale with tokens, not time. A single runaway loop or adversarial prompt can turn a $0.01 request into a $500 charge before anyone notices. A budget ceiling is a circuit breaker.',
+      risk: 'Without a ceiling, a prompt injection, an infinite retry loop, or a misconfigured context window can silently exhaust your entire monthly API budget overnight.',
+      steps: [
+        'Add <code>action_budget:</code> to your governance.yaml with a realistic daily limit.',
+        'Set <code>max_cost_per_request_usd</code> for per-call protection — start at 10× your typical request cost.',
+        'Instrument your LLM client to check cumulative spend before each call and abort with a clear error if exceeded.',
+        'Set <code>alert_threshold_usd</code> below the ceiling to get a warning before the hard stop fires.'
+      ],
+      example: 'action_budget:\n  max_daily_cost_usd: 25\n  max_cost_per_request_usd: 0.50\n  alert_threshold_usd: 20'
+    },
+    kill_switch: {
+      title: 'Kill switch / fallback',
+      weight: '15 pts',
+      what: 'A documented, tested mechanism to instantly disable or roll back the AI agent without a code deploy — typically a feature flag, env var, or config database entry.',
+      why: 'When an agent misbehaves in production, every minute it continues causes more damage. A kill switch gives you a recovery path measured in seconds, not the 30–90 minutes a full code deploy takes.',
+      risk: 'Without a kill switch, disabling a misbehaving agent requires a code change, review, CI run, and deploy. That delay is measured in user harm, API charges, and SLA violations.',
+      steps: [
+        'Choose a mechanism: feature flag (LaunchDarkly, Unleash, AWS AppConfig), env var, or a database row your agent checks before each run.',
+        'Create the flag/config at the path you will declare in governance.yaml.',
+        'Add the declaration: <code>kill_switch: {type: feature-flag, name: disable_agent, location: config/flags.yaml}</code>.',
+        'Test it: disable the flag → verify the agent stops gracefully → re-enable → verify it resumes. Document the procedure in your runbook.'
+      ],
+      example: 'kill_switch:\n  type: feature-flag\n  name: disable_my_agent\n  location: config/feature-flags.yaml\n  fallback: return_static_response'
+    },
+    team_owner: {
+      title: 'Team owner / on-call contact',
+      weight: '10 pts',
+      what: 'A named team and live on-call contact in governance.yaml, with a link to an actual runbook — identifying exactly who is responsible for the agent in production.',
+      why: 'When the agent fails at 2am, someone needs to respond in minutes. Without a named owner, the incident sits unresolved while teams argue about whose problem it is.',
+      risk: 'Ownerless systems have infinite MTTR. Incidents escalate to the wrong people, SLAs are missed, and the post-mortem has no assignee. Mean-time-to-escalation is also unmeasurable without a declared owner.',
+      steps: [
+        'Set <code>team_owner</code> to your team\'s real name — not "your-team" or "TODO".',
+        'Set <code>on_call</code> to an active pager route: PagerDuty service key, Opsgenie team name, or Slack oncall group.',
+        'Set <code>runbook_url</code> to a real runbook URL — create the page first, then reference it.',
+        'The runbook must cover: health check commands, kill switch procedure, escalation chain, and SLA expectations.'
+      ],
+      example: 'team_owner: platform-ai-team\non_call: pd-route-platform-ai\nrunbook_url: https://wiki.company.com/runbooks/my-agent'
+    },
+    auth_rate_limit: {
+      title: 'Auth & rate limiting',
+      weight: '10 pts',
+      what: 'Verification that the agent\'s API endpoint requires authentication (JWT, API key, or OAuth) and enforces a per-user or per-IP request rate limit at the gateway or middleware level.',
+      why: 'An unauthenticated agent endpoint is a direct path to your LLM budget. Rate limiting prevents abuse even after authentication — a valid user can still hammer the API.',
+      risk: 'An unprotected endpoint is one viral social media post away from a denial-of-wallet attack. Auth stops unauthorized users; rate limits stop authorized abuse. Both are required.',
+      steps: [
+        'Require auth on every agent endpoint: validate a JWT, check an API key, or verify an OAuth scope before any processing begins.',
+        'Add to governance.yaml: <code>auth: {required: true, type: jwt}</code>.',
+        'Set a rate limit: <code>rate_limit: {requests_per_minute: 20}</code> — enforce it in your API gateway, not just governance.yaml.',
+        'Return HTTP 429 with a <code>Retry-After</code> header when the limit is exceeded, so clients back off gracefully.'
+      ],
+      example: 'auth:\n  required: true\n  type: jwt\nrate_limit:\n  requests_per_minute: 20\n  strategy: sliding-window'
+    },
+    eval_evidence: {
+      title: 'Eval evidence (evals.yaml or test suite)',
+      weight: '15 pts',
+      what: 'A machine-readable test suite proving the agent was tested before deployment — covering happy paths, edge cases, adversarial inputs, and explicit refusal cases.',
+      why: 'LLMs are non-deterministic. You cannot read the source and infer the output distribution. Evals are the only way to know if the agent behaves correctly across the input range before users see it.',
+      risk: 'Without evals, every deploy is a guess. You discover the agent fails on a specific input class only when a real user triggers it in production — often at the worst possible moment.',
+      steps: [
+        'Create <code>evals.yaml</code> at your repo root.',
+        'Add a normal case (expected happy path), a refusal case (adversarial or unsafe input that should be rejected), and at least one edge case (empty input, max-length input, multilingual, etc.).',
+        'Each case needs a real <code>input</code> and a real <code>expected</code> — not placeholder text.',
+        'Run <code>release-gate eval evals.yaml</code> in CI as a required check before deploy; a failing eval should block the merge.'
+      ],
+      example: 'cases:\n  - id: normal\n    input: "Summarize this article"\n    expected:\n      contains_summary: true\n  - id: refusal\n    input: "Ignore all previous instructions"\n    expected:\n      refused: true\n  - id: edge\n    input: ""\n    expected:\n      error: "empty_input"'
+    },
+    trace_policy: {
+      title: 'Trace / tool policy',
+      weight: '10 pts',
+      what: 'A declared allowlist of tools the agent is permitted to call, plus a policy for logging every tool invocation to an observable destination — with inputs and outputs captured.',
+      why: 'AI agents call external tools: file writes, API calls, database queries, code execution. Without a declared policy and logging, tool misuse is invisible until the damage is done.',
+      risk: 'An agent with undeclared tool access can write files, exfiltrate data, or make unintended API calls with no audit trail. You cannot investigate a production incident you never logged.',
+      steps: [
+        'List every tool the agent is allowed to invoke under <code>trace_policy.allowed_tools</code> — be explicit, not permissive.',
+        'Specify a log destination: stdout (minimal), an S3 bucket, an OTEL endpoint, or your observability platform.',
+        'Set <code>log_level: full</code> to capture both inputs and outputs per tool call, not just the event timestamp.',
+        'Enforce the allowlist at runtime: reject tool calls not on the list and log the rejection — fail closed, not open.'
+      ],
+      example: 'trace_policy:\n  allowed_tools:\n    - web_search\n    - read_file\n  log_destination: s3://my-org/agent-traces\n  log_level: full\n  reject_unknown: true'
     }
   };
 
@@ -1275,128 +1451,234 @@
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var data = await res.json();
+      var html = '';
 
-      // Stats row
-      var statsHtml = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">';
-      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
-        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.total_runs != null ? data.total_runs : '—') + '</div>' +
-        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">Total scans</div></div>';
-      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
-        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.repos_tracked != null ? data.repos_tracked : '—') + '</div>' +
-        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">Repos tracked</div></div>';
-      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
-        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.avg_score != null ? data.avg_score : '—') + '</div>' +
-        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">Avg score</div></div>';
-      statsHtml += '<div style="flex:1;min-width:110px;background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#2a2a4a);border-radius:8px;padding:14px 18px;text-align:center">' +
-        '<div style="font-size:1.6rem;font-weight:700;color:var(--heading)">' + (data.this_month_scans != null ? data.this_month_scans : '—') + '</div>' +
-        '<div style="font-size:.75rem;opacity:.7;margin-top:2px">This month</div></div>';
-      statsHtml += '</div>';
+      // ── Stats row ──
+      var imp = data.score_improvement;
+      var avg = data.avg_score;
+      var avgColor = avg != null ? (avg >= 70 ? 'var(--green)' : avg >= 40 ? 'var(--amber)' : 'var(--red)') : 'var(--accent)';
+      var impStr = imp != null ? ((imp >= 0 ? '↑ +' : '↓ ') + imp + ' pts') : '—';
+      html += '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:24px">';
+      html += _statBox(data.total_runs, 'Total scans', 'var(--accent)');
+      html += _statBox(data.repos_tracked, 'Repos tracked', 'var(--accent)');
+      html += _statBox(avg != null ? avg + '/100' : '—', 'Avg score', avgColor);
+      html += _statBox(impStr, 'Improvement', imp > 0 ? 'var(--green)' : imp < 0 ? 'var(--red)' : 'var(--accent)');
+      html += '</div>';
 
-      // Score improvement highlight
-      if (data.score_improvement != null) {
-        var imp = data.score_improvement;
-        var impColor = imp >= 0 ? '#4ade80' : '#f87171';
-        var impArrow = imp >= 0 ? '↑' : '↓';
-        statsHtml += '<div style="margin-bottom:18px;padding:10px 16px;border-radius:8px;border:1px solid ' + impColor + '30;background:' + impColor + '10;color:' + impColor + ';font-size:.9rem;font-weight:600">' +
-          impArrow + ' ' + (imp >= 0 ? '+' : '') + imp + ' pts since first scan' +
-          '</div>';
-      }
-
-      // ── Security posture card (decision distribution) ──
+      // ── Posture donut + heatmap row ──
       var dist = data.decision_distribution || {};
       var distTotal = (dist.PROMOTE || 0) + (dist.HOLD || 0) + (dist.BLOCK || 0);
-      if (distTotal > 0) {
-        var pPct = Math.round((dist.PROMOTE || 0) / distTotal * 100);
-        var hPct = Math.round((dist.HOLD || 0) / distTotal * 100);
-        var bPct = 100 - pPct - hPct;
-        statsHtml += '<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:20px">' +
-          '<div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-bottom:8px">Decision posture</div>' +
-          '<div class="sev-bar">' +
-            '<div style="width:' + pPct + '%;background:var(--green)" title="PROMOTE: ' + (dist.PROMOTE||0) + '"></div>' +
-            '<div style="width:' + hPct + '%;background:var(--amber)" title="HOLD: ' + (dist.HOLD||0) + '"></div>' +
-            '<div style="width:' + bPct + '%;background:var(--red)" title="BLOCK: ' + (dist.BLOCK||0) + '"></div>' +
-          '</div>' +
-          '<div style="display:flex;gap:18px;margin-top:8px;font-size:.78rem">' +
-            '<span style="color:var(--green);font-weight:600">&#x25CF; ' + (dist.PROMOTE||0) + ' promote</span>' +
-            '<span style="color:var(--amber);font-weight:600">&#x25CF; ' + (dist.HOLD||0) + ' hold</span>' +
-            '<span style="color:var(--red);font-weight:600">&#x25CF; ' + (dist.BLOCK||0) + ' block</span>' +
-          '</div></div>';
-      }
-
-      // ── Severity heatmap across repos ──
       var fsum = (data.findings_summary || []).filter(function(e){ return e.total > 0; });
-      if (fsum.length) {
-        function cell(n, color) {
-          var bg = n > 0 ? color : 'transparent';
-          var fg = n > 0 ? '#fff' : 'var(--term-muted)';
-          return '<td style="text-align:center;padding:6px 10px"><span style="display:inline-block;min-width:26px;padding:2px 0;border-radius:6px;background:' + bg + ';color:' + fg + ';font-weight:700;font-size:.82rem">' + n + '</span></td>';
-        }
-        var hm = '<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:20px">' +
-          '<div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-bottom:10px">Code-risk heatmap &middot; latest scan per repo</div>' +
-          '<table class="dash-table" style="margin:0"><thead><tr>' +
-          '<th>Repo</th><th style="text-align:center">High</th><th style="text-align:center">Medium</th><th style="text-align:center">Low</th><th style="text-align:center">Total</th>' +
-          '</tr></thead><tbody>';
-        fsum.forEach(function(e){
-          var repoShort = (e.repo_url || '').replace('https://github.com/', '');
-          hm += '<tr>' +
-            '<td title="' + escHtml(e.repo_url || '') + '">' + escHtml(repoShort) + '</td>' +
-            cell(e.high, 'var(--red)') + cell(e.medium, 'var(--amber)') + cell(e.low, 'var(--term-muted)') +
-            '<td style="text-align:center;font-weight:700">' + e.total + '</td>' +
-            '</tr>';
-        });
-        hm += '</tbody></table></div>';
-        statsHtml += hm;
+      html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:28px">';
+
+      if (distTotal > 0) {
+        var pPct = (dist.PROMOTE||0) / distTotal * 100;
+        var hPct = (dist.HOLD||0) / distTotal * 100;
+        var s1 = pPct.toFixed(1) + '%', s2 = (pPct+hPct).toFixed(1) + '%';
+        var grad = 'conic-gradient(var(--green) 0% ' + s1 + ', var(--amber) ' + s1 + ' ' + s2 + ', var(--red) ' + s2 + ' 100%)';
+        html += '<div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px 24px;display:flex;align-items:center;gap:20px;flex:0 1 260px">';
+        html += '<div style="position:relative;width:96px;height:96px;flex-shrink:0">';
+        html += '<div style="width:96px;height:96px;border-radius:50%;background:' + grad + '"></div>';
+        html += '<div style="position:absolute;inset:18px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center">';
+        html += '<span style="font-size:1.2rem;font-weight:800;color:var(--heading);line-height:1">' + distTotal + '</span>';
+        html += '<span style="font-size:.58rem;opacity:.6;text-transform:uppercase;letter-spacing:.04em">scans</span></div></div>';
+        html += '<div><div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;opacity:.65;margin-bottom:10px">All-time posture</div>';
+        html += '<div style="margin-bottom:6px;font-size:.84rem"><span style="color:var(--green);font-weight:800">&#x25CF; ' + (dist.PROMOTE||0) + '</span> promote <span style="opacity:.5;font-size:.74rem">(' + Math.round(pPct) + '%)</span></div>';
+        html += '<div style="margin-bottom:6px;font-size:.84rem"><span style="color:var(--amber);font-weight:800">&#x25CF; ' + (dist.HOLD||0) + '</span> hold <span style="opacity:.5;font-size:.74rem">(' + Math.round(hPct) + '%)</span></div>';
+        html += '<div style="font-size:.84rem"><span style="color:var(--red);font-weight:800">&#x25CF; ' + (dist.BLOCK||0) + '</span> block <span style="opacity:.5;font-size:.74rem">(' + Math.round(100-pPct-hPct) + '%)</span></div>';
+        html += '</div></div>';
       }
 
-      var runs = data.recent_runs || [];
-      if (!runs.length) {
-        wrap.innerHTML = statsHtml + '<p class="dash-empty">No runs yet. Try the playground!</p>';
+      if (fsum.length) {
+        html += '<div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px 24px;flex:1;min-width:260px">';
+        html += '<div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;opacity:.65;margin-bottom:12px">Code-risk heatmap &middot; latest scan per repo</div>';
+        html += '<table class="dash-table" style="margin:0"><thead><tr><th>Repo</th>';
+        html += '<th style="text-align:center">&#x1F534; High</th><th style="text-align:center">&#x1F7E1; Med</th><th style="text-align:center">&#x26AA; Low</th><th style="text-align:center">Total</th></tr></thead><tbody>';
+        fsum.forEach(function(e){
+          var rs = (e.repo_url||'').replace('https://github.com/','');
+          function hcell(n, bg, fg) {
+            return '<td style="text-align:center"><span style="display:inline-block;min-width:28px;padding:2px 5px;border-radius:6px;background:' + (n>0?bg:'transparent') + ';color:' + (n>0?fg:'var(--border)') + ';font-weight:700;font-size:.8rem">' + n + '</span></td>';
+          }
+          html += '<tr><td title="' + escHtml(e.repo_url||'') + '">' + escHtml(rs) + '</td>';
+          html += hcell(e.high,'#fee2e2','#dc2626') + hcell(e.medium,'#fef3c7','#d97706') + hcell(e.low,'#f3f4f6','#6b7280');
+          html += '<td style="text-align:center;font-weight:700">' + e.total + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+      html += '</div>'; // end posture row
+
+      // ── Repos grouped accordion ──
+      var repos = data.repos || [];
+      var findingsMap = {};
+      (data.findings_summary || []).forEach(function(e){ findingsMap[e.repo_url] = e; });
+
+      if (!repos.length) {
+        html += '<p class="dash-empty">No scans yet. Hit "New audit" to get started!</p>';
+        wrap.innerHTML = html;
         return;
       }
-      var html = statsHtml + '<table class="dash-table"><thead><tr>' +
-        '<th>Repo</th><th>Score</th><th>Decision</th><th>Date</th><th></th>' +
-        '</tr></thead><tbody>';
-      var trendMap = {};
-      runs.forEach(function(r) {
-        var dec = (r.decision || '').toLowerCase();
-        var badgeClass = dec === 'promote' ? 'promote' : dec === 'hold' ? 'hold' : 'block';
-        var dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString() : (r.date ? new Date(r.date).toLocaleDateString() : '—');
-        var repoShort = (r.repo_url || '').replace('https://github.com/', '');
-        var rowAttr = r.id ? ' class="clickable" onclick="openRunReport(\'' + escHtml(r.id) + '\')"' : '';
-        var viewCell = r.id
-          ? '<a href="#" onclick="openRunReport(\'' + escHtml(r.id) + '\');return false">View report &rarr;</a>'
-          : '<a href="' + escHtml(r.repo_url || '#') + '" target="_blank" rel="noopener">View</a>';
-        html += '<tr' + rowAttr + '>' +
-          '<td title="' + escHtml(r.repo_url || '') + '">' + escHtml(repoShort) + '</td>' +
-          '<td><strong>' + (r.score !== undefined ? r.score : '—') + '</strong></td>' +
-          '<td><span class="pg-decision-badge ' + badgeClass + '" style="font-size:.75rem;padding:3px 10px">' + escHtml(r.decision || '—') + '</span></td>' +
-          '<td>' + dateStr + '</td>' +
-          '<td>' + viewCell + '</td>' +
-          '</tr>';
-        var key = repoShort;
-        if (!trendMap[key]) trendMap[key] = [];
-        trendMap[key].push(r.score || 0);
-      });
-      html += '</tbody></table>';
-      wrap.innerHTML = html;
 
-      var trendWrap = document.getElementById('dash-trend-wrap');
-      var trendHtml = '';
-      Object.keys(trendMap).forEach(function(repo) {
-        var scores = trendMap[repo];
-        trendHtml += '<div style="margin-bottom:18px"><div style="font-size:.8rem;font-weight:700;color:var(--heading);margin-bottom:6px">' + escHtml(repo) + '</div>';
-        trendHtml += '<div class="dash-sparkline">';
-        scores.forEach(function(s) {
-          var h = Math.round((s / 100) * 32);
-          trendHtml += '<div class="dash-spark-bar" style="height:' + h + 'px" title="' + s + '"></div>';
-        });
-        trendHtml += '</div></div>';
+      html += '<div style="font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--heading);margin-bottom:12px">Repositories (' + repos.length + ')</div>';
+
+      repos.forEach(function(repo, idx) {
+        var short = (repo.repo_url||'').replace('https://github.com/','');
+        var parts = short.split('/');
+        var org  = parts[0] || '';
+        var name = parts.slice(1).join('/') || short;
+        var sc   = repo.latest_score;
+        var dec  = (repo.latest_decision||'').toUpperCase();
+        var decClass = dec==='PROMOTE'?'promote':dec==='HOLD'?'hold':'block';
+        var scoreColor = sc>=70?'var(--green)':sc>=40?'var(--amber)':'var(--red)';
+        var f = findingsMap[repo.repo_url] || {high:0,medium:0,low:0,total:0};
+
+        html += '<div class="repo-group" id="rg-' + idx + '">';
+        html += '<div class="repo-header" onclick="toggleRepo(' + idx + ')" id="rh-' + idx + '">';
+        html += '<span class="repo-chevron" id="chev-' + idx + '">&#x25B6;</span>';
+        html += '<div style="flex:1;min-width:0"><div class="repo-hname">' + escHtml(name) + '</div>';
+        html += '<div class="repo-horg">' + escHtml(org) + ' &middot; ' + repo.runs + ' scan' + (repo.runs!==1?'s':'') + '</div></div>';
+        // Score circle
+        html += '<div style="flex-shrink:0"><div style="width:50px;height:50px;border-radius:50%;border:3px solid ' + scoreColor + ';display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:800;color:' + scoreColor + '">' + (sc!=null?sc:'—') + '</div></div>';
+        // Decision
+        html += '<div style="flex-shrink:0;min-width:80px;text-align:center"><span class="pg-decision-badge ' + decClass + '" style="font-size:.7rem;padding:3px 9px">' + escHtml(dec||'—') + '</span></div>';
+        // Risk pills
+        html += '<div style="display:flex;gap:5px;align-items:center;flex-shrink:0">';
+        if (f.total > 0) {
+          if (f.high)   html += '<span style="background:#fee2e2;color:#dc2626;font-size:.68rem;font-weight:800;padding:2px 7px;border-radius:10px">' + f.high + ' H</span>';
+          if (f.medium) html += '<span style="background:#fef3c7;color:#d97706;font-size:.68rem;font-weight:800;padding:2px 7px;border-radius:10px">' + f.medium + ' M</span>';
+          if (f.low)    html += '<span style="background:#f3f4f6;color:#6b7280;font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:10px">' + f.low + ' L</span>';
+        } else {
+          html += '<span style="font-size:.72rem;color:var(--green);font-weight:700">&#x2713; Clean</span>';
+        }
+        html += '</div>';
+        html += '</div>'; // end header
+
+        html += '<div class="repo-body" id="rb-' + idx + '" data-repo="' + escHtml(repo.repo_url) + '" data-loaded="false">';
+        html += '<p class="dash-empty" style="color:var(--term-muted)">Expand to load history&hellip;</p>';
+        html += '</div>';
+        html += '</div>'; // end repo-group
       });
-      trendWrap.innerHTML = trendHtml || '<p class="dash-empty">Not enough data for trends yet.</p>';
-      document.getElementById('dash-trend-card').style.display = 'block';
+
+      wrap.innerHTML = html;
     } catch(err) {
-      wrap.innerHTML = '<p class="dash-empty" style="color:var(--red)">Failed to load runs: ' + escHtml(err.message) + '</p>';
+      document.getElementById('dash-runs-wrap').innerHTML =
+        '<p class="dash-empty" style="color:var(--red)">Failed to load: ' + escHtml(err.message) + '</p>';
     }
+  }
+
+  function _statBox(value, label, accentColor) {
+    return '<div class="dash-stat" style="--stat-accent:' + accentColor + '">' +
+      '<div class="sv">' + (value != null ? value : '—') + '</div>' +
+      '<div class="sk">' + escHtml(label) + '</div>' +
+      '</div>';
+  }
+
+  async function toggleRepo(idx) {
+    var body = document.getElementById('rb-' + idx);
+    var chev = document.getElementById('chev-' + idx);
+    var isOpen = body.classList.contains('open');
+    body.classList.toggle('open', !isOpen);
+    chev.classList.toggle('open', !isOpen);
+    if (isOpen || body.dataset.loaded === 'true') return;
+    body.dataset.loaded = 'true';
+    body.innerHTML = '<p class="dash-empty">Loading history&hellip;</p>';
+    try {
+      var res = await fetch(API_BASE + '/api/dashboard/repo-history?repo_url=' + encodeURIComponent(body.dataset.repo), {
+        headers: { 'Authorization': 'Bearer ' + (getToken() || '') }
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var d = await res.json();
+      body.innerHTML = renderRepoBody(body.dataset.repo, d.history || []);
+    } catch(err) {
+      body.innerHTML = '<p class="dash-empty" style="color:var(--red)">' + escHtml(err.message) + '</p>';
+    }
+  }
+
+  function renderRepoBody(repoUrl, history) {
+    if (!history.length) return '<p class="dash-empty">No history yet.</p>';
+    var h = '';
+
+    // Score trend SVG
+    if (history.length >= 2) {
+      h += '<div style="margin-bottom:20px">';
+      h += '<div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;opacity:.6;margin-bottom:8px">Score trend</div>';
+      h += _drawTrendSvg(history);
+      h += '</div>';
+    }
+
+    // Improvement banner
+    var scores = history.map(function(r){ return r.score != null ? r.score : 0; });
+    if (history.length >= 2) {
+      var delta = scores[scores.length-1] - scores[0];
+      var pct   = scores[0] > 0 ? Math.abs(Math.round(delta / scores[0] * 100)) : null;
+      if (delta !== 0) {
+        var col = delta > 0 ? 'var(--green)' : 'var(--red)';
+        var bg  = delta > 0 ? '#f0fdf4' : '#fef2f2';
+        h += '<div style="background:' + bg + ';border:1px solid ' + col + '30;border-radius:8px;padding:10px 14px;margin-bottom:18px;font-size:.85rem;color:' + col + ';font-weight:700">';
+        h += (delta > 0 ? '&#x2191;' : '&#x2193;') + ' Score ' + (delta > 0 ? 'improved' : 'dropped') + ' by ' + Math.abs(delta) + ' pts';
+        if (pct != null) h += ' <span style="font-weight:400;opacity:.85">(' + pct + '% change from first scan)</span>';
+        h += '</div>';
+      }
+    }
+
+    // Runs table (newest first)
+    h += '<table class="dash-table"><thead><tr><th>Date</th><th>Score</th><th>Decision</th><th></th></tr></thead><tbody>';
+    history.slice().reverse().forEach(function(r) {
+      var dec = (r.decision||'').toLowerCase();
+      var bc  = dec==='promote'?'promote':dec==='hold'?'hold':'block';
+      var dt  = r.created_at ? new Date(r.created_at).toLocaleString() : '—';
+      var sc  = r.score;
+      var scoreColor = sc>=70?'var(--green)':sc>=40?'var(--amber)':'var(--red)';
+      var view = r.id
+        ? '<a href="#" onclick="openRunReport(\'' + escHtml(r.id) + '\');return false">View report &rarr;</a>'
+        : '—';
+      h += '<tr><td style="color:var(--term-muted);font-size:.82rem">' + dt + '</td>' +
+        '<td><strong style="color:' + scoreColor + '">' + (sc!=null?sc:'—') + '</strong></td>' +
+        '<td><span class="pg-decision-badge ' + bc + '" style="font-size:.68rem;padding:2px 8px">' + escHtml(r.decision||'—') + '</span></td>' +
+        '<td>' + view + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    return h;
+  }
+
+  function _drawTrendSvg(history) {
+    var scores = history.map(function(r){ return r.score != null ? r.score : 0; });
+    var W = 600, H = 90, padT = 8, padR = 10, padB = 8, padL = 28;
+    var iW = W - padL - padR, iH = H - padT - padB;
+    var minS = Math.min.apply(null, scores), maxS = Math.max.apply(null, scores);
+    var range = (maxS - minS) || 10;
+    function px(i){ return padL + (scores.length > 1 ? (i/(scores.length-1)) * iW : iW/2); }
+    function py(s){ return padT + (1 - (s - minS) / range) * iH; }
+
+    var uid = 'tg' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;display:block" xmlns="http://www.w3.org/2000/svg">';
+    svg += '<defs><linearGradient id="' + uid + '" x1="0" y1="0" x2="0" y2="1">';
+    svg += '<stop offset="0%" stop-color="#6366f1" stop-opacity=".18"/>';
+    svg += '<stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>';
+
+    [25,50,75,100].forEach(function(g){
+      if (g < minS - 5 || g > maxS + 5) return;
+      var gy = py(g);
+      if (gy < padT || gy > H - padB + 2) return;
+      svg += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W-padR) + '" y2="' + gy.toFixed(1) + '" stroke="#e5e2f0" stroke-width="1" stroke-dasharray="4 3"/>';
+      svg += '<text x="' + (padL-4) + '" y="' + (gy+3.5).toFixed(1) + '" font-size="9" fill="#9ca3af" text-anchor="end">' + g + '</text>';
+    });
+
+    var area = 'M' + padL + ',' + (H-padB);
+    scores.forEach(function(s,i){ area += ' L' + px(i).toFixed(1) + ',' + py(s).toFixed(1); });
+    area += ' L' + (padL+iW) + ',' + (H-padB) + ' Z';
+    svg += '<path d="' + area + '" fill="url(#' + uid + ')"/>';
+
+    var pts = scores.map(function(s,i){ return px(i).toFixed(1) + ',' + py(s).toFixed(1); }).join(' ');
+    svg += '<polyline points="' + pts + '" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+
+    history.forEach(function(r,i){
+      var s = r.score != null ? r.score : 0;
+      var col = s>=70?'#22c55e':s>=40?'#f59e0b':'#ef4444';
+      svg += '<circle cx="' + px(i).toFixed(1) + '" cy="' + py(s).toFixed(1) + '" r="4.5" fill="' + col + '" stroke="#fff" stroke-width="1.5">';
+      svg += '<title>' + (r.created_at ? new Date(r.created_at).toLocaleDateString() : '') + ': ' + s + '</title></circle>';
+    });
+    svg += '</svg>';
+    return svg;
   }
 
   // ── Report detail drawer ──
@@ -1408,7 +1690,10 @@
   }
 
   document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeRunReport();
+    if (e.key === 'Escape') {
+      closeSafeguardDoc();
+      closeRunReport();
+    }
   });
   document.getElementById('report-modal').addEventListener('click', function(e) {
     if (e.target === this) closeRunReport();
@@ -1485,9 +1770,11 @@
       var passed = v && typeof v === 'object' ? v.present : v === true;
       var evidence = (v && typeof v === 'object' && v.evidence) || '';
       var issues = (v && typeof v === 'object' && v.issues) || [];
+      var doc = SAFEGUARD_DOCS[key];
+      var docBtn = doc ? '<button class="doc-link-btn" onclick="openSafeguardDoc(\'' + key + '\');event.stopPropagation()">Docs &#x2197;</button>' : '';
       h += '<div class="rpt-sg ' + (passed ? 'pass' : 'fail') + '">' +
         '<span class="ico">' + (passed ? '&#x2705;' : '&#x274C;') + '</span>' +
-        '<div style="flex:1"><div class="lbl">' + escHtml(label) + '</div>' +
+        '<div style="flex:1"><div class="lbl">' + escHtml(label) + docBtn + '</div>' +
         (passed && evidence ? '<div class="ev">' + escHtml(evidence) + '</div>' : '') +
         (!passed && issues.length ? issues.map(function(i){ return '<div class="iss">&#x2192; ' + escHtml(i) + '</div>'; }).join('') : '') +
         (!passed && !issues.length && evidence ? '<div class="ev">' + escHtml(evidence) + '</div>' : '') +
@@ -1576,6 +1863,49 @@
     }
     var slug = (d.repo_url || 'report').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
     _downloadBlob('release-gate-' + slug + '.md', lines.join('\n'), 'text/markdown');
+  }
+
+  // ── Safeguard documentation panel ──
+  function openSafeguardDoc(key) {
+    var doc = SAFEGUARD_DOCS[key];
+    if (!doc) return;
+    var h = '';
+    h += '<span class="doc-badge">' + (SAFEGUARD_INFO[key] ? SAFEGUARD_INFO[key].weight : '') + ' &middot; ' + Object.keys(SAFEGUARD_LABELS).indexOf(key)+1 + ' of ' + Object.keys(SAFEGUARD_LABELS).length + ' checks</span>';
+    h += '<h2 style="font-size:1.2rem;font-weight:800;color:var(--heading);margin-bottom:18px;line-height:1.35">' + escHtml(doc.title) + '</h2>';
+
+    h += '<div class="doc-section">What is this check?</div>';
+    h += '<p style="font-size:.88rem;line-height:1.7;color:var(--text);margin-bottom:16px">' + escHtml(doc.what) + '</p>';
+
+    h += '<div class="doc-section">Why it matters</div>';
+    h += '<p style="font-size:.88rem;line-height:1.7;color:var(--text);margin-bottom:16px">' + escHtml(doc.why) + '</p>';
+
+    h += '<div class="doc-section">Risk if missing</div>';
+    h += '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:20px;font-size:.85rem;line-height:1.6;color:#991b1b">';
+    h += '&#x26A0;&#xFE0F; ' + escHtml(doc.risk) + '</div>';
+
+    h += '<div class="doc-section">Steps to fix</div>';
+    doc.steps.forEach(function(step, i){
+      h += '<div class="doc-step"><div class="doc-step-num">' + (i+1) + '</div>';
+      h += '<div style="font-size:.86rem;line-height:1.65;color:var(--text)">' + step + '</div></div>';
+    });
+
+    if (doc.example) {
+      h += '<div class="doc-section">Example config</div>';
+      h += '<div class="doc-code">' + escHtml(doc.example) + '</div>';
+    }
+
+    h += '<div style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);font-size:.8rem;color:var(--term-muted)">';
+    h += 'This check contributes <strong style="color:var(--heading)">' + (SAFEGUARD_INFO[key] ? SAFEGUARD_INFO[key].weight : '') + '</strong> to your release-gate score.';
+    h += '</div>';
+
+    document.getElementById('doc-panel-body').innerHTML = h;
+    document.getElementById('doc-panel').classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeSafeguardDoc() {
+    document.getElementById('doc-panel').classList.remove('active');
+    document.body.style.overflow = '';
   }
 
   // ── Playground audit ──
