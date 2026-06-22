@@ -178,6 +178,9 @@ def _redact_for_free(report: Dict) -> Dict:
         "code_findings": [],    # lock the code-analysis findings for anon users
         "_code_findings_count": len(findings),
         "_redacted": True,
+        # Lock detected model for anon — shown as a hook to sign up
+        "detected_model": None,
+        "_detected_model_locked": True,
         "_upgrade_message": "Sign up free to see all safeguard details, emit a governance.yaml, and track history.",
     }
 

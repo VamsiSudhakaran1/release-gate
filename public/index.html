@@ -764,8 +764,10 @@
           </div>
         </div>
         <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
+        <div id="pg-stack-tags" style="display:none;margin-bottom:14px;flex-wrap:wrap;gap:6px;align-items:center;"></div>
         <ul class="pg-checklist" id="pg-checklist"></ul>
         <div id="pg-findings" style="margin-top:14px;"></div>
+        <div id="pg-run-link" style="display:none;margin-top:14px;"></div>
         <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
           <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
         </div>
@@ -1047,8 +1049,8 @@
       <!-- Enterprise -->
       <div class="tier-card">
         <div class="tier-name">Enterprise</div>
-        <div class="tier-price">$199</div>
-        <div class="tier-price-sub">per month</div>
+        <div class="tier-price" style="font-size:1.4rem;letter-spacing:-.5px">Custom pricing</div>
+        <div class="tier-price-sub">talk to us about your team size</div>
         <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Unlimited scans &amp; repos</div>
         <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> Org-wide governance policy, compliance audit trail, SSO.</p>
         <ul class="tier-features">
@@ -1061,7 +1063,7 @@
           <li>Audit trail</li>
           <li>GitHub App org-wide</li>
         </ul>
-        <a href="mailto:vamsi.sudhakaran@gmail.com" class="tier-btn secondary">Contact us &rarr;</a>
+        <a href="mailto:Vamsi.sudhakaran@gmail.com?subject=release-gate%20Enterprise%20inquiry" class="tier-btn secondary">Contact us &rarr;</a>
       </div>
 
     </div>
@@ -1137,7 +1139,7 @@
       <div class="footer-links">
         <a href="#cli-section">CLI docs</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a>
-        <a href="mailto:vamsi.sudhakaran@gmail.com">Email</a>
+        <a href="mailto:Vamsi.sudhakaran@gmail.com?subject=release-gate%20inquiry">Contact us</a>
       </div>
     </div>
     <div class="footer-bottom">
@@ -1826,7 +1828,7 @@
       '<div class="rpt-metric"><div class="v">' + passCount + '/' + sgTotal + '</div><div class="k">Safeguards passing</div></div>' +
       '<div class="rpt-metric"><div class="v" style="color:' + (findings.length ? 'var(--red)' : 'var(--green)') + '">' + findings.length + '</div><div class="k">Code risks</div></div>' +
       '<div class="rpt-metric"><div class="v" style="color:var(--red)">' + sevCount.high + '</div><div class="k">High severity</div></div>' +
-      '<div class="rpt-metric"><div class="v">' + (rpt.detected_model ? escHtml(rpt.detected_model) : (fwNames.length ? fwNames.length : '—')) + '</div><div class="k">' + (rpt.detected_model ? 'Detected model' : 'Frameworks') + '</div></div>' +
+      '<div class="rpt-metric"><div class="v" style="' + (rpt._detected_model_locked ? 'font-size:.72rem;color:var(--accent);cursor:pointer' : '') + '" ' + (rpt._detected_model_locked ? 'onclick="openAuthModal(\'signup\')" title="Sign up to reveal detected model"' : '') + '>' + (rpt.detected_model ? escHtml(rpt.detected_model) : (rpt._detected_model_locked ? '&#x1F512; Sign up' : (fwNames.length ? fwNames.length + ' frameworks' : '—'))) + '</div><div class="k">Detected model</div></div>' +
       '</div>';
 
     // Frameworks
@@ -2050,6 +2052,7 @@
         throw new Error((detail && typeof detail === 'string') ? detail : 'Audit failed (HTTP ' + res.status + ')');
       }
       var report = data.report || data;
+      if (data.run_id) report._run_id = data.run_id;
       _lastScannedUrl = url;
       _lastReport = report;
       renderPlaygroundResults(report, url);
@@ -2229,6 +2232,31 @@
         if (needsGovernance) files.push('<code>governance.yaml</code>');
         if (needsEvals) files.push('<code>evals.yaml</code>');
         preview.innerHTML = files.join(' + ');
+      }
+    }
+
+    // Detected stack tags — always shown, even for anon
+    var stackEl = document.getElementById('pg-stack-tags');
+    if (stackEl) {
+      var fw = data.frameworks || {};
+      var fwKeys = Object.keys(fw);
+      if (fwKeys.length) {
+        stackEl.innerHTML = '<span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#6b7280;margin-right:6px">Stack:</span>' +
+          fwKeys.map(function(k){ return '<span style="background:#ede9fe;color:#6366f1;font-size:.76rem;font-weight:600;padding:3px 10px;border-radius:20px">' + escHtml(k) + ' &middot; ' + fw[k] + '</span>'; }).join(' ');
+        stackEl.style.display = 'flex';
+      } else {
+        stackEl.style.display = 'none';
+      }
+    }
+
+    // Web report link — only for logged-in users where run_id was returned
+    var runLinkEl = document.getElementById('pg-run-link');
+    if (runLinkEl) {
+      if (data._run_id) {
+        runLinkEl.innerHTML = '<a href="/r/' + encodeURIComponent(data._run_id) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border-radius:8px;border:1px solid #c4b5fd;">&#x1F4CA; View full report + trend history &rarr;</a>';
+        runLinkEl.style.display = 'block';
+      } else {
+        runLinkEl.style.display = 'none';
       }
     }
 
