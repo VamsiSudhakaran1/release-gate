@@ -134,3 +134,76 @@ runs:
       with:
         name: release-gate-report
         path: ${{ inputs.html-report }}
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.sarif-output != '' && inputs.command == 'audit' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-output }}
+        category: release-gate
+
+    - name: Post PR comment
+      if: inputs.pr-comment == 'true' && github.event_name == 'pull_request' && inputs.command == 'audit' && always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Parse JSON report for summary data
+        SCORE=$(jq -r '.score // "?"' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+        DECISION=$(jq -r '.decision // "UNKNOWN"' /tmp/rg-audit-report.json 2>/dev/null || echo "UNKNOWN")
+        FINDINGS=$(jq -r '.code_findings | length' /tmp/rg-audit-report.json 2>/dev/null || echo "0")
+        MISSING=$(jq -r '.missing | length' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+        PASSING=$(jq -r '.passing | length' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+
+        case "$DECISION" in
+          PROMOTE) BADGE="🟢 PROMOTE" ;;
+          HOLD)    BADGE="🟡 HOLD" ;;
+          BLOCK)   BADGE="🔴 BLOCK" ;;
+          *)       BADGE="⚪ $DECISION" ;;
+        esac
+
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        # Build safeguard table rows from JSON
+        SG_ROWS=$(jq -r '
+          (.passing // [] | map("| " + .label + " | ✅ | " + (.evidence // "—") + " |")) +
+          (.missing // [] | map("| " + .label + " | ❌ | " + ((.issues // [.[\"risk\"]]) | first // "—") + " |"))
+          | .[]' /tmp/rg-audit-report.json 2>/dev/null || echo "| — | — | — |")
+
+        BODY="<!-- release-gate -->\n## 🚪 release-gate\n\n**Score:** ${SCORE}/100 — ${BADGE}\n\n| Safeguard | Status | Detail |\n| --- | :---: | --- |\n${SG_ROWS}\n\n**Code risks:** ${FINDINGS} finding(s)  \n[Full run →](${RUN_URL})"
+
+        # Find existing comment from this bot
+        COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+          --jq '.[] | select(.body | startswith("<!-- release-gate -->")) | .id' 2>/dev/null | head -1)
+
+        if [ -n "$COMMENT_ID" ]; then
+          gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+            -X PATCH -f "body=${BODY}" --silent
+        else
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            -f "body=${BODY}" --silent
+        fi
+
+    - name: Set commit status
+      if: inputs.command == 'audit' && always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        SCORE=$(jq -r '.score // "?"' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+        DECISION=$(jq -r '.decision // "UNKNOWN"' /tmp/rg-audit-report.json 2>/dev/null || echo "UNKNOWN")
+        case "$DECISION" in
+          PROMOTE) STATE="success" ;;
+          HOLD)    STATE="pending" ;;
+          BLOCK)   STATE="failure" ;;
+          *)       STATE="error" ;;
+        esac
+        DESC="Score: ${SCORE}/100 — ${DECISION}"
+        SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+        REPO="${{ github.repository }}"
+        gh api "repos/${REPO}/statuses/${SHA}" \
+          -f state="${STATE}" \
+          -f context="release-gate / readiness" \
+          -f description="${DESC}" \
+          -f target_url="${{ github.server_url }}/${REPO}/actions/runs/${{ github.run_id }}" \
+          --silent || true
