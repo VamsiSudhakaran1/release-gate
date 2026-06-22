@@ -90,8 +90,66 @@ def installation_token_for_repo(owner: str, repo: str) -> Optional[str]:
         with urllib.request.urlopen(req, timeout=10) as resp:
             installation_id = json.loads(resp.read())["id"]
         return _installation_token(installation_id)
-    except Exception:
-        return None
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(
+            f"GitHub App install lookup for {owner}/{repo} failed: HTTP {e.code} — {body_text}"
+        ) from e
+    except Exception as exc:
+        raise RuntimeError(f"GitHub App token error: {exc}") from exc
+
+
+def debug_github_app(owner: str, repo: str) -> dict:
+    """Return a diagnostic dict showing what's happening with GitHub App setup."""
+    result: dict = {
+        "app_id_set": bool(APP_ID),
+        "private_key_set": bool(PRIVATE_KEY_RAW),
+        "app_id": APP_ID or None,
+        "private_key_prefix": PRIVATE_KEY_RAW[:30] if PRIVATE_KEY_RAW else None,
+    }
+    if not APP_ID:
+        result["error"] = "GITHUB_APP_ID env var not set"
+        return result
+    if not PRIVATE_KEY_RAW:
+        result["error"] = "GITHUB_APP_PRIVATE_KEY env var not set"
+        return result
+    try:
+        jwt_token = _make_jwt()
+        result["jwt_ok"] = True
+    except Exception as exc:
+        result["jwt_ok"] = False
+        result["jwt_error"] = str(exc)
+        return result
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/installation",
+            headers={
+                "Authorization": f"Bearer {jwt_token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "release-gate-app",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        result["installation_id"] = data.get("id")
+        result["installation_ok"] = True
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="ignore")
+        result["installation_ok"] = False
+        result["installation_error"] = f"HTTP {e.code}: {body_text}"
+        return result
+    except Exception as exc:
+        result["installation_ok"] = False
+        result["installation_error"] = str(exc)
+        return result
+    try:
+        token = _installation_token(result["installation_id"])
+        result["access_token_ok"] = True
+        result["access_token_prefix"] = token[:10] + "..."
+    except Exception as exc:
+        result["access_token_ok"] = False
+        result["access_token_error"] = str(exc)
+    return result
 
 
 # ── GitHub API helpers ─────────────────────────────────────────────────────
