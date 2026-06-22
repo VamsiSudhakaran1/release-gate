@@ -21,7 +21,7 @@ from release_gate_api.db import (
     create_user, get_run, get_runs_for_user, get_repo_history,
     get_user_by_email, get_user_by_id, get_user_by_token,
     init_db, save_run, create_api_token,
-    increment_usage, get_usage, get_dashboard_stats,
+    increment_usage, get_usage, get_dashboard_stats, get_findings_summary,
 )
 
 app = FastAPI(title="release-gate API", version="0.7.0")
@@ -331,6 +331,7 @@ async def dashboard(authorization: Optional[str] = Header(default=None)):
         **stats,
         "repos": list(repos.values()),
         "decision_distribution": decisions,
+        "findings_summary": get_findings_summary(user["id"]),
         "recent_runs": runs[:10],
     }
 

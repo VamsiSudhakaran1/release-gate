@@ -1323,6 +1323,31 @@
           '</div></div>';
       }
 
+      // ── Severity heatmap across repos ──
+      var fsum = (data.findings_summary || []).filter(function(e){ return e.total > 0; });
+      if (fsum.length) {
+        function cell(n, color) {
+          var bg = n > 0 ? color : 'transparent';
+          var fg = n > 0 ? '#fff' : 'var(--term-muted)';
+          return '<td style="text-align:center;padding:6px 10px"><span style="display:inline-block;min-width:26px;padding:2px 0;border-radius:6px;background:' + bg + ';color:' + fg + ';font-weight:700;font-size:.82rem">' + n + '</span></td>';
+        }
+        var hm = '<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:20px">' +
+          '<div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-bottom:10px">Code-risk heatmap &middot; latest scan per repo</div>' +
+          '<table class="dash-table" style="margin:0"><thead><tr>' +
+          '<th>Repo</th><th style="text-align:center">High</th><th style="text-align:center">Medium</th><th style="text-align:center">Low</th><th style="text-align:center">Total</th>' +
+          '</tr></thead><tbody>';
+        fsum.forEach(function(e){
+          var repoShort = (e.repo_url || '').replace('https://github.com/', '');
+          hm += '<tr>' +
+            '<td title="' + escHtml(e.repo_url || '') + '">' + escHtml(repoShort) + '</td>' +
+            cell(e.high, 'var(--red)') + cell(e.medium, 'var(--amber)') + cell(e.low, 'var(--term-muted)') +
+            '<td style="text-align:center;font-weight:700">' + e.total + '</td>' +
+            '</tr>';
+        });
+        hm += '</tbody></table></div>';
+        statsHtml += hm;
+      }
+
       var runs = data.recent_runs || [];
       if (!runs.length) {
         wrap.innerHTML = statsHtml + '<p class="dash-empty">No runs yet. Try the playground!</p>';
