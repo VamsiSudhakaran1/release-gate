@@ -730,6 +730,7 @@
     <ul class="nav-links">
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
+      <li><a href="#security">Security</a></li>
       <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a></li>
     </ul>
     <div id="nav-auth-area" class="nav-user-chip">
@@ -742,12 +743,39 @@
 <section class="hero">
   <div class="container hero-inner">
     <h1>Know before you ship.</h1>
-    <p class="hero-sub">Paste any public GitHub repo URL — release-gate scans for 7 deployment safeguards and shows you exactly what's in place and what's worth a second look. Takes 10 seconds. No install needed.</p>
+    <p class="hero-sub">Paste any public GitHub repo URL — release-gate scans for 7 deployment safeguards and shows you exactly what's in place and what's missing. Takes 10 seconds. No install needed.</p>
+    <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">release-gate starts as a 10-second repo audit, then becomes a CI gate that blocks unsafe AI releases before they reach production.</p>
+
+    <!-- Sample output — makes value visible before signup -->
+    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;margin-bottom:24px;font-family:ui-monospace,monospace;font-size:.82rem;max-width:560px">
+      <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--term-border)">
+        <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#22c55e;display:inline-block"></span>
+        <span style="color:var(--term-muted);font-size:.75rem;margin-left:6px">$ release-gate audit myorg/my-ai-agent</span>
+      </div>
+      <div style="padding:14px 16px;line-height:1.9">
+        <div style="color:var(--term-muted)">Scanning <span style="color:var(--term-blue)">myorg/my-ai-agent</span> &middot; 7 checks &middot; code analysis&hellip;</div>
+        <div style="margin-top:8px">
+          <span style="color:var(--term-yellow);font-weight:700">AI Release Readiness: 42/100 &mdash; HOLD</span>
+        </div>
+        <div style="margin-top:10px;color:var(--term-muted)">Safeguards:</div>
+        <div style="color:var(--term-red)">  ✗ governance config &nbsp;<span style="color:#4b5563;font-size:.75rem">project.name still a placeholder</span></div>
+        <div style="color:var(--term-red)">  ✗ eval evidence &nbsp;<span style="color:#4b5563;font-size:.75rem">no evals.yaml found</span></div>
+        <div style="color:var(--term-red)">  ✗ budget ceiling &nbsp;<span style="color:#4b5563;font-size:.75rem">max_daily_cost still # TODO</span></div>
+        <div style="color:var(--term-red)">  ✗ kill switch &nbsp;<span style="color:#4b5563;font-size:.75rem">location path does not exist</span></div>
+        <div style="color:var(--term-green)">  ✓ team owner</div>
+        <div style="color:var(--term-green)">  ✓ auth &amp; rate limiting</div>
+        <div style="color:var(--term-green)">  ✓ trace policy</div>
+        <div style="margin-top:8px;color:var(--term-red)">  &#x26A0; 1 high-severity code risk: LLM call inside unbounded loop (agent.py:42)</div>
+        <div style="margin-top:4px;color:var(--term-muted);font-size:.75rem">  Run <span style="color:var(--term-blue)">release-gate audit . --fix</span> to scaffold missing governance files</div>
+      </div>
+    </div>
 
     <!-- Hero playground input -->
     <div class="hero-scan-row">
       <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
-      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Scan repo &rarr;</button>
+      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Audit in 10 seconds &rarr;</button>
     </div>
     <p class="hero-scan-hint">
       🔒 Scanning a private repo?
@@ -781,7 +809,7 @@
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <div>
               <div style="font-weight:700;color:#3730a3;font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
-              <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview"></span>. You review &amp; merge.</div>
+              <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
             </div>
             <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">
               Create fix PR &rarr;
@@ -969,7 +997,8 @@
   <div class="container">
     <div class="section-header">
       <h2 class="section-title">Built for teams, not just individuals</h2>
-      <p class="section-subtitle">The CLI is always 100% free and unlimited. The platform adds what CLI can&rsquo;t: persistence, team visibility, and compliance trail.</p>
+      <p class="section-subtitle">The CLI is always 100% free and unlimited — no scan caps, no account required, works in any CI pipeline. The platform adds what CLI can&rsquo;t: persistent history, team visibility, and compliance audit trail.</p>
+      <p style="font-size:.85rem;color:var(--text);opacity:.8;max-width:640px;margin:0 auto;margin-top:-8px">Scan limits below apply only to <strong>hosted web scans</strong>. Local CLI and CI usage is always unlimited.</p>
     </div>
 
     <div class="tier-grid">
@@ -1042,6 +1071,55 @@
           <li>GitHub App org-wide</li>
         </ul>
         <a href="mailto:vamsi.sudhakaran@gmail.com" class="tier-btn secondary">Contact us &rarr;</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ SECURITY & PRIVACY ═══════════════════════ -->
+<section id="security" style="padding:72px 0">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Security &amp; privacy</h2>
+      <p class="section-subtitle">We audit your repo — we don&rsquo;t store your code. Here&rsquo;s exactly how access works.</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;max-width:960px;margin:0 auto">
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 24px">
+        <div style="font-size:1.4rem;margin-bottom:10px">&#x1F513;</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:6px">Public repos — no login</div>
+        <div style="font-size:.87rem;color:var(--text);line-height:1.65">Public GitHub repos are scanned via the GitHub API with no authentication. No account or token needed — just paste the URL.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 24px">
+        <div style="font-size:1.4rem;margin-bottom:10px">&#x1F510;</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:6px">Private repos — read-only GitHub App</div>
+        <div style="font-size:.87rem;color:var(--text);line-height:1.65">Private repo access uses a GitHub App installation token with <strong>read-only</strong> repository contents scope. The App cannot write code, open issues, or modify settings.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 24px">
+        <div style="font-size:1.4rem;margin-bottom:10px">&#x1F9E0;</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:6px">No training on your code</div>
+        <div style="font-size:.87rem;color:var(--text);line-height:1.65">Source code scanned by release-gate is never used to train models. Static analysis runs in-process and results are stored as structured findings — not raw code.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 24px">
+        <div style="font-size:1.4rem;margin-bottom:10px">&#x1F4BB;</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:6px">CLI runs 100% locally</div>
+        <div style="font-size:.87rem;color:var(--text);line-height:1.65">The open-source CLI never phones home. It reads only the local directory you point it at. Your code stays on your machine, in your CI, or behind your firewall.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 24px">
+        <div style="font-size:1.4rem;margin-bottom:10px">&#x1F3D7;&#xFE0F;</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:6px">Self-hostable</div>
+        <div style="font-size:.87rem;color:var(--text);line-height:1.65">Run release-gate entirely in your own CI pipeline using the CLI — no cloud dependency, no data leaves your network. Enterprise users can also self-host the dashboard.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 24px">
+        <div style="font-size:1.4rem;margin-bottom:10px">&#x1F4C4;</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:6px">Open-source core</div>
+        <div style="font-size:.87rem;color:var(--text);line-height:1.65">The scanning engine, safeguard checks, and governance schema are <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">fully open-source</a>. Audit the code that audits your code.</div>
       </div>
 
     </div>
