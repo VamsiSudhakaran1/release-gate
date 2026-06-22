@@ -39,6 +39,10 @@ dependencies = [
     "PyJWT>=2.8.0",
 ]
 
+# Supply-chain note: for reproducible production installs, pin dependencies with
+# hashes by running:  pip install release-gate --require-hashes -r requirements.txt
+# Generate a pinned requirements file with:  pip-compile --generate-hashes pyproject.toml
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0",

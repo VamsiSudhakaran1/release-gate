@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://release-gate.com/schema/governance.schema.json",
+  "title": "release-gate governance.yaml",
+  "description": "Deployment governance policy for an AI agent. Validated by release-gate audit.",
+  "type": "object",
+  "required": ["project", "safeguards"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["name", "model", "version"],
+      "properties": {
+        "name":        { "type": "string", "minLength": 1, "description": "Human-readable project name" },
+        "model":       { "type": "string", "minLength": 1, "description": "Primary model id (e.g. gpt-4o, claude-3-5-sonnet)" },
+        "version":     { "type": "string", "pattern": "^\\d+\\.\\d+", "description": "Semantic version of the agent" },
+        "description": { "type": "string" },
+        "repo":        { "type": "string", "format": "uri" }
+      }
+    },
+    "safeguards": {
+      "type": "object",
+      "properties": {
+        "kill_switch": {
+          "type": "object",
+          "required": ["location"],
+          "properties": {
+            "location": { "type": "string", "description": "File path or URL of the kill switch / feature flag" },
+            "type":     { "type": "string", "enum": ["env_var", "feature_flag", "config_file", "api_endpoint"] },
+            "tested":   { "type": "boolean" }
+          }
+        },
+        "budget_ceiling": {
+          "type": "object",
+          "required": ["max_daily_cost_usd"],
+          "properties": {
+            "max_daily_cost_usd":     { "type": "number", "minimum": 0 },
+            "max_tokens_per_request": { "type": "integer", "minimum": 1 },
+            "alert_threshold_pct":    { "type": "number", "minimum": 0, "maximum": 100 }
+          }
+        },
+        "team_owner": {
+          "type": "object",
+          "required": ["name", "oncall"],
+          "properties": {
+            "name":    { "type": "string" },
+            "oncall":  { "type": "string", "description": "PagerDuty service, email, or Slack handle" },
+            "runbook": { "type": "string", "format": "uri" }
+          }
+        },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "required":   { "type": "boolean" },
+            "type":       { "type": "string", "enum": ["api_key", "oauth2", "jwt", "mtls", "none"] },
+            "rate_limit": { "type": "string", "description": "e.g. 100/min" }
+          }
+        },
+        "trace_policies": {
+          "type": "object",
+          "properties": {
+            "enabled":         { "type": "boolean" },
+            "forbidden_tools": { "type": "array", "items": { "type": "string" } },
+            "allowed_tools":   { "type": "array", "items": { "type": "string" } },
+            "log_level":       { "type": "string", "enum": ["none", "summary", "full"] }
+          }
+        }
+      }
+    },
+    "evals": {
+      "type": "object",
+      "properties": {
+        "suite":           { "type": "string", "description": "Path to evals.yaml" },
+        "min_pass_rate":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "last_run_date":   { "type": "string", "format": "date" },
+        "framework":       { "type": "string" }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "environment": { "type": "string", "enum": ["development", "staging", "production"] },
+        "rollout":     { "type": "string", "enum": ["canary", "blue-green", "direct"] },
+        "min_score":   { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,35 @@
+{
+  "name": "release-gate",
+  "displayName": "release-gate — AI Agent Readiness",
+  "description": "Inline AI deployment safeguard feedback as you code. Flags missing governance, unbounded loops, hardcoded secrets, and more before you push.",
+  "version": "0.1.0",
+  "publisher": "release-gate",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Other"],
+  "activationEvents": ["onLanguage:python", "onLanguage:typescript", "onLanguage:javascript"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "release-gate.audit", "title": "release-gate: Audit this workspace" },
+      { "command": "release-gate.auditFile", "title": "release-gate: Audit current file" }
+    ],
+    "configuration": {
+      "title": "release-gate",
+      "properties": {
+        "release-gate.apiUrl": { "type": "string", "default": "https://api.release-gate.com", "description": "release-gate API base URL" },
+        "release-gate.apiToken": { "type": "string", "default": "", "description": "API token from release-gate.com (Settings → API)" },
+        "release-gate.runOnSave": { "type": "boolean", "default": false, "description": "Auto-audit on file save" },
+        "release-gate.minSeverity": { "type": "string", "enum": ["high", "medium", "low"], "default": "medium" }
+      }
+    },
+    "statusBar": {}
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

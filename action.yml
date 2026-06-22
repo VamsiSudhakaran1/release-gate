@@ -43,10 +43,24 @@ inputs:
     description: "Python version to use"
     required: false
     default: "3.11"
+  sarif-output:
+    description: "If set, write a SARIF 2.1.0 file to this path and upload it to GitHub Code Scanning (e.g. release-gate.sarif)"
+    required: false
+    default: ""
+  pr-comment:
+    description: "Post/update a sticky summary comment on the PR (default: false)"
+    required: false
+    default: "false"
+  notify:
+    description: "Notification target URL(s): slack://..., datadog://..., otlp://... (comma-separated)"
+    required: false
+    default: ""
 
 outputs:
   decision:
     description: "PROMOTE/HOLD/BLOCK (score) or PASS/WARN/FAIL (run, impact)"
+  audit-score:
+    description: "Readiness score 0-100 from the audit command"
   daily-cost:
     description: "Estimated daily cost in USD (from Impact Simulator)"
   runaway-cost:
@@ -56,7 +70,7 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@0a5c61591373683505ea898e09424647f5f1c7db # v5.4.0
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -70,9 +84,16 @@ runs:
       shell: bash
       run: |
         set +e
+        SARIF_FLAGS=""
+        if [ -n "${{ inputs.sarif-output }}" ]; then
+          SARIF_FLAGS="--sarif ${{ inputs.sarif-output }}"
+        fi
         # Writes a Markdown report to the job summary automatically via
         # $GITHUB_STEP_SUMMARY, and still prints to the log.
-        release-gate audit "${{ inputs.path }}" --markdown
+        # Also emit JSON for downstream steps (PR comment, commit status).
+        release-gate audit "${{ inputs.path }}" --markdown $SARIF_FLAGS \
+          --json > /tmp/rg-audit-report.json 2>/dev/null || true
+        release-gate audit "${{ inputs.path }}" --markdown $SARIF_FLAGS
         EXIT_CODE=$?
         set -e
         # audit exit codes: 0 PROMOTE/no-agent · 10 HOLD · 1 BLOCK
@@ -81,6 +102,20 @@ runs:
           exit 0
         fi
         exit $EXIT_CODE
+
+    - name: Send notifications
+      if: inputs.notify != ''
+      shell: bash
+      run: |
+        IFS=',' read -ra NOTIFY_TARGETS <<< "${{ inputs.notify }}"
+        NOTIFY_FLAGS=""
+        for target in "${NOTIFY_TARGETS[@]}"; do
+          target=$(echo "$target" | xargs)
+          if [ -n "$target" ]; then
+            NOTIFY_FLAGS="$NOTIFY_FLAGS --notify $target"
+          fi
+        done
+        release-gate audit "${{ inputs.path }}" $NOTIFY_FLAGS --json > /dev/null 2>&1 || true
 
     - name: Run release-gate ${{ inputs.command }}
       if: inputs.command != 'audit'
@@ -115,7 +150,80 @@ runs:
 
     - name: Upload HTML report
       if: inputs.html-report != '' && always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.6.0
       with:
         name: release-gate-report
         path: ${{ inputs.html-report }}
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.sarif-output != '' && inputs.command == 'audit' && always()
+      uses: github/codeql-action/upload-sarif@65c74964a9ed8c44ed9f19d4bbc5757a6a8af9e4 # v3.25.0
+      with:
+        sarif_file: ${{ inputs.sarif-output }}
+        category: release-gate
+
+    - name: Post PR comment
+      if: inputs.pr-comment == 'true' && github.event_name == 'pull_request' && inputs.command == 'audit' && always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Parse JSON report for summary data
+        SCORE=$(jq -r '.score // "?"' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+        DECISION=$(jq -r '.decision // "UNKNOWN"' /tmp/rg-audit-report.json 2>/dev/null || echo "UNKNOWN")
+        FINDINGS=$(jq -r '.code_findings | length' /tmp/rg-audit-report.json 2>/dev/null || echo "0")
+        MISSING=$(jq -r '.missing | length' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+        PASSING=$(jq -r '.passing | length' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+
+        case "$DECISION" in
+          PROMOTE) BADGE="🟢 PROMOTE" ;;
+          HOLD)    BADGE="🟡 HOLD" ;;
+          BLOCK)   BADGE="🔴 BLOCK" ;;
+          *)       BADGE="⚪ $DECISION" ;;
+        esac
+
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        # Build safeguard table rows from JSON
+        SG_ROWS=$(jq -r '
+          (.passing // [] | map("| " + .label + " | ✅ | " + (.evidence // "—") + " |")) +
+          (.missing // [] | map("| " + .label + " | ❌ | " + ((.issues // [.[\"risk\"]]) | first // "—") + " |"))
+          | .[]' /tmp/rg-audit-report.json 2>/dev/null || echo "| — | — | — |")
+
+        BODY="<!-- release-gate -->\n## 🚪 release-gate\n\n**Score:** ${SCORE}/100 — ${BADGE}\n\n| Safeguard | Status | Detail |\n| --- | :---: | --- |\n${SG_ROWS}\n\n**Code risks:** ${FINDINGS} finding(s)  \n[Full run →](${RUN_URL})"
+
+        # Find existing comment from this bot
+        COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+          --jq '.[] | select(.body | startswith("<!-- release-gate -->")) | .id' 2>/dev/null | head -1)
+
+        if [ -n "$COMMENT_ID" ]; then
+          gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+            -X PATCH -f "body=${BODY}" --silent
+        else
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            -f "body=${BODY}" --silent
+        fi
+
+    - name: Set commit status
+      if: inputs.command == 'audit' && always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        SCORE=$(jq -r '.score // "?"' /tmp/rg-audit-report.json 2>/dev/null || echo "?")
+        DECISION=$(jq -r '.decision // "UNKNOWN"' /tmp/rg-audit-report.json 2>/dev/null || echo "UNKNOWN")
+        case "$DECISION" in
+          PROMOTE) STATE="success" ;;
+          HOLD)    STATE="pending" ;;
+          BLOCK)   STATE="failure" ;;
+          *)       STATE="error" ;;
+        esac
+        DESC="Score: ${SCORE}/100 — ${DECISION}"
+        SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+        REPO="${{ github.repository }}"
+        gh api "repos/${REPO}/statuses/${SHA}" \
+          -f state="${STATE}" \
+          -f context="release-gate / readiness" \
+          -f description="${DESC}" \
+          -f target_url="${{ github.server_url }}/${REPO}/actions/runs/${{ github.run_id }}" \
+          --silent || true

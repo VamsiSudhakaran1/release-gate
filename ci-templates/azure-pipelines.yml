@@ -1,0 +1,22 @@
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.11'
+
+  - script: pip install release-gate
+    displayName: Install release-gate
+
+  - script: release-gate audit . --sarif release-gate.sarif
+    displayName: AI safeguard audit
+
+  - task: PublishBuildArtifacts@1
+    inputs:
+      PathtoPublish: release-gate.sarif
+      ArtifactName: release-gate-sarif
+    condition: always()

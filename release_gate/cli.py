@@ -69,6 +69,13 @@ try:
 except ImportError:
     AUDIT_AVAILABLE = False
 
+# Import integration hooks
+try:
+    from release_gate.integrations import dispatch_notify
+    INTEGRATIONS_AVAILABLE = True
+except ImportError:
+    INTEGRATIONS_AVAILABLE = False
+
 # Import live agent runtime (Phase 2)
 try:
     from release_gate.agent import AgentClient, AgentSpecError, RuntimeProfile
@@ -765,6 +772,8 @@ def print_help():
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
     print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
     print("  release-gate audit [path|url] --badge         # README badge snippet for your score")
+    print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
+    print("  release-gate audit [path|url] --baseline BRANCH|FILE  # Only fail on net-new issues")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
@@ -810,7 +819,7 @@ def main():
         from pathlib import Path as _Path
         from release_gate.audit import (
             _is_github_url, clone_and_audit, emit_config,
-            render_markdown, badge_markdown,
+            render_markdown, badge_markdown, emit_sarif, compare_to_baseline,
         )
         target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
         as_json = '--json' in sys.argv
@@ -818,16 +827,57 @@ def main():
         as_badge = '--badge' in sys.argv
         emit = '--emit-config' in sys.argv
         out_path = _flag(sys.argv, '--output') or _flag(sys.argv, '-o')
+        sarif_path = _flag(sys.argv, '--sarif')
+        # Collect all --notify values (flag may appear multiple times)
+        notify_targets = []
+        for i, arg in enumerate(sys.argv):
+            if arg == '--notify' and i + 1 < len(sys.argv):
+                notify_targets.append(sys.argv[i + 1])
+        # --sarif without a value: default to release-gate.sarif
+        if sarif_path is None and '--sarif' in sys.argv:
+            sarif_path = 'release-gate.sarif'
+        baseline_arg = _flag(sys.argv, '--baseline')
+
         try:
             if _is_github_url(target):
                 if not emit:
                     print(f"  Cloning {target} ...")
                 report = clone_and_audit(target)
             else:
-                report = build_report(_Path(target))
+                # Baseline diff-aware mode: restrict code scanning to changed files
+                if baseline_arg and not baseline_arg.endswith('.json'):
+                    # Branch mode: get changed files vs. baseline branch
+                    try:
+                        diff_result = __import__('subprocess').run(
+                            ['git', 'diff', '--name-only', f'origin/{baseline_arg}...HEAD'],
+                            capture_output=True, text=True, timeout=30,
+                        )
+                        changed_files = set(diff_result.stdout.strip().splitlines())
+                    except Exception:
+                        changed_files = None
+                    report = build_report(_Path(target))
+                    if changed_files is not None:
+                        # Filter code_findings to only those in changed files
+                        report['code_findings'] = [
+                            f for f in (report.get('code_findings') or [])
+                            if f.get('file') in changed_files
+                        ]
+                else:
+                    report = build_report(_Path(target))
         except RuntimeError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
+
+        # Baseline comparison (JSON file mode)
+        baseline_comparison = None
+        if baseline_arg and baseline_arg.endswith('.json'):
+            try:
+                with open(baseline_arg, 'r', encoding='utf-8') as bf:
+                    baseline_report = json.load(bf)
+                baseline_comparison = compare_to_baseline(report, baseline_report)
+                report['_baseline_comparison'] = baseline_comparison
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"Warning: could not load baseline file: {exc}")
 
         if emit:
             if not report.get('agent_detected', True):
@@ -871,8 +921,41 @@ def main():
             print(_json.dumps(out, indent=2))
         else:
             render_audit_terminal(report)
+
+        # Dispatch notifications
+        if notify_targets and INTEGRATIONS_AVAILABLE:
+            for notify_url in notify_targets:
+                try:
+                    dispatch_notify(report, notify_url)
+                except Exception as exc:
+                    print(f"Warning: notification to {notify_url!r} failed: {exc}")
+        elif notify_targets and not INTEGRATIONS_AVAILABLE:
+            print("Warning: integration hooks not available; --notify targets ignored.")
+
+        # Emit SARIF file if requested
+        if sarif_path:
+            try:
+                emit_sarif(report, sarif_path)
+                print(f"SARIF report written to: {sarif_path}")
+            except Exception as exc:
+                print(f"Warning: could not write SARIF: {exc}")
+
         if not report.get('agent_detected', True):
             sys.exit(0)
+
+        # Baseline mode: exit code based on net-new issues only
+        if baseline_comparison is not None:
+            new_block = [f for f in baseline_comparison.get('new_code_findings', [])
+                         if f.get('severity') == 'high']
+            new_sg_high = [s for s in baseline_comparison.get('new_safeguard_failures', [])
+                           if s.get('id') in ('governance_file', 'kill_switch', 'budget_ceiling')]
+            if new_block or new_sg_high:
+                sys.exit(1)   # BLOCK: new regressions
+            if (baseline_comparison.get('new_code_findings') or
+                    baseline_comparison.get('new_safeguard_failures')):
+                sys.exit(10)  # HOLD: net-new issues but not critical
+            sys.exit(0)       # no regressions
+
         decision = report['decision']
         sys.exit(1 if decision == 'BLOCK' else 10 if decision == 'HOLD' else 0)
 

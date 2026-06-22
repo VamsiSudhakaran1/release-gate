@@ -1,0 +1,14 @@
+- id: release-gate-audit
+  name: release-gate AI safeguard audit
+  language: python
+  entry: release-gate audit
+  args: ["--fail-on: block"]
+  pass_filenames: false
+  stages: [pre-push]
+  additional_dependencies: [release-gate]
+- id: release-gate-schema-validate
+  name: validate governance.yaml against schema
+  language: python
+  entry: python -c "import jsonschema, yaml, json, sys; schema=json.load(open('schema/governance.schema.json')); data=yaml.safe_load(open(sys.argv[1])); jsonschema.validate(data, schema)"
+  files: governance\.ya?ml$
+  additional_dependencies: [jsonschema, pyyaml]
