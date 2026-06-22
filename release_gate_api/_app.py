@@ -350,6 +350,25 @@ async def repo_history_alias(repo_url: str, authorization: Optional[str] = Heade
     return {"repo_url": repo_url, "history": history}
 
 
+@app.get("/api/run/{run_id}")
+async def run_detail(run_id: str, authorization: Optional[str] = Header(default=None)):
+    """Full stored report for a single run. Owner-only — this is the detailed
+    vulnerability report behind each dashboard row."""
+    user = _require_user(authorization)
+    run = get_run(run_id)
+    if not run or run.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Run not found")
+    report = run.get("report") or {}
+    return {
+        "id": run.get("id"),
+        "repo_url": run.get("repo_url"),
+        "score": run.get("score"),
+        "decision": run.get("decision"),
+        "created_at": run.get("created_at"),
+        "report": report,
+    }
+
+
 # ── API tokens ─────────────────────────────────────────────────────────────
 
 @app.post("/api/tokens")
