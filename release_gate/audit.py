@@ -996,6 +996,16 @@ def render_terminal(report: Dict[str, Any]) -> None:
 
     print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
     print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
+    step += 1
+
+    # Web report link — only present when scan was saved via authenticated API
+    run_id = report.get("run_id")
+    if run_id:
+        print()
+        print(f"  {div}")
+        print()
+        print(f"  {_col('📊 Full report + trend history:', _BOLD)}")
+        print(f"     {_col('https://release-gate.com/r/' + run_id, _BLUE)}")
 
     print()
     print(f"  {div}")
