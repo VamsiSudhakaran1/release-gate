@@ -372,6 +372,88 @@ async def debug_github_app_endpoint(owner: str, repo: str):
     return debug_github_app(owner, repo)
 
 
+class FixRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/fix")
+async def fix_repo(body: FixRequest, authorization: Optional[str] = Header(default=None)):
+    """Open a PR in the user's repo with auto-generated governance files.
+
+    Security model:
+    - Caller must be authenticated (JWT).
+    - Getting an installation token requires the GitHub App to be installed on
+      the target repo by someone with admin rights — this is the authorization
+      gate. A user cannot obtain a token for a repo they don't control.
+    - We never write to a repo without a valid installation token.
+    """
+    user = _require_user(authorization)
+
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    from release_gate.audit import _is_github_url
+    if not _is_github_url(url):
+        raise HTTPException(status_code=400, detail="Only GitHub repos are supported for auto-fix")
+
+    owner_name, repo_name = _parse_owner_repo(url)
+    if not owner_name or not repo_name:
+        raise HTTPException(status_code=400, detail="Could not parse owner/repo from URL")
+
+    # Authorization gate: installation token proves the GitHub App is installed
+    # on this specific repo by someone with admin access.
+    from release_gate_api.github_app import installation_token_for_repo, create_fix_pr
+    try:
+        install_token = installation_token_for_repo(owner_name, repo_name)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "private_repo": True,
+                "install_url": "https://github.com/apps/release-gate-ai/installations/new",
+                "message": (
+                    f"Install the release-gate-ai GitHub App on {owner_name}/{repo_name} "
+                    f"to enable auto-fix. Error: {exc}"
+                ),
+            },
+        )
+    if not install_token:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "private_repo": True,
+                "install_url": "https://github.com/apps/release-gate-ai/installations/new",
+                "message": (
+                    f"Install the release-gate-ai GitHub App on {owner_name}/{repo_name} "
+                    "to enable auto-fix."
+                ),
+            },
+        )
+
+    # Run a fresh audit (using the installation token so private repos work)
+    try:
+        report = _run_audit(url)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # Create the fix PR
+    try:
+        pr_url = create_fix_pr(owner_name, repo_name, report, install_token)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to create PR: {exc}")
+
+    # Record the scan
+    increment_usage(user["id"])
+    save_run(url, report, user_id=user["id"])
+
+    return {"pr_url": pr_url, "report": report}
+
+
 # ── Static frontend ──────────────────────────────────────────────────────────
 # This FastAPI app is the single Vercel entrypoint, so it must also serve the
 # site. The HTML is embedded as a Python module (release_gate_api/_frontend.py)

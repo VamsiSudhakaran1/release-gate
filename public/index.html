@@ -656,6 +656,19 @@
         <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
           <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
         </div>
+        <!-- Fix CTA — shown when logged in + score < 100 + github repo -->
+        <div id="pg-fix-cta" style="display:none;margin-top:16px;padding:16px;background:linear-gradient(135deg,#f0f0ff 0%,#e8f0ff 100%);border:1px solid #c7d2fe;border-radius:12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:700;color:#3730a3;font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
+              <div style="font-size:.82rem;color:#4b5563;margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview"></span>. You review &amp; merge.</div>
+            </div>
+            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+              Create fix PR &rarr;
+            </button>
+          </div>
+          <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1300,6 +1313,9 @@
     };
   }
 
+  var _lastScannedUrl = '';
+  var _lastReport = null;
+
   async function runPlaygroundAudit() {
     var urlInput = document.getElementById('pg-url-input');
     var url = urlInput.value.trim();
@@ -1342,7 +1358,10 @@
         }
         throw new Error((detail && typeof detail === 'string') ? detail : 'Audit failed (HTTP ' + res.status + ')');
       }
-      renderPlaygroundResults(data.report || data, url);
+      var report = data.report || data;
+      _lastScannedUrl = url;
+      _lastReport = report;
+      renderPlaygroundResults(report, url);
     } catch(err) {
       if (err.name === 'TypeError' || err.name === 'SyntaxError') {
         renderPlaygroundResults(getMockReport(url), url);
@@ -1456,7 +1475,101 @@
     var anonCta = document.getElementById('pg-anon-cta');
     if (anonCta) anonCta.style.display = getToken() ? 'none' : 'block';
 
+    // Show Fix CTA when: logged in + not fully passing + GitHub URL + not demo
+    var fixCta = document.getElementById('pg-fix-cta');
+    var fixResult = document.getElementById('pg-fix-result');
+    if (fixCta) {
+      var isGitHub = repoUrl && repoUrl.includes('github.com');
+      var notPerfect = data.decision !== 'PROMOTE';
+      var loggedIn = !!getToken();
+      var notDemo = !data._demo;
+      var missingKeys = Object.entries(data.safeguards || {}).filter(function(e) {
+        var v = e[1];
+        if (v && typeof v === 'object' && v.redacted) return false;
+        return v === false || (v && typeof v === 'object' && !v.present);
+      }).map(function(e) { return e[0]; });
+      var needsGovernance = missingKeys.includes('governance_file');
+      var needsEvals = missingKeys.includes('eval_evidence');
+      var canFix = isGitHub && notPerfect && loggedIn && notDemo && (needsGovernance || needsEvals);
+      fixCta.style.display = canFix ? 'block' : 'none';
+      // Reset result area
+      if (fixResult) { fixResult.style.display = 'none'; fixResult.innerHTML = ''; }
+      // Preview which files will be created
+      var preview = document.getElementById('pg-fix-files-preview');
+      if (preview) {
+        var files = [];
+        if (needsGovernance) files.push('<code>governance.yaml</code>');
+        if (needsEvals) files.push('<code>evals.yaml</code>');
+        preview.innerHTML = files.join(' + ');
+      }
+    }
+
     document.getElementById('playground-results').style.display = 'block';
+  }
+
+  async function runAutoFix() {
+    var btn = document.getElementById('pg-fix-btn');
+    var fixResult = document.getElementById('pg-fix-result');
+    if (!_lastScannedUrl) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Creating PR…';
+    fixResult.style.display = 'none';
+
+    try {
+      var res = await fetch(API_BASE + '/api/fix', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + getToken(),
+        },
+        body: JSON.stringify({ url: _lastScannedUrl }),
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        var detail = data && data.detail;
+        if (detail && typeof detail === 'object' && detail.private_repo) {
+          fixResult.style.background = '#fef3c7';
+          fixResult.style.border = '1px solid #f59e0b';
+          fixResult.style.color = '#92400e';
+          fixResult.innerHTML = detail.message +
+            ' <a href="' + detail.install_url + '" target="_blank" rel="noopener" ' +
+            'style="color:#6366f1;font-weight:600;text-decoration:underline;">Install release-gate-ai →</a>';
+        } else {
+          fixResult.style.background = '#fee2e2';
+          fixResult.style.border = '1px solid #f87171';
+          fixResult.style.color = '#991b1b';
+          fixResult.textContent = (detail && typeof detail === 'string') ? detail : 'Fix failed. Please try again.';
+        }
+        fixResult.style.display = 'block';
+        return;
+      }
+      // Success — show PR link and re-scan button
+      fixResult.style.background = '#d1fae5';
+      fixResult.style.border = '1px solid #34d399';
+      fixResult.style.color = '#064e3b';
+      fixResult.innerHTML =
+        '&#x2705; PR created! ' +
+        '<a href="' + data.pr_url + '" target="_blank" rel="noopener" ' +
+        'style="color:#065f46;font-weight:700;text-decoration:underline;">' +
+        'Review &amp; merge on GitHub →</a>' +
+        '<span style="display:block;margin-top:8px;font-size:.8rem;color:#047857;">' +
+        'Fill in the <code style="background:#a7f3d0;padding:1px 4px;border-radius:3px;"># TODO:</code> ' +
+        'lines, merge, then click Re-scan below to see your improved score.</span>' +
+        '<button onclick="runPlaygroundAudit()" style="margin-top:10px;background:#059669;color:#fff;' +
+        'border:none;border-radius:6px;padding:7px 16px;font-size:.85rem;font-weight:600;cursor:pointer;">' +
+        '&#x1F504; Re-scan now</button>';
+      fixResult.style.display = 'block';
+      btn.textContent = 'PR created ✓';
+    } catch(err) {
+      fixResult.style.background = '#fee2e2';
+      fixResult.style.border = '1px solid #f87171';
+      fixResult.style.color = '#991b1b';
+      fixResult.textContent = err.message || 'Unexpected error.';
+      fixResult.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Create fix PR →';
+    }
   }
 
   // ── Init ──
