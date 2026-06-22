@@ -362,8 +362,8 @@
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px;
     }
     .tier-card {
-      background: #fff; border-radius: 18px;
-      border: 1px solid var(--border); padding: 32px 28px;
+      background: #fff; border-radius: 14px;
+      border: 1px solid var(--border); padding: 22px 20px;
       box-shadow: var(--card-shadow);
       display: flex; flex-direction: column;
     }
@@ -372,28 +372,28 @@
       box-shadow: 0 4px 32px rgba(99,102,241,.14);
     }
     .tier-name {
-      font-size: .8rem; font-weight: 800; text-transform: uppercase;
-      letter-spacing: .1em; color: var(--accent); margin-bottom: 10px;
+      font-size: .72rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .1em; color: var(--accent); margin-bottom: 6px;
     }
     .tier-price {
-      font-size: 2rem; font-weight: 900; color: var(--heading);
-      letter-spacing: -1px; margin-bottom: 4px;
+      font-size: 1.55rem; font-weight: 900; color: var(--heading);
+      letter-spacing: -.5px; margin-bottom: 2px;
     }
-    .tier-price-sub { font-size: .8rem; color: var(--text); margin-bottom: 20px; }
+    .tier-price-sub { font-size: .75rem; color: var(--text); margin-bottom: 14px; }
     .tier-features {
-      list-style: none; flex: 1; margin-bottom: 24px;
+      list-style: none; flex: 1; margin-bottom: 18px;
     }
     .tier-features li {
-      font-size: .875rem; color: var(--text);
-      padding: 6px 0; border-bottom: 1px solid var(--border);
-      display: flex; gap: 8px; align-items: flex-start;
+      font-size: .82rem; color: var(--text);
+      padding: 5px 0; border-bottom: 1px solid var(--border);
+      display: flex; gap: 7px; align-items: flex-start;
     }
     .tier-features li:last-child { border-bottom: none; }
     .tier-features li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
     .tier-btn {
       display: block; text-align: center;
-      padding: 12px 20px; border-radius: 50px;
-      font-weight: 700; font-size: .9rem;
+      padding: 10px 18px; border-radius: 50px;
+      font-weight: 700; font-size: .85rem;
       transition: opacity .15s;
     }
     .tier-btn.primary { background: var(--accent); color: #fff; }
@@ -999,7 +999,7 @@
     <div class="section-header">
       <h2 class="section-title">Built for teams, not just individuals</h2>
       <p class="section-subtitle">The CLI is always 100% free and unlimited — no scan caps, no account required, works in any CI pipeline. The platform adds what CLI can&rsquo;t: persistent history, team visibility, and compliance audit trail.</p>
-      <p style="font-size:.85rem;color:var(--text);opacity:.8;max-width:640px;margin:0 auto;margin-top:-8px">Scan limits below apply only to <strong>hosted web scans</strong>. Local CLI and CI usage is always unlimited.</p>
+      <p style="font-size:.85rem;color:var(--text);opacity:.7;max-width:600px;margin:10px 0 0;line-height:1.6">Scan limits below apply only to <strong>hosted web scans</strong>. Local CLI and CI usage is always unlimited.</p>
     </div>
 
     <div class="tier-grid">
