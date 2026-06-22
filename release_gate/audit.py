@@ -121,6 +121,14 @@ COMPLIANCE_TAGS: Dict[str, List[str]] = {
 }
 
 
+def get_compliance_tags(key: str) -> List[str]:
+    """Return the compliance framework references for a safeguard id or finding type key.
+
+    Returns an empty list for unknown keys so callers can safely iterate.
+    """
+    return COMPLIANCE_TAGS.get(key, [])
+
+
 # ─────────────────────────── File scanner ───────────────────────────────────
 
 def _iter_source_files(root: Path):
