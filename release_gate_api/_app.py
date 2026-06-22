@@ -126,19 +126,26 @@ def _run_audit(url: str) -> Dict[str, Any]:
             # Repo is private (or doesn't exist). Try an App installation token.
             owner, repo = _parse_owner_repo(url)
             token = None
+            app_error: Optional[str] = None
             if owner and repo:
                 from release_gate_api.github_app import installation_token_for_repo
-                token = installation_token_for_repo(owner, repo)
+                try:
+                    token = installation_token_for_repo(owner, repo)
+                except Exception as exc:
+                    app_error = str(exc)
             if not token:
+                msg = (
+                    "This repo is private or not found. Install the "
+                    "release-gate-ai GitHub App on it to enable scanning."
+                )
+                if app_error:
+                    msg = f"GitHub App error: {app_error}"
                 raise HTTPException(
                     status_code=403,
                     detail={
                         "private_repo": True,
                         "install_url": "https://github.com/apps/release-gate-ai/installations/new",
-                        "message": (
-                            "This repo is private or not found. Install the "
-                            "release-gate-ai GitHub App on it to enable scanning."
-                        ),
+                        "message": msg,
                     },
                 )
             report = clone_and_audit(url, token=token)
@@ -356,6 +363,13 @@ async def create_token(authorization: Optional[str] = Header(default=None)):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "0.7.0"}
+
+
+@app.get("/api/debug/github-app")
+async def debug_github_app_endpoint(owner: str, repo: str):
+    """Diagnostic: test GitHub App configuration and installation for owner/repo."""
+    from release_gate_api.github_app import debug_github_app
+    return debug_github_app(owner, repo)
 
 
 # ── Static frontend ──────────────────────────────────────────────────────────
