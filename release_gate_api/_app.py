@@ -169,11 +169,14 @@ def _redact_for_free(report: Dict) -> Dict:
         else:
             present = v if isinstance(v, bool) else v.get("present", False)
             redacted[k] = {"present": present, "redacted": True}
+    findings = report.get("code_findings", []) or []
     return {
         **report,
         "safeguards": redacted,
         "checks": [],           # hide detailed check results
         "next_steps": [],
+        "code_findings": [],    # lock the code-analysis findings for anon users
+        "_code_findings_count": len(findings),
         "_redacted": True,
         "_upgrade_message": "Sign up free to see all safeguard details, emit a governance.yaml, and track history.",
     }

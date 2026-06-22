@@ -1,0 +1,529 @@
+"""
+release-gate verification core — the part that makes this a *gate*, not a guard.
+
+The original audit detected the *presence* of safeguards by grepping for
+keywords ("does the file mention 'budget'?"). That let a scaffold full of
+`# TODO:` placeholders score 100/100 — a blank ticket waved through.
+
+This module replaces presence-detection with three layers of real checks:
+
+  Tier 1 — VALIDITY:        parse the YAML and reject placeholder / unfilled
+                            values (TODO, your-team, https://TODO, empty, the
+                            untouched scaffold defaults).
+  Tier 2 — CROSS-CHECK:     verify the config against the actual repo — declared
+                            kill-switch paths must exist, the declared model must
+                            match the model the code actually calls, declared auth
+                            must have corresponding code.
+  Tier 3 — CODE FINDINGS:   AI-specific static analysis of the source — runaway
+                            cost loops, LLM calls with no token ceiling, prompt
+                            injection surface, exec/eval sinks, hardcoded secrets.
+
+Each safeguard returns a structured result with `present` (does it earn points
+under strict scoring), a human-readable `evidence` string, and a list of
+`issues` explaining exactly what failed — so the gate can tell you *why* the
+ticket is invalid, not just stamp it.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+try:
+    import yaml
+except Exception:  # pragma: no cover - pyyaml is a hard dep, but be defensive
+    yaml = None
+
+
+# ─────────────────────────── Placeholder detection ──────────────────────────
+
+# Sentinel words/patterns that mean "the human never filled this in". Matched
+# against parsed YAML *values* (not comments — those are stripped by the parser).
+_PLACEHOLDER_RE = re.compile(
+    r"\b(todo|tbd|fixme|changeme|xxx+|placeholder|fill[\s_\-]?in|"
+    r"replace[\s_\-]?me|your[\s_\-]?(team|org|company|value|auth|model)|"
+    r"example[\s_\-]?(team|value)?)\b"
+    r"|todo[\s_\-]"          # TODO-your-team
+    r"|https?://todo"        # https://TODO/runbook
+    r"|<[^>]+>",             # <fill-this-in>
+    re.IGNORECASE,
+)
+
+# Trailing scaffold comments left on a leaf line, e.g.
+#   max_daily_cost: 100         # TODO: your hard daily $ ceiling
+# A line that still carries one of these is an untouched scaffold value.
+_LINE_TODO_RE = re.compile(r"#.*\b(todo|fixme|tbd)\b", re.IGNORECASE)
+
+
+def is_placeholder(value: Any) -> bool:
+    """True if a parsed YAML value is missing, empty, or an unfilled placeholder."""
+    if value is None:
+        return True
+    if isinstance(value, (list, dict)):
+        return len(value) == 0
+    s = str(value).strip()
+    if not s:
+        return True
+    return bool(_PLACEHOLDER_RE.search(s))
+
+
+# ─────────────────────────── Raw-text helpers ───────────────────────────────
+
+def _leaf_line(raw: str, key: str) -> str:
+    """Return the first raw line declaring `key:` (for trailing-comment checks)."""
+    pat = re.compile(r"^\s*" + re.escape(key) + r"\s*:", re.MULTILINE)
+    m = pat.search(raw)
+    if not m:
+        return ""
+    line_start = raw.rfind("\n", 0, m.start()) + 1
+    line_end = raw.find("\n", m.start())
+    if line_end == -1:
+        line_end = len(raw)
+    return raw[line_start:line_end]
+
+
+def _line_unfilled(raw: str, key: str) -> bool:
+    """True if the raw line for `key` still carries a scaffold `# TODO` comment."""
+    line = _leaf_line(raw, key)
+    return bool(line) and bool(_LINE_TODO_RE.search(line))
+
+
+# ─────────────────────────── Nested dict access ─────────────────────────────
+
+def _get(data: Any, *path: str) -> Any:
+    cur = data
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+# ─────────────────────────── Result type ────────────────────────────────────
+
+def _result(present: bool, evidence: str, issues: Optional[List[str]] = None,
+            status: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "present": present,
+        "status": status or ("pass" if present else "fail"),
+        "evidence": evidence,
+        "issues": issues or [],
+    }
+
+
+# ─────────────────────────── Model-cost table (rough) ────────────────────────
+
+# $ per 1M tokens (input, output) — order-of-magnitude only, for the budget
+# sanity check. Unknown models fall back to a mid-range estimate.
+_MODEL_COST = {
+    "gpt-4o":      (2.5, 10.0),
+    "gpt-4-turbo": (10.0, 30.0),
+    "gpt-4":       (30.0, 60.0),
+    "gpt-3.5":     (0.5, 1.5),
+    "o1":          (15.0, 60.0),
+    "claude-3-opus":   (15.0, 75.0),
+    "claude-3-5-sonnet": (3.0, 15.0),
+    "claude-3-sonnet": (3.0, 15.0),
+    "claude-3-haiku":  (0.25, 1.25),
+}
+
+
+def _cost_for(model: Optional[str]) -> tuple:
+    if not model:
+        return (5.0, 15.0)
+    low = model.lower()
+    for prefix, cost in _MODEL_COST.items():
+        if low.startswith(prefix):
+            return cost
+    return (5.0, 15.0)
+
+
+# ─────────────────────────── Safeguard verifiers ────────────────────────────
+
+def verify_safeguards(
+    root: Path,
+    gov_path: Optional[Path],
+    frameworks: Dict[str, int],
+    detected_model: Optional[str],
+    source_blob: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Return {safeguard_id: result} with strict validity + cross-verification.
+
+    `source_blob` is a lowercased concatenation of repo source (for code
+    cross-checks); pass "" if unavailable.
+    """
+    results: Dict[str, Dict[str, Any]] = {}
+
+    raw = ""
+    data: Any = None
+    parse_error: Optional[str] = None
+    if gov_path and gov_path.is_file():
+        try:
+            raw = gov_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            raw = ""
+        if yaml is not None and raw:
+            try:
+                data = yaml.safe_load(raw)
+            except Exception as exc:
+                parse_error = f"governance file is not valid YAML: {exc}"
+
+    # ── governance_file ──────────────────────────────────────────────────────
+    if not gov_path:
+        results["governance_file"] = _result(
+            False, "No governance.yaml found.",
+            ["Add a governance.yaml — run `release-gate audit . --emit-config`."],
+        )
+    elif parse_error:
+        results["governance_file"] = _result(False, "governance.yaml present but invalid.", [parse_error])
+    elif not isinstance(data, dict):
+        results["governance_file"] = _result(
+            False, "governance.yaml is empty or not a mapping.",
+            ["The file parses but contains no configuration."],
+        )
+    else:
+        name = _get(data, "project", "name")
+        issues = []
+        if is_placeholder(name):
+            issues.append("project.name is missing or a placeholder.")
+        model = _get(data, "agent", "model")
+        # Model is optional, but if declared it must be real and match the code.
+        if model is not None:
+            if is_placeholder(model) or _line_unfilled(raw, "model"):
+                issues.append("agent.model is still a `# TODO` placeholder.")
+            elif detected_model and detected_model.lower() not in str(model).lower() \
+                    and str(model).lower() not in detected_model.lower():
+                issues.append(
+                    f"agent.model is '{model}' but the code actually calls "
+                    f"'{detected_model}' — the config doesn't match the repo."
+                )
+        present = not issues
+        results["governance_file"] = _result(
+            present,
+            f"governance.yaml valid (project: {name})." if present
+            else "governance.yaml present but unfilled/inconsistent.",
+            issues,
+        )
+
+    # If there's no valid governance data, every config-derived safeguard fails.
+    has_data = isinstance(data, dict)
+
+    # ── budget_ceiling ─────────────────────────────────────────────────────────
+    if not has_data:
+        results["budget_ceiling"] = _result(False, "No governance config to declare a budget ceiling.")
+    else:
+        ceiling = _get(data, "checks", "action_budget", "max_daily_cost")
+        if _get(data, "checks", "action_budget", "max_daily_cost") is None:
+            ceiling = _get(data, "checks", "budget_simulation", "max_daily_cost")
+        issues = []
+        if ceiling is None:
+            issues.append("checks.action_budget.max_daily_cost is not set.")
+        elif _line_unfilled(raw, "max_daily_cost"):
+            issues.append("max_daily_cost still carries a `# TODO` — it was never set for real.")
+        elif not isinstance(ceiling, (int, float)) or ceiling <= 0:
+            issues.append(f"max_daily_cost must be a positive number (got {ceiling!r}).")
+        present = not issues
+        # Advisory cross-check: is the ceiling plausible vs. simulated spend?
+        if present:
+            reqs = _get(data, "agent", "daily_requests") or \
+                _get(data, "checks", "budget_simulation", "simulation", "requests_per_day")
+            tin = _get(data, "agent", "avg_input_tokens") or 800
+            tout = _get(data, "agent", "avg_output_tokens") or 400
+            if isinstance(reqs, (int, float)) and reqs > 0:
+                cin, cout = _cost_for(detected_model or str(_get(data, "agent", "model") or ""))
+                est = reqs * (tin * cin + tout * cout) / 1_000_000
+                if est > ceiling * 1.1:
+                    issues.append(
+                        f"Declared ceiling ${ceiling} is below the projected daily "
+                        f"spend (~${est:.0f}) from your own volume figures — the "
+                        f"ceiling would be breached on a normal day."
+                    )
+                    present = False
+        results["budget_ceiling"] = _result(
+            present,
+            f"Daily cost ceiling set to ${ceiling}." if present else "Budget ceiling invalid or unenforceable.",
+            issues,
+        )
+
+    # ── kill_switch ────────────────────────────────────────────────────────────
+    if not has_data:
+        results["kill_switch"] = _result(False, "No governance config to declare a kill switch.")
+    else:
+        ks = _get(data, "checks", "fallback_declared", "kill_switch")
+        issues = []
+        if not isinstance(ks, dict):
+            issues.append("checks.fallback_declared.kill_switch is not declared.")
+        else:
+            ks_type = ks.get("type")
+            if is_placeholder(ks_type) or _line_unfilled(raw, "type"):
+                issues.append("kill_switch.type is unset or a placeholder.")
+            location = ks.get("location")
+            if location and not is_placeholder(location):
+                # Cross-check: the declared kill-switch location must exist in the repo.
+                target = (root / str(location)).resolve()
+                if not (str(target).startswith(str(root.resolve())) and target.exists()):
+                    issues.append(
+                        f"kill_switch.location '{location}' does not exist in the "
+                        f"repo — the declared kill switch points at nothing."
+                    )
+        present = not issues
+        results["kill_switch"] = _result(
+            present,
+            "Kill switch declared and its location exists." if present
+            else "Kill switch missing, unfilled, or pointing at a non-existent path.",
+            issues,
+        )
+
+    # ── team_owner ─────────────────────────────────────────────────────────────
+    if not has_data:
+        results["team_owner"] = _result(False, "No governance config to declare an owner.")
+    else:
+        owner = _get(data, "checks", "fallback_declared", "team_owner")
+        runbook = _get(data, "checks", "fallback_declared", "runbook_url")
+        issues = []
+        if is_placeholder(owner) or _line_unfilled(raw, "team_owner"):
+            issues.append("team_owner is unset or still 'TODO' — nobody is on the hook.")
+        if runbook is not None and (is_placeholder(runbook) or _line_unfilled(raw, "runbook_url")):
+            issues.append("runbook_url is a placeholder (e.g. https://TODO/runbook).")
+        present = not issues
+        results["team_owner"] = _result(
+            present,
+            f"Owner: {owner}." if present else "No real owner / runbook on file.",
+            issues,
+        )
+
+    # ── auth_rate_limit ──────────────────────────────────────────────────────────
+    if not has_data:
+        results["auth_rate_limit"] = _result(False, "No governance config to declare auth / rate limits.")
+    else:
+        auth_required = _get(data, "checks", "identity_boundary", "authentication", "required")
+        auth_type = _get(data, "checks", "identity_boundary", "authentication", "type")
+        rpm = _get(data, "checks", "identity_boundary", "rate_limit", "requests_per_minute")
+        issues = []
+        if auth_required is not True:
+            issues.append("identity_boundary.authentication.required must be true.")
+        if is_placeholder(auth_type) or _line_unfilled(raw, "type"):
+            issues.append("authentication.type is unset or a placeholder.")
+        if not isinstance(rpm, (int, float)) or rpm <= 0 or _line_unfilled(raw, "requests_per_minute"):
+            issues.append("rate_limit.requests_per_minute must be a positive number, set for real.")
+        present = not issues
+        # Cross-check (advisory): is there any auth code in the repo?
+        if present and source_blob:
+            if not re.search(r"auth|bearer|api[_\-]?key|oauth|jwt|rate.?limit", source_blob):
+                issues.append(
+                    "Config declares auth but no authentication code was found in "
+                    "the repo — the declaration may not be enforced."
+                )
+        results["auth_rate_limit"] = _result(
+            present,
+            "Auth required + rate limit set." if present else "Auth/rate-limit declaration incomplete.",
+            issues,
+        )
+
+    # ── eval_evidence ──────────────────────────────────────────────────────────
+    results["eval_evidence"] = _verify_evals(root)
+
+    # ── trace_policy ───────────────────────────────────────────────────────────
+    if not has_data:
+        results["trace_policy"] = _result(False, "No governance config to declare a tool/trace policy.")
+    else:
+        tp = data.get("trace_policies") if isinstance(data, dict) else None
+        issues = []
+        if not isinstance(tp, dict):
+            issues.append("trace_policies is not declared.")
+        else:
+            allowed = tp.get("allowed_tools")
+            forbidden = tp.get("forbidden_tools")
+            if _line_unfilled(raw, "allowed_tools") or _line_unfilled(raw, "forbidden_tools"):
+                issues.append("tool lists still carry `# TODO` — they were never tailored to this agent.")
+            elif is_placeholder(allowed) and is_placeholder(forbidden):
+                issues.append("Neither allowed_tools nor forbidden_tools is populated.")
+        present = not issues
+        results["trace_policy"] = _result(
+            present,
+            "Tool policy declared." if present else "Tool/trace policy missing or unfilled.",
+            issues,
+        )
+
+    return results
+
+
+def _verify_evals(root: Path) -> Dict[str, Any]:
+    """eval_evidence passes only if there's a parseable suite with ≥1 real case,
+    or a test file with genuine agent-behaviour assertions."""
+    for name in ("evals.yaml", "evals.yml"):
+        path = root / name
+        if path.is_file():
+            if yaml is None:
+                return _result(True, "evals.yaml present (not parsed — pyyaml unavailable).")
+            try:
+                doc = yaml.safe_load(path.read_text(encoding="utf-8", errors="ignore"))
+            except Exception as exc:
+                return _result(False, "evals.yaml present but invalid.", [f"Could not parse evals.yaml: {exc}"])
+            cases = None
+            if isinstance(doc, dict):
+                cases = doc.get("cases") or doc.get("evals") or doc.get("tests")
+            elif isinstance(doc, list):
+                cases = doc
+            if not isinstance(cases, list) or not cases:
+                return _result(False, "evals.yaml has no test cases.",
+                               ["Add at least one case with an input and an expected result."])
+            good = 0
+            for c in cases:
+                if isinstance(c, dict) and (c.get("input") is not None or c.get("name") or c.get("id")) \
+                        and (c.get("expected") is not None or c.get("assert") is not None
+                             or c.get("name") or c.get("id")):
+                    good += 1
+            if good == 0:
+                return _result(False, "evals.yaml cases are malformed.",
+                               ["Each case needs an input and an expected result."])
+            return _result(True, f"{good} eval case(s) defined.")
+    # Fall back to test files
+    if _has_behaviour_tests(root):
+        return _result(True, "Behaviour test suite found.")
+    return _result(False, "No eval suite or behaviour tests found.",
+                   ["Add evals.yaml or test_*.py with agent-behaviour assertions."])
+
+
+def _has_behaviour_tests(root: Path) -> bool:
+    test_patterns = [r"def test.*agent", r"def test.*eval", r"pii", r"refuse",
+                     r"keywords_blocked", r"injection", r"jailbreak"]
+    for dirpath, _, filenames in os.walk(root):
+        if any(skip in dirpath for skip in (".git", "__pycache__", ".venv", "node_modules")):
+            continue
+        for fname in filenames:
+            if fname.startswith("test_") and fname.endswith(".py"):
+                try:
+                    content = (Path(dirpath) / fname).read_text(
+                        encoding="utf-8", errors="ignore").lower()
+                except OSError:
+                    continue
+                if any(re.search(p, content) for p in test_patterns):
+                    return True
+    return False
+
+
+# ─────────────────────────── Tier 3: code findings ──────────────────────────
+
+# AI-specific failure modes. This is the part SonarQube can't do: it doesn't
+# know what a runaway agent loop or a prompt-injection surface is.
+
+_LLM_CALL_RE = re.compile(
+    r"\.(?:chat\.completions\.create|completions\.create|messages\.create|"
+    r"create_message|generate|complete|invoke|run|chat)\s*\(",
+)
+_EXEC_SINK_RE = re.compile(r"\b(?:eval|exec)\s*\(|os\.system\s*\(|subprocess\.[A-Za-z_]+\([^)]*shell\s*=\s*True")
+_SECRET_RE = re.compile(r"sk-[A-Za-z0-9]{16,}|(?:api[_\-]?key|secret|token)\s*=\s*['\"][A-Za-z0-9_\-]{12,}['\"]", re.IGNORECASE)
+_SYSTEM_PROMPT_FSTRING_RE = re.compile(r"""(["'])(?:system|developer)\1""", re.IGNORECASE)
+
+
+def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_000) -> List[Dict[str, Any]]:
+    """Static analysis for AI-agent-specific risks. Returns a list of findings."""
+    findings: List[Dict[str, Any]] = []
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv",
+                 "dist", "build", "site-packages", ".tox", "tests", "test"}
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            if not fname.endswith(".py"):
+                continue
+            count += 1
+            if count > max_files:
+                return findings
+            fpath = Path(dirpath) / fname
+            try:
+                text = fpath.read_bytes()[:max_bytes].decode("utf-8", errors="ignore")
+            except OSError:
+                continue
+            rel = str(fpath.relative_to(root))
+            findings.extend(_scan_file(rel, text))
+    # De-dup identical (file, line, title)
+    seen = set()
+    unique = []
+    for f in findings:
+        key = (f["file"], f["line"], f["title"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+    return unique
+
+
+def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    lines = text.splitlines()
+
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+
+        # Dangerous execution sinks
+        if _EXEC_SINK_RE.search(line):
+            findings.append(_finding(
+                "high", "Dangerous execution sink", rel, i, stripped,
+                "eval/exec/os.system/shell=True can execute arbitrary input. If any "
+                "model output or user input reaches this, it's remote code execution. "
+                "Remove it or strictly validate inputs.",
+            ))
+
+        # Hardcoded secrets
+        if _SECRET_RE.search(line):
+            findings.append(_finding(
+                "high", "Hardcoded secret / API key", rel, i, "<redacted>",
+                "Move secrets to environment variables or a secrets manager — never commit them.",
+            ))
+
+        # Unbounded loop near an LLM call
+        if re.match(r"while\s+True\s*:", stripped):
+            window = "\n".join(lines[i - 1:i + 6])
+            if _LLM_CALL_RE.search(window):
+                findings.append(_finding(
+                    "high", "Unbounded loop around an LLM call", rel, i, stripped,
+                    "A `while True` wrapping an LLM call with no iteration cap can spin "
+                    "forever, burning tokens and budget. Add a max-iterations ceiling.",
+                ))
+
+    # LLM calls without a token ceiling (look at the call + a small window)
+    for m in _LLM_CALL_RE.finditer(text):
+        start = m.start()
+        line_no = text.count("\n", 0, start) + 1
+        window = text[start:start + 400]
+        if "max_tokens" not in window and "max_output_tokens" not in window \
+                and "max_completion_tokens" not in window:
+            snippet = text[start:text.find("\n", start) if text.find("\n", start) != -1 else start + 80].strip()
+            findings.append(_finding(
+                "medium", "LLM call with no token ceiling", rel, line_no, snippet[:120],
+                "No max_tokens on this call — a single response can run away on length "
+                "and cost. Set an explicit max_tokens/max_output_tokens.",
+            ))
+
+    # Prompt-injection surface: an f-string used for a system/developer prompt
+    for m in _SYSTEM_PROMPT_FSTRING_RE.finditer(text):
+        start = m.start()
+        line_no = text.count("\n", 0, start) + 1
+        window = text[max(0, start - 200):start + 200]
+        if re.search(r"f['\"][^'\"]*\{", window):
+            line_text = text.splitlines()[line_no - 1].strip() if line_no - 1 < len(text.splitlines()) else ""
+            findings.append(_finding(
+                "medium", "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
+                "User-controlled values interpolated into a system/developer prompt are "
+                "a prompt-injection vector. Keep untrusted input in user-role messages "
+                "and validate it.",
+            ))
+
+    return findings
+
+
+def _finding(severity: str, title: str, file: str, line: int, snippet: str,
+             recommendation: str) -> Dict[str, Any]:
+    return {
+        "severity": severity,
+        "title": title,
+        "file": file,
+        "line": line,
+        "snippet": snippet,
+        "recommendation": recommendation,
+    }

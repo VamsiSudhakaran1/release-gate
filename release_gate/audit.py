@@ -219,7 +219,22 @@ def _has_github_actions_integration(root: Path) -> bool:
 
 
 def detect_safeguards(root: Path) -> Tuple[Dict[str, bool], Optional[Path]]:
-    """Return (safeguard_present_map, governance_path_or_None)."""
+    """Return (safeguard_present_map, governance_path_or_None).
+
+    Backwards-compatible thin wrapper over the strict verifier in
+    release_gate.verify — the present map now reflects *validated* safeguards
+    (placeholders and unfilled scaffolds do NOT count), not mere keyword
+    presence. Use verify_safeguards() directly for evidence + issues.
+    """
+    results, gov_path = verify_safeguards_for(root)
+    present = {sid: bool(r.get("present")) for sid, r in results.items()}
+    return present, gov_path
+
+
+def verify_safeguards_for(root: Path) -> Tuple[Dict[str, Dict[str, Any]], Optional[Path]]:
+    """Run the strict verifier and return (rich_results_map, gov_path)."""
+    from release_gate.verify import verify_safeguards
+
     gov_path: Optional[Path] = None
     for name in GOVERNANCE_FILENAMES:
         candidate = root / name
@@ -227,39 +242,11 @@ def detect_safeguards(root: Path) -> Tuple[Dict[str, bool], Optional[Path]]:
             gov_path = candidate
             break
 
-    evals_path: Optional[Path] = None
-    for name in EVALS_FILENAMES:
-        candidate = root / name
-        if candidate.is_file():
-            evals_path = candidate
-            break
-
-    has_traces = any((root / d).exists() for d in TRACE_FILENAMES)
-
-    present = {
-        "governance_file": gov_path is not None,
-        "eval_evidence":   evals_path is not None or _has_test_evals(root),
-        "trace_policy":    has_traces,
-    }
-
-    # For the remaining safeguards, look inside governance.yaml if it exists,
-    # otherwise scan Python files and requirements.
-    if gov_path:
-        present["budget_ceiling"]  = _yaml_contains(gov_path, BUDGET_PATTERNS)
-        present["kill_switch"]     = _yaml_contains(gov_path, KILL_SW_PATTERNS)
-        present["team_owner"]      = _yaml_contains(gov_path, OWNER_PATTERNS)
-        present["auth_rate_limit"] = _yaml_contains(gov_path, AUTH_PATTERNS)
-        if not present["trace_policy"]:
-            present["trace_policy"] = _yaml_contains(gov_path, TRACE_PATTERNS)
-    else:
-        # No governance file — scan source for any hints of these safeguards
-        combined = _scan_source_for_patterns(root)
-        present["budget_ceiling"]  = bool(re.search("|".join(BUDGET_PATTERNS),  combined))
-        present["kill_switch"]     = bool(re.search("|".join(KILL_SW_PATTERNS), combined))
-        present["team_owner"]      = False  # can't infer from code alone
-        present["auth_rate_limit"] = bool(re.search("|".join(AUTH_PATTERNS),    combined))
-
-    return present, gov_path
+    frameworks = detect_frameworks(root)
+    detected_model = detect_model(root)
+    source_blob = _scan_source_for_patterns(root)
+    results = verify_safeguards(root, gov_path, frameworks, detected_model, source_blob)
+    return results, gov_path
 
 
 def _has_test_evals(root: Path) -> bool:
@@ -298,8 +285,23 @@ PROMOTE_THRESHOLD = 90
 HOLD_THRESHOLD    = 50
 
 
-def compute_score(present: Dict[str, bool]) -> Tuple[int, str]:
-    """Return (score 0-100, decision)."""
+def _sg_present(val: Any) -> bool:
+    """Read the present-bool from a safeguard value (bool or {present: bool} dict)."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, dict):
+        return bool(val.get("present"))
+    return bool(val)
+
+
+def compute_score(present: Dict[str, bool],
+                  findings: Optional[List[Dict[str, Any]]] = None) -> Tuple[int, str]:
+    """Return (score 0-100, decision).
+
+    `findings` are Tier-3 code findings. They act as a hard gate on top of the
+    safeguard score: a clean checklist can't PROMOTE if the code itself has
+    high-severity AI risks (runaway loops, exec sinks, hardcoded secrets).
+    """
     total_weight = sum(s["weight"] for s in SAFEGUARDS)
     earned = sum(s["weight"] for s in SAFEGUARDS if present.get(s["id"], False))
     score = round(earned / total_weight * 100)
@@ -310,6 +312,15 @@ def compute_score(present: Dict[str, bool]) -> Tuple[int, str]:
         decision = "HOLD"
     else:
         decision = "BLOCK"
+
+    # Code findings gate the decision regardless of the checklist score.
+    if findings:
+        high = sum(1 for f in findings if f.get("severity") == "high")
+        if high >= 3:
+            decision = "BLOCK"
+        elif high >= 1 and decision == "PROMOTE":
+            decision = "HOLD"  # real code risk — formalize/fix before promoting
+
     return score, decision
 
 
@@ -453,12 +464,40 @@ def build_report(root: Path) -> Dict[str, Any]:
     frameworks = detect_frameworks(root)
     agent_detected = len(frameworks) > 0
     detected_model = detect_model(root)
-    present, gov_path = detect_safeguards(root)
-    score, decision = compute_score(present)
+
+    # Strict verification: validity + cross-checks (not keyword presence).
+    verify_results, gov_path = verify_safeguards_for(root)
+    present = {sid: bool(r.get("present")) for sid, r in verify_results.items()}
+
+    # Tier 3: AI-specific static analysis of the code.
+    from release_gate.verify import scan_code_findings
+    code_findings = scan_code_findings(root) if agent_detected else []
+
+    score, decision = compute_score(present, code_findings)
     has_ci = _has_github_actions_integration(root)
 
-    missing = [s for s in SAFEGUARDS if not present.get(s["id"], False)]
-    passing = [s for s in SAFEGUARDS if present.get(s["id"], False)]
+    # Enrich each safeguard with its evidence/issues for the report + UI.
+    def _enriched(s):
+        r = verify_results.get(s["id"], {})
+        return {**s,
+                "present": bool(r.get("present")),
+                "evidence": r.get("evidence", ""),
+                "issues": r.get("issues", [])}
+
+    missing = [_enriched(s) for s in SAFEGUARDS if not present.get(s["id"], False)]
+    passing = [_enriched(s) for s in SAFEGUARDS if present.get(s["id"], False)]
+
+    # safeguards map: keep the {present: bool} shape the frontend expects, but
+    # carry evidence/issues alongside so the gate can explain itself.
+    safeguards_map = {
+        sid: {
+            "present": bool(r.get("present")),
+            "status": r.get("status"),
+            "evidence": r.get("evidence", ""),
+            "issues": r.get("issues", []),
+        }
+        for sid, r in verify_results.items()
+    }
 
     # If governance.yaml exists, try to run real checks for richer output
     real_check_results = None
@@ -479,9 +518,10 @@ def build_report(root: Path) -> Dict[str, Any]:
         "detected_model":     detected_model,
         "governance_file":    str(gov_path) if gov_path else None,
         "has_ci_integration": has_ci,
-        "safeguards":         present,
+        "safeguards":         safeguards_map,
         "missing":            missing,
         "passing":            passing,
+        "code_findings":      code_findings,
         "score":              score,
         "decision":           decision,
         "real_checks":        real_check_results,
@@ -509,7 +549,8 @@ def emit_config(report: Dict[str, Any]) -> str:
     project = _project_name_from_path(report.get("path", "ai-agent"))
     model = report.get("detected_model")
     frameworks = ", ".join(sorted(report.get("frameworks", {}).keys())) or "unknown"
-    present = report.get("safeguards", {})
+    # Normalize safeguards (values may be bools or {present: bool} dicts) to bools.
+    present = {k: _sg_present(v) for k, v in report.get("safeguards", {}).items()}
 
     if model:
         model_line = f"  model: {model}"
@@ -776,13 +817,28 @@ def render_markdown(report: Dict[str, Any]) -> str:
     missing = report.get("missing", [])
     passing = report.get("passing", [])
 
-    out.append("| Safeguard | Status | Risk if missing |")
+    out.append("| Safeguard | Status | Why |")
     out.append("| --- | :---: | --- |")
     for s in passing:
-        out.append(f"| {s['label']} | ✅ | — |")
+        out.append(f"| {s['label']} | ✅ | {s.get('evidence') or '—'} |")
     for s in missing:
-        out.append(f"| {s['label']} | ❌ | {s['risk']} |")
+        reason = (s.get("issues") or [s.get("risk", "")])[0]
+        out.append(f"| {s['label']} | ❌ | {reason} |")
     out.append("")
+
+    # Tier 3: AI-specific code findings
+    findings = report.get("code_findings", []) or []
+    if findings:
+        out.append(f"### 🔍 Code risks ({len(findings)})")
+        out.append("")
+        out.append("| Severity | Issue | Location | Recommendation |")
+        out.append("| :---: | --- | --- | --- |")
+        sev_emoji = {"high": "🔴", "medium": "🟠", "low": "⚪"}
+        for f in findings[:25]:
+            em = sev_emoji.get(f.get("severity"), "⚪")
+            out.append(f"| {em} {f.get('severity','').upper()} | {f['title']} | "
+                       f"`{f['file']}:{f['line']}` | {f['recommendation']} |")
+        out.append("")
 
     if missing:
         out.append("### Next step")
@@ -928,7 +984,7 @@ def render_terminal(report: Dict[str, Any]) -> None:
     print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
     step += 1
 
-    if not report["governance_file"] or not report["safeguards"].get("eval_evidence"):
+    if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
         print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
         print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
         step += 1
