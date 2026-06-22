@@ -69,6 +69,13 @@ try:
 except ImportError:
     AUDIT_AVAILABLE = False
 
+# Import integration hooks
+try:
+    from release_gate.integrations import dispatch_notify
+    INTEGRATIONS_AVAILABLE = True
+except ImportError:
+    INTEGRATIONS_AVAILABLE = False
+
 # Import live agent runtime (Phase 2)
 try:
     from release_gate.agent import AgentClient, AgentSpecError, RuntimeProfile
@@ -821,6 +828,11 @@ def main():
         emit = '--emit-config' in sys.argv
         out_path = _flag(sys.argv, '--output') or _flag(sys.argv, '-o')
         sarif_path = _flag(sys.argv, '--sarif')
+        # Collect all --notify values (flag may appear multiple times)
+        notify_targets = []
+        for i, arg in enumerate(sys.argv):
+            if arg == '--notify' and i + 1 < len(sys.argv):
+                notify_targets.append(sys.argv[i + 1])
         # --sarif without a value: default to release-gate.sarif
         if sarif_path is None and '--sarif' in sys.argv:
             sarif_path = 'release-gate.sarif'
@@ -909,6 +921,16 @@ def main():
             print(_json.dumps(out, indent=2))
         else:
             render_audit_terminal(report)
+
+        # Dispatch notifications
+        if notify_targets and INTEGRATIONS_AVAILABLE:
+            for notify_url in notify_targets:
+                try:
+                    dispatch_notify(report, notify_url)
+                except Exception as exc:
+                    print(f"Warning: notification to {notify_url!r} failed: {exc}")
+        elif notify_targets and not INTEGRATIONS_AVAILABLE:
+            print("Warning: integration hooks not available; --notify targets ignored.")
 
         # Emit SARIF file if requested
         if sarif_path:
