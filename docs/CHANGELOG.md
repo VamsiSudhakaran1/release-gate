@@ -2,7 +2,7 @@
 
 All notable changes to release-gate will be documented in this file.
 
-## [Unreleased]
+## [0.7.2] — 2026-06-23
 
 ### 🐛 Fixed — external review (correctness & security)
 
