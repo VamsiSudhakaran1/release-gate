@@ -1,24 +1,30 @@
 """
-SMTP email helper for release-gate.
+Email helper for release-gate.
 
-Configured entirely via environment variables. If SMTP is not configured,
-emails are logged to stderr instead of sent (safe dev fallback) and the
-function returns False so callers can surface the link another way.
+Tries providers in order: Resend (HTTP API) → SMTP (fallback).
+If neither is configured, logs to stderr and returns False.
 
 Environment variables:
-  SMTP_HOST       e.g. smtp.gmail.com
+  RESEND_API_KEY  Resend API key (re_...) — recommended on Vercel
+  RESEND_FROM     From address (default: onboarding@resend.dev for testing,
+                  set to your verified domain address in production)
+
+  SMTP_HOST       e.g. smtp.gmail.com  (fallback if no RESEND_API_KEY)
   SMTP_PORT       default 587
-  SMTP_USER       SMTP username (often the from address)
+  SMTP_USER       SMTP username
   SMTP_PASSWORD   SMTP password / app password
   SMTP_FROM       From address (defaults to SMTP_USER)
   SMTP_TLS        "true" (default) uses STARTTLS; "ssl" uses SMTP_SSL
+
   APP_BASE_URL    Public site URL for building links (default https://release-gate.com)
 """
 from __future__ import annotations
 
+import json
 import os
 import smtplib
 import sys
+import urllib.request
 from email.message import EmailMessage
 from typing import Optional
 
@@ -27,18 +33,41 @@ def app_base_url() -> str:
     return os.environ.get("APP_BASE_URL", "https://release-gate.com").rstrip("/")
 
 
+def _resend_configured() -> bool:
+    return bool(os.environ.get("RESEND_API_KEY"))
+
+
 def _smtp_configured() -> bool:
     return bool(os.environ.get("SMTP_HOST") and os.environ.get("SMTP_USER")
                 and os.environ.get("SMTP_PASSWORD"))
 
 
-def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> bool:
-    """Send an email via SMTP. Returns True if sent, False if not configured/failed."""
-    if not _smtp_configured():
-        print(f"[email] SMTP not configured — would have sent to {to}:\n"
-              f"  Subject: {subject}\n  {text}", file=sys.stderr)
+def _send_via_resend(to: str, subject: str, text: str, html: Optional[str]) -> bool:
+    api_key = os.environ["RESEND_API_KEY"]
+    from_addr = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
+    payload = {"from": from_addr, "to": [to], "subject": subject, "text": text}
+    if html:
+        payload["html"] = html
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=data,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status in (200, 201):
+                return True
+            body = resp.read().decode()
+            print(f"[email] Resend non-200 ({resp.status}): {body}", file=sys.stderr)
+            return False
+    except Exception as exc:
+        print(f"[email] Resend send failed to {to}: {exc}", file=sys.stderr)
         return False
 
+
+def _send_via_smtp(to: str, subject: str, text: str, html: Optional[str]) -> bool:
     host = os.environ["SMTP_HOST"]
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ["SMTP_USER"]
@@ -66,9 +95,20 @@ def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> 
                 s.login(user, password)
                 s.send_message(msg)
         return True
-    except Exception as exc:  # don't let email failures break the request
-        print(f"[email] send failed to {to}: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"[email] SMTP send failed to {to}: {exc}", file=sys.stderr)
         return False
+
+
+def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> bool:
+    """Send an email. Tries Resend first, then SMTP. Returns True if sent."""
+    if _resend_configured():
+        return _send_via_resend(to, subject, text, html)
+    if _smtp_configured():
+        return _send_via_smtp(to, subject, text, html)
+    print(f"[email] no provider configured — would have sent to {to}:\n"
+          f"  Subject: {subject}\n  {text}", file=sys.stderr)
+    return False
 
 
 def send_password_reset(to: str, reset_url: str) -> bool:
