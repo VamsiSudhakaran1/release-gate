@@ -86,6 +86,19 @@
       padding: 80px 0 60px;
     }
     .hero-inner { width: 100%; }
+    /* Side-by-side mode: once a scan completes, hero text sits left and the
+       results panel sits on the right so the page doesn't jump/scroll down. */
+    .hero-inner.has-results {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      gap: 44px; align-items: start; text-align: left;
+      max-width: 1180px; margin: 0 auto;
+    }
+    .hero-inner.has-results .hero-left { text-align: left; }
+    .hero-inner.has-results .hero-sub { margin-left: 0; margin-right: 0; }
+    .hero-inner.has-results .hero-scan-row { justify-content: flex-start; margin-left: 0; }
+    .hero-inner.has-results .hero-scan-hint { text-align: left; }
+    .hero-inner.has-results .pg-wrap { max-width: none; margin: 0; }
     .hero h1 {
       font-size: clamp(2.2rem, 5vw, 3.6rem);
       font-weight: 900; color: var(--accent);
@@ -699,6 +712,12 @@
       .cli-grid  { grid-template-columns: 1fr; }
       .checks-grid { grid-template-columns: 1fr; }
     }
+    @media (max-width: 900px) {
+      /* Stack the side-by-side layout back to a single column on small screens */
+      .hero-inner.has-results {
+        grid-template-columns: 1fr; gap: 24px; max-width: 640px;
+      }
+    }
     @media (max-width: 768px) {
       .nav-links { display: none; }
       .hero { padding: 60px 0 40px; }
@@ -731,7 +750,8 @@
 
 <!-- ═══════════════════════ HERO ═══════════════════════ -->
 <section class="hero">
-  <div class="container hero-inner">
+  <div class="container hero-inner" id="hero-inner">
+   <div class="hero-left">
     <h1>Know before you ship.</h1>
     <p class="hero-sub">Paste any public GitHub repo URL — release-gate scans for 7 deployment safeguards and shows you exactly what's in place and what's missing. Takes 10 seconds. No install needed.</p>
     <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">release-gate starts as a 10-second repo audit, then becomes a CI gate that blocks unsafe AI releases before they reach production.</p>
@@ -746,6 +766,7 @@
       <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
       to grant read access — public repos work without it.
     </p>
+   </div>
 
     <div class="pg-wrap">
       <div class="pg-spinner" id="pg-spinner">
@@ -1613,6 +1634,21 @@
     }
   }
 
+  // Handle the shareable report route /r/<run_id> (opened from "View full report").
+  function _checkReportRoute() {
+    var m = (location.pathname || '').match(/^\/r\/([^\/?#]+)/);
+    if (!m) return;
+    var runId = decodeURIComponent(m[1]);
+    if (!getToken()) {
+      // Report is owner-only; prompt login, then open it after auth.
+      _pendingReportId = runId;
+      openAuthModal('login');
+      return;
+    }
+    openRunReport(runId);
+  }
+  var _pendingReportId = '';
+
   async function submitAuth(e) {
     e.preventDefault();
     var email = document.getElementById('auth-email').value.trim();
@@ -1644,7 +1680,11 @@
         }
         msgEl.textContent = _authMode === 'signup' ? 'Account created!' : 'Logged in!';
         msgEl.className = 'auth-msg success';
-        setTimeout(function() { closeAuthModal(); }, 800);
+        setTimeout(function() {
+          closeAuthModal();
+          // If the user landed on a /r/<id> report link, open it now that they're authed.
+          if (_pendingReportId) { var rid = _pendingReportId; _pendingReportId = ''; openRunReport(rid); }
+        }, 800);
       } else {
         msgEl.textContent = (data && data.detail) ? data.detail : 'Something went wrong. Please try again.';
         msgEl.className = 'auth-msg error';
@@ -2439,11 +2479,12 @@
     }
 
     document.getElementById('playground-results').style.display = 'block';
+    // Move into the side-by-side layout so the page doesn't jump downward.
+    var heroInner = document.getElementById('hero-inner');
+    if (heroInner) heroInner.classList.add('has-results');
     // Hide sample output once a real scan has run
     var sampleSection = document.getElementById('sample-output-section');
     if (sampleSection) sampleSection.style.display = 'none';
-    // Scroll results into view
-    document.getElementById('playground-results').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   async function runAutoFix() {
@@ -2514,6 +2555,7 @@
   // ── Init ──
   checkAuth();
   _checkResetRoute();
+  _checkReportRoute();
 </script>
 </body>
 </html>

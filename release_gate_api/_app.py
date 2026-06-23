@@ -60,6 +60,35 @@ _anon_counters: Dict[str, Dict] = {}  # ip -> {"count": int, "window_start": flo
 _ANON_LIMIT = 3
 _ANON_WINDOW = 3600  # 1 hour in seconds
 
+# Generic sliding-window rate limiter for sensitive auth endpoints.
+# In-memory per serverless instance — not perfect across instances, but it
+# meaningfully slows credential brute-force and reset-email abuse.
+_auth_counters: Dict[str, Dict] = {}  # key -> {"count": int, "window_start": float}
+
+
+def _client_ip(request: Optional[Request]) -> str:
+    if request is None:
+        return "unknown"
+    # Vercel/forwarding proxies put the real client IP first in X-Forwarded-For
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(key: str, limit: int, window: int = 900) -> bool:
+    """Return True if the action is allowed, False if the limit is exceeded.
+    Counts this attempt when allowed. Window defaults to 15 minutes."""
+    now = _time.time()
+    entry = _auth_counters.get(key)
+    if entry and (now - entry["window_start"]) < window:
+        if entry["count"] >= limit:
+            return False
+        entry["count"] += 1
+    else:
+        _auth_counters[key] = {"count": 1, "window_start": now}
+    return True
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -335,7 +364,16 @@ async def signup(body: SignupRequest):
 
 
 @app.post("/api/auth/login")
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, request: Request = None):
+    # Rate limit by IP and by target email to slow brute-force / credential stuffing.
+    ip = _client_ip(request)
+    email_key = body.email.lower().strip()
+    if not _check_rate_limit(f"login:ip:{ip}", limit=10, window=900) or \
+       not _check_rate_limit(f"login:email:{email_key}", limit=5, window=900):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please wait a few minutes and try again.",
+        )
     user = get_user_by_email(body.email)
     if not user or not verify_password(body.password, user["hashed_pw"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -379,9 +417,16 @@ RESET_TOKEN_TTL_HOURS = 1
 
 
 @app.post("/api/auth/forgot-password")
-async def forgot_password(body: ForgotPasswordRequest):
+async def forgot_password(body: ForgotPasswordRequest, request: Request = None):
     """Email a password-reset link. Always returns 200 (no email enumeration)."""
     _ensure_db()
+    # Rate limit reset-email sends per IP and per target email to prevent abuse.
+    ip = _client_ip(request)
+    email_key = body.email.lower().strip()
+    if not _check_rate_limit(f"forgot:ip:{ip}", limit=5, window=900) or \
+       not _check_rate_limit(f"forgot:email:{email_key}", limit=3, window=900):
+        # Still 200 to avoid enumeration, but skip sending.
+        return {"ok": True, "message": "If that email exists, a reset link has been sent."}
     user = get_user_by_email(body.email)
     if user:
         raw_token = secrets.token_urlsafe(32)
