@@ -105,6 +105,15 @@ def init_db():
             )""")
             cur.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS version TEXT")
             cur.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS prev_score INTEGER")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 0")
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token_hash  TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                expires_at  TEXT NOT NULL,
+                used        INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL
+            )""")
         else:
             cur.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -130,10 +139,18 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id);
             CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repo_url);
             """)
+            cur.executescript("""
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+                expires_at TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            """)
             # SQLite: add columns if they don't exist yet (ignore errors if already present)
             for col_sql in [
                 "ALTER TABLE runs ADD COLUMN version TEXT",
                 "ALTER TABLE runs ADD COLUMN prev_score INTEGER",
+                "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
             ]:
                 try:
                     cur.execute(col_sql)
@@ -144,17 +161,18 @@ def init_db():
 
 # ── Users ──────────────────────────────────────────────────────────────────
 
-def create_user(email: str, hashed_pw: str) -> Dict[str, Any]:
+def create_user(email: str, hashed_pw: str, must_change: bool = False) -> Dict[str, Any]:
     uid = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     ph = _ph()
     with get_db() as db:
         cur = db.cursor()
         cur.execute(
-            f"INSERT INTO users (id, email, hashed_pw, plan, created_at) VALUES ({ph},{ph},{ph},{ph},{ph})",
-            (uid, email.lower().strip(), hashed_pw, "free", now),
+            f"INSERT INTO users (id, email, hashed_pw, plan, created_at, must_change_password) "
+            f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph})",
+            (uid, email.lower().strip(), hashed_pw, "free", now, 1 if must_change else 0),
         )
-    return {"id": uid, "email": email, "plan": "free"}
+    return {"id": uid, "email": email, "plan": "free", "must_change_password": must_change}
 
 
 def update_user_plan(email: str, plan: str) -> bool:
@@ -166,6 +184,52 @@ def update_user_plan(email: str, plan: str) -> bool:
         updated = cur.rowcount > 0
         db.commit()
     return updated
+
+
+def set_user_password(email: str, hashed_pw: str, must_change: bool = False) -> bool:
+    """Set a user's password (by email) and the must_change flag. Returns True if updated."""
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(
+            f"UPDATE users SET hashed_pw={ph}, must_change_password={ph} WHERE email={ph}",
+            (hashed_pw, 1 if must_change else 0, email.lower().strip()),
+        )
+        updated = cur.rowcount > 0
+        db.commit()
+    return updated
+
+
+def create_password_reset(user_id: str, token_hash: str, expires_at: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(
+            f"INSERT INTO password_resets (token_hash, user_id, expires_at, used, created_at) "
+            f"VALUES ({ph},{ph},{ph},0,{ph})",
+            (token_hash, user_id, expires_at, now),
+        )
+
+
+def get_password_reset(token_hash: str) -> Optional[Dict]:
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            import psycopg2.extras
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"SELECT * FROM password_resets WHERE token_hash={ph}", (token_hash,))
+        row = cur.fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def mark_reset_used(token_hash: str) -> None:
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(f"UPDATE password_resets SET used=1 WHERE token_hash={ph}", (token_hash,))
+        db.commit()
 
 
 def list_users(limit: int = 100) -> list:

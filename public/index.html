@@ -1164,6 +1164,43 @@
       <input type="password" id="auth-password" required autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" />
       <button type="submit" id="auth-submit-btn">Sign up</button>
       <p class="auth-msg" id="auth-msg"></p>
+      <p id="auth-forgot-link" style="display:none;text-align:center;margin-top:4px">
+        <a href="#" onclick="showForgotForm();return false;" style="font-size:.85rem;color:var(--accent)">Forgot password?</a>
+      </p>
+    </form>
+
+    <!-- Forgot-password view -->
+    <form class="auth-form" id="forgot-form" style="display:none" onsubmit="submitForgot(event)">
+      <h3 style="margin-bottom:8px;color:var(--heading)">Reset your password</h3>
+      <p style="font-size:.85rem;color:var(--text);margin-bottom:6px">Enter your email and we'll send you a reset link.</p>
+      <label for="forgot-email">Email</label>
+      <input type="email" id="forgot-email" required autocomplete="email" placeholder="you@example.com" />
+      <button type="submit" id="forgot-submit-btn">Send reset link</button>
+      <p class="auth-msg" id="forgot-msg"></p>
+      <p style="text-align:center;margin-top:4px"><a href="#" onclick="switchAuthTab('login');return false;" style="font-size:.85rem;color:var(--accent)">&larr; Back to log in</a></p>
+    </form>
+
+    <!-- Reset-password view (from email link #reset?token=...) -->
+    <form class="auth-form" id="reset-form" style="display:none" onsubmit="submitReset(event)">
+      <h3 style="margin-bottom:8px;color:var(--heading)">Set a new password</h3>
+      <label for="reset-password">New password</label>
+      <input type="password" id="reset-password" required autocomplete="new-password" minlength="8" placeholder="At least 8 characters" />
+      <label for="reset-password2">Confirm new password</label>
+      <input type="password" id="reset-password2" required autocomplete="new-password" minlength="8" placeholder="Repeat password" />
+      <button type="submit" id="reset-submit-btn">Update password</button>
+      <p class="auth-msg" id="reset-msg"></p>
+    </form>
+
+    <!-- Forced change-password view (must_change_password) -->
+    <form class="auth-form" id="change-form" style="display:none" onsubmit="submitChange(event)">
+      <h3 style="margin-bottom:8px;color:var(--heading)">Choose a new password</h3>
+      <p style="font-size:.85rem;color:var(--text);margin-bottom:6px">You're using a temporary password. Please set your own to continue.</p>
+      <label for="change-current">Temporary password</label>
+      <input type="password" id="change-current" required autocomplete="current-password" placeholder="Temporary password" />
+      <label for="change-new">New password</label>
+      <input type="password" id="change-new" required autocomplete="new-password" minlength="8" placeholder="At least 8 characters" />
+      <button type="submit" id="change-submit-btn">Set new password</button>
+      <p class="auth-msg" id="change-msg"></p>
     </form>
   </div>
 </div>
@@ -1371,6 +1408,8 @@
   // ── Auth state ──
   var _currentUser = null;
   var _authMode = 'signup';
+  var _resetToken = '';
+  var _forceChangeEmail = '';
 
   function getToken() { return localStorage.getItem('rg_token'); }
   function setToken(t) { localStorage.setItem('rg_token', t); }
@@ -1403,6 +1442,7 @@
         var data = await res.json();
         _currentUser = data;
         updateNav(data);
+        if (data.must_change_password) showChangePasswordModal(data.email);
       } else {
         clearToken(); _currentUser = null; updateNav(null);
       }
@@ -1419,6 +1459,8 @@
   // ── Auth modal ──
   function openAuthModal(mode) {
     _authMode = mode || 'signup';
+    var closeBtn = document.querySelector('#auth-modal .auth-close');
+    if (closeBtn) closeBtn.style.display = '';
     switchAuthTab(_authMode);
     document.getElementById('auth-msg').textContent = '';
     document.getElementById('auth-email').value = '';
@@ -1431,14 +1473,144 @@
     document.getElementById('auth-modal').classList.remove('open');
   }
 
+  // Show exactly one form view inside the auth modal.
+  function _showAuthView(view) {
+    ['auth-form','forgot-form','reset-form','change-form'].forEach(function(id){
+      document.getElementById(id).style.display = (id === view) ? '' : 'none';
+    });
+    var tabs = document.querySelector('.auth-tabs');
+    if (tabs) tabs.style.display = (view === 'auth-form') ? '' : 'none';
+  }
+
   function switchAuthTab(mode) {
     _authMode = mode;
     var isSignup = mode === 'signup';
+    _showAuthView('auth-form');
     document.getElementById('tab-signup-btn').classList.toggle('active', isSignup);
     document.getElementById('tab-login-btn').classList.toggle('active', !isSignup);
     document.getElementById('auth-submit-btn').textContent = isSignup ? 'Sign up' : 'Log in';
     document.getElementById('auth-msg').textContent = '';
     document.getElementById('auth-msg').className = 'auth-msg';
+    // Forgot link only makes sense on login
+    document.getElementById('auth-forgot-link').style.display = isSignup ? 'none' : 'block';
+    document.getElementById('auth-password').setAttribute('autocomplete', isSignup ? 'new-password' : 'current-password');
+  }
+
+  function showForgotForm() {
+    _showAuthView('forgot-form');
+    document.getElementById('forgot-msg').textContent = '';
+    document.getElementById('forgot-email').value = document.getElementById('auth-email').value || '';
+    document.getElementById('forgot-email').focus();
+  }
+
+  async function submitForgot(e) {
+    e.preventDefault();
+    var email = document.getElementById('forgot-email').value.trim();
+    var msgEl = document.getElementById('forgot-msg');
+    var btn = document.getElementById('forgot-submit-btn');
+    btn.disabled = true; msgEl.textContent = ''; msgEl.className = 'auth-msg';
+    try {
+      var res = await fetch(API_BASE + '/api/auth/forgot-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email })
+      });
+      await res.json();
+      msgEl.textContent = 'If that email exists, a reset link is on its way. Check your inbox.';
+      msgEl.className = 'auth-msg success';
+    } catch(err) {
+      msgEl.textContent = 'Could not send reset link. Please try again.';
+      msgEl.className = 'auth-msg error';
+    } finally { btn.disabled = false; }
+  }
+
+  // Open the reset view, reading the token from the URL hash (#reset?token=...).
+  function showResetForm(token) {
+    _resetToken = token;
+    openAuthModal('login');
+    _showAuthView('reset-form');
+    document.getElementById('reset-msg').textContent = '';
+    document.getElementById('reset-password').value = '';
+    document.getElementById('reset-password2').value = '';
+    document.getElementById('reset-password').focus();
+  }
+
+  async function submitReset(e) {
+    e.preventDefault();
+    var p1 = document.getElementById('reset-password').value;
+    var p2 = document.getElementById('reset-password2').value;
+    var msgEl = document.getElementById('reset-msg');
+    var btn = document.getElementById('reset-submit-btn');
+    msgEl.className = 'auth-msg';
+    if (p1 !== p2) { msgEl.textContent = 'Passwords do not match.'; msgEl.className = 'auth-msg error'; return; }
+    btn.disabled = true;
+    try {
+      var res = await fetch(API_BASE + '/api/auth/reset-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: _resetToken, new_password: p1 })
+      });
+      var data = await res.json();
+      if (res.ok) {
+        msgEl.textContent = 'Password updated! You can now log in.';
+        msgEl.className = 'auth-msg success';
+        if (history.replaceState) history.replaceState(null, '', location.pathname);
+        setTimeout(function(){ switchAuthTab('login'); }, 1200);
+      } else {
+        msgEl.textContent = (data && data.detail) || 'Reset failed.';
+        msgEl.className = 'auth-msg error';
+      }
+    } catch(err) {
+      msgEl.textContent = 'Reset failed. Please try again.';
+      msgEl.className = 'auth-msg error';
+    } finally { btn.disabled = false; }
+  }
+
+  // Forced change-password (must_change_password). Cannot be dismissed.
+  function showChangePasswordModal(email) {
+    _forceChangeEmail = email || '';
+    openAuthModal('login');
+    _showAuthView('change-form');
+    document.querySelector('#auth-modal .auth-close').style.display = 'none';
+    document.getElementById('change-msg').textContent = '';
+    document.getElementById('change-current').focus();
+  }
+
+  async function submitChange(e) {
+    e.preventDefault();
+    var cur = document.getElementById('change-current').value;
+    var nw = document.getElementById('change-new').value;
+    var msgEl = document.getElementById('change-msg');
+    var btn = document.getElementById('change-submit-btn');
+    btn.disabled = true; msgEl.textContent = ''; msgEl.className = 'auth-msg';
+    try {
+      var res = await fetch(API_BASE + '/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({ current_password: cur, new_password: nw })
+      });
+      var data = await res.json();
+      if (res.ok) {
+        msgEl.textContent = 'Password updated!';
+        msgEl.className = 'auth-msg success';
+        if (_currentUser) _currentUser.must_change_password = false;
+        document.querySelector('#auth-modal .auth-close').style.display = '';
+        setTimeout(function(){ closeAuthModal(); }, 800);
+      } else {
+        msgEl.textContent = (data && data.detail) || 'Could not change password.';
+        msgEl.className = 'auth-msg error';
+      }
+    } catch(err) {
+      msgEl.textContent = 'Could not change password. Please try again.';
+      msgEl.className = 'auth-msg error';
+    } finally { btn.disabled = false; }
+  }
+
+  // Detect a reset link on page load: #reset?token=XXprivate
+  function _checkResetRoute() {
+    var h = location.hash || '';
+    if (h.indexOf('reset') !== -1 && h.indexOf('token=') !== -1) {
+      var token = h.split('token=')[1].split('&')[0];
+      if (token) showResetForm(decodeURIComponent(token));
+    }
   }
 
   async function submitAuth(e) {
@@ -1464,6 +1636,12 @@
         setToken(data.token);
         _currentUser = data.user || { email: email };
         updateNav(_currentUser);
+        // Force a password change if logging in with a temporary password
+        if (_currentUser && _currentUser.must_change_password) {
+          msgEl.textContent = '';
+          showChangePasswordModal(_currentUser.email);
+          return;
+        }
         msgEl.textContent = _authMode === 'signup' ? 'Account created!' : 'Logged in!';
         msgEl.className = 'auth-msg success';
         setTimeout(function() { closeAuthModal(); }, 800);
@@ -2335,6 +2513,7 @@
 
   // ── Init ──
   checkAuth();
+  _checkResetRoute();
 </script>
 </body>
 </html>

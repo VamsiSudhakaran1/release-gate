@@ -23,7 +23,24 @@ from release_gate_api.db import (
     init_db, save_run, create_api_token,
     increment_usage, get_usage, get_dashboard_stats, get_findings_summary,
     update_user_plan, list_users,
+    set_user_password, create_password_reset, get_password_reset, mark_reset_used,
 )
+from release_gate_api.email_util import (
+    send_password_reset, send_temp_password, app_base_url,
+)
+
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _gen_temp_password() -> str:
+    # URL-safe, ~12 chars, human-typable
+    return secrets.token_urlsafe(9)
 
 app = FastAPI(title="release-gate API", version="0.7.0")
 
@@ -309,8 +326,10 @@ async def login(body: LoginRequest):
     if user["email"].lower().strip() == ADMIN_EMAIL and user.get("plan") != "admin":
         update_user_plan(user["email"], "admin")
         user["plan"] = "admin"
+    must_change = bool(user.get("must_change_password"))
     token = create_access_token(user["id"], user["email"], user["plan"])
-    return {"token": token, "user": {"email": user["email"], "plan": user["plan"]}}
+    return {"token": token, "user": {"email": user["email"], "plan": user["plan"],
+                                     "must_change_password": must_change}}
 
 
 @app.get("/api/auth/me")
@@ -319,7 +338,80 @@ async def me(authorization: Optional[str] = Header(default=None)):
     db_user = get_user_by_id(user["id"])
     if not db_user:
         raise HTTPException(status_code=404)
-    return {"email": db_user["email"], "plan": db_user["plan"], "id": db_user["id"]}
+    return {"email": db_user["email"], "plan": db_user["plan"], "id": db_user["id"],
+            "must_change_password": bool(db_user.get("must_change_password"))}
+
+
+# ── Password reset / change ─────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+RESET_TOKEN_TTL_HOURS = 1
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest):
+    """Email a password-reset link. Always returns 200 (no email enumeration)."""
+    _ensure_db()
+    user = get_user_by_email(body.email)
+    if user:
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(raw_token)
+        expires = (datetime.now(timezone.utc) + timedelta(hours=RESET_TOKEN_TTL_HOURS)).isoformat()
+        create_password_reset(user["id"], token_hash, expires)
+        reset_url = f"{app_base_url()}/#reset?token={raw_token}"
+        send_password_reset(user["email"], reset_url)
+    return {"ok": True, "message": "If that email exists, a reset link has been sent."}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(body: ResetPasswordRequest):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    rec = get_password_reset(_hash_token(body.token))
+    if not rec or rec.get("used"):
+        raise HTTPException(status_code=400, detail="Invalid or already-used reset link")
+    try:
+        expired = datetime.fromisoformat(rec["expires_at"]) < datetime.now(timezone.utc)
+    except Exception:
+        expired = True
+    if expired:
+        raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
+    db_user = get_user_by_id(rec["user_id"])
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User no longer exists")
+    set_user_password(db_user["email"], hash_password(body.new_password), must_change=False)
+    mark_reset_used(_hash_token(body.token))
+    return {"ok": True, "message": "Password updated. You can now log in."}
+
+
+@app.post("/api/auth/change-password")
+async def change_password(body: ChangePasswordRequest, authorization: Optional[str] = Header(default=None)):
+    """Authenticated password change. Clears the must_change_password flag."""
+    user = _require_user(authorization)
+    db_user = get_user_by_id(user["id"])
+    if not db_user:
+        raise HTTPException(status_code=404)
+    if not verify_password(body.current_password, db_user["hashed_pw"]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="New password must differ from the current one")
+    set_user_password(db_user["email"], hash_password(body.new_password), must_change=False)
+    return {"ok": True, "message": "Password changed."}
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────
@@ -359,6 +451,37 @@ async def admin_set_plan(body: PlanUpdateRequest, authorization: Optional[str] =
     if not updated:
         raise HTTPException(status_code=404, detail=f"No user found with email {body.email}")
     return {"ok": True, "email": body.email, "plan": body.plan}
+
+
+class AdminEmailRequest(BaseModel):
+    email: str
+
+
+@app.post("/api/admin/create-user")
+async def admin_create_user(body: AdminEmailRequest, authorization: Optional[str] = Header(default=None)):
+    """Create a user with a temporary password (must be changed on first login).
+    Emails the temp password and also returns it so the admin can relay it. Admin only."""
+    _require_admin(authorization)
+    if get_user_by_email(body.email):
+        raise HTTPException(status_code=409, detail="Email already registered")
+    temp = _gen_temp_password()
+    create_user(body.email, hash_password(temp), must_change=True)
+    emailed = send_temp_password(body.email, temp)
+    return {"ok": True, "email": body.email, "temp_password": temp, "emailed": emailed}
+
+
+@app.post("/api/admin/reset-password")
+async def admin_reset_password(body: AdminEmailRequest, authorization: Optional[str] = Header(default=None)):
+    """Reset a user's password to a new temp password (must be changed on next login).
+    Emails it and returns it. Admin only."""
+    _require_admin(authorization)
+    user = get_user_by_email(body.email)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"No user found with email {body.email}")
+    temp = _gen_temp_password()
+    set_user_password(body.email, hash_password(temp), must_change=True)
+    emailed = send_temp_password(body.email, temp)
+    return {"ok": True, "email": body.email, "temp_password": temp, "emailed": emailed}
 
 
 @app.get("/api/admin/stats")
