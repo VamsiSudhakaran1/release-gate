@@ -24,27 +24,38 @@ import json
 import os
 import smtplib
 import sys
+import urllib.error
 import urllib.request
 from email.message import EmailMessage
 from typing import Optional
 
 
+def _env(name: str, default: str = "") -> str:
+    """Read an env var, stripping surrounding whitespace/newlines.
+
+    Pasting secrets into dashboards (Vercel, etc.) frequently appends a
+    trailing newline or space. An API key with a trailing '\\n' produces an
+    'Authorization: Bearer <key>\\n' header, which Resend rejects with 403.
+    Stripping here makes the config forgiving.
+    """
+    return os.environ.get(name, default).strip()
+
+
 def app_base_url() -> str:
-    return os.environ.get("APP_BASE_URL", "https://release-gate.com").rstrip("/")
+    return _env("APP_BASE_URL", "https://release-gate.com").rstrip("/")
 
 
 def _resend_configured() -> bool:
-    return bool(os.environ.get("RESEND_API_KEY"))
+    return bool(_env("RESEND_API_KEY"))
 
 
 def _smtp_configured() -> bool:
-    return bool(os.environ.get("SMTP_HOST") and os.environ.get("SMTP_USER")
-                and os.environ.get("SMTP_PASSWORD"))
+    return bool(_env("SMTP_HOST") and _env("SMTP_USER") and _env("SMTP_PASSWORD"))
 
 
 def _send_via_resend(to: str, subject: str, text: str, html: Optional[str]) -> bool:
-    api_key = os.environ["RESEND_API_KEY"]
-    from_addr = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
+    api_key = _env("RESEND_API_KEY")
+    from_addr = _env("RESEND_FROM") or "onboarding@resend.dev"
     payload = {"from": from_addr, "to": [to], "subject": subject, "text": text}
     if html:
         payload["html"] = html
@@ -58,22 +69,31 @@ def _send_via_resend(to: str, subject: str, text: str, html: Optional[str]) -> b
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status in (200, 201):
+                print(f"[email] Resend accepted message to {to} (from {from_addr})",
+                      file=sys.stderr)
                 return True
-            body = resp.read().decode()
-            print(f"[email] Resend non-200 ({resp.status}): {body}", file=sys.stderr)
+            body = resp.read().decode(errors="replace")
+            print(f"[email] Resend non-2xx ({resp.status}) from={from_addr}: {body}",
+                  file=sys.stderr)
             return False
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        print(f"[email] Resend {exc.code} sending to {to} (from={from_addr}): {body}",
+              file=sys.stderr)
+        return False
     except Exception as exc:
-        print(f"[email] Resend send failed to {to}: {exc}", file=sys.stderr)
+        print(f"[email] Resend send failed to {to} (from={from_addr}): {exc}",
+              file=sys.stderr)
         return False
 
 
 def _send_via_smtp(to: str, subject: str, text: str, html: Optional[str]) -> bool:
-    host = os.environ["SMTP_HOST"]
-    port = int(os.environ.get("SMTP_PORT", "587"))
-    user = os.environ["SMTP_USER"]
-    password = os.environ["SMTP_PASSWORD"]
-    from_addr = os.environ.get("SMTP_FROM", user)
-    mode = os.environ.get("SMTP_TLS", "true").lower()
+    host = _env("SMTP_HOST")
+    port = int(_env("SMTP_PORT", "587"))
+    user = _env("SMTP_USER")
+    password = _env("SMTP_PASSWORD")
+    from_addr = _env("SMTP_FROM") or user
+    mode = (_env("SMTP_TLS", "true")).lower()
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -98,6 +118,29 @@ def _send_via_smtp(to: str, subject: str, text: str, html: Optional[str]) -> boo
     except Exception as exc:
         print(f"[email] SMTP send failed to {to}: {exc}", file=sys.stderr)
         return False
+
+
+def email_config_status() -> dict:
+    """Non-secret summary of the active email config, for diagnostics.
+
+    Never returns the API key or password — only whether they're present,
+    their length, and the from/host values so misconfig is obvious.
+    """
+    api_key = _env("RESEND_API_KEY")
+    return {
+        "provider": "resend" if _resend_configured() else ("smtp" if _smtp_configured() else "none"),
+        "resend": {
+            "api_key_present": bool(api_key),
+            "api_key_len": len(api_key),
+            "api_key_prefix": (api_key[:3] + "…") if api_key else "",
+            "from": _env("RESEND_FROM") or "onboarding@resend.dev (default)",
+        },
+        "smtp": {
+            "host": _env("SMTP_HOST"),
+            "user_present": bool(_env("SMTP_USER")),
+        },
+        "app_base_url": app_base_url(),
+    }
 
 
 def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> bool:
