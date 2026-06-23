@@ -77,12 +77,26 @@ def startup():
         print(f"[startup] init_db failed: {exc}", file=sys.stderr)
 
 
-# Ensure the schema exists even if the startup hook didn't run (serverless cold start)
+# Ensure the schema exists even if the startup hook didn't run (serverless cold start).
+# Retries on Postgres deadlock (40P01) which can happen when multiple serverless
+# instances race to CREATE TABLE IF NOT EXISTS on a cold start.
 def _ensure_db():
-    try:
-        init_db()
-    except Exception as exc:
-        print(f"[ensure_db] init_db failed: {exc}", file=sys.stderr)
+    import time
+    delay = 1.0
+    for attempt in range(4):
+        try:
+            init_db()
+            return
+        except Exception as exc:
+            pg_code = getattr(getattr(exc, 'pgcode', None), '__str__', lambda: '')() or str(getattr(exc, 'pgcode', ''))
+            is_deadlock = pg_code == '40P01' or 'deadlock' in str(exc).lower()
+            if is_deadlock and attempt < 3:
+                print(f"[ensure_db] deadlock on attempt {attempt + 1}, retrying in {delay}s…", file=sys.stderr)
+                time.sleep(delay)
+                delay *= 2
+            else:
+                print(f"[ensure_db] init_db failed: {exc}", file=sys.stderr)
+                return
 
 
 # ── Auth helpers ───────────────────────────────────────────────────────────
