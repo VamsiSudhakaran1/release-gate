@@ -63,7 +63,15 @@ def _send_via_resend(to: str, subject: str, text: str, html: Optional[str]) -> b
     req = urllib.request.Request(
         "https://api.resend.com/emails",
         data=data,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            # Resend's API is behind Cloudflare, which bans the default
+            # "Python-urllib/x" User-Agent (403 with Cloudflare error 1010).
+            # A normal UA + explicit Accept gets us through.
+            "User-Agent": "release-gate/1.0 (+https://release-gate.com)",
+            "Accept": "application/json",
+        },
         method="POST",
     )
     try:
