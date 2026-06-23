@@ -2,87 +2,159 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://release-gate.com/schema/governance.schema.json",
   "title": "release-gate governance.yaml",
-  "description": "Deployment governance policy for an AI agent. Validated by release-gate audit.",
+  "description": "Deployment governance policy for an AI agent, in the canonical format produced by `release-gate audit --emit-config` and consumed by `release-gate score`.",
   "type": "object",
-  "required": ["project", "safeguards"],
+  "required": ["project", "agent", "policy", "checks"],
+  "additionalProperties": true,
   "properties": {
     "project": {
       "type": "object",
-      "required": ["name", "model", "version"],
+      "required": ["name"],
+      "additionalProperties": true,
       "properties": {
         "name":        { "type": "string", "minLength": 1, "description": "Human-readable project name" },
-        "model":       { "type": "string", "minLength": 1, "description": "Primary model id (e.g. gpt-4o, claude-3-5-sonnet)" },
-        "version":     { "type": "string", "pattern": "^\\d+\\.\\d+", "description": "Semantic version of the agent" },
         "description": { "type": "string" },
-        "repo":        { "type": "string", "format": "uri" }
+        "version":     { "type": "string", "description": "Semantic version of the agent (e.g. 1.0.0)" },
+        "repo":        { "type": "string", "description": "Repository URL" }
       }
     },
-    "safeguards": {
+    "agent": {
       "type": "object",
+      "required": ["model"],
+      "additionalProperties": true,
+      "description": "Runtime profile of the agent, used by the Impact Simulator.",
       "properties": {
-        "kill_switch": {
-          "type": "object",
-          "required": ["location"],
-          "properties": {
-            "location": { "type": "string", "description": "File path or URL of the kill switch / feature flag" },
-            "type":     { "type": "string", "enum": ["env_var", "feature_flag", "config_file", "api_endpoint"] },
-            "tested":   { "type": "boolean" }
-          }
+        "model":             { "type": "string", "minLength": 1, "description": "Primary model id (e.g. gpt-4o, claude-3-5-sonnet-20241022)" },
+        "daily_requests":    { "type": "integer", "minimum": 0, "description": "Expected daily request volume" },
+        "avg_input_tokens":  { "type": "integer", "minimum": 0, "description": "Typical prompt size in tokens" },
+        "avg_output_tokens": { "type": "integer", "minimum": 0, "description": "Typical completion size in tokens" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Which checks block a release (fail_on) versus warn (warn_on). Check names are upper-snake-case.",
+      "properties": {
+        "fail_on": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["ACTION_BUDGET", "FALLBACK_DECLARED", "BUDGET_SIMULATION", "IDENTITY_BOUNDARY", "INPUT_CONTRACT"] },
+          "description": "Checks that cause a BLOCK/FAIL decision when they fail"
         },
-        "budget_ceiling": {
-          "type": "object",
-          "required": ["max_daily_cost_usd"],
-          "properties": {
-            "max_daily_cost_usd":     { "type": "number", "minimum": 0 },
-            "max_tokens_per_request": { "type": "integer", "minimum": 1 },
-            "alert_threshold_pct":    { "type": "number", "minimum": 0, "maximum": 100 }
-          }
-        },
-        "team_owner": {
-          "type": "object",
-          "required": ["name", "oncall"],
-          "properties": {
-            "name":    { "type": "string" },
-            "oncall":  { "type": "string", "description": "PagerDuty service, email, or Slack handle" },
-            "runbook": { "type": "string", "format": "uri" }
-          }
-        },
-        "auth": {
-          "type": "object",
-          "properties": {
-            "required":   { "type": "boolean" },
-            "type":       { "type": "string", "enum": ["api_key", "oauth2", "jwt", "mtls", "none"] },
-            "rate_limit": { "type": "string", "description": "e.g. 100/min" }
-          }
-        },
-        "trace_policies": {
-          "type": "object",
-          "properties": {
-            "enabled":         { "type": "boolean" },
-            "forbidden_tools": { "type": "array", "items": { "type": "string" } },
-            "allowed_tools":   { "type": "array", "items": { "type": "string" } },
-            "log_level":       { "type": "string", "enum": ["none", "summary", "full"] }
-          }
+        "warn_on": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["ACTION_BUDGET", "FALLBACK_DECLARED", "BUDGET_SIMULATION", "IDENTITY_BOUNDARY", "INPUT_CONTRACT"] },
+          "description": "Checks that cause a HOLD/WARN decision when they fail"
         }
       }
     },
-    "evals": {
+    "checks": {
       "type": "object",
+      "additionalProperties": true,
+      "description": "Per-check configuration. Each check has an `enabled` flag plus check-specific fields.",
       "properties": {
-        "suite":           { "type": "string", "description": "Path to evals.yaml" },
-        "min_pass_rate":   { "type": "number", "minimum": 0, "maximum": 1 },
-        "last_run_date":   { "type": "string", "format": "date" },
-        "framework":       { "type": "string" }
-      }
-    },
-    "deployment": {
-      "type": "object",
-      "properties": {
-        "environment": { "type": "string", "enum": ["development", "staging", "production"] },
-        "rollout":     { "type": "string", "enum": ["canary", "blue-green", "direct"] },
-        "min_score":   { "type": "integer", "minimum": 0, "maximum": 100 }
+        "action_budget": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "OWASP LLM10 · NIST AI RMF MANAGE-2.2 · EU AI Act Art.9 — hard daily cost ceiling.",
+          "properties": {
+            "enabled":        { "type": "boolean" },
+            "max_daily_cost": { "type": "number", "minimum": 0, "description": "Hard daily $ ceiling on API spend" }
+          }
+        },
+        "fallback_declared": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "NIST AI RMF MANAGE-4.1 · EU AI Act Art.14 · OWASP LLM08 — kill switch & on-call owner.",
+          "properties": {
+            "enabled":       { "type": "boolean" },
+            "kill_switch": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "type":     { "type": "string", "description": "How the agent is disabled at runtime (e.g. feature-flag, env_var)" },
+                "location": { "type": "string", "description": "Path, env var, or URL of the kill switch" }
+              }
+            },
+            "fallback_mode": { "type": "string", "description": "What happens when the agent is disabled (e.g. escalate-to-human)" },
+            "team_owner":    { "type": "string", "description": "Team or person who gets paged" },
+            "runbook_url":   { "type": "string", "description": "Link to the incident runbook" }
+          }
+        },
+        "identity_boundary": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "OWASP LLM01 · NIST AI RMF MANAGE-1.3 — auth, rate limiting, data isolation.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "authentication": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "required": { "type": "boolean" },
+                "type":     { "type": "string", "description": "Auth method (e.g. oauth2, api_key, jwt, mtls)" }
+              }
+            },
+            "rate_limit": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "requests_per_minute": { "type": "integer", "minimum": 0 },
+                "burst_allowed":       { "type": "boolean" }
+              }
+            },
+            "data_isolation": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "input_contract": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "NIST AI RMF MEASURE-2.5 — declared input schema with valid/invalid samples.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "schema":  { "type": "object", "additionalProperties": true },
+            "samples": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "valid":   { "type": "array" },
+                "invalid": { "type": "array" }
+              }
+            }
+          }
+        },
+        "budget_simulation": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "OWASP LLM10 — runaway-cost simulation factors.",
+          "properties": {
+            "enabled":    { "type": "boolean" },
+            "simulation": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "requests_per_day": { "type": "integer", "minimum": 0 },
+                "tokens_per_request": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "input":  { "type": "integer", "minimum": 0 },
+                    "output": { "type": "integer", "minimum": 0 }
+                  }
+                },
+                "factors": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "retry_rate":              { "type": "number", "minimum": 0 },
+                    "cache_hit_rate":          { "type": "number", "minimum": 0, "maximum": 1 },
+                    "spiky_usage_multiplier":  { "type": "number", "minimum": 0 }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
-  },
-  "additionalProperties": false
+  }
 }
