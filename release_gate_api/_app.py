@@ -50,7 +50,9 @@ PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999, "admin": 999999}
 
 # Admin email — this account gets the admin plan automatically on first login/signup
 # and is the only account that can call /api/admin/* endpoints.
-ADMIN_EMAIL = os.environ.get("RELEASE_GATE_ADMIN_EMAIL", "vamsi.sudhakaran@gmail.com").lower().strip()
+# Read from the environment so the identity of the admin is not exposed in the
+# public source. If unset, NO account is treated as admin (fail closed).
+ADMIN_EMAIL = os.environ.get("RELEASE_GATE_ADMIN_EMAIL", "").lower().strip()
 
 # Anonymous IP-based rate limiting (in-memory, resets hourly)
 import time as _time
