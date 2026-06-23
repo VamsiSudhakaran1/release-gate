@@ -2,6 +2,17 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.7.3] — 2026-06-23
+
+### 🐛 Fixed — production hotfix
+
+- **Reverted the dependency split from 0.7.2.** Vercel's Python runtime installs
+  this project from `pyproject.toml` (not `requirements.txt`), so moving the web
+  stack to an optional `[api]` extra meant FastAPI was never installed and the
+  serverless function crashed on import (`ModuleNotFoundError: No module named
+  'fastapi'`). The web deps are back in core `dependencies`. All other
+  external-review fixes from 0.7.2 are retained.
+
 ## [0.7.2] — 2026-06-23
 
 ### 🐛 Fixed — external review (correctness & security)
