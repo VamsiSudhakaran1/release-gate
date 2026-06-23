@@ -972,7 +972,7 @@ def emit_sarif(report: Dict[str, Any], path: str) -> None:
             "tool": {
                 "driver": {
                     "name": "release-gate",
-                    "version": "0.7.0",
+                    "version": "0.7.1",
                     "informationUri": "https://release-gate.com",
                     "rules": rules,
                 },
@@ -1243,7 +1243,7 @@ def render_terminal(report: Dict[str, Any]) -> None:
 
     if not report["has_ci_integration"]:
         print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
-        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.0', _BLUE)}")
+        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.1', _BLUE)}")
         step += 1
 
     print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")

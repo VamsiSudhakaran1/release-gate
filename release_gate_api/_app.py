@@ -43,7 +43,7 @@ def _gen_temp_password() -> str:
     # URL-safe, ~12 chars, human-typable
     return secrets.token_urlsafe(9)
 
-app = FastAPI(title="release-gate API", version="0.7.0")
+app = FastAPI(title="release-gate API", version="0.7.1")
 
 # ── Plan limits ────────────────────────────────────────────────────────────
 PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999, "admin": 999999}
@@ -669,7 +669,7 @@ async def create_token(authorization: Optional[str] = Header(default=None)):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.7.0"}
+    return {"status": "ok", "version": "0.7.1"}
 
 
 @app.get("/api/debug/github-app")
