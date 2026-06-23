@@ -8,7 +8,32 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-SECRET_KEY = os.environ.get("RG_JWT_SECRET", "change-me-in-production-use-random-256-bit-key")
+def _load_secret_key() -> str:
+    """Resolve the JWT signing secret.
+
+    The secret MUST come from the RG_JWT_SECRET environment variable in any
+    real deployment. We deliberately do NOT ship a usable default — a
+    hardcoded key in a public repo lets anyone forge an admin token and
+    bypass authentication entirely.
+
+    Only when running locally (no DATABASE_URL, i.e. the SQLite dev fallback)
+    do we fall back to an ephemeral random key for developer convenience.
+    """
+    secret = os.environ.get("RG_JWT_SECRET", "").strip()
+    if secret:
+        return secret
+    # Deployed (Postgres) environments must set the secret explicitly.
+    if os.environ.get("DATABASE_URL"):
+        raise RuntimeError(
+            "RG_JWT_SECRET is not set. Refusing to start with a default signing "
+            "key in a deployed environment — set RG_JWT_SECRET to a random 256-bit value."
+        )
+    # Local dev only: ephemeral per-process key (tokens won't survive restart).
+    import secrets as _secrets
+    return _secrets.token_urlsafe(48)
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24 * 7  # 7 days
 
