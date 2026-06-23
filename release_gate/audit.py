@@ -1250,14 +1250,18 @@ def render_terminal(report: Dict[str, Any]) -> None:
     print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
     step += 1
 
-    # Web report link — only present when scan was saved via authenticated API
+    # Web report link — show deep link if run was saved via authenticated API,
+    # otherwise show the homepage so CLI users know where to scan via the web.
     run_id = report.get("run_id")
+    print()
+    print(f"  {div}")
+    print()
     if run_id:
-        print()
-        print(f"  {div}")
-        print()
         print(f"  {_col('📊 Full report + trend history:', _BOLD)}")
         print(f"     {_col('https://release-gate.com/r/' + run_id, _BLUE)}")
+    else:
+        print(f"  {_col('🌐 Scan this repo on the web for a full dashboard + trend history:', _BOLD)}")
+        print(f"     {_col('https://release-gate.com', _BLUE)}")
 
     print()
     print(f"  {div}")
