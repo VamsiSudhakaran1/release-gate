@@ -157,6 +157,28 @@ def create_user(email: str, hashed_pw: str) -> Dict[str, Any]:
     return {"id": uid, "email": email, "plan": "free"}
 
 
+def update_user_plan(email: str, plan: str) -> bool:
+    """Set the plan for a user by email. Returns True if a row was updated."""
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(f"UPDATE users SET plan={ph} WHERE email={ph}", (plan, email.lower().strip()))
+        updated = cur.rowcount > 0
+        db.commit()
+    return updated
+
+
+def list_users(limit: int = 100) -> list:
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            import psycopg2.extras
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"SELECT id, email, plan, created_at FROM users ORDER BY created_at DESC LIMIT {int(limit)}")
+        rows = cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 def get_user_by_email(email: str) -> Optional[Dict]:
     ph = _ph()
     with get_db() as db:

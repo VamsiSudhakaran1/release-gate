@@ -22,12 +22,17 @@ from release_gate_api.db import (
     get_user_by_email, get_user_by_id, get_user_by_token,
     init_db, save_run, create_api_token,
     increment_usage, get_usage, get_dashboard_stats, get_findings_summary,
+    update_user_plan, list_users,
 )
 
 app = FastAPI(title="release-gate API", version="0.7.0")
 
 # ── Plan limits ────────────────────────────────────────────────────────────
-PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999}
+PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999, "admin": 999999}
+
+# Admin email — this account gets the admin plan automatically on first login/signup
+# and is the only account that can call /api/admin/* endpoints.
+ADMIN_EMAIL = os.environ.get("RELEASE_GATE_ADMIN_EMAIL", "vamsi.sudhakaran@gmail.com").lower().strip()
 
 # Anonymous IP-based rate limiting (in-memory, resets hourly)
 import time as _time
@@ -272,6 +277,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _assign_admin_if_owner(email: str) -> str:
+    """Return 'admin' if this email is the admin email, else 'free'."""
+    return "admin" if email.lower().strip() == ADMIN_EMAIL else "free"
+
+
 @app.post("/api/auth/signup")
 async def signup(body: SignupRequest):
     if len(body.password) < 8:
@@ -281,6 +291,11 @@ async def signup(body: SignupRequest):
         raise HTTPException(status_code=409, detail="Email already registered")
     hashed = hash_password(body.password)
     user = create_user(body.email, hashed)
+    # Auto-elevate the admin email on first signup
+    plan = _assign_admin_if_owner(body.email)
+    if plan == "admin":
+        update_user_plan(body.email, "admin")
+        user["plan"] = "admin"
     token = create_access_token(user["id"], user["email"], user["plan"])
     return {"token": token, "user": {"email": user["email"], "plan": user["plan"]}}
 
@@ -290,6 +305,10 @@ async def login(body: LoginRequest):
     user = get_user_by_email(body.email)
     if not user or not verify_password(body.password, user["hashed_pw"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Ensure admin email always has admin plan (in case DB was set before this code)
+    if user["email"].lower().strip() == ADMIN_EMAIL and user.get("plan") != "admin":
+        update_user_plan(user["email"], "admin")
+        user["plan"] = "admin"
     token = create_access_token(user["id"], user["email"], user["plan"])
     return {"token": token, "user": {"email": user["email"], "plan": user["plan"]}}
 
@@ -303,13 +322,67 @@ async def me(authorization: Optional[str] = Header(default=None)):
     return {"email": db_user["email"], "plan": db_user["plan"], "id": db_user["id"]}
 
 
+# ── Admin ─────────────────────────────────────────────────────────────────
+
+def _require_admin(authorization: Optional[str]) -> Dict:
+    user = _require_user(authorization)
+    if user.get("plan") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+class PlanUpdateRequest(BaseModel):
+    email: str
+    plan: str
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(authorization: Optional[str] = Header(default=None)):
+    """List all users with their plans. Admin only."""
+    _require_admin(authorization)
+    users = list_users(limit=500)
+    # Never expose hashed passwords
+    return {"users": [{"id": u["id"], "email": u["email"], "plan": u["plan"], "created_at": u.get("created_at")} for u in users]}
+
+
+@app.post("/api/admin/set-plan")
+async def admin_set_plan(body: PlanUpdateRequest, authorization: Optional[str] = Header(default=None)):
+    """Set a user's plan. Admin only. Valid plans: free, pro, enterprise."""
+    _require_admin(authorization)
+    valid_plans = {"free", "pro", "enterprise"}
+    if body.plan not in valid_plans:
+        raise HTTPException(status_code=400, detail=f"plan must be one of {sorted(valid_plans)}")
+    # Protect admin email — it cannot be downgraded via this endpoint
+    if body.email.lower().strip() == ADMIN_EMAIL:
+        raise HTTPException(status_code=400, detail="Cannot change the admin account's plan")
+    updated = update_user_plan(body.email, body.plan)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"No user found with email {body.email}")
+    return {"ok": True, "email": body.email, "plan": body.plan}
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(authorization: Optional[str] = Header(default=None)):
+    """High-level platform stats. Admin only."""
+    _require_admin(authorization)
+    users = list_users(limit=5000)
+    by_plan = {}
+    for u in users:
+        by_plan[u["plan"]] = by_plan.get(u["plan"], 0) + 1
+    return {
+        "total_users": len(users),
+        "by_plan": by_plan,
+        "admin_email": ADMIN_EMAIL,
+    }
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────
 
 @app.get("/api/dashboard")
 async def dashboard(authorization: Optional[str] = Header(default=None)):
     user = _require_user(authorization)
     plan = user.get("plan", "free")
-    history_limit = 5 if plan == "free" else 50 if plan == "pro" else 1000
+    history_limit = 5 if plan == "free" else 50 if plan == "pro" else 10000
     runs = get_runs_for_user(user["id"], limit=history_limit)
     stats = get_dashboard_stats(user["id"])
 
