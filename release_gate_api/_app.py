@@ -26,7 +26,8 @@ from release_gate_api.db import (
     set_user_password, create_password_reset, get_password_reset, mark_reset_used,
 )
 from release_gate_api.email_util import (
-    send_password_reset, send_temp_password, app_base_url,
+    send_password_reset, send_temp_password, app_base_url, send_email,
+    email_config_status,
 )
 
 import hashlib
@@ -511,6 +512,29 @@ async def admin_stats(authorization: Optional[str] = Header(default=None)):
         "by_plan": by_plan,
         "admin_email": ADMIN_EMAIL,
     }
+
+
+@app.get("/api/admin/email-status")
+async def admin_email_status(authorization: Optional[str] = Header(default=None)):
+    """Report the active email provider config (no secrets). Admin only."""
+    _require_admin(authorization)
+    return email_config_status()
+
+
+@app.post("/api/admin/email-test")
+async def admin_email_test(authorization: Optional[str] = Header(default=None)):
+    """Send a live test email to the admin and report success. Admin only.
+    Check the server logs for the exact provider response if this returns false."""
+    user = _require_admin(authorization)
+    to = user.get("email", ADMIN_EMAIL)
+    ok = send_email(
+        to,
+        "release-gate email test",
+        "This is a test email from release-gate. If you received it, email delivery works.",
+        "<p>This is a <b>test email</b> from release-gate. "
+        "If you received it, email delivery works. 🎉</p>",
+    )
+    return {"ok": ok, "to": to, "config": email_config_status()}
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────
