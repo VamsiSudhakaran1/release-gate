@@ -2,6 +2,37 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [Unreleased]
+
+### 🐛 Fixed — external review (correctness & security)
+
+- **GitHub Action**: the `audit` step combined `--markdown` and `--json` in one
+  call, so the JSON capture file actually contained Markdown — corrupting every
+  downstream `jq` parse (PR comment, commit status). Now JSON and Markdown are
+  emitted by separate calls. Also fixed an invalid backslash-escaped `jq`
+  expression in the PR-comment table builder.
+- **Packaging**: removed the stale `setup.py` (pinned at 0.6.0); `pyproject.toml`
+  is the single source of truth.
+- **Dependencies**: split the heavy web/SaaS stack (FastAPI, uvicorn, psycopg2,
+  passlib, jose) into a `release-gate[api]` extra. `pip install release-gate`
+  for CLI/CI users is now lean (pyyaml, jsonschema, cryptography only).
+- **Evals**: generated `evals.yaml` used a `suite:/cases:` layout the eval
+  runner couldn't read (`load_evals` only saw `evals:`), so `release-gate eval`
+  silently ran zero cases. The scaffold now emits the runner's schema, and
+  `load_evals` also tolerates legacy `cases:`/`tests:` keys.
+- **Pricing**: `on_unknown: fail` was silently downgraded to `HOLD`; it now maps
+  to a distinct `FAIL` status (block).
+- **ACTION_BUDGET**: now resolves model pricing through the shared
+  `PricingResolver` chain (custom / locked / openrouter / litellm / static,
+  honouring `on_unknown`) instead of a separate hardcoded table, and surfaces a
+  non-passing result when pricing can't be resolved.
+- **Security — agent cmd runtime**: `cmd:` targets now run via `shlex.split` with
+  `shell=False`, closing a shell-injection vector.
+- **Security — API**: the degraded-mode fallback no longer echoes the full
+  traceback to anonymous callers (logged to stderr; set `RG_DEBUG=1` to surface
+  it). CORS is no longer a wildcard by default — it uses an explicit allowlist,
+  overridable via `RG_CORS_ORIGINS`.
+
 ## [0.7.0] — 2026-06-16
 
 ### 🔧 Changed — audit scoring thresholds

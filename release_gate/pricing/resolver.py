@@ -42,6 +42,7 @@ from release_gate.pricing.lock import PricingLock, DEFAULT_LOCK_FILENAME
 STATUS_OK = "OK"        # price resolved from its declared source
 STATUS_WARN = "WARN"    # resolved, but via a fallback or a stale snapshot
 STATUS_HOLD = "HOLD"    # could not resolve — do not let cost pass silently
+STATUS_FAIL = "FAIL"    # could not resolve and policy is on_unknown: fail (block)
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
@@ -263,7 +264,7 @@ class PricingResolver:
         self, model_id, provider, source, on_unknown, reason, requested_source=None
     ) -> ResolvedPricing:
         status = {
-            "fail": STATUS_HOLD,
+            "fail": STATUS_FAIL,
             "hold": STATUS_HOLD,
             "warn": STATUS_WARN,
         }.get((on_unknown or "hold").lower(), STATUS_HOLD)

@@ -107,16 +107,35 @@ def test_cmd_target_echo():
 
 
 def test_cmd_target_failure():
-    c = AgentClient.from_spec("cmd:exit 3")
+    # Commands run with shell=False, so use a real executable that exits nonzero.
+    c = AgentClient.from_spec('cmd:python -c "import sys; sys.exit(3)"')
     resp = c.invoke("x")
     assert not resp.ok
     assert "failed" in resp.error
 
 
 def test_cmd_target_context_env():
-    c = AgentClient.from_spec('cmd:printf "%s" "$RG_CONTEXT"')
+    # The context is exposed to the subprocess via the RG_CONTEXT env var (not
+    # by shell-expanding it into the command string — shell=False).
+    c = AgentClient.from_spec(
+        'cmd:python -c "import os,sys; sys.stdout.write(os.environ.get(\'RG_CONTEXT\',\'\'))"'
+    )
     resp = c.invoke("ignored", "the-context")
     assert resp.text == "the-context"
+
+
+def test_cmd_target_no_shell_injection():
+    # A shell metacharacter in the target must NOT be interpreted by a shell.
+    # With shell=True this would create the file; with shell=False the whole
+    # string after `echo` is just literal argv, so the file is never written.
+    import os as _os
+    import tempfile
+    marker = _os.path.join(tempfile.gettempdir(), "rg_shell_injection_probe")
+    if _os.path.exists(marker):
+        _os.remove(marker)
+    c = AgentClient.from_spec(f"cmd:echo hi; touch {marker}")
+    c.invoke("x")
+    assert not _os.path.exists(marker), "shell metacharacters were interpreted!"
 
 
 # --------------------------------------------------------------------------- #

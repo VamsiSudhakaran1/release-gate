@@ -51,7 +51,17 @@ import yaml
 def load_evals(path: str) -> List[Dict]:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return data.get("evals", [])
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        # Accept the canonical `evals:` key, plus `cases:`/`tests:` aliases that
+        # older generated scaffolds (suite:/cases: layout) used, so a file
+        # written by any release-gate version still runs.
+        for key in ("evals", "cases", "tests"):
+            cases = data.get(key)
+            if isinstance(cases, list):
+                return cases
+    return []
 
 
 class EvalRunner:

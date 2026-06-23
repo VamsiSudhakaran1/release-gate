@@ -73,21 +73,36 @@ class CostEstimator:
         daily_requests: int,
         avg_input_tokens: int,
         avg_output_tokens: int,
-        retry_rate: float = 1.0
+        retry_rate: float = 1.0,
+        pricing_override: Optional[Dict] = None,
     ) -> CostEstimate:
-        """Estimate cost for an agent"""
-        
+        """Estimate cost for an agent.
+
+        If ``pricing_override`` is supplied (a dict with per-1k ``input``/
+        ``output`` rates, and optionally ``name``/``provider``), it takes
+        precedence over the built-in static table. This is how the check routes
+        cost through the shared PricingResolver chain (openrouter / lock /
+        custom / static) instead of duplicating a stale price table here.
+        """
+
         # Validate inputs
         if daily_requests <= 0:
             raise ValueError("daily_requests must be > 0")
         if avg_input_tokens <= 0 or avg_output_tokens <= 0:
             raise ValueError("Token counts must be > 0")
-        
-        # Get pricing
-        if model not in self.PRICING:
+
+        # Get pricing: resolver-provided override first, else built-in table.
+        if pricing_override is not None:
+            pricing = {
+                "name": pricing_override.get("name", model),
+                "provider": pricing_override.get("provider", "resolved"),
+                "input": pricing_override["input"],
+                "output": pricing_override["output"],
+            }
+        elif model in self.PRICING:
+            pricing = self.PRICING[model]
+        else:
             raise ValueError(f"Unknown model: {model}")
-        
-        pricing = self.PRICING[model]
         
         # Calculate costs
         daily_input_cost = (
@@ -177,22 +192,90 @@ class ActionBudgetCheck:
             avg_input_tokens = agent_config.get('avg_input_tokens', 500)
             avg_output_tokens = agent_config.get('avg_output_tokens', 500)
             retry_rate = agent_config.get('retry_rate', 1.0)
-            
+
+            # Resolve pricing through the shared PricingResolver chain so this
+            # check honours the same source/lock/on_unknown policy as the Budget
+            # Simulator. If pricing can't be resolved, surface that instead of
+            # silently falling back to a stale local table.
+            pricing_override, unresolved = self._resolve_pricing(config, model)
+            if unresolved is not None:
+                return unresolved
+
             # Estimate cost
             cost_estimate = self.estimator.estimate_cost(
                 model=model,
                 daily_requests=daily_requests,
                 avg_input_tokens=avg_input_tokens,
                 avg_output_tokens=avg_output_tokens,
-                retry_rate=retry_rate
+                retry_rate=retry_rate,
+                pricing_override=pricing_override,
             )
-            
+
             # Validate against budget
             return self._validate_against_budget(cost_estimate, max_daily_cost, config)
         
         except Exception as e:
             return self._error(str(e))
-    
+
+    def _resolve_pricing(self, config: Dict, model: str):
+        """Resolve pricing via the shared PricingResolver chain.
+
+        Returns ``(pricing_override, unresolved_result)``:
+          * ``pricing_override`` is a per-1k ``{input, output, name, provider}``
+            dict to feed CostEstimator, or ``None`` to use the built-in table.
+          * ``unresolved_result`` is a ready FAIL/WARN result dict when pricing
+            could not be resolved (and must not silently pass), else ``None``.
+
+        A ``model:`` block in the config is resolved through the full chain
+        (custom / locked / openrouter / litellm / static) honouring
+        ``on_unknown``. With no ``model:`` block we leave pricing to the local
+        static table for backward compatibility.
+        """
+        model_block = config.get('model')
+        if not isinstance(model_block, dict) or not model_block:
+            # No resolver-style model block — fall back to the local table.
+            return None, None
+
+        try:
+            from release_gate.pricing.resolver import (
+                PricingResolver, STATUS_OK, STATUS_WARN,
+            )
+        except Exception:
+            # Resolver unavailable (e.g. trimmed install) — local table.
+            return None, None
+
+        pricing_cfg = model_block.get('pricing', {}) or {}
+        lock_path = pricing_cfg.get('lock_path', 'pricing.lock.json')
+        allow_network = config.get('pricing', {}).get('allow_network', True)
+        resolver = PricingResolver(allow_network=allow_network)
+        resolved = resolver.resolve(model_block, lock_path=lock_path)
+
+        if resolved.resolved:
+            override = {
+                "name": resolved.model,
+                "provider": resolved.provider,
+                # Resolver returns per-1M rates; CostEstimator expects per-1k.
+                "input": resolved.input_per_1m / 1000.0,
+                "output": resolved.output_per_1m / 1000.0,
+            }
+            return override, None
+
+        # Could not resolve a price. on_unknown: warn -> WARN, else FAIL/HOLD.
+        status = 'WARN' if resolved.status == STATUS_WARN else 'FAIL'
+        unresolved = {
+            "status": status,
+            "severity": "critical",
+            "title": "Cost Control: Pricing Unresolved",
+            "details": f"Pricing for {resolved.model} could not be resolved: {resolved.reason}",
+            "evidence": {"pricing": resolved.as_dict()},
+            "reasoning": [
+                f"✗ Could not resolve pricing for {resolved.model}",
+                f"  Source requested: {resolved.requested_source}; reason: {resolved.reason}",
+                "  Cost cannot be estimated, so the budget cannot be guaranteed.",
+            ],
+        }
+        return None, unresolved
+
     def _validate_against_budget(self, cost_estimate: CostEstimate, max_daily: float, config: Dict) -> Dict:
         """Validate cost against budget"""
         

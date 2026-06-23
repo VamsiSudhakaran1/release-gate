@@ -88,11 +88,15 @@ runs:
         if [ -n "${{ inputs.sarif-output }}" ]; then
           SARIF_FLAGS="--sarif ${{ inputs.sarif-output }}"
         fi
-        # Writes a Markdown report to the job summary automatically via
-        # $GITHUB_STEP_SUMMARY, and still prints to the log.
-        # Also emit JSON for downstream steps (PR comment, commit status).
-        release-gate audit "${{ inputs.path }}" --markdown $SARIF_FLAGS \
-          --json > /tmp/rg-audit-report.json 2>/dev/null || true
+        # First pass: emit pure JSON for downstream steps (PR comment, commit
+        # status). This MUST be --json only — combining it with --markdown makes
+        # the CLI emit Markdown (which wins), corrupting the file every later
+        # `jq` call reads.
+        release-gate audit "${{ inputs.path }}" --json \
+          > /tmp/rg-audit-report.json 2>/dev/null || true
+        # Second pass: human-readable Markdown to the log and the job summary
+        # (via $GITHUB_STEP_SUMMARY), plus SARIF if requested. This call owns
+        # the real exit code.
         release-gate audit "${{ inputs.path }}" --markdown $SARIF_FLAGS
         EXIT_CODE=$?
         set -e
@@ -187,7 +191,7 @@ runs:
         # Build safeguard table rows from JSON
         SG_ROWS=$(jq -r '
           (.passing // [] | map("| " + .label + " | ✅ | " + (.evidence // "—") + " |")) +
-          (.missing // [] | map("| " + .label + " | ❌ | " + ((.issues // [.[\"risk\"]]) | first // "—") + " |"))
+          (.missing // [] | map("| " + .label + " | ❌ | " + ((.issues // [.risk] // []) | map(select(. != null)) | first // "—") + " |"))
           | .[]' /tmp/rg-audit-report.json 2>/dev/null || echo "| — | — | — |")
 
         BODY="<!-- release-gate -->\n## 🚪 release-gate\n\n**Score:** ${SCORE}/100 — ${BADGE}\n\n| Safeguard | Status | Detail |\n| --- | :---: | --- |\n${SG_ROWS}\n\n**Code risks:** ${FINDINGS} finding(s)  \n[Full run →](${RUN_URL})"

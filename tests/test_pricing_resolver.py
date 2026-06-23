@@ -11,6 +11,7 @@ from release_gate.pricing.resolver import (
     STATUS_OK,
     STATUS_WARN,
     STATUS_HOLD,
+    STATUS_FAIL,
 )
 from release_gate.pricing.lock import PricingLock
 
@@ -62,6 +63,16 @@ def test_on_unknown_warn_downgrades_status():
     block = {"id": "nope", "pricing": {"source": "static", "on_unknown": "warn"}}
     r = RESOLVER.resolve(block, lock_path=None)
     assert not r.resolved and r.status == STATUS_WARN
+
+
+def test_on_unknown_fail_maps_to_fail_not_hold():
+    # on_unknown: fail is a distinct, harder policy than hold — it must surface
+    # as FAIL (block), not be silently downgraded to HOLD.
+    block = {"id": "nope", "pricing": {"source": "static", "on_unknown": "fail"}}
+    r = RESOLVER.resolve(block, lock_path=None)
+    assert not r.resolved
+    assert r.status == STATUS_FAIL
+    assert r.status != STATUS_HOLD
 
 
 def test_self_hosted_zero_cost_is_ok():

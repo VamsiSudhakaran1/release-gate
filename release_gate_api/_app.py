@@ -89,9 +89,30 @@ def _check_rate_limit(key: str, limit: int, window: int = 900) -> bool:
         _auth_counters[key] = {"count": 1, "window_start": now}
     return True
 
+def _cors_origins() -> list[str]:
+    """Resolve the CORS allowlist.
+
+    Production should serve the SPA from the same origin, so a wildcard is
+    unnecessary and over-permissive. Defaults to the known release-gate origins
+    plus localhost for dev; override with RG_CORS_ORIGINS (comma-separated), or
+    set it to ``*`` to explicitly opt back into the old wildcard behaviour.
+    """
+    raw = os.environ.get("RG_CORS_ORIGINS", "").strip()
+    if raw == "*":
+        return ["*"]
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
+        "https://release-gate.com",
+        "https://www.release-gate.com",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

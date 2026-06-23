@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import time
 import urllib.error
@@ -151,9 +152,19 @@ class AgentClient:
         env = dict(os.environ)
         if context:
             env["RG_CONTEXT"] = context
+        # Parse the command with shlex and run with shell=False so the target
+        # string is never handed to a shell for interpretation. shell=True would
+        # let an eval input or a crafted target string inject arbitrary shell
+        # commands (e.g. `cmd:./run.sh; rm -rf ~`).
+        try:
+            argv = shlex.split(self.target)
+        except ValueError as exc:
+            raise RuntimeError(f"invalid agent command {self.target!r}: {exc}")
+        if not argv:
+            raise RuntimeError("empty agent command")
         proc = subprocess.run(
-            self.target,
-            shell=True,
+            argv,
+            shell=False,
             input=agent_input,
             capture_output=True,
             text=True,

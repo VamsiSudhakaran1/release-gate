@@ -3,12 +3,15 @@ Vercel entrypoint for the release-gate API.
 
 This is a thin, defensive wrapper around the real app in ``_app.py``. If the
 real app fails to import (e.g. a dependency is missing in the serverless
-environment), we fall back to a minimal app that reports the traceback as
-plain text on every route — so the browser shows the actual error instead of
-an opaque ``FUNCTION_INVOCATION_FAILED`` 500.
+environment), we fall back to a minimal app. The full traceback is always
+logged to stderr (visible in the platform logs), but it is only echoed in the
+HTTP response when ``RG_DEBUG`` is set — leaking a stack trace (file paths,
+dependency versions, internal structure) to anonymous callers in production is
+an information-disclosure risk.
 """
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 
@@ -18,6 +21,8 @@ except Exception:  # pragma: no cover - only triggers on a broken deployment
     _TB = traceback.format_exc()
     print(_TB, file=sys.stderr)
 
+    _DEBUG = os.environ.get("RG_DEBUG", "").strip().lower() in ("1", "true", "yes")
+
     from fastapi import FastAPI
     from fastapi.responses import PlainTextResponse
 
@@ -25,7 +30,11 @@ except Exception:  # pragma: no cover - only triggers on a broken deployment
 
     @app.get("/{full_path:path}")
     async def _import_error(full_path: str):  # noqa: ANN001
-        return PlainTextResponse(
-            "release-gate API failed to start.\n\n" + _TB,
-            status_code=500,
-        )
+        if _DEBUG:
+            body = "release-gate API failed to start.\n\n" + _TB
+        else:
+            body = (
+                "release-gate API failed to start. The error has been logged. "
+                "Set RG_DEBUG=1 to surface the traceback in this response."
+            )
+        return PlainTextResponse(body, status_code=500)
