@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 
-> **v0.7.2** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
+> **v0.7.3** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
 
 ## Try it in 30 seconds
 
@@ -53,7 +53,7 @@ release-gate sits between your tests and your deployment. It runs evals, validat
 ```
 $ release-gate score governance.yaml --evals evals.yaml
 
-  release-gate  |  Readiness Scorer  v0.7.2
+  release-gate  |  Readiness Scorer  v0.7.3
 
   Project          customer-support-agent  v1.0.0
   Checks run       5  (5 pass, 0 warn, 0 fail)
@@ -343,7 +343,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.7.2
+        uses: VamsiSudhakaran1/release-gate@v0.7.3
         with:
           command: score
           config: governance.yaml
@@ -355,7 +355,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.7.2
+- uses: VamsiSudhakaran1/release-gate@v0.7.3
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run
