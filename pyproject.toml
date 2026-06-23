@@ -20,15 +20,24 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 requires-python = ">=3.10"
-# Vercel's Python runtime resolves dependencies from pyproject.toml, so the
-# FastAPI backend's deps must live here (not only in requirements.txt) or the
-# serverless function crashes on import with FUNCTION_INVOCATION_FAILED.
+# Core CLI dependencies only. `pip install release-gate` should stay lean — a CI
+# user running the gate must NOT have to pull FastAPI, uvicorn, psycopg2, etc.
+# The SaaS/API backend deps live in the [api] extra below (and in
+# requirements.txt, which is what Vercel's Python builder installs).
 dependencies = [
-    # Core CLI
     "pyyaml>=6.0",
     "jsonschema>=4.0",
-	"cryptography>=41.0.0",
-    # Web / SaaS backend
+    "cryptography>=41.0.0",  # evidence-pack signing/verification
+]
+
+# Supply-chain note: for reproducible production installs, pin dependencies with
+# hashes by running:  pip install release-gate --require-hashes -r requirements.txt
+# Generate a pinned requirements file with:  pip-compile --generate-hashes pyproject.toml
+
+[project.optional-dependencies]
+# Web / SaaS backend (the release-gate.com API). Install with:
+#   pip install release-gate[api]
+api = [
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
     "python-jose[cryptography]>=3.3.0",
@@ -38,12 +47,6 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "PyJWT>=2.8.0",
 ]
-
-# Supply-chain note: for reproducible production installs, pin dependencies with
-# hashes by running:  pip install release-gate --require-hashes -r requirements.txt
-# Generate a pinned requirements file with:  pip-compile --generate-hashes pyproject.toml
-
-[project.optional-dependencies]
 dev = [
     "pytest>=9.0",
     "pytest-cov>=4.0",
