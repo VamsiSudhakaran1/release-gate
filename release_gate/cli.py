@@ -1468,8 +1468,11 @@ def _run_agent_score_command():
         s = d["score"]
         tag = ""
         if key == "safety":
-            l1, l2 = d.get("l1"), d.get("l2")
-            if l1 and l2:
+            l1, l2, l3 = d.get("l1"), d.get("l2"), d.get("l3")
+            if l1 and l2 and l3:
+                tag = (f"L1 {l1['passed']}/{l1['total']} · L2 {l2['passed']}/{l2['total']}"
+                       f" · L3 {l3['passed']}/{l3['total']}")
+            elif l1 and l2:
                 tag = f"L1 {l1['passed']}/{l1['total']} · L2 {l2['passed']}/{l2['total']}"
             else:
                 tag = f"({d['passed']}/{d['total']})"
@@ -1481,7 +1484,7 @@ def _run_agent_score_command():
             tag = f"p95 {d['p95_latency_ms']:.0f}ms"
         weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
         print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
-              f"{_MUTED}{tag:<22}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
+              f"{_MUTED}{tag:<26}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
 
     if result.issues:
         print(f"\n  {_BOLD}Top issues{_RESET}")
