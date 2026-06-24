@@ -784,6 +784,7 @@ def print_help():
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
+    print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
     print("  --agent <spec>                          Run evals LIVE against a real agent")
@@ -1112,6 +1113,9 @@ def main():
     elif command == 'verify':
         _run_verify_command()
 
+    elif command == 'loop-sim':
+        _run_loop_sim_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
@@ -1249,6 +1253,121 @@ def _run_verify_command():
 
     # Exit codes: 0 = SHIP, 10 = CONTINUE (not done yet), 1 = ROLLBACK
     sys.exit(0 if result.decision == 'SHIP' else (10 if result.decision == 'CONTINUE' else 1))
+
+
+def _run_loop_sim_command():
+    """release-gate loop-sim — pre-deploy loop characterization.
+
+    Runs the agent through a scenario bank and returns ONE readiness decision
+    for a looping environment: PROMOTE / HOLD / BLOCK.
+
+    Usage:
+      release-gate loop-sim scenarios.yaml \\
+          [--agent py:module:fn | cmd:./script | http(s)://url] \\
+          [--json]
+
+    The scenarios file carries an optional `loop:` block (same shape as
+    governance.yaml) plus a `scenarios:` list. Without --agent, a deterministic
+    mock agent is used so you can dry-run the harness itself.
+
+    Exit codes: 0 = PROMOTE, 10 = HOLD, 1 = BLOCK
+    """
+    import json as _json
+    import yaml as _yaml
+
+    args = sys.argv[2:]
+    if not args or args[0].startswith('-'):
+        print("Error: loop-sim needs a scenarios file, e.g. "
+              "release-gate loop-sim scenarios.yaml", file=sys.stderr)
+        sys.exit(1)
+    scen_path = args[0]
+    agent_spec = _flag(sys.argv, '--agent')
+    as_json    = '--json' in sys.argv
+
+    try:
+        doc = _yaml.safe_load(open(scen_path, encoding='utf-8').read()) or {}
+    except Exception as exc:
+        print(f"Error reading scenarios file: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    scenarios   = doc.get('scenarios') or []
+    loop_policy = doc.get('loop') or {'max_iterations': 6}
+    global_evals = doc.get('evals')
+    if not scenarios:
+        print("Error: scenarios file has no `scenarios:` list.", file=sys.stderr)
+        sys.exit(1)
+
+    # Resolve the agent target (mock when omitted).
+    agent_callable = None
+    if agent_spec:
+        try:
+            from release_gate.agent.client import AgentClient
+            client = AgentClient.from_spec(agent_spec)
+            agent_callable = lambda task, ctx: client.invoke(task, ctx)
+        except Exception as exc:
+            print(f"Error building agent from '{agent_spec}': {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    from release_gate.loop_sim import LoopSimulator
+    result = LoopSimulator().run(
+        scenarios,
+        agent=agent_callable,
+        loop_policy=loop_policy,
+        evals=global_evals,
+    )
+
+    if as_json:
+        print(_json.dumps(result.as_dict(), indent=2))
+        _exit_loop_sim(result.decision)
+
+    # ── terminal report ──
+    _BOLD, _RESET = '\033[1m', '\033[0m'
+    _GREEN, _YELLOW, _RED = '\033[92m', '\033[93m', '\033[91m'
+    colour = {'PROMOTE': _GREEN, 'HOLD': _YELLOW, 'BLOCK': _RED}.get(result.decision, _RESET)
+    icon   = {'PROMOTE': '✓', 'HOLD': '⚠', 'BLOCK': '✗'}.get(result.decision, '?')
+
+    n_adv = sum(1 for r in result.scenario_results if r['adversarial'])
+    n_norm = result.scenarios_run - n_adv
+
+    print()
+    print(f"  {_BOLD}🔁 release-gate  |  Loop Sim{_RESET}")
+    print(f"  {'─' * 52}")
+    print(f"  Agent       {agent_spec or 'mock (no --agent)'}")
+    print(f"  Scenarios   {result.scenarios_run}  ({n_norm} normal · {n_adv} adversarial)")
+    print()
+    conv_pct = result.convergence_rate * 100
+    print(f"  Outcome match     {result.scenarios_passed}/{result.scenarios_run} "
+          f"scenarios reached their expected decision")
+    print(f"  Convergence       {conv_pct:.0f}% of normal scenarios shipped")
+    print(f"  Iterations        avg {result.avg_iterations:.1f}  "
+          f"P95 {result.p95_iterations}  max {result.max_iterations}")
+    print(f"  Cost / run        avg ${result.avg_cost:.4f}  "
+          f"P95 ${result.p95_cost:.4f}  max ${result.max_cost:.4f}")
+    if result.spike_scenarios:
+        print(f"  Cost spikes       {len(result.spike_scenarios)} "
+              f"({len(result.spike_scenarios) * 100 // max(1, result.scenarios_run)}%): "
+              f"{', '.join(result.spike_scenarios[:4])}")
+    if n_adv:
+        print(f"  Adversarial       {result.adversarial_pass_rate * 100:.0f}% rolled back as required")
+
+    if result.top_violations or result.top_warnings:
+        print(f"\n  {_BOLD}Top issues{_RESET}")
+        for v in result.top_violations:
+            print(f"    {_RED}✗{_RESET} {v}")
+        for w in result.top_warnings:
+            print(f"    {_YELLOW}⚠{_RESET} {w}")
+
+    print(f"\n  Decision:   {colour}{_BOLD}{icon}  {result.decision}{_RESET}")
+    for reason in result.reasons:
+        print(f"  {' ' * 12}{reason}")
+    print()
+
+    _exit_loop_sim(result.decision)
+
+
+def _exit_loop_sim(decision):
+    """0 = PROMOTE, 10 = HOLD, 1 = BLOCK."""
+    sys.exit(0 if decision == 'PROMOTE' else (10 if decision == 'HOLD' else 1))
 
 
 def unified_main():

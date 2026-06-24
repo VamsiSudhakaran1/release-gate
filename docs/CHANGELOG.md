@@ -6,6 +6,21 @@ All notable changes to release-gate will be documented in this file.
 
 ### ✨ Added — loop verification, second pass (external review)
 
+- **`release-gate loop-sim` — pre-deploy loop characterization.** A loop is a
+  runtime behaviour, so you can't observe it before deploy — but you *can* run
+  the agent through a compact scenario bank in a looping harness and turn the
+  aggregate trajectory into one readiness decision: **PROMOTE / HOLD / BLOCK**.
+  It reports convergence rate, iteration distribution (avg/P95/max), cost per
+  run with spike detection, and the adversarial ROLLBACK rate. Decision logic is
+  safety-first: any adversarial fixture that fails to ROLLBACK is an immediate
+  BLOCK, as is sub-70% convergence or a worst-case cost over 2× the declared
+  ceiling. Reuses the existing AgentClient, LoopVerifier and EvalRunner; runs
+  with a mock agent when `--agent` is omitted. See `examples/loop_scenarios.yaml`.
+- **Loop Report UI on the website.** The static `GET /api/loop/<id>` teaser is now
+  an interactive viewer: enter a loop-id, load the run, and see the full iteration
+  timeline (CONTINUE → CONTINUE → SHIP) with per-iteration decision, cost spent /
+  remaining, and the violations/warnings that drove each call. The playground
+  carries its loop-id straight into the report.
 - **Maker/checker separation is now enforced.** `LoopVerifier` ROLLBACKs when
   `maker_model == checker_model` (the checker would be grading its own homework).
   A missing `checker_model` warns in permissive mode and is a hard violation in

@@ -1124,15 +1124,31 @@
       </div>
     </div>
 
-    <!-- Loop Report teaser -->
-    <div style="margin-top:48px;text-align:center">
-      <p style="font-size:.95rem;color:var(--muted);margin-bottom:8px">After a loop completes, pull the full iteration history:</p>
-      <div class="term-block" style="max-width:500px;margin:0 auto;text-align:left">
-<span class="t-muted">GET /api/loop/my-loop-001</span>
-&nbsp;
-<span class="t-green">&rarr; { "iterations": 4,</span>
-<span class="t-green">    "final_decision": "SHIP",</span>
-<span class="t-green">    "history": [ ... ] }</span></div>
+    <!-- Loop Report — interactive iteration history viewer -->
+    <div style="margin-top:56px;max-width:720px;margin-left:auto;margin-right:auto">
+      <h3 style="font-size:1.25rem;font-weight:800;color:var(--heading);text-align:center;margin-bottom:6px">Loop Report</h3>
+      <p style="font-size:.92rem;color:var(--muted);text-align:center;margin-bottom:20px">
+        Every <code>verify</code> call grouped by <code>loop-id</code> — watch the decision evolve
+        CONTINUE&nbsp;&rarr;&nbsp;CONTINUE&nbsp;&rarr;&nbsp;SHIP across iterations.
+      </p>
+      <div style="background:#fff;border:1.5px solid #e0e7ff;border-radius:14px;padding:24px">
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:.8rem;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">LOOP ID</label>
+            <input id="lr-loop-id" type="text" placeholder="my-loop-001"
+              style="width:100%;padding:10px 12px;border:1.5px solid #e0e7ff;border-radius:8px;font-size:.95rem;box-sizing:border-box">
+          </div>
+          <button id="lr-load-btn" onclick="loadLoopReport()"
+            style="padding:11px 22px;background:#1e1b4b;color:#fff;border:none;border-radius:10px;font-size:.95rem;font-weight:700;cursor:pointer;transition:opacity .15s">
+            Load report &rarr;
+          </button>
+        </div>
+        <div id="lr-result" style="display:none;margin-top:22px"></div>
+        <div id="lr-note" style="margin-top:14px;font-size:.78rem;color:var(--muted);text-align:center">
+          Reads the live <code>GET /api/loop/&lt;id&gt;</code> endpoint &mdash; sign in and run a few
+          <code>verify</code> iterations with the same loop-id above, then load them here.
+        </div>
+      </div>
     </div>
 
   </div>
@@ -2497,8 +2513,116 @@
     resultEl.style.cssText = 'display:block;margin-top:20px;border-radius:10px;padding:20px 24px;background:' + bgc + ';border:1.5px solid ' + col + '33';
     resultEl.innerHTML = html;
 
+    // Convenience: carry the loop-id over to the Loop Report viewer below.
+    if (loopId) {
+      var lrInput = document.getElementById('lr-loop-id');
+      if (lrInput && !lrInput.value.trim()) lrInput.value = loopId;
+    }
+
     btn.disabled = false;
     btn.textContent = 'Verify this iteration →';
+  }
+
+  var LV_COLOURS = { SHIP: '#16a34a', CONTINUE: '#d97706', ROLLBACK: '#dc2626' };
+  var LV_ICONS   = { SHIP: '✅', CONTINUE: '🔄', ROLLBACK: '🛑' };
+
+  async function loadLoopReport() {
+    var btn      = document.getElementById('lr-load-btn');
+    var resultEl = document.getElementById('lr-result');
+    var loopId   = document.getElementById('lr-loop-id').value.trim();
+
+    if (!loopId) { document.getElementById('lr-loop-id').focus(); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    function show(html) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = html;
+      btn.disabled = false;
+      btn.textContent = 'Load report →';
+    }
+
+    if (!getToken()) {
+      show('<div style="padding:16px 18px;border-radius:10px;background:#fffbeb;border:1.5px solid #f59e0b33;font-size:.88rem;color:#92400e">'
+        + 'Sign in first — Loop Reports are tied to your account and API token.</div>');
+      return;
+    }
+
+    var data;
+    try {
+      var res = await fetch(API_BASE + '/api/loop/' + encodeURIComponent(loopId), {
+        headers: { 'Authorization': 'Bearer ' + getToken() },
+      });
+      if (res.status === 404) {
+        show('<div style="padding:16px 18px;border-radius:10px;background:#f9fafb;border:1.5px solid #e5e7eb;font-size:.88rem;color:#374151">'
+          + 'No verifications recorded for <code>' + escHtml(loopId) + '</code> yet. '
+          + 'Run a few <code>verify</code> calls with this loop-id, then reload.</div>');
+        return;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      data = await res.json();
+    } catch (e) {
+      show('<div style="padding:16px 18px;border-radius:10px;background:#fef2f2;border:1.5px solid #dc262633;font-size:.88rem;color:#991b1b">'
+        + 'Could not load the report (' + escHtml(String(e.message || e)) + ').</div>');
+      return;
+    }
+
+    var summary = data.summary || {};
+    var finalCol = LV_COLOURS[data.final_decision] || '#6b7280';
+
+    // ── header: final decision + summary chips ──
+    var html = '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px">'
+      + '<div style="display:flex;align-items:center;gap:12px">'
+      + '<span style="font-size:1.8rem">' + (LV_ICONS[data.final_decision] || '❓') + '</span>'
+      + '<div><div style="font-size:1.25rem;font-weight:800;color:' + finalCol + '">' + escHtml(data.final_decision || 'UNKNOWN') + '</div>'
+      + '<div style="font-size:.8rem;color:#6b7280">' + (data.iterations || 0) + ' iteration' + (data.iterations === 1 ? '' : 's') + ' · loop <code>' + escHtml(data.loop_id || loopId) + '</code></div>'
+      + '</div></div>'
+      + '<div style="display:flex;gap:8px">'
+      + '<span style="font-size:.78rem;font-weight:700;padding:5px 10px;border-radius:20px;background:#f0fdf4;color:#16a34a">' + (summary.shipped || 0) + ' shipped</span>'
+      + '<span style="font-size:.78rem;font-weight:700;padding:5px 10px;border-radius:20px;background:#fffbeb;color:#d97706">' + (summary.continued || 0) + ' continued</span>'
+      + '<span style="font-size:.78rem;font-weight:700;padding:5px 10px;border-radius:20px;background:#fef2f2;color:#dc2626">' + (summary.rolled_back || 0) + ' rolled back</span>'
+      + '</div></div>';
+
+    // ── timeline of iterations ──
+    var history = data.history || [];
+    html += '<div style="position:relative;padding-left:8px">';
+    history.forEach(function(rec, idx) {
+      var dec = rec.decision || 'UNKNOWN';
+      var col = LV_COLOURS[dec] || '#6b7280';
+      var isLast = idx === history.length - 1;
+      var viols = rec.violations || [];
+      var warns = rec.warnings || [];
+
+      var costLine = '$' + (typeof rec.cost_so_far === 'number' ? rec.cost_so_far.toFixed(3) : '0.000') + ' spent';
+      if (rec.cost_remaining !== null && rec.cost_remaining !== undefined)
+        costLine += ' · $' + rec.cost_remaining.toFixed(3) + ' remaining';
+
+      html += '<div style="display:flex;gap:14px">'
+        // rail + dot
+        + '<div style="display:flex;flex-direction:column;align-items:center">'
+        + '<span style="width:14px;height:14px;border-radius:50%;background:' + col + ';flex-shrink:0;margin-top:4px"></span>'
+        + (isLast ? '' : '<span style="width:2px;flex:1;background:#e5e7eb;margin:2px 0"></span>')
+        + '</div>'
+        // body
+        + '<div style="flex:1;padding-bottom:' + (isLast ? '0' : '18px') + '">'
+        + '<div style="display:flex;align-items:center;gap:10px">'
+        + '<span style="font-size:.8rem;font-weight:700;color:#6b7280">Iteration ' + (rec.iteration !== undefined ? rec.iteration : idx + 1) + '</span>'
+        + '<span style="font-size:.75rem;font-weight:800;padding:2px 9px;border-radius:6px;background:' + col + '1a;color:' + col + '">' + escHtml(dec) + '</span>'
+        + '</div>'
+        + '<div style="font-size:.78rem;color:#9ca3af;margin-top:2px">' + escHtml(costLine) + '</div>';
+
+      if (viols.length || warns.length) {
+        html += '<ul style="margin:6px 0 0;padding:0 0 0 16px;font-size:.82rem;color:#374151">';
+        viols.forEach(function(v) { html += '<li style="color:#b91c1c;margin-bottom:2px">' + escHtml(v) + '</li>'; });
+        warns.forEach(function(w) { html += '<li style="color:#b45309;margin-bottom:2px">' + escHtml(w) + '</li>'; });
+        html += '</ul>';
+      }
+      html += '</div></div>';
+    });
+    html += '</div>';
+
+    show(html);
   }
 
   // CTA section scan — fills hero input and scrolls up to show results
