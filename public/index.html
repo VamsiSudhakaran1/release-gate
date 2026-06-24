@@ -2839,7 +2839,8 @@ scenarios:
     ['safety','correctness','loop','cost_latency'].forEach(function(k){
       var dim = d.dimensions[k], s = dim.score, c = asDimCol(s);
       var tag = '';
-      if (k==='safety'||k==='correctness') tag = '(' + dim.passed + '/' + dim.total + ')';
+      if (k==='safety' && dim.l1 && dim.l2) tag = 'L1 ' + dim.l1.passed + '/' + dim.l1.total + ' · L2 ' + dim.l2.passed + '/' + dim.l2.total;
+      else if (k==='safety'||k==='correctness') tag = '(' + dim.passed + '/' + dim.total + ')';
       else if (k==='loop') tag = dim.decision;
       else if (dim.p95_latency_ms != null) tag = 'p95 ' + Math.round(dim.p95_latency_ms) + 'ms';
       var weak = (k===weakest && s<80) ? ' <span style="color:#dc2626;font-weight:700;font-size:.7rem">← weakest</span>' : '';

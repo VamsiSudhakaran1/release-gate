@@ -1467,7 +1467,13 @@ def _run_agent_score_command():
         d = result.dimensions[key]
         s = d["score"]
         tag = ""
-        if key in ("safety", "correctness"):
+        if key == "safety":
+            l1, l2 = d.get("l1"), d.get("l2")
+            if l1 and l2:
+                tag = f"L1 {l1['passed']}/{l1['total']} · L2 {l2['passed']}/{l2['total']}"
+            else:
+                tag = f"({d['passed']}/{d['total']})"
+        elif key == "correctness":
             tag = f"({d['passed']}/{d['total']})"
         elif key == "loop":
             tag = d["decision"]
