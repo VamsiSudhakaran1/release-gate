@@ -18,6 +18,12 @@ All notable changes to release-gate will be documented in this file.
   with a mock agent when `--agent` is omitted. See `examples/loop_scenarios.yaml`.
   Also wired into the **GitHub Action** (`command: loop-sim`, `scenarios:`,
   `agent:` inputs) so loop readiness can block a merge the same way `audit` does.
+  And surfaced as an **interactive website card** backed by a new stateless
+  `POST /api/loop-sim` endpoint — paste a scenario bank, get the
+  PROMOTE/HOLD/BLOCK decision plus convergence / iteration / cost / adversarial
+  metrics. The endpoint runs **mock mode only and never executes a caller's
+  agent** (no RCE); real-agent runs stay in the CLI/CI where the user owns the
+  runtime. Inputs are bounded (≤25 scenarios, max_iterations clamped).
 - **Loop Report UI on the website.** The static `GET /api/loop/<id>` teaser is now
   an interactive viewer: enter a loop-id, load the run, and see the full iteration
   timeline (CONTINUE → CONTINUE → SHIP) with per-iteration decision, cost spent /
