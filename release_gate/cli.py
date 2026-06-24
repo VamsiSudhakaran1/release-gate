@@ -788,6 +788,7 @@ def print_help():
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("\nOptions for 'agent-score':")
     print("  --evals <evals.yaml>                    Add domain correctness cases")
+    print("  --strict                                Any confirmed canary leak (L2/L3/L4) BLOCKs instead of HOLDs")
     print("  --frameworks                            Map results to OWASP LLM Top 10 / NIST AI RMF / EU AI Act")
     print("  --json                                  Machine-readable output (add --frameworks for the mapping)")
     print("\nOptions for 'score' and 'evidence-pack':")
@@ -1402,6 +1403,7 @@ def _run_agent_score_command():
     evals_path = _flag(sys.argv, '--evals')
     as_json    = '--json' in sys.argv
     show_frameworks = '--frameworks' in sys.argv
+    strict     = '--strict' in sys.argv
 
     # Build the agent + a shared runtime profile so latency/tokens are captured.
     try:
@@ -1426,7 +1428,7 @@ def _run_agent_score_command():
     from release_gate.agent_score import AgentScorer
     result = AgentScorer().score(
         agent_callable, agent_label=agent_spec,
-        extra_evals=extra_evals, profile=profile,
+        extra_evals=extra_evals, profile=profile, strict=strict,
     )
 
     if as_json:
