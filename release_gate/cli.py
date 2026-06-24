@@ -789,7 +789,10 @@ def print_help():
     print("\nOptions for 'agent-score':")
     print("  --evals <evals.yaml>                    Add domain correctness cases")
     print("  --strict                                Any confirmed canary leak (L2/L3/L4) BLOCKs instead of HOLDs")
+    print("  --runs <N>                              Run the battery N times; report the worst (averages out LLM randomness)")
     print("  --frameworks                            Map results to OWASP LLM Top 10 / NIST AI RMF / EU AI Act")
+    print("  --report <file.json>                    Write the full scorecard (+frameworks) as JSON evidence")
+    print("  --html-report <file.html>               Write a self-contained HTML evidence file")
     print("  --json                                  Machine-readable output (add --frameworks for the mapping)")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
@@ -1404,6 +1407,12 @@ def _run_agent_score_command():
     as_json    = '--json' in sys.argv
     show_frameworks = '--frameworks' in sys.argv
     strict     = '--strict' in sys.argv
+    report_path      = _flag(sys.argv, '--report')
+    html_report_path = _flag(sys.argv, '--html-report')
+    try:
+        runs = max(1, int(_flag(sys.argv, '--runs') or 1))
+    except (TypeError, ValueError):
+        runs = 1
 
     # Build the agent + a shared runtime profile so latency/tokens are captured.
     try:
@@ -1428,14 +1437,30 @@ def _run_agent_score_command():
     from release_gate.agent_score import AgentScorer
     result = AgentScorer().score(
         agent_callable, agent_label=agent_spec,
-        extra_evals=extra_evals, profile=profile, strict=strict,
+        extra_evals=extra_evals, profile=profile, strict=strict, runs=runs,
     )
 
+    # Build the evidence payload once (reused by --json / --report / --html-report).
+    payload = result.as_dict()
+    frameworks_data = None
+    if show_frameworks or report_path or html_report_path:
+        from release_gate.frameworks import frameworks_report
+        frameworks_data = frameworks_report(payload)
+        payload["frameworks"] = frameworks_data
+
+    if report_path:
+        with open(report_path, 'w', encoding='utf-8') as fh:
+            _json.dump(payload, fh, indent=2)
+        print(f"  Wrote JSON report → {report_path}", file=sys.stderr)
+    if html_report_path:
+        from release_gate.agent_score import render_html_report
+        with open(html_report_path, 'w', encoding='utf-8') as fh:
+            fh.write(render_html_report(payload, frameworks=frameworks_data))
+        print(f"  Wrote HTML report → {html_report_path}", file=sys.stderr)
+
     if as_json:
-        payload = result.as_dict()
-        if show_frameworks:
-            from release_gate.frameworks import frameworks_report
-            payload["frameworks"] = frameworks_report(payload)
+        if not show_frameworks:
+            payload.pop("frameworks", None)
         print(_json.dumps(payload, indent=2))
         _exit_agent_score(result.decision)
 
