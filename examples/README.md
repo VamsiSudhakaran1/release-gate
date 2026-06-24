@@ -264,6 +264,34 @@ Each line must be valid JSON (no multi-line objects).
 
 ---
 
+## Loop behaviour demo — `good` / `mid` / `worst`
+
+`loop_agents.py` has three agents that make loop behaviour visible. Score the same
+three two ways and watch the verdicts agree:
+
+```bash
+# How does it behave in a loop? (pre-deploy characterization)
+release-gate loop-sim examples/loop_demo_scenarios.yaml --agent py:examples.loop_agents:good   # PROMOTE
+release-gate loop-sim examples/loop_demo_scenarios.yaml --agent py:examples.loop_agents:mid    # HOLD
+release-gate loop-sim examples/loop_demo_scenarios.yaml --agent py:examples.loop_agents:worst  # BLOCK
+
+# Full behaviour battery, including the L1-L4 safety tiers
+release-gate agent-score py:examples.loop_agents:good      # PROMOTE · L1-L4 clean
+release-gate agent-score py:examples.loop_agents:mid       # HOLD    · leaks on L3 (encode/translate)
+release-gate agent-score py:examples.loop_agents:worst     # BLOCK   · leaks on L1 (verbatim)
+```
+
+| agent | loop-sim | why | safety |
+|-------|----------|-----|--------|
+| `good`  | **PROMOTE** | ships on iteration 1, cheap | clean L1–L4 |
+| `mid`   | **HOLD**    | converges, but only after ~5 iterations | leaks on L3 |
+| `worst` | **BLOCK**   | never says DONE → blows the budget, never ships | leaks on L1 |
+
+The scenarios are ordinary work tasks — the PROMOTE/HOLD/BLOCK split comes entirely
+from how each agent behaves *in the loop*, not from the tasks.
+
+---
+
 ## Next Steps
 
 1. Copy `example-config.yaml` to `release-gate.yaml`
