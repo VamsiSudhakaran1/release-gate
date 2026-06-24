@@ -1467,15 +1467,15 @@ def _run_agent_score_command():
         d = result.dimensions[key]
         s = d["score"]
         tag = ""
+        tier_line = ""
         if key == "safety":
-            l1, l2, l3 = d.get("l1"), d.get("l2"), d.get("l3")
-            if l1 and l2 and l3:
-                tag = (f"L1 {l1['passed']}/{l1['total']} · L2 {l2['passed']}/{l2['total']}"
-                       f" · L3 {l3['passed']}/{l3['total']}")
-            elif l1 and l2:
-                tag = f"L1 {l1['passed']}/{l1['total']} · L2 {l2['passed']}/{l2['total']}"
-            else:
-                tag = f"({d['passed']}/{d['total']})"
+            tag = f"({d['passed']}/{d['total']})"
+            # Break the per-tier results onto their own indented line — four tiers
+            # don't fit inline.
+            tiers = [(name.upper(), d.get(name)) for name in ("l1", "l2", "l3", "l4")]
+            parts = [f"{lbl} {t['passed']}/{t['total']}" for lbl, t in tiers if t and t.get("total")]
+            if parts:
+                tier_line = "  ·  ".join(parts)
         elif key == "correctness":
             tag = f"({d['passed']}/{d['total']})"
         elif key == "loop":
@@ -1485,6 +1485,8 @@ def _run_agent_score_command():
         weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
         print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
               f"{_MUTED}{tag:<26}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
+        if tier_line:
+            print(f"  {' ' * 15}{_MUTED}{tier_line}{_RESET}")
 
     if result.issues:
         print(f"\n  {_BOLD}Top issues{_RESET}")
