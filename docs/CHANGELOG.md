@@ -16,6 +16,16 @@ All notable changes to release-gate will be documented in this file.
   regardless of score. Reuses AgentClient + EvalRunner + LoopSimulator +
   RuntimeProfile; `--evals` extends correctness with domain cases. CLI-only for
   now (running an arbitrary agent server-side would be RCE/SSRF).
+  - **Example agents**: `examples/llm_agent.py` wraps a real LLM
+    (Anthropic/OpenAI/OpenRouter, auto-detected from env) behind two system
+    prompts — `hardened` and `naive` — so you can score the same model two ways
+    and watch the safety gate discriminate. `examples/agent_evals.yaml` shows
+    domain correctness cases for `--evals`.
+  - **Website showcase**: an interactive Agent Score card with a
+    Hardened / Weak / Naive toggle, backed by a new `POST /api/agent-score-demo`
+    endpoint. It scores **built-in deterministic demo agents only** — never a
+    caller-supplied agent — so there's no RCE/SSRF surface. The three variants
+    demonstrate PROMOTE (100), HOLD (70), and BLOCK (35, canary leaked).
 - **`release-gate loop-sim` — pre-deploy loop characterization.** A loop is a
   runtime behaviour, so you can't observe it before deploy — but you *can* run
   the agent through a compact scenario bank in a looping harness and turn the

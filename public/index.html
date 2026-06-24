@@ -1200,6 +1200,31 @@ scenarios:
       </div>
     </div>
 
+    <!-- Agent Score — score how an agent behaves -->
+    <div style="margin-top:56px;max-width:760px;margin-left:auto;margin-right:auto">
+      <h3 style="font-size:1.25rem;font-weight:800;color:var(--heading);text-align:center;margin-bottom:6px">Agent Score &mdash; how does it behave?</h3>
+      <p style="font-size:.92rem;color:var(--muted);text-align:center;margin-bottom:20px">
+        <code>audit&nbsp;&lt;repo&gt;</code> scores safeguards. <strong>Agent Score runs the agent</strong>
+        through a behaviour battery &mdash; Safety, Correctness, Loop, Cost &mdash; for a 0&ndash;100 score.
+        Pick a demo agent and watch the canary safety gate fire:
+      </p>
+      <div style="background:#fff;border:1.5px solid #e0e7ff;border-radius:14px;padding:24px">
+        <div style="display:flex;gap:8px;justify-content:center;margin-bottom:18px;flex-wrap:wrap">
+          <button class="as-tab" data-variant="hardened" onclick="runAgentScore('hardened')"
+            style="padding:9px 18px;border:1.5px solid #e0e7ff;border-radius:9px;background:#fff;font-size:.9rem;font-weight:700;cursor:pointer;color:#1e1b4b">🛡️ Hardened</button>
+          <button class="as-tab" data-variant="weak" onclick="runAgentScore('weak')"
+            style="padding:9px 18px;border:1.5px solid #e0e7ff;border-radius:9px;background:#fff;font-size:.9rem;font-weight:700;cursor:pointer;color:#1e1b4b">😐 Weak</button>
+          <button class="as-tab" data-variant="naive" onclick="runAgentScore('naive')"
+            style="padding:9px 18px;border:1.5px solid #e0e7ff;border-radius:9px;background:#fff;font-size:.9rem;font-weight:700;cursor:pointer;color:#1e1b4b">⚠️ Naive</button>
+        </div>
+        <div id="as-result" style="display:none"></div>
+        <div id="as-note" style="margin-top:14px;font-size:.78rem;color:var(--muted);text-align:center">
+          These are built-in demo agents scored server-side &mdash; no account, no agent of your own needed.
+          Score your real agent locally: <code>release-gate agent-score py:my_pkg:run</code>
+        </div>
+      </div>
+    </div>
+
   </div>
 </section>
 
@@ -2761,6 +2786,88 @@ scenarios:
     }
 
     show(html);
+  }
+
+  // ── Agent Score card ───────────────────────────────────────────────────────
+  function asColours(d) { return { PROMOTE:'#16a34a', HOLD:'#d97706', BLOCK:'#dc2626' }[d] || '#6b7280'; }
+  function asIcon(d) { return { PROMOTE:'✅', HOLD:'⚠️', BLOCK:'🛑' }[d] || '❓'; }
+  function asDimCol(s) { return s >= 80 ? '#16a34a' : (s >= 60 ? '#d97706' : '#dc2626'); }
+
+  async function runAgentScore(variant) {
+    var resultEl = document.getElementById('as-result');
+    // highlight the active tab
+    Array.prototype.forEach.call(document.querySelectorAll('.as-tab'), function(b){
+      var on = b.getAttribute('data-variant') === variant;
+      b.style.background = on ? '#1e1b4b' : '#fff';
+      b.style.color = on ? '#fff' : '#1e1b4b';
+      b.style.borderColor = on ? '#1e1b4b' : '#e0e7ff';
+    });
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = '<div style="text-align:center;color:#9ca3af;font-size:.9rem;padding:20px">Scoring…</div>';
+
+    var d;
+    try {
+      var res = await fetch(API_BASE + '/api/agent-score-demo', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ variant: variant }),
+      });
+      d = await res.json();
+      if (!res.ok) { resultEl.innerHTML = '<div style="color:#991b1b;font-size:.88rem">' + escHtml(d.detail || 'error') + '</div>'; return; }
+    } catch(e) {
+      resultEl.innerHTML = '<div style="color:#991b1b;font-size:.88rem">Could not reach the endpoint.</div>'; return;
+    }
+
+    var col = asColours(d.decision);
+    var dimLabels = { safety:'Safety', correctness:'Correctness', loop:'Loop behavior', cost_latency:'Cost & latency' };
+    var dimWt = { safety:35, correctness:30, loop:20, cost_latency:15 };
+
+    // score ring (conic) + verdict
+    var pct = Math.max(0, Math.min(100, d.score));
+    var html = '<div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-bottom:18px">'
+      + '<div style="width:96px;height:96px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;'
+      + 'background:conic-gradient(' + col + ' 0 ' + pct + '%, #eef0f6 ' + pct + '% 100%)">'
+      + '<div style="width:76px;height:76px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center">'
+      + '<div style="font-size:1.6rem;font-weight:800;color:#1e1b4b;line-height:1">' + d.score + '</div>'
+      + '<div style="font-size:.6rem;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em">/ 100</div></div></div>'
+      + '<div><div style="font-size:1.4rem;font-weight:800;color:' + col + '">' + asIcon(d.decision) + ' ' + escHtml(d.decision) + '</div>'
+      + '<div style="font-size:.82rem;color:#6b7280">' + escHtml(d.agent) + ' · ' + (d.runtime.calls || 0) + ' live calls</div></div></div>';
+
+    // dimension bars
+    var weakest = null, wv = 999;
+    ['safety','correctness','loop','cost_latency'].forEach(function(k){ if (d.dimensions[k].score < wv){ wv = d.dimensions[k].score; weakest = k; } });
+    html += '<div style="display:flex;flex-direction:column;gap:11px;margin-bottom:16px">';
+    ['safety','correctness','loop','cost_latency'].forEach(function(k){
+      var dim = d.dimensions[k], s = dim.score, c = asDimCol(s);
+      var tag = '';
+      if (k==='safety'||k==='correctness') tag = '(' + dim.passed + '/' + dim.total + ')';
+      else if (k==='loop') tag = dim.decision;
+      else if (dim.p95_latency_ms != null) tag = 'p95 ' + Math.round(dim.p95_latency_ms) + 'ms';
+      var weak = (k===weakest && s<80) ? ' <span style="color:#dc2626;font-weight:700;font-size:.7rem">← weakest</span>' : '';
+      html += '<div style="display:grid;grid-template-columns:118px 1fr 42px 70px;align-items:center;gap:10px">'
+        + '<div style="font-size:.84rem;font-weight:600;color:#1e1b4b">' + dimLabels[k] + weak + '</div>'
+        + '<div style="height:9px;border-radius:6px;background:#eef0f6;overflow:hidden"><i style="display:block;height:100%;width:' + s + '%;background:' + c + ';border-radius:6px"></i></div>'
+        + '<div style="font-size:.95rem;font-weight:800;color:' + c + ';text-align:right">' + s + '</div>'
+        + '<div style="font-size:.72rem;color:#9ca3af">' + escHtml(tag) + ' · ' + dimWt[k] + '%</div>'
+        + '</div>';
+    });
+    html += '</div>';
+
+    if (d.issues && d.issues.length) {
+      html += '<div style="background:#fef2f2;border:1.5px solid #dc262622;border-radius:10px;padding:12px 15px;margin-bottom:14px">'
+        + '<div style="font-size:.74rem;font-weight:800;color:#dc2626;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Top issues</div><ul style="margin:0;padding:0 0 0 16px;font-size:.83rem">';
+      d.issues.slice(0,4).forEach(function(it){
+        var ic = (it.severity==='critical'||it.severity==='high') ? '#b91c1c' : '#b45309';
+        html += '<li style="color:' + ic + ';margin-bottom:2px">' + escHtml(it.detail) + ' <span style="color:#9ca3af">(' + escHtml(it.dimension) + ')</span></li>';
+      });
+      html += '</ul></div>';
+    }
+
+    if (d.reasons && d.reasons.length) {
+      html += '<div style="padding:13px 16px;border-radius:10px;background:' + col + '0d;border:1.5px solid ' + col + '33;font-size:.85rem;color:#374151">'
+        + '<strong style="color:' + col + '">Why ' + escHtml(d.decision) + '</strong> &mdash; ' + escHtml(d.reasons[0]) + '</div>';
+    }
+
+    resultEl.innerHTML = html;
   }
 
   // CTA section scan — fills hero input and scrolls up to show results

@@ -105,10 +105,23 @@ class AgentClient:
             raise AgentSpecError(f"py: spec needs both module and callable, got '{target}'")
         try:
             import importlib
+            import sys
+
+            # When release-gate runs as an installed console script the current
+            # working directory is not on sys.path, so a project-local module like
+            # `examples.llm_agent` won't import. Add cwd to the front of the path so
+            # `py:` specs resolve relative to where the user invoked the command.
+            cwd = os.getcwd()
+            if cwd not in sys.path:
+                sys.path.insert(0, cwd)
 
             module = importlib.import_module(module_path)
         except ImportError as exc:
-            raise AgentSpecError(f"Could not import module '{module_path}': {exc}") from exc
+            raise AgentSpecError(
+                f"Could not import module '{module_path}': {exc}. "
+                f"Run from the project root (cwd is {os.getcwd()!r}); for "
+                f"'examples.llm_agent' that means the directory containing 'examples/'."
+            ) from exc
         try:
             fn = getattr(module, attr)
         except AttributeError as exc:

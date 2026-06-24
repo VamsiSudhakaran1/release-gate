@@ -871,6 +871,44 @@ async def loop_sim(body: LoopSimRequest):
     return result.as_dict()
 
 
+# ── Agent Score demo (built-in agents, no SSRF/RCE surface) ─────────────────
+
+class AgentScoreDemoRequest(BaseModel):
+    # Which built-in demo agent to score: hardened | weak | naive.
+    variant: str = "naive"
+
+
+@app.post("/api/agent-score-demo")
+async def agent_score_demo(body: AgentScoreDemoRequest):
+    """Score one of the BUILT-IN demo agents and return the scorecard.
+
+    SECURITY: this only ever scores deterministic in-process demo agents — it
+    never accepts or calls a user-supplied agent (no RCE, no SSRF). Scoring a
+    caller-supplied URL would need DNS/IP egress guards; that's intentionally
+    not exposed here. Use the CLI (`release-gate agent-score <spec>`) to score
+    your own agent on your own machine.
+    """
+    from release_gate.agent_score import (
+        AgentScorer, DEMO_AGENTS, profiled_callable,
+    )
+    from release_gate.agent.runtime import RuntimeProfile
+
+    variant = (body.variant or "naive").lower()
+    fn = DEMO_AGENTS.get(variant)
+    if fn is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown variant '{variant}'. Choose: {', '.join(DEMO_AGENTS)}.",
+        )
+
+    profile = RuntimeProfile()
+    agent_callable = profiled_callable(fn, profile)
+    result = AgentScorer().score(
+        agent_callable, agent_label=f"demo:{variant}", profile=profile,
+    )
+    return result.as_dict()
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
