@@ -112,6 +112,7 @@ release-gate evidence-pack governance.yaml
 | `release-gate run <config.yaml>` | Governance checks — PASS/WARN/FAIL with exit codes for CI |
 | `release-gate init` | Interactive setup wizard *(use `audit --emit-config` instead — pre-fills from your actual code)* |
 | `release-gate validate-and-lock` | Cryptographic sign/verify (RSA-PSS + SHA256) |
+| `release-gate verify <governance.yaml>` | **Loop Verifier** — CONTINUE / SHIP / ROLLBACK for one loop iteration |
 
 ### Flags for `score`
 
@@ -123,15 +124,144 @@ release-gate evidence-pack governance.yaml
 | `--html-report <file.html>` | Write self-contained HTML evidence report |
 | `--output-evidence <file.json>` | Save full JSON readiness report |
 
+### Flags for `verify`
+
+| Flag | Description |
+|------|-------------|
+| `--iteration N` | Current iteration number (default: 1) |
+| `--cost FLOAT` | Cumulative cost so far in USD (default: 0.0) |
+| `--trace <file.jsonl>` | Validate the current iteration's agent trace |
+| `--evals <evals.yaml>` | Run eval quality checks on the current output |
+| `--output "text"` | Pass agent output text for eval assertion checks |
+| `--loop-id ID` | Group iterations into a named Loop Report |
+| `--json` | Machine-readable JSON output |
+
 ---
 
 ## Exit Codes
 
 | Code | Decision | Meaning |
 |------|----------|--------|
-| `0` | PROMOTE / PASS | Safe to deploy |
-| `10` | HOLD / WARN | Review needed before deploying |
+| `0` | PROMOTE / PASS / SHIP | Safe to deploy |
+| `10` | HOLD / WARN / CONTINUE | Review needed / keep iterating |
+| `1` | BLOCK / FAIL / ROLLBACK | Do not deploy / abort loop |
 | `1` | BLOCK / FAIL | Do not deploy |
+
+---
+
+## Loop Verification
+
+Release Gate owns the **Verify** phase inside agent loops — the independent checker that the maker model can't be.
+
+```
+Discover → Plan → Execute → [Release Gate Verify] → Iterate
+                                      ↓
+                            CONTINUE / SHIP / ROLLBACK
+```
+
+### governance.yaml — `loop:` block
+
+```yaml
+loop:
+  max_iterations: 10          # hard cap — exceeding triggers ROLLBACK
+  total_cost_limit: 1.00      # cumulative $ ceiling for the whole run
+  cost_per_iteration_limit: 0.15   # per-iteration soft warning threshold
+  max_tokens_per_iteration: 8000   # token ceiling per trace
+  maker_model: claude-opus-4-8     # model that generates outputs
+  checker_model: claude-haiku-4-5  # must differ — avoids self-review bias
+```
+
+### CLI — local loops
+
+```bash
+release-gate verify governance.yaml \
+  --iteration 3 --cost 0.12 \
+  --trace trace.jsonl \
+  --evals evals.yaml \
+  --loop-id my-loop-001 \
+  --json
+```
+
+Exit codes: **0** = SHIP · **10** = CONTINUE · **1** = ROLLBACK
+
+Use directly in a shell loop:
+
+```bash
+i=1; cost=0
+while true; do
+  # ... run agent, update cost ...
+  release-gate verify governance.yaml --iteration $i --cost $cost --json
+  case $? in
+    0) echo "SHIP — deploying"; break ;;
+    1) echo "ROLLBACK — aborting"; exit 1 ;;
+   10) i=$((i+1)) ;;  # CONTINUE
+  esac
+done
+```
+
+### API — live loops
+
+```python
+import httpx
+
+rg = httpx.Client(
+    base_url="https://release-gate.com",
+    headers={"Authorization": "Bearer rg_your_token"}
+)
+
+for i in range(1, 20):
+    output = agent.run(task)
+
+    result = rg.post("/api/verify", json={
+        "iteration": i,
+        "cost_so_far": agent.cost(),        # or spaturzu.current_spend("loop")
+        "trace": agent.trace(),
+        "loop_id": "my-loop-001",
+        "loop_policy": {
+            "max_iterations": 10,
+            "total_cost_limit": 1.00,
+        },
+    }).json()
+
+    if result["decision"] == "SHIP":
+        deploy(output); break
+    if result["decision"] == "ROLLBACK":
+        raise LoopFailed(result["reasons"])
+    # CONTINUE → keep iterating
+```
+
+### Loop Report
+
+After a run completes, pull the full iteration history:
+
+```bash
+curl https://release-gate.com/api/loop/my-loop-001 \
+  -H "Authorization: Bearer rg_your_token"
+```
+
+```json
+{
+  "loop_id": "my-loop-001",
+  "iterations": 4,
+  "final_decision": "SHIP",
+  "summary": { "shipped": 1, "continued": 3, "rolled_back": 0 },
+  "history": [...]
+}
+```
+
+### Spaturzu integration
+
+If you use [Spaturzu](https://github.com/Nu11P01nt3r3xc3pt10n/spaturzu-sdks) for per-agent cost attribution, pass the real spend directly:
+
+```json
+{
+  "iteration": 3,
+  "spaturzu_spend": 0.127,
+  "loop_id": "my-loop-001"
+}
+```
+
+Release Gate uses the measured cost instead of an estimate.
 
 ---
 
