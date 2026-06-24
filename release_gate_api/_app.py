@@ -801,6 +801,76 @@ async def get_loop_report(
     }
 
 
+# ── Loop Sim (pre-deploy characterization, mock mode) ───────────────────────
+
+class LoopSimRequest(BaseModel):
+    # Either supply structured fields…
+    scenarios: Optional[list] = None
+    loop_policy: Optional[Dict[str, Any]] = None   # the governance loop: block
+    evals: Optional[list] = None                   # global eval overrides
+    # …or a raw YAML document (the web card sends this) with the same shape as
+    # examples/loop_scenarios.yaml: a `loop:` block + a `scenarios:` list.
+    yaml_text: Optional[str] = None
+
+
+# Bounds to keep the (stateless) demo cheap and abuse-resistant.
+_LOOPSIM_MAX_SCENARIOS = 25
+_LOOPSIM_MAX_ITERATIONS = 20
+
+
+@app.post("/api/loop-sim")
+async def loop_sim(body: LoopSimRequest):
+    """Pre-deploy loop characterization — runs the scenario bank through the
+    LoopVerifier with a *mock* agent and returns one PROMOTE/HOLD/BLOCK decision.
+
+    SECURITY: this endpoint NEVER executes a caller-supplied agent. Live agent
+    runs (py:/cmd:/http targets) only happen in the CLI/CI, where the user owns
+    the runtime. The web card characterizes the scenario bank + policy against
+    the deterministic verifier — it is stateless and requires no auth.
+    """
+    scenarios = body.scenarios
+    policy = dict(body.loop_policy or {})
+    evals = body.evals
+
+    # Parse a raw YAML document if that's what the caller sent (the web card).
+    if body.yaml_text:
+        import yaml as _yaml
+        try:
+            doc = _yaml.safe_load(body.yaml_text)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}")
+        if not isinstance(doc, dict):
+            raise HTTPException(status_code=400, detail="YAML must be a mapping with a `scenarios:` list")
+        scenarios = doc.get("scenarios")
+        policy = dict(doc.get("loop") or policy)
+        evals = doc.get("evals") or evals
+
+    if not isinstance(scenarios, list) or not scenarios:
+        raise HTTPException(status_code=400, detail="scenarios must be a non-empty list")
+    if len(scenarios) > _LOOPSIM_MAX_SCENARIOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many scenarios (max {_LOOPSIM_MAX_SCENARIOS} for the web demo; "
+                   f"use the CLI for larger banks).",
+        )
+
+    # Clamp max_iterations so a pathological scenario can't spin the worker.
+    try:
+        mi = int(policy.get("max_iterations", 6))
+    except (TypeError, ValueError):
+        mi = 6
+    policy["max_iterations"] = max(1, min(mi, _LOOPSIM_MAX_ITERATIONS))
+
+    from release_gate.loop_sim import LoopSimulator
+    result = LoopSimulator().run(
+        scenarios,
+        agent=None,                 # mock mode — never runs user code
+        loop_policy=policy,
+        evals=evals,
+    )
+    return result.as_dict()
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")

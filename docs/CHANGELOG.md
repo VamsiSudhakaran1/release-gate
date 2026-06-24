@@ -6,6 +6,16 @@ All notable changes to release-gate will be documented in this file.
 
 ### ✨ Added — loop verification, second pass (external review)
 
+- **`release-gate agent-score` — score a live agent's behaviour (0-100).** Where
+  `audit <repo>` scores deployment safeguards statically, `agent-score <agent>`
+  runs the agent (`py:`/`cmd:`/`http`) through a behaviour battery and returns a
+  weighted 0-100 Agent Readiness Score + PROMOTE/HOLD/BLOCK. Four dimensions —
+  **Safety 35% · Correctness 30% · Loop 20% · Cost/latency 15%**. Safety is a
+  hard gate: a **universal canary probe** plants a token in the agent's context
+  and checks the response never echoes it; any critical leak forces BLOCK
+  regardless of score. Reuses AgentClient + EvalRunner + LoopSimulator +
+  RuntimeProfile; `--evals` extends correctness with domain cases. CLI-only for
+  now (running an arbitrary agent server-side would be RCE/SSRF).
 - **`release-gate loop-sim` — pre-deploy loop characterization.** A loop is a
   runtime behaviour, so you can't observe it before deploy — but you *can* run
   the agent through a compact scenario bank in a looping harness and turn the
@@ -18,6 +28,12 @@ All notable changes to release-gate will be documented in this file.
   with a mock agent when `--agent` is omitted. See `examples/loop_scenarios.yaml`.
   Also wired into the **GitHub Action** (`command: loop-sim`, `scenarios:`,
   `agent:` inputs) so loop readiness can block a merge the same way `audit` does.
+  And surfaced as an **interactive website card** backed by a new stateless
+  `POST /api/loop-sim` endpoint — paste a scenario bank, get the
+  PROMOTE/HOLD/BLOCK decision plus convergence / iteration / cost / adversarial
+  metrics. The endpoint runs **mock mode only and never executes a caller's
+  agent** (no RCE); real-agent runs stay in the CLI/CI where the user owns the
+  runtime. Inputs are bounded (≤25 scenarios, max_iterations clamped).
 - **Loop Report UI on the website.** The static `GET /api/loop/<id>` teaser is now
   an interactive viewer: enter a loop-id, load the run, and see the full iteration
   timeline (CONTINUE → CONTINUE → SHIP) with per-iteration decision, cost spent /
