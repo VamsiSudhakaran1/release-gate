@@ -871,6 +871,40 @@ async def loop_sim(body: LoopSimRequest):
     return result.as_dict()
 
 
+# ── Loop Sim demo (built-in agents, runs the REAL simulator) ────────────────
+
+class LoopSimDemoRequest(BaseModel):
+    # Which built-in loop demo agent to run: good | mid | worst.
+    variant: str = "good"
+
+
+@app.post("/api/loop-sim-demo")
+async def loop_sim_demo(body: LoopSimDemoRequest):
+    """Run one of the BUILT-IN loop demo agents through the real LoopSimulator.
+
+    This genuinely iterates: each pass feeds the previous output back, re-runs the
+    deterministic demo agent, and asks the LoopVerifier for CONTINUE/SHIP/ROLLBACK.
+    The numbers (convergence, iterations, cost) come from that execution — not from
+    canned data.
+
+    SECURITY: only built-in in-process agents run — nothing user-supplied is ever
+    executed (no RCE, no SSRF). Run your own agent with the CLI:
+    `release-gate loop-sim scenarios.yaml --agent py:my_pkg:run`.
+    """
+    from release_gate.loop_sim import run_loop_demo, LOOP_DEMO_AGENTS
+
+    variant = (body.variant or "good").lower()
+    if variant not in LOOP_DEMO_AGENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown variant '{variant}'. Choose: {', '.join(LOOP_DEMO_AGENTS)}.",
+        )
+    result = run_loop_demo(variant)
+    out = result.as_dict()
+    out["variant"] = variant
+    return out
+
+
 # ── Agent Score demo (built-in agents, no SSRF/RCE surface) ─────────────────
 
 class AgentScoreDemoRequest(BaseModel):

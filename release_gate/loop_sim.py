@@ -311,6 +311,74 @@ def _mock_agent(task: str, context: str) -> str:
     return f"Task completed: {task}"
 
 
+# ── Loop demo (deterministic in-process agents; safe for the web showcase) ────
+# These mirror examples/loop_agents.py but live in the library so the API can run
+# the REAL LoopSimulator against them server-side — genuinely iterating through
+# the verifier, not replaying canned numbers. No RCE/SSRF: nothing user-supplied
+# is ever executed.
+import re as _re
+
+LOOP_DEMO_POLICY: Dict[str, Any] = {
+    "max_iterations": 6,
+    "total_cost_limit": 0.03,
+    "maker_model": "gpt-4o",
+    "checker_model": "claude-haiku",
+    "stop_condition": {"type": "required_keyword_present", "keyword": "DONE"},
+}
+
+LOOP_DEMO_SCENARIOS: List[Dict[str, Any]] = [
+    {"id": "summarize-contract", "task": "Summarize this vendor contract in three bullet points."},
+    {"id": "draft-reply", "task": "Draft a polite reply declining the meeting."},
+    {"id": "classify-ticket", "task": "Classify this support ticket: 'my card was declined at checkout'."},
+    {"id": "extract-fields", "task": "Extract the company and due date from: 'Invoice for Acme, due 2025-07-01'."},
+    {"id": "status-summary", "task": "Write a one-paragraph status summary for the project."},
+]
+
+
+def _loop_demo_good(task: str, context: str = "") -> str:
+    return f"Completed: {task.strip()[:70]}. DONE"
+
+
+def _loop_demo_mid(task: str, context: str = "") -> str:
+    seen = _re.findall(r"draft v(\d+)", context)
+    n = (max(int(x) for x in seen) + 1) if seen else 1
+    if n >= 5:
+        return f"Final result for {task.strip()[:50]}. draft v{n} DONE"
+    return f"Still working on {task.strip()[:50]}... draft v{n}"
+
+
+def _loop_demo_worst(task: str, context: str = "") -> str:
+    padding = "let me refine this further " * 120     # ~3.2k chars → cost climbs
+    return f"Of course! Ongoing work: {context} {padding}"
+
+
+LOOP_DEMO_AGENTS: Dict[str, Callable[[str, str], str]] = {
+    "good":  _loop_demo_good,
+    "mid":   _loop_demo_mid,
+    "worst": _loop_demo_worst,
+}
+
+
+class _EstimatedResponse:
+    """Wraps a demo agent's text with an estimated token count (~4 chars/token)
+    so the cost characterization is real — a verbose/runaway agent costs more."""
+    __slots__ = ("text", "tokens_out")
+
+    def __init__(self, text: str):
+        self.text = text
+        self.tokens_out = max(1, len(text) // 4)
+
+
+def run_loop_demo(variant: str) -> SimResult:
+    """Run one built-in demo agent through the real LoopSimulator. Raises
+    KeyError for an unknown variant (the caller maps it to a 400)."""
+    fn = LOOP_DEMO_AGENTS[variant]
+    agent = lambda task, ctx: _EstimatedResponse(fn(task, ctx))
+    return LoopSimulator().run(
+        LOOP_DEMO_SCENARIOS, agent=agent, loop_policy=dict(LOOP_DEMO_POLICY),
+    )
+
+
 def _text_of(resp: Any) -> str:
     """Accept a plain string or an AgentResponse-like object."""
     if isinstance(resp, str):
