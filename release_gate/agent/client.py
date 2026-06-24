@@ -35,6 +35,13 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 
+def _estimate_tokens(text: str) -> int:
+    """Coarse token estimate (~4 chars/token) for targets that don't report usage
+    (local py:/cmd: agents). Used only to give cost characterization a signal —
+    it shapes relative cost, it is not a billing figure."""
+    return max(1, len(text or "") // 4)
+
+
 class AgentSpecError(ValueError):
     """Raised when an agent spec string cannot be parsed or resolved."""
 
@@ -159,7 +166,12 @@ class AgentClient:
         except TypeError:
             # Allow single-argument callables fn(input).
             out = self._fn(agent_input)
-        return str(out), None, None
+        text = str(out)
+        # A local callable doesn't report token usage, but cost characterization
+        # (loop-sim, the cost dimension) needs *some* signal. Estimate tokens from
+        # text length (~4 chars/token) so a verbose/runaway agent honestly costs
+        # more than a terse one. Coarse by design — it shapes cost, not billing.
+        return text, _estimate_tokens(f"{agent_input} {context}"), _estimate_tokens(text)
 
     def _invoke_cmd(self, agent_input, context):
         env = dict(os.environ)
@@ -187,7 +199,8 @@ class AgentClient:
         if proc.returncode != 0:
             err = proc.stderr.strip() or f"exit code {proc.returncode}"
             raise RuntimeError(f"agent command failed: {err}")
-        return proc.stdout.strip(), None, None
+        text = proc.stdout.strip()
+        return text, _estimate_tokens(f"{agent_input} {context}"), _estimate_tokens(text)
 
     def _invoke_http(self, agent_input, context):
         payload = json.dumps({"input": agent_input, "context": context}).encode("utf-8")
