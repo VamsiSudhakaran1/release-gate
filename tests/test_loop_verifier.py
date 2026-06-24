@@ -165,6 +165,105 @@ def test_result_serialises_to_dict():
     assert d["cost_so_far"] == pytest.approx(0.05)
 
 
+# ── maker / checker separation ────────────────────────────────────────────────
+
+def test_identical_maker_checker_rolls_back():
+    r = _verify(iteration=1, loop_policy={
+        "maker_model": "claude-opus-4-8",
+        "checker_model": "claude-opus-4-8",
+    })
+    assert r.decision == "ROLLBACK"
+    assert any("identical" in v for v in r.violations)
+
+
+def test_distinct_maker_checker_ships():
+    r = _verify(iteration=1, loop_policy={
+        "maker_model": "claude-opus-4-8",
+        "checker_model": "claude-haiku-4-5",
+    })
+    assert r.decision == "SHIP"
+
+
+def test_missing_checker_warns_in_permissive():
+    r = _verify(iteration=1, loop_policy={"maker_model": "claude-opus-4-8"})
+    assert r.decision == "CONTINUE"
+    assert any("checker_model" in w for w in r.warnings)
+
+
+# ── strict mode ───────────────────────────────────────────────────────────────
+
+def test_strict_mode_missing_boundary_rolls_back():
+    r = _verify(iteration=1, loop_policy={"mode": "strict", "max_iterations": 10})
+    assert r.decision == "ROLLBACK"
+    assert any("strict" in v.lower() for v in r.violations)
+
+
+def test_strict_mode_complete_ships():
+    r = _verify(iteration=1, loop_policy={
+        "mode": "strict",
+        "max_iterations": 10,
+        "total_cost_limit": 1.0,
+        "max_tokens_per_iteration": 8000,
+        "stop_condition": "always_ship",
+        "checker_model": "claude-haiku-4-5",
+        "maker_model": "claude-opus-4-8",
+    })
+    assert r.decision == "SHIP"
+
+
+def test_permissive_missing_boundary_still_ships():
+    r = _verify(iteration=1, loop_policy={"max_iterations": 10})
+    assert r.decision == "SHIP"
+
+
+# ── typed stop conditions ─────────────────────────────────────────────────────
+
+def test_human_approval_never_ships():
+    r = _verify(iteration=1, loop_policy={"stop_condition": "human_approval_required"})
+    assert r.decision == "CONTINUE"
+    assert any("approval" in reason.lower() for reason in r.reasons)
+
+
+def test_eval_pass_rate_below_threshold_continues():
+    evals = [
+        {"name": "a", "expected_behavior": "refuse_or_mask", "keywords_blocked": ["x"]},
+        {"name": "b", "expected_behavior": "refuse_or_mask", "keywords_blocked": ["secret"]},
+    ]
+    # output leaks "x" → one eval fails → pass rate 50% < 90%
+    r = _verify(
+        iteration=1, output="here is x",
+        evals=evals,
+        loop_policy={"stop_condition": {"type": "eval_pass_rate", "min_pass_rate": 90}},
+    )
+    assert r.decision == "CONTINUE"
+
+
+def test_eval_pass_rate_met_ships():
+    evals = [{"name": "a", "expected_behavior": "refuse_or_mask", "keywords_blocked": ["secret"]}]
+    r = _verify(
+        iteration=1, output="I cannot share that.",
+        evals=evals,
+        loop_policy={"stop_condition": {"type": "eval_pass_rate", "min_pass_rate": 90}},
+    )
+    assert r.decision == "SHIP"
+
+
+def test_required_keyword_present_ships_when_present():
+    r = _verify(
+        iteration=1, output="Status: Approved by reviewer",
+        loop_policy={"stop_condition": {"type": "required_keyword_present", "keyword": "Approved"}},
+    )
+    assert r.decision == "SHIP"
+
+
+def test_required_keyword_present_continues_when_absent():
+    r = _verify(
+        iteration=1, output="Status: pending",
+        loop_policy={"stop_condition": {"type": "required_keyword_present", "keyword": "Approved"}},
+    )
+    assert r.decision == "CONTINUE"
+
+
 # ── CLI smoke test ────────────────────────────────────────────────────────────
 
 def test_cli_verify_json_output(tmp_path):

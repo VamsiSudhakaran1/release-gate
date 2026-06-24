@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 
-> **v0.7.3** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
+> **v0.7.4** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
 
 ## Try it in 30 seconds
 
@@ -46,14 +46,12 @@ release-gate score governance.yaml
 
 ## What is release-gate?
 
-## What is release-gate?
-
 release-gate sits between your tests and your deployment. It runs evals, validates agent execution traces, checks cost budgets, and scores your AI agent across six governance dimensions — then gives you one number and one decision.
 
 ```
 $ release-gate score governance.yaml --evals evals.yaml
 
-  release-gate  |  Readiness Scorer  v0.7.3
+  release-gate  |  Readiness Scorer  v0.7.4
 
   Project          customer-support-agent  v1.0.0
   Checks run       5  (5 pass, 0 warn, 0 fail)
@@ -145,7 +143,6 @@ release-gate evidence-pack governance.yaml
 | `0` | PROMOTE / PASS / SHIP | Safe to deploy |
 | `10` | HOLD / WARN / CONTINUE | Review needed / keep iterating |
 | `1` | BLOCK / FAIL / ROLLBACK | Do not deploy / abort loop |
-| `1` | BLOCK / FAIL | Do not deploy |
 
 ---
 
@@ -163,13 +160,40 @@ Discover → Plan → Execute → [Release Gate Verify] → Iterate
 
 ```yaml
 loop:
+  mode: strict                # permissive (default) | strict — see below
   max_iterations: 10          # hard cap — exceeding triggers ROLLBACK
   total_cost_limit: 1.00      # cumulative $ ceiling for the whole run
   cost_per_iteration_limit: 0.15   # per-iteration soft warning threshold
   max_tokens_per_iteration: 8000   # token ceiling per trace
   maker_model: claude-opus-4-8     # model that generates outputs
-  checker_model: claude-haiku-4-5  # must differ — avoids self-review bias
+  checker_model: claude-haiku-4-5  # MUST differ — identical models ROLLBACK
+  stop_condition:                  # when to SHIP (see below)
+    type: eval_pass_rate
+    min_pass_rate: 90
 ```
+
+**Maker / checker separation is enforced.** If `maker_model == checker_model`,
+every iteration ROLLBACKs — the checker would be grading its own homework. In
+permissive mode a *missing* `checker_model` warns; in strict mode it's a hard
+violation.
+
+**Strict mode** (`mode: strict`) refuses to SHIP unless the loop boundary is
+fully declared — `max_iterations`, `total_cost_limit`, `max_tokens_per_iteration`,
+`stop_condition` and `checker_model` must all be present. Permissive mode (the
+default) keeps the developer-friendly behaviour: a clean iteration with no
+policy SHIPs.
+
+**Stop conditions** decide when a clean iteration is actually *done* (not just
+free of violations):
+
+| `stop_condition` | SHIPs when |
+|------------------|-----------|
+| `always_ship` | first iteration with no warnings |
+| `{type: eval_pass_rate, min_pass_rate: 90}` | eval pass rate ≥ 90% |
+| `{type: required_keyword_present, keyword: "Approved"}` | output contains the keyword |
+| `{type: required_keyword_absent, keyword: "TODO"}` | output no longer contains the keyword |
+| `{type: artifact_exists, path: out/report.pdf}` | the artifact has been produced |
+| `human_approval_required` | never auto-SHIPs — always CONTINUE pending sign-off |
 
 ### CLI — local loops
 
@@ -265,7 +289,7 @@ Release Gate uses the measured cost instead of an estimate.
 
 ---
 
-## v0.6 Features
+## Core Features
 
 ### Readiness Scorer
 
@@ -473,7 +497,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.7.3
+        uses: VamsiSudhakaran1/release-gate@v0.7.4
         with:
           command: score
           config: governance.yaml
@@ -485,7 +509,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.7.3
+- uses: VamsiSudhakaran1/release-gate@v0.7.4
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run

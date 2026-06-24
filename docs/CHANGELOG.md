@@ -2,6 +2,35 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.7.4] — 2026-06-24
+
+### ✨ Added — loop verification, second pass (external review)
+
+- **Maker/checker separation is now enforced.** `LoopVerifier` ROLLBACKs when
+  `maker_model == checker_model` (the checker would be grading its own homework).
+  A missing `checker_model` warns in permissive mode and is a hard violation in
+  strict mode. Previously the README promised this but the logic didn't check it.
+- **Strict mode** (`loop.mode: strict`). A missing loop boundary becomes a hard
+  violation: `max_iterations`, `total_cost_limit`, `max_tokens_per_iteration`,
+  `stop_condition` and `checker_model` must all be declared or every iteration
+  ROLLBACKs. Permissive mode (default) keeps the developer-friendly behaviour
+  where a clean iteration with no policy SHIPs.
+- **Typed stop conditions.** `stop_condition` now accepts a bare string or a
+  typed dict: `eval_pass_rate` (min_pass_rate), `required_keyword_present`,
+  `required_keyword_absent`, `artifact_exists`, and `human_approval_required`
+  (never auto-SHIPs). A clean-but-not-done iteration now CONTINUEs instead of
+  prematurely SHIPping.
+- **`loop_boundary` audit safeguard.** `release-gate audit` now detects repos
+  that run agent loops without a declared boundary, and flags identical
+  maker/checker models. It's advisory (weight 0) so it surfaces in the report
+  and missing list without perturbing the established 0-100 safeguard score.
+
+### 🐛 Fixed — docs polish
+
+- Removed the duplicated `## What is release-gate?` heading, the duplicated
+  `1 = BLOCK / FAIL` exit-code row, and relabelled the stale `v0.6 Features`
+  section to `Core Features` in the README.
+
 ## [0.7.3] — 2026-06-23
 
 ### 🐛 Fixed — production hotfix

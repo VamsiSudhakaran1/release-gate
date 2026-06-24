@@ -347,6 +347,45 @@ def verify_safeguards(
             issues,
         )
 
+    # ── loop_boundary (advisory) ───────────────────────────────────────────────
+    # A loop: block that declares at least one boundary (iteration cap, cost
+    # ceiling, or stop condition) means the agent loop can't spin without bound.
+    if not has_data:
+        results["loop_boundary"] = _result(
+            False, "No governance config to declare a loop boundary.",
+            ["Add a loop: block with max_iterations / total_cost_limit / stop_condition "
+             "if this repo runs an agent loop."],
+        )
+    else:
+        loop_cfg = data.get("loop") if isinstance(data, dict) else None
+        issues = []
+        if not isinstance(loop_cfg, dict):
+            issues.append(
+                "No loop: block declared — agent loops have no iteration cap, "
+                "cost ceiling, or stop condition."
+            )
+        else:
+            boundary_keys = ("max_iterations", "total_cost_limit",
+                             "max_tokens_per_iteration", "stop_condition")
+            if not any(loop_cfg.get(k) not in (None, "") for k in boundary_keys):
+                issues.append(
+                    "loop: block declares no boundary "
+                    "(max_iterations / total_cost_limit / stop_condition)."
+                )
+            maker = loop_cfg.get("maker_model")
+            checker = loop_cfg.get("checker_model")
+            if maker and checker and str(maker).strip() == str(checker).strip():
+                issues.append(
+                    "maker_model and checker_model are identical — the checker is "
+                    "reviewing its own output (self-review bias)."
+                )
+        present = not issues
+        results["loop_boundary"] = _result(
+            present,
+            "Loop boundary declared." if present else "Loop boundary missing or unbounded.",
+            issues,
+        )
+
     return results
 
 
