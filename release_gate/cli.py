@@ -786,6 +786,10 @@ def print_help():
     print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
+    print("\nOptions for 'agent-score':")
+    print("  --evals <evals.yaml>                    Add domain correctness cases")
+    print("  --frameworks                            Map results to OWASP LLM Top 10 / NIST AI RMF / EU AI Act")
+    print("  --json                                  Machine-readable output (add --frameworks for the mapping)")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
     print("  --agent <spec>                          Run evals LIVE against a real agent")
@@ -1397,6 +1401,7 @@ def _run_agent_score_command():
     agent_spec = args[0]
     evals_path = _flag(sys.argv, '--evals')
     as_json    = '--json' in sys.argv
+    show_frameworks = '--frameworks' in sys.argv
 
     # Build the agent + a shared runtime profile so latency/tokens are captured.
     try:
@@ -1425,7 +1430,11 @@ def _run_agent_score_command():
     )
 
     if as_json:
-        print(_json.dumps(result.as_dict(), indent=2))
+        payload = result.as_dict()
+        if show_frameworks:
+            from release_gate.frameworks import frameworks_report
+            payload["frameworks"] = frameworks_report(payload)
+        print(_json.dumps(payload, indent=2))
         _exit_agent_score(result.decision)
 
     # ── terminal scorecard ──
@@ -1498,11 +1507,50 @@ def _run_agent_score_command():
     for reason in result.reasons:
         print(f"             {reason}")
     print()
-    print(f"  {_MUTED}Add your own task evals:  "
-          f"release-gate agent-score {agent_spec} --evals my_evals.yaml{_RESET}")
+
+    if show_frameworks:
+        _print_framework_view(result.as_dict(), _BOLD, _RESET, _GREEN, _YELLOW, _RED, _MUTED)
+    else:
+        print(f"  {_MUTED}Map to OWASP / NIST / EU AI Act:  "
+              f"release-gate agent-score {agent_spec} --frameworks{_RESET}")
     print()
 
     _exit_agent_score(result.decision)
+
+
+def _print_framework_view(score_dict, _BOLD, _RESET, _GREEN, _YELLOW, _RED, _MUTED):
+    """Render the OWASP / NIST / EU AI Act control mapping as an auditor would read it."""
+    from release_gate.frameworks import (
+        assess_frameworks, summarize_frameworks, PASS, FAIL, PARTIAL,
+    )
+    controls = assess_frameworks(score_dict)
+    summary = summarize_frameworks(controls)
+
+    mark = {PASS: f"{_GREEN}✓{_RESET}", FAIL: f"{_RED}✗{_RESET}",
+            PARTIAL: f"{_YELLOW}◐{_RESET}"}
+    not_assessed = f"{_MUTED}○{_RESET}"
+
+    print(f"  {_BOLD}Framework coverage{_RESET}  {_MUTED}(✓ pass · ✗ finding · ◐ partial · ○ not assessed){_RESET}")
+    print(f"  {'─' * 52}")
+
+    # group controls by framework, preserving catalog order
+    seen = []
+    for c in controls:
+        if c.framework not in seen:
+            seen.append(c.framework)
+    for fw in seen:
+        s = summary[fw]
+        head = f"{_BOLD}{fw}{_RESET}"
+        cov = f"{_MUTED}{s['coverage_pct']}% assessed"
+        if s["FAIL"]:
+            cov += f"{_RESET}{_RED} · {s['FAIL']} finding(s){_RESET}"
+        else:
+            cov += f"{_RESET}"
+        print(f"\n  {head}   {cov}")
+        for c in [c for c in controls if c.framework == fw]:
+            m = mark.get(c.status, not_assessed)
+            print(f"    {m} {c.control_id:<8}{c.title}")
+            print(f"        {_MUTED}{c.evidence}{_RESET}")
 
 
 def _exit_agent_score(decision):
