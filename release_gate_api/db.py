@@ -114,6 +114,22 @@ def init_db():
                 used        INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT NOT NULL
             )""")
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS verifications (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                loop_id         TEXT,
+                iteration       INTEGER NOT NULL,
+                decision        TEXT NOT NULL,
+                cost_so_far     REAL,
+                cost_remaining  REAL,
+                violations_json TEXT,
+                warnings_json   TEXT,
+                checks_json     TEXT,
+                created_at      TEXT NOT NULL
+            )""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_verif_user   ON verifications(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_verif_loop   ON verifications(loop_id)")
         else:
             cur.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -145,6 +161,21 @@ def init_db():
                 expires_at TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS verifications (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                loop_id         TEXT,
+                iteration       INTEGER NOT NULL,
+                decision        TEXT NOT NULL,
+                cost_so_far     REAL,
+                cost_remaining  REAL,
+                violations_json TEXT,
+                warnings_json   TEXT,
+                checks_json     TEXT,
+                created_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_verif_user ON verifications(user_id);
+            CREATE INDEX IF NOT EXISTS idx_verif_loop ON verifications(loop_id);
             """)
             # SQLite: add columns if they don't exist yet (ignore errors if already present)
             for col_sql in [
@@ -504,3 +535,62 @@ def get_dashboard_stats(user_id: str) -> Dict:
         "this_month_scans": this_month_scans,
         "score_improvement": score_improvement,
     }
+
+
+# ── Verifications ──────────────────────────────────────────────────────────
+
+def save_verification(
+    user_id: str,
+    iteration: int,
+    decision: str,
+    violations: list,
+    warnings: list,
+    checks: dict,
+    cost_so_far: float = 0.0,
+    cost_remaining=None,
+    loop_id: str = None,
+) -> str:
+    import json as _json
+    vid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(
+            f"INSERT INTO verifications "
+            f"(id, user_id, loop_id, iteration, decision, cost_so_far, "
+            f"cost_remaining, violations_json, warnings_json, checks_json, created_at) "
+            f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+            (
+                vid, user_id, loop_id, iteration, decision,
+                cost_so_far, cost_remaining,
+                _json.dumps(violations), _json.dumps(warnings), _json.dumps(checks),
+                now,
+            ),
+        )
+    return vid
+
+
+def get_verifications_for_loop(loop_id: str, user_id: str) -> list:
+    import json as _json
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            import psycopg2.extras
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"SELECT * FROM verifications WHERE loop_id={ph} AND user_id={ph} "
+            f"ORDER BY iteration ASC",
+            (loop_id, user_id),
+        )
+        rows = cur.fetchall()
+    results = []
+    for r in rows:
+        row = _row_to_dict(r)
+        for key in ("violations_json", "warnings_json", "checks_json"):
+            val = row.pop(key, None)
+            out_key = key.replace("_json", "")
+            row[out_key] = _json.loads(val) if val else []
+        results.append(row)
+    return results

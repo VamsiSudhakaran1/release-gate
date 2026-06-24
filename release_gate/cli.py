@@ -783,6 +783,7 @@ def print_help():
     print("  release-gate init                       # Interactive wizard (use audit --emit-config instead)")
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
+    print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
     print("  --agent <spec>                          Run evals LIVE against a real agent")
@@ -1108,10 +1109,146 @@ def main():
             '--offline' not in sys.argv,
         )
 
+    elif command == 'verify':
+        _run_verify_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
         sys.exit(1)
+
+
+def _run_verify_command():
+    """release-gate verify — run the Loop Verifier locally.
+
+    Usage:
+      release-gate verify governance.yaml \\
+          [--trace trace.jsonl] \\
+          [--evals evals.yaml] \\
+          [--iteration N] \\
+          [--cost FLOAT] \\
+          [--output "agent output text"] \\
+          [--loop-id LOOP_ID] \\
+          [--json]
+
+    Examples:
+      release-gate verify governance.yaml --iteration 3 --cost 0.12 --trace trace.jsonl
+      release-gate verify governance.yaml --iteration 1 --output "Paris" --evals evals.yaml
+    """
+    import json as _json
+    import yaml as _yaml
+
+    args = sys.argv[2:]
+    if not args or args[0].startswith('-'):
+        gov_path = None
+    else:
+        gov_path = args[0]
+
+    iteration   = int(_flag(sys.argv, '--iteration') or '1')
+    cost        = float(_flag(sys.argv, '--cost') or '0.0')
+    trace_path  = _flag(sys.argv, '--trace')
+    evals_path  = _flag(sys.argv, '--evals')
+    output_text = _flag(sys.argv, '--output')
+    loop_id     = _flag(sys.argv, '--loop-id')
+    as_json     = '--json' in sys.argv
+
+    # Load governance
+    loop_policy     = {}
+    trace_policies  = {}
+    if gov_path:
+        try:
+            gov = _yaml.safe_load(open(gov_path, encoding='utf-8').read())
+            loop_policy    = (gov or {}).get('loop', {}) or {}
+            trace_policies = (gov or {}).get('trace_policies', {}) or {}
+        except Exception as exc:
+            print(f"Error reading governance file: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Load trace
+    trace = None
+    if trace_path:
+        try:
+            import json as _j
+            text = open(trace_path, encoding='utf-8').read().strip()
+            if trace_path.endswith('.jsonl'):
+                steps = [_j.loads(l) for l in text.splitlines() if l.strip()]
+                trace = {'steps': steps}
+            else:
+                obj = _j.loads(text)
+                trace = obj if isinstance(obj, dict) else {'steps': obj}
+        except Exception as exc:
+            print(f"Error reading trace file: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Load evals
+    evals = None
+    if evals_path:
+        try:
+            from release_gate.evals.runner import load_evals
+            evals = load_evals(evals_path)
+        except Exception as exc:
+            print(f"Error reading evals file: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    from release_gate.loop_verifier import LoopVerifier
+    result = LoopVerifier().verify(
+        iteration=iteration,
+        cost_so_far=cost,
+        output=output_text,
+        loop_policy=loop_policy,
+        trace=trace,
+        trace_policies=trace_policies,
+        evals=evals,
+    )
+
+    if as_json:
+        print(_json.dumps(result.as_dict(), indent=2))
+        sys.exit(0 if result.decision == 'SHIP' else (10 if result.decision == 'CONTINUE' else 1))
+
+    # Terminal output
+    _BOLD  = '\033[1m'
+    _RESET = '\033[0m'
+    _GREEN = '\033[92m'
+    _YELLOW = '\033[93m'
+    _RED   = '\033[91m'
+    _BLUE  = '\033[94m'
+
+    colour = {
+        'SHIP':     _GREEN,
+        'CONTINUE': _YELLOW,
+        'ROLLBACK': _RED,
+    }.get(result.decision, _RESET)
+
+    print()
+    print(f"  {_BOLD}🔁 release-gate  |  Loop Verifier{_RESET}")
+    print(f"  {'─' * 50}")
+    print(f"  Decision    {colour}{_BOLD}{result.decision}{_RESET}")
+    print(f"  Iteration   {result.iteration}")
+    print(f"  Cost so far ${result.cost_so_far:.4f}", end="")
+    if result.cost_remaining is not None:
+        print(f"  (${result.cost_remaining:.4f} remaining)", end="")
+    print()
+    if loop_id:
+        print(f"  Loop ID     {loop_id}")
+    print()
+
+    for reason in result.reasons:
+        print(f"  {reason}")
+
+    if result.violations:
+        print(f"\n  {_RED}Violations:{_RESET}")
+        for v in result.violations:
+            print(f"    ✗ {v}")
+
+    if result.warnings:
+        print(f"\n  {_YELLOW}Warnings:{_RESET}")
+        for w in result.warnings:
+            print(f"    ⚠ {w}")
+
+    print()
+
+    # Exit codes: 0 = SHIP, 10 = CONTINUE (not done yet), 1 = ROLLBACK
+    sys.exit(0 if result.decision == 'SHIP' else (10 if result.decision == 'CONTINUE' else 1))
 
 
 def unified_main():

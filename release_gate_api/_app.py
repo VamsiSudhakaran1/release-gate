@@ -24,6 +24,7 @@ from release_gate_api.db import (
     increment_usage, get_usage, get_dashboard_stats, get_findings_summary,
     update_user_plan, list_users,
     set_user_password, create_password_reset, get_password_reset, mark_reset_used,
+    save_verification, get_verifications_for_loop,
 )
 from release_gate_api.email_util import (
     send_password_reset, send_temp_password, app_base_url, send_email,
@@ -684,6 +685,120 @@ async def create_token(authorization: Optional[str] = Header(default=None)):
     db_user = get_user_by_id(user["id"])
     token = create_api_token(db_user["id"])
     return {"token": token}
+
+
+# ── Loop Verification ──────────────────────────────────────────────────────
+
+class VerifyRequest(BaseModel):
+    # Loop context
+    iteration: int
+    cost_so_far: float = 0.0
+    output: Optional[str] = None
+    loop_id: Optional[str] = None        # caller-supplied to group iterations
+
+    # Governance (one of governance_yaml or loop_policy must be present)
+    governance_yaml: Optional[str] = None  # raw YAML text of governance.yaml
+    loop_policy: Optional[Dict[str, Any]] = None   # pre-parsed loop: block
+    trace_policies: Optional[Dict[str, Any]] = None
+
+    # Trace from this iteration
+    trace: Optional[Dict[str, Any]] = None
+
+    # Eval cases (list of dicts matching the evals.yaml evals: schema)
+    evals: Optional[list] = None
+
+    # Spaturzu or any cost metering SDK integration field name
+    spaturzu_spend: Optional[float] = None  # alias: caller can use either field
+
+
+@app.post("/api/verify")
+async def loop_verify(
+    body: VerifyRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Verification endpoint for agent loops.
+
+    Called by a running loop after each iteration. Returns
+    CONTINUE / SHIP / ROLLBACK with reasons so the loop can
+    decide whether to keep iterating, deploy the output, or abort.
+
+    Authentication: Bearer JWT or rg_* API token (same as all other endpoints).
+    """
+    user = _require_user(authorization)
+
+    from release_gate.loop_verifier import LoopVerifier
+    import yaml as _yaml
+
+    # Resolve loop_policy from governance YAML if provided
+    loop_policy = body.loop_policy or {}
+    trace_policies = body.trace_policies or {}
+    if body.governance_yaml:
+        try:
+            gov = _yaml.safe_load(body.governance_yaml)
+            if isinstance(gov, dict):
+                loop_policy = loop_policy or gov.get("loop", {}) or {}
+                trace_policies = trace_policies or gov.get("trace_policies", {}) or {}
+        except Exception:
+            raise HTTPException(status_code=400, detail="governance_yaml is not valid YAML")
+
+    # Spaturzu / external cost SDK: prefer spaturzu_spend if provided
+    cost_so_far = body.spaturzu_spend if body.spaturzu_spend is not None else body.cost_so_far
+
+    result = LoopVerifier().verify(
+        iteration=body.iteration,
+        cost_so_far=cost_so_far,
+        output=body.output,
+        loop_policy=loop_policy,
+        trace=body.trace,
+        trace_policies=trace_policies,
+        evals=body.evals,
+    )
+
+    # Persist for Loop Report / history
+    vid = save_verification(
+        user_id=user["id"],
+        iteration=body.iteration,
+        decision=result.decision,
+        violations=result.violations,
+        warnings=result.warnings,
+        checks=result.checks,
+        cost_so_far=cost_so_far,
+        cost_remaining=result.cost_remaining,
+        loop_id=body.loop_id,
+    )
+
+    return {**result.as_dict(), "verification_id": vid}
+
+
+@app.get("/api/loop/{loop_id}")
+async def get_loop_report(
+    loop_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Loop Report — full iteration history for a loop run.
+
+    Returns all verify calls for the given loop_id, ordered by iteration,
+    so you can see how the decision evolved across iterations.
+    """
+    user = _require_user(authorization)
+    verifications = get_verifications_for_loop(loop_id, user["id"])
+    if not verifications:
+        raise HTTPException(status_code=404, detail="Loop not found or no verifications recorded")
+
+    decisions = [v["decision"] for v in verifications]
+    final = decisions[-1] if decisions else "UNKNOWN"
+
+    return {
+        "loop_id":       loop_id,
+        "iterations":    len(verifications),
+        "final_decision": final,
+        "history":       verifications,
+        "summary": {
+            "shipped":    decisions.count("SHIP"),
+            "continued":  decisions.count("CONTINUE"),
+            "rolled_back": decisions.count("ROLLBACK"),
+        },
+    }
 
 
 # ── Health ─────────────────────────────────────────────────────────────────

@@ -7,6 +7,41 @@
   "required": ["project", "agent", "policy", "checks"],
   "additionalProperties": true,
   "properties": {
+    "loop": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Loop verification policy. Governs how Release Gate's /api/verify endpoint drives the Verify phase of an agent loop.",
+      "properties": {
+        "max_iterations": {
+          "type": "integer", "minimum": 1,
+          "description": "Hard cap on loop iterations. Exceeding this triggers ROLLBACK."
+        },
+        "total_cost_limit": {
+          "type": "number", "minimum": 0,
+          "description": "Hard cumulative $ ceiling for the entire loop run. Exceeding triggers ROLLBACK."
+        },
+        "cost_per_iteration_limit": {
+          "type": "number", "minimum": 0,
+          "description": "Soft $ ceiling per iteration. Exceeding warns but does not immediately roll back."
+        },
+        "max_tokens_per_iteration": {
+          "type": "integer", "minimum": 0,
+          "description": "Token budget per iteration, applied to the trace validator."
+        },
+        "maker_model": {
+          "type": "string",
+          "description": "Model that generates outputs. Documented for audit purposes."
+        },
+        "checker_model": {
+          "type": "string",
+          "description": "Model used for verification. Must differ from maker_model to avoid self-review bias."
+        },
+        "stop_condition": {
+          "type": "string",
+          "description": "When to SHIP: 'always_ship' (first clean iteration), or leave blank to let Release Gate decide from check results."
+        }
+      }
+    },
     "project": {
       "type": "object",
       "required": ["name"],
