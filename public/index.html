@@ -739,6 +739,7 @@
     <ul class="nav-links">
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
+      <li><a href="#loop-section">Loop Verify</a></li>
       <li><a href="#security">Security</a></li>
       <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a></li>
     </ul>
@@ -1003,6 +1004,137 @@
       </div>
 
     </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ LOOP VERIFIER ═══════════════════════ -->
+<section id="loop-section" style="padding:72px 0;background:#f8f7ff;border-top:1px solid rgba(99,102,241,.1)">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">The Verify phase for agent loops</h2>
+      <p class="section-subtitle">Every agent loop needs a checker that isn&rsquo;t the same model that wrote the output. Release Gate owns the Verify step &mdash; returning <strong>CONTINUE</strong>, <strong>SHIP</strong>, or <strong>ROLLBACK</strong> after each iteration.</p>
+    </div>
+
+    <!-- How it fits in the loop -->
+    <div style="display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap;margin:0 0 48px;font-size:.92rem;font-weight:600">
+      <span style="background:#e0e7ff;color:#4338ca;padding:8px 18px;border-radius:8px">Discover</span>
+      <span style="color:var(--muted)">→</span>
+      <span style="background:#e0e7ff;color:#4338ca;padding:8px 18px;border-radius:8px">Plan</span>
+      <span style="color:var(--muted)">→</span>
+      <span style="background:#e0e7ff;color:#4338ca;padding:8px 18px;border-radius:8px">Execute</span>
+      <span style="color:var(--muted)">→</span>
+      <span style="background:#6366f1;color:#fff;padding:8px 18px;border-radius:8px;box-shadow:0 2px 12px rgba(99,102,241,.4)">✓ Release Gate Verify</span>
+      <span style="color:var(--muted)">→</span>
+      <span style="background:#e0e7ff;color:#4338ca;padding:8px 18px;border-radius:8px">Iterate</span>
+    </div>
+
+    <!-- Three-column: CLI / API / Governance -->
+    <div class="cli-grid" style="margin-bottom:48px">
+
+      <div class="cli-col">
+        <h3>&#x1F4BB; CLI (local loops)</h3>
+        <div class="term-block">
+<span class="t-muted">$ release-gate verify governance.yaml \</span>
+<span class="t-muted">    --iteration 3 --cost 0.12 \</span>
+<span class="t-muted">    --trace trace.jsonl --json</span>
+&nbsp;
+<span class="t-green">{ "decision": "SHIP",</span>
+<span class="t-green">  "cost_remaining": 0.88 }</span>
+&nbsp;
+<span class="yaml-cmt"># exit 0=SHIP  10=CONTINUE  1=ROLLBACK</span></div>
+        <p class="cli-col-label">Works in any shell loop. No account needed.</p>
+      </div>
+
+      <div class="cli-col">
+        <h3>&#x1F310; API (live loops)</h3>
+        <div class="term-block">
+<span class="t-muted">POST /api/verify</span>
+<span class="t-muted">{</span>
+<span class="t-muted">  "iteration": 3,</span>
+<span class="t-muted">  "cost_so_far": 0.12,</span>
+<span class="t-muted">  "trace": { "steps": [...] },</span>
+<span class="t-muted">  "loop_id": "my-loop-001"</span>
+<span class="t-muted">}</span>
+&nbsp;
+<span class="t-green">&rarr; { "decision": "CONTINUE",</span>
+<span class="t-green">    "warnings": ["8/10 iterations used"] }</span></div>
+        <p class="cli-col-label">Call from any language. Each iteration is persisted.</p>
+      </div>
+
+      <div class="cli-col">
+        <h3>&#x1F4CB; Governance</h3>
+        <div class="term-block">
+<span class="yaml-cmt"># governance.yaml</span>
+<span class="yaml-key">loop</span>:
+  <span class="yaml-key">max_iterations</span>: <span class="t-yellow">10</span>
+  <span class="yaml-key">total_cost_limit</span>: <span class="t-yellow">1.00</span>
+  <span class="yaml-key">cost_per_iteration_limit</span>: <span class="t-yellow">0.15</span>
+  <span class="yaml-key">maker_model</span>: <span class="yaml-str">claude-opus-4-8</span>
+  <span class="yaml-key">checker_model</span>: <span class="yaml-str">claude-haiku-4-5</span></div>
+        <p class="cli-col-label">Declare the policy once. Release Gate enforces it every iteration.</p>
+      </div>
+
+    </div>
+
+    <!-- Interactive Loop Verifier playground -->
+    <div style="max-width:800px;margin:0 auto">
+      <h3 style="text-align:center;font-size:1.15rem;font-weight:700;margin-bottom:20px;color:var(--heading,#18181b)">&#x1F9EA; Try the Loop Verifier</h3>
+
+      <div style="background:#fff;border-radius:16px;box-shadow:0 4px 32px rgba(99,102,241,.10);padding:28px 32px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px">
+          <div>
+            <label style="font-size:.8rem;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">ITERATION</label>
+            <input id="lv-iteration" type="number" value="3" min="1"
+              style="width:100%;padding:10px 12px;border:1.5px solid #e0e7ff;border-radius:8px;font-size:.95rem;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:.8rem;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">COST SO FAR ($)</label>
+            <input id="lv-cost" type="number" value="0.12" step="0.01" min="0"
+              style="width:100%;padding:10px 12px;border:1.5px solid #e0e7ff;border-radius:8px;font-size:.95rem;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:.8rem;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">MAX ITERATIONS</label>
+            <input id="lv-max-iter" type="number" value="5" min="1"
+              style="width:100%;padding:10px 12px;border:1.5px solid #e0e7ff;border-radius:8px;font-size:.95rem;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+          <div>
+            <label style="font-size:.8rem;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">TOTAL COST LIMIT ($)</label>
+            <input id="lv-cost-limit" type="number" value="1.00" step="0.10" min="0"
+              style="width:100%;padding:10px 12px;border:1.5px solid #e0e7ff;border-radius:8px;font-size:.95rem;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:.8rem;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">LOOP ID (optional)</label>
+            <input id="lv-loop-id" type="text" placeholder="my-loop-001"
+              style="width:100%;padding:10px 12px;border:1.5px solid #e0e7ff;border-radius:8px;font-size:.95rem;box-sizing:border-box">
+          </div>
+        </div>
+
+        <button id="lv-run-btn" onclick="runLoopVerify()"
+          style="width:100%;padding:13px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;transition:opacity .15s">
+          Verify this iteration &rarr;
+        </button>
+
+        <div id="lv-result" style="display:none;margin-top:20px;border-radius:10px;padding:20px 24px"></div>
+        <div id="lv-note" style="margin-top:12px;font-size:.78rem;color:var(--muted);text-align:center">
+          Runs against the live <code>/api/verify</code> endpoint &mdash; requires a free account and API token.
+          Without auth the result is a local simulation.
+        </div>
+      </div>
+    </div>
+
+    <!-- Loop Report teaser -->
+    <div style="margin-top:48px;text-align:center">
+      <p style="font-size:.95rem;color:var(--muted);margin-bottom:8px">After a loop completes, pull the full iteration history:</p>
+      <div class="term-block" style="max-width:500px;margin:0 auto;text-align:left">
+<span class="t-muted">GET /api/loop/my-loop-001</span>
+&nbsp;
+<span class="t-green">&rarr; { "iterations": 4,</span>
+<span class="t-green">    "final_decision": "SHIP",</span>
+<span class="t-green">    "history": [ ... ] }</span></div>
+    </div>
+
   </div>
 </section>
 
@@ -2285,6 +2417,88 @@
       btn.disabled = false;
       spinner.classList.remove('active');
     }
+  }
+
+  // ── Loop Verifier playground ──────────────────────────────────────────────
+  async function runLoopVerify() {
+    var btn     = document.getElementById('lv-run-btn');
+    var resultEl = document.getElementById('lv-result');
+    var iteration  = parseInt(document.getElementById('lv-iteration').value) || 1;
+    var costSoFar  = parseFloat(document.getElementById('lv-cost').value) || 0;
+    var maxIter    = parseInt(document.getElementById('lv-max-iter').value) || 10;
+    var costLimit  = parseFloat(document.getElementById('lv-cost-limit').value) || 0;
+    var loopId     = document.getElementById('lv-loop-id').value.trim() || null;
+
+    btn.disabled = true;
+    btn.textContent = 'Verifying…';
+    resultEl.style.display = 'none';
+
+    var loopPolicy = { max_iterations: maxIter };
+    if (costLimit > 0) loopPolicy.total_cost_limit = costLimit;
+
+    var payload = { iteration: iteration, cost_so_far: costSoFar, loop_policy: loopPolicy };
+    if (loopId) payload.loop_id = loopId;
+
+    var decision, reasons, violations, warnings, costRemaining;
+
+    try {
+      var headers = { 'Content-Type': 'application/json' };
+      if (getToken()) headers['Authorization'] = 'Bearer ' + getToken();
+      var res = await fetch(API_BASE + '/api/verify', {
+        method: 'POST', headers: headers,
+        body: JSON.stringify(payload),
+      });
+      var data = await res.json();
+      decision      = data.decision;
+      reasons       = data.reasons || [];
+      violations    = data.violations || [];
+      warnings      = data.warnings || [];
+      costRemaining = data.cost_remaining;
+    } catch(e) {
+      // Offline / no auth: simulate locally
+      decision = iteration > maxIter ? 'ROLLBACK'
+               : (costLimit > 0 && costSoFar > costLimit) ? 'ROLLBACK'
+               : (maxIter > 0 && iteration >= maxIter * 0.8) ? 'CONTINUE'
+               : 'SHIP';
+      reasons  = decision === 'ROLLBACK'
+        ? [iteration > maxIter ? 'Max iterations exceeded: ' + iteration + ' > ' + maxIter
+                               : 'Total cost limit exceeded: $' + costSoFar.toFixed(2) + ' > $' + costLimit.toFixed(2)]
+        : decision === 'CONTINUE' ? ['Approaching max iterations: ' + iteration + '/' + maxIter]
+        : ['All checks passed — output is ready to ship.'];
+      violations    = decision === 'ROLLBACK' ? reasons : [];
+      warnings      = decision === 'CONTINUE' ? reasons : [];
+      costRemaining = costLimit > 0 ? Math.max(0, costLimit - costSoFar) : null;
+    }
+
+    var colours = { SHIP: '#16a34a', CONTINUE: '#d97706', ROLLBACK: '#dc2626' };
+    var bg      = { SHIP: '#f0fdf4', CONTINUE: '#fffbeb', ROLLBACK: '#fef2f2' };
+    var icons   = { SHIP: '✅', CONTINUE: '🔄', ROLLBACK: '🛑' };
+    var col = colours[decision] || '#6b7280';
+    var bgc = bg[decision]     || '#f9fafb';
+
+    var html = '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">'
+      + '<span style="font-size:2rem">' + (icons[decision] || '❓') + '</span>'
+      + '<div>'
+      + '<div style="font-size:1.4rem;font-weight:800;color:' + col + '">' + decision + '</div>'
+      + (costRemaining !== null && costRemaining !== undefined
+          ? '<div style="font-size:.82rem;color:#6b7280">$' + costSoFar.toFixed(3) + ' spent · $' + costRemaining.toFixed(3) + ' remaining</div>'
+          : '<div style="font-size:.82rem;color:#6b7280">Iteration ' + iteration + ' · $' + costSoFar.toFixed(3) + ' spent</div>')
+      + '</div></div>';
+
+    var allMsgs = violations.concat(warnings).concat(
+      violations.length === 0 && warnings.length === 0 ? reasons : []
+    );
+    if (allMsgs.length) {
+      html += '<ul style="margin:0;padding:0 0 0 18px;font-size:.88rem;color:#374151">';
+      allMsgs.forEach(function(m) { html += '<li style="margin-bottom:4px">' + m + '</li>'; });
+      html += '</ul>';
+    }
+
+    resultEl.style.cssText = 'display:block;margin-top:20px;border-radius:10px;padding:20px 24px;background:' + bgc + ';border:1.5px solid ' + col + '33';
+    resultEl.innerHTML = html;
+
+    btn.disabled = false;
+    btn.textContent = 'Verify this iteration →';
   }
 
   // CTA section scan — fills hero input and scrolls up to show results
