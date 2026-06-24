@@ -805,7 +805,7 @@ async def get_loop_report(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.7.3"}
+    return {"status": "ok", "version": "0.7.4"}
 
 
 @app.get("/api/debug/github-app")

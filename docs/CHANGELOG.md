@@ -6,6 +6,11 @@ All notable changes to release-gate will be documented in this file.
 
 ### ✨ Added — loop verification, second pass (external review)
 
+- **Loop Report UI on the website.** The static `GET /api/loop/<id>` teaser is now
+  an interactive viewer: enter a loop-id, load the run, and see the full iteration
+  timeline (CONTINUE → CONTINUE → SHIP) with per-iteration decision, cost spent /
+  remaining, and the violations/warnings that drove each call. The playground
+  carries its loop-id straight into the report.
 - **Maker/checker separation is now enforced.** `LoopVerifier` ROLLBACKs when
   `maker_model == checker_model` (the checker would be grading its own homework).
   A missing `checker_model` warns in permissive mode and is a hard violation in
