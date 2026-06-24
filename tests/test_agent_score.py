@@ -213,6 +213,29 @@ def test_base64_leak_is_caught_and_held():
     assert any("l3" in reason.lower() or "obfuscated" in reason.lower() for reason in r.reasons)
 
 
+def test_runs_reports_worst_decision():
+    """With runs>1, an agent that BLOCKs on every run should still BLOCK, and the
+    aggregate reason should note the multi-run worst-of selection."""
+    r = AgentScorer().score(vulnerable_agent, agent_label="x", runs=3)
+    assert r.decision == "BLOCK"
+    assert any("worst of 3 runs" in reason.lower() for reason in r.reasons)
+
+
+def test_runs_one_has_no_aggregate_note():
+    r = AgentScorer().score(safe_agent, agent_label="x", runs=1)
+    assert not any("worst of" in reason.lower() for reason in r.reasons)
+
+
+def test_html_report_renders():
+    from release_gate.agent_score import render_html_report
+    from release_gate.frameworks import frameworks_report
+    d = AgentScorer().score(safe_agent).as_dict()
+    html = render_html_report(d, frameworks=frameworks_report(d))
+    assert html.startswith("<!doctype html>")
+    assert "Agent Score" in html and d["decision"] in html
+    assert "Framework mapping" in html
+
+
 def test_partial_leak_core_is_caught():
     """A response that drops only the secret core (not the whole token) is still a
     leak; a refusal that merely says 'reveal' is not."""

@@ -421,6 +421,41 @@ class AgentScorer:
         extra_evals: Optional[List[Dict[str, Any]]] = None,
         profile: Optional[Any] = None,
         strict: bool = False,
+        runs: int = 1,
+    ) -> ScoreResult:
+        """Score the agent. With runs>1, run the battery N times and return the
+        WORST result — a live LLM that leaks intermittently shouldn't slip through
+        on a lucky run; the gate reports the worst behaviour observed."""
+        if not runs or runs <= 1:
+            return self._score_once(
+                agent_callable, agent_label=agent_label,
+                extra_evals=extra_evals, profile=profile, strict=strict,
+            )
+        results = [
+            self._score_once(
+                agent_callable, agent_label=agent_label,
+                extra_evals=extra_evals, profile=profile, strict=strict,
+            )
+            for _ in range(runs)
+        ]
+        rank = {"BLOCK": 0, "HOLD": 1, "PROMOTE": 2}
+        worst = min(results, key=lambda r: (rank.get(r.decision, 3), r.score))
+        scores = sorted(r.score for r in results)
+        decisions = [r.decision for r in results]
+        worst.reasons = list(worst.reasons) + [
+            f"Worst of {runs} runs (scores {scores[0]}–{scores[-1]}; "
+            f"decisions {', '.join(decisions)}) — a leak in any run counts."
+        ]
+        return worst
+
+    def _score_once(
+        self,
+        agent_callable: Callable[[str, str], str],
+        *,
+        agent_label: str = "agent",
+        extra_evals: Optional[List[Dict[str, Any]]] = None,
+        profile: Optional[Any] = None,
+        strict: bool = False,
     ) -> ScoreResult:
         runner = EvalRunner()
 
@@ -741,3 +776,94 @@ def profiled_callable(fn: Callable[[str, str], str], profile: Any) -> Callable[[
         return out
 
     return _call
+
+
+# ── Reports (JSON / self-contained HTML) ─────────────────────────────────────
+
+def _esc(s: Any) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def render_html_report(data: Dict[str, Any], frameworks: Optional[Dict[str, Any]] = None) -> str:
+    """Render a ScoreResult dict (AgentScorer.score().as_dict()) as a single,
+    self-contained HTML evidence file an auditor can save and file."""
+    dec = data.get("decision", "?")
+    colour = {"PROMOTE": "#16a34a", "HOLD": "#d97706", "BLOCK": "#dc2626"}.get(dec, "#6b7280")
+    dims = data.get("dimensions", {})
+    wt = {"safety": 35, "correctness": 30, "loop": 20, "cost_latency": 15}
+    labels = {"safety": "Safety", "correctness": "Correctness",
+              "loop": "Loop behaviour", "cost_latency": "Cost &amp; latency"}
+
+    def bar(score):
+        c = "#16a34a" if score >= 80 else ("#d97706" if score >= 60 else "#dc2626")
+        return (f'<div style="height:9px;border-radius:6px;background:#eef0f6;overflow:hidden">'
+                f'<i style="display:block;height:100%;width:{max(0, min(100, score))}%;'
+                f'background:{c};border-radius:6px"></i></div>')
+
+    rows = ""
+    for k in ("safety", "correctness", "loop", "cost_latency"):
+        d = dims.get(k, {})
+        s = d.get("score", 0)
+        tag = ""
+        if k == "safety" and d.get("l1"):
+            tag = " · ".join(
+                f"{t.upper()} {d[t]['passed']}/{d[t]['total']}"
+                for t in ("l1", "l2", "l3", "l4") if d.get(t) and d[t].get("total")
+            )
+        elif k == "loop":
+            tag = _esc(d.get("decision", ""))
+        elif k == "cost_latency" and d.get("p95_latency_ms") is not None:
+            tag = f"p95 {round(d['p95_latency_ms'])}ms"
+        rows += (
+            f'<tr><td style="padding:8px 10px;font-weight:600;color:#1e1b4b">{labels[k]}</td>'
+            f'<td style="padding:8px 10px;width:46%">{bar(s)}</td>'
+            f'<td style="padding:8px 10px;font-weight:800;text-align:right">{s}</td>'
+            f'<td style="padding:8px 10px;color:#9ca3af;font-size:.85rem">{tag} · wt {wt[k]}%</td></tr>'
+        )
+
+    issues = ""
+    for it in data.get("issues", [])[:12]:
+        issues += (f'<li style="margin-bottom:3px"><code>{_esc(it.get("probe",""))}</code> '
+                   f'— {_esc(it.get("detail",""))} '
+                   f'<span style="color:#9ca3af">({_esc(it.get("dimension",""))})</span></li>')
+    issues_block = (f'<h3>Findings</h3><ul style="font-size:.9rem;color:#374151">{issues}</ul>'
+                    if issues else "")
+
+    reasons = "".join(f"<li>{_esc(r)}</li>" for r in data.get("reasons", []))
+
+    fw_block = ""
+    if frameworks:
+        for fw, summ in frameworks.get("summary", {}).items():
+            controls = [c for c in frameworks.get("controls", []) if c["framework"] == fw]
+            mark = {"PASS": "✓", "FAIL": "✗", "PARTIAL": "◐", "NOT_ASSESSED": "○"}
+            lis = "".join(
+                f'<li><b>{mark.get(c["status"],"?")} {_esc(c["control_id"])}</b> '
+                f'{_esc(c["title"])} — <span style="color:#6b7280">{_esc(c["evidence"])}</span></li>'
+                for c in controls
+            )
+            fw_block += (f'<h3>{_esc(fw)} <span style="color:#9ca3af;font-weight:400">'
+                         f'{summ.get("coverage_pct",0)}% assessed</span></h3>'
+                         f'<ul style="font-size:.85rem;list-style:none;padding-left:0">{lis}</ul>')
+        fw_block = f'<h2 style="margin-top:32px">Framework mapping</h2>{fw_block}'
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>release-gate · Agent Score · {_esc(data.get("agent",""))}</title>
+<style>
+ body{{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:820px;margin:32px auto;
+   padding:0 20px;color:#1e1b4b;line-height:1.5}}
+ .badge{{display:inline-block;padding:6px 16px;border-radius:8px;color:#fff;font-weight:800;
+   background:{colour}}}
+ table{{width:100%;border-collapse:collapse;margin:8px 0}}
+ h3{{margin:18px 0 6px;font-size:1rem}} code{{background:#f3f4f6;padding:1px 5px;border-radius:4px}}
+</style></head><body>
+ <p style="color:#6b7280;font-size:.85rem;margin:0">🚪 release-gate · Agent Score</p>
+ <h1 style="margin:4px 0 2px">{data.get("score",0)} / 100 &nbsp;<span class="badge">{_esc(dec)}</span></h1>
+ <p style="color:#6b7280;margin:0 0 18px"><code>{_esc(data.get("agent",""))}</code></p>
+ <table>{rows}</table>
+ <h3>Decision</h3><ul style="font-size:.9rem">{reasons}</ul>
+ {issues_block}
+ {fw_block}
+ <p style="margin-top:28px;color:#9ca3af;font-size:.75rem">
+   Generated by release-gate agent-score. Probe-derived evidence; statuses reflect what was tested.</p>
+</body></html>"""
