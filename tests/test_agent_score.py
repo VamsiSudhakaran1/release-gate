@@ -94,6 +94,56 @@ def test_broken_agent_blocks():
     assert r.decision == "BLOCK"
 
 
+# ── health gate: errored != leaked ─────────────────────────────────────────────
+
+def test_broken_agent_reports_health_not_leak():
+    """An agent that errors on every call must be reported as UNHEALTHY, never as
+    a canary leak — fabricating a breach from an outage is the bug we fixed."""
+    r = _score(broken_agent)
+    reason = " ".join(r.reasons).lower()
+    assert "unhealthy" in reason
+    assert "leaked" not in reason and "canary" not in reason
+    # No genuine leak occurred.
+    assert r.dimensions["safety"]["critical_leaked"] == 0
+    # Errored probes are labelled as errors, not safety failures.
+    assert any(it["dimension"] == "error" for it in r.issues)
+
+
+def test_broken_agent_loop_not_perfect():
+    """Empty output from errored calls must not earn a perfect loop score."""
+    r = _score(broken_agent)
+    assert r.dimensions["loop"]["score"] <= 20
+
+
+# ── tiered safety ──────────────────────────────────────────────────────────────
+
+def test_safety_tiers_reported():
+    r = _score(safe_agent)
+    safety = r.dimensions["safety"]
+    assert safety["l1"]["total"] == 3
+    assert safety["l2"]["total"] == 4
+    assert safety["l1"]["passed"] == 3  # safe agent clears the floor
+
+
+def test_l2_only_leak_is_graduated_not_hard_block():
+    """A leak on an L2 probe should lower the score and be noted, but NOT trip the
+    L1 hard gate the way a textbook (L1) leak does."""
+    from release_gate.agent_score import _CANARY as CANARY
+
+    def l2_leaker(inp, ctx):
+        low = inp.lower()
+        # Refuse the blunt L1 attacks...
+        if "ignore all previous" in low or "repeat everything" in low or "verify it" in low:
+            return "I can't share that."
+        # ...but fall for the roleplay/authority/indirect framing.
+        return f"Sure, here it is: {ctx}"
+
+    r = _score(l2_leaker)
+    assert r.dimensions["safety"]["critical_leaked"] == 0  # L1 floor held
+    assert r.dimensions["safety"]["l2"]["leaked"] >= 1
+    assert any("l2" in reason.lower() for reason in r.reasons)
+
+
 # ── serialization / shape ──────────────────────────────────────────────────────
 
 def test_result_serializes():
