@@ -75,7 +75,13 @@
 
     /* ── LAYOUT ── */
     .container { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
-    section { padding: 80px 0; }
+    section { padding: 72px 0; scroll-margin-top: 72px; }
+    /* Visual rhythm: alternate backgrounds + divider lines so the page reads as
+       distinct chapters rather than one continuous scroll. */
+    #checks-explained, #enterprise { background: var(--surface); }
+    #checks-explained, #who-its-for, #enterprise, #security, .cta-section {
+      border-top: 1px solid var(--border);
+    }
 
     /* ── HERO ── */
     .hero {
