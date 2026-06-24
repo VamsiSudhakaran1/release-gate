@@ -785,6 +785,7 @@ def print_help():
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
+    print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
     print("  --agent <spec>                          Run evals LIVE against a real agent")
@@ -1116,6 +1117,9 @@ def main():
     elif command == 'loop-sim':
         _run_loop_sim_command()
 
+    elif command == 'agent-score':
+        _run_agent_score_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
@@ -1366,6 +1370,131 @@ def _run_loop_sim_command():
 
 
 def _exit_loop_sim(decision):
+    """0 = PROMOTE, 10 = HOLD, 1 = BLOCK."""
+    sys.exit(0 if decision == 'PROMOTE' else (10 if decision == 'HOLD' else 1))
+
+
+def _run_agent_score_command():
+    """release-gate agent-score — run a behavior battery against a live agent.
+
+    Usage:
+      release-gate agent-score <agent-spec> [--evals my_evals.yaml] [--json]
+
+      <agent-spec> is py:module:fn | cmd:./script | http(s)://url
+
+    Scores Safety / Correctness / Loop / Cost into a 0-100 Agent Readiness
+    Score with a PROMOTE / HOLD / BLOCK decision. Exit: 0 PROMOTE · 10 HOLD · 1 BLOCK.
+
+    NOTE: this makes real calls to the agent (and costs real tokens).
+    """
+    import json as _json
+
+    args = sys.argv[2:]
+    if not args or args[0].startswith('-'):
+        print("Error: agent-score needs an agent spec, e.g. "
+              "release-gate agent-score py:my_pkg.agent:run", file=sys.stderr)
+        sys.exit(1)
+    agent_spec = args[0]
+    evals_path = _flag(sys.argv, '--evals')
+    as_json    = '--json' in sys.argv
+
+    # Build the agent + a shared runtime profile so latency/tokens are captured.
+    try:
+        from release_gate.agent.client import AgentClient
+        from release_gate.agent.runtime import RuntimeProfile
+        client  = AgentClient.from_spec(agent_spec)
+        profile = RuntimeProfile()
+        agent_callable = client.as_eval_callable(profile)
+    except Exception as exc:
+        print(f"Error building agent from '{agent_spec}': {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    extra_evals = None
+    if evals_path:
+        try:
+            from release_gate.evals.runner import load_evals
+            extra_evals = load_evals(evals_path)
+        except Exception as exc:
+            print(f"Error reading evals file: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    from release_gate.agent_score import AgentScorer
+    result = AgentScorer().score(
+        agent_callable, agent_label=agent_spec,
+        extra_evals=extra_evals, profile=profile,
+    )
+
+    if as_json:
+        print(_json.dumps(result.as_dict(), indent=2))
+        _exit_agent_score(result.decision)
+
+    # ── terminal scorecard ──
+    _BOLD, _RESET = '\033[1m', '\033[0m'
+    _GREEN, _YELLOW, _RED, _MUTED = '\033[92m', '\033[93m', '\033[91m', '\033[90m'
+    col  = {'PROMOTE': _GREEN, 'HOLD': _YELLOW, 'BLOCK': _RED}.get(result.decision, _RESET)
+    icon = {'PROMOTE': '✓', 'HOLD': '⚠', 'BLOCK': '✗'}.get(result.decision, '?')
+    rt = result.runtime
+
+    def _bar(score):
+        filled = int(round(score / 10.0))
+        return '█' * filled + '░' * (10 - filled)
+
+    def _dcol(score):
+        return _GREEN if score >= 80 else (_YELLOW if score >= 60 else _RED)
+
+    WEIGHTS_PCT = {"safety": 35, "correctness": 30, "loop": 20, "cost_latency": 15}
+
+    print()
+    print(f"  {_BOLD}🤖 release-gate  |  Agent Score{_RESET}")
+    print(f"  {'─' * 52}")
+    print(f"  Agent       {result.agent}")
+    calls = rt.get('calls', 0)
+    print(f"  Ran         {calls} live calls", end="")
+    if rt.get('errors'):
+        print(f"  ({rt['errors']} errored)", end="")
+    print()
+    print()
+    print(f"  {_BOLD}Agent Readiness   {col}{result.score} / 100{_RESET}   "
+          f"{col}{_BOLD}{icon}  {result.decision}{_RESET}")
+    print(f"  {'─' * 52}")
+
+    labels = {
+        "safety": "Safety", "correctness": "Correctness",
+        "loop": "Loop behavior", "cost_latency": "Cost & latency",
+    }
+    weakest = min(result.dimensions, key=lambda k: result.dimensions[k]["score"])
+    for key in ("safety", "correctness", "loop", "cost_latency"):
+        d = result.dimensions[key]
+        s = d["score"]
+        tag = ""
+        if key in ("safety", "correctness"):
+            tag = f"({d['passed']}/{d['total']})"
+        elif key == "loop":
+            tag = d["decision"]
+        elif key == "cost_latency" and d.get("p95_latency_ms") is not None:
+            tag = f"p95 {d['p95_latency_ms']:.0f}ms"
+        weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
+        print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
+              f"{_MUTED}{tag:<22}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
+
+    if result.issues:
+        print(f"\n  {_BOLD}Top issues{_RESET}")
+        for it in result.issues[:5]:
+            mark = _RED + '✗' if it['severity'] in ('critical', 'high') else _YELLOW + '⚠'
+            print(f"    {mark}{_RESET} {it['detail']}  {_MUTED}({it['dimension']}){_RESET}")
+
+    print(f"\n  Decision:  {col}{_BOLD}{icon}  {result.decision}{_RESET}")
+    for reason in result.reasons:
+        print(f"             {reason}")
+    print()
+    print(f"  {_MUTED}Add your own task evals:  "
+          f"release-gate agent-score {agent_spec} --evals my_evals.yaml{_RESET}")
+    print()
+
+    _exit_agent_score(result.decision)
+
+
+def _exit_agent_score(decision):
     """0 = PROMOTE, 10 = HOLD, 1 = BLOCK."""
     sys.exit(0 if decision == 'PROMOTE' else (10 if decision == 'HOLD' else 1))
 

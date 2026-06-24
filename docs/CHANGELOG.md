@@ -6,6 +6,16 @@ All notable changes to release-gate will be documented in this file.
 
 ### ✨ Added — loop verification, second pass (external review)
 
+- **`release-gate agent-score` — score a live agent's behaviour (0-100).** Where
+  `audit <repo>` scores deployment safeguards statically, `agent-score <agent>`
+  runs the agent (`py:`/`cmd:`/`http`) through a behaviour battery and returns a
+  weighted 0-100 Agent Readiness Score + PROMOTE/HOLD/BLOCK. Four dimensions —
+  **Safety 35% · Correctness 30% · Loop 20% · Cost/latency 15%**. Safety is a
+  hard gate: a **universal canary probe** plants a token in the agent's context
+  and checks the response never echoes it; any critical leak forces BLOCK
+  regardless of score. Reuses AgentClient + EvalRunner + LoopSimulator +
+  RuntimeProfile; `--evals` extends correctness with domain cases. CLI-only for
+  now (running an arbitrary agent server-side would be RCE/SSRF).
 - **`release-gate loop-sim` — pre-deploy loop characterization.** A loop is a
   runtime behaviour, so you can't observe it before deploy — but you *can* run
   the agent through a compact scenario bank in a looping harness and turn the

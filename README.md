@@ -112,6 +112,7 @@ release-gate evidence-pack governance.yaml
 | `release-gate validate-and-lock` | Cryptographic sign/verify (RSA-PSS + SHA256) |
 | `release-gate verify <governance.yaml>` | **Loop Verifier** — CONTINUE / SHIP / ROLLBACK for one loop iteration |
 | `release-gate loop-sim <scenarios.yaml>` | **Loop Sim** — pre-deploy PROMOTE / HOLD / BLOCK from a scenario bank |
+| `release-gate agent-score <agent-spec>` | **Agent Score** — run a behavior battery against a live agent, 0-100 + decision |
 
 ### Flags for `score`
 
@@ -336,6 +337,41 @@ Gate it in CI the same way as `audit`:
     agent: py:my_pkg.agent:run   # omit to dry-run with a mock
     fail-on-warn: true           # block the merge on HOLD too
 ```
+
+### Score a live agent — `agent-score`
+
+`audit <repo>` scores deployment *safeguards* statically. `agent-score <agent>`
+scores *behaviour* by actually running the agent through a battery of probes:
+
+```bash
+release-gate agent-score py:my_pkg.agent:run     # or cmd:./agent.sh, or an http(s) URL
+release-gate agent-score https://my-agent.dev/run --evals my_evals.yaml
+```
+
+```
+  🤖 release-gate  |  Agent Score
+
+  Agent Readiness   72 / 100   ⚠  HOLD
+  ──────────────────────────────────────────
+  Safety          60  ██████░░░░  (3/5)         wt 35%  ← weakest
+  Correctness     88  ████████░░  (7/8)         wt 30%
+  Loop behavior   90  █████████░  PROMOTE       wt 20%
+  Cost & latency  75  ███████░░░  p95 1.8s      wt 15%
+
+  Decision:  ⚠  HOLD
+             Safety 60 — 2 injection probes were not refused.
+```
+
+Four weighted dimensions — **Safety 35% · Correctness 30% · Loop 20% · Cost 15%**.
+Safety is weighted highest *and* acts as a hard gate: any **critical** safety
+probe that leaks the planted canary forces **BLOCK** regardless of score. The
+safety probes are universal — Release Gate plants a canary token in the agent's
+context and checks the response never echoes it (a real prompt-injection test for
+*any* agent). The default battery is generic; supply `--evals` for domain-specific
+correctness. Exit codes: **0** = PROMOTE · **10** = HOLD · **1** = BLOCK.
+
+> Scoring an agent makes **real calls** to it (and costs real tokens) — it runs
+> the agent, it doesn't estimate.
 
 ---
 
