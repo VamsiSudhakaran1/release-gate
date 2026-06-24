@@ -12,9 +12,17 @@ inputs:
     required: false
     default: "governance.yaml"
   command:
-    description: "Command: 'audit', 'score', 'evidence-pack', 'impact', or 'run'"
+    description: "Command: 'audit', 'score', 'evidence-pack', 'impact', 'run', or 'loop-sim'"
     required: false
     default: "score"
+  scenarios:
+    description: "Path to a loop-sim scenarios.yaml (command: loop-sim)"
+    required: false
+    default: ""
+  agent:
+    description: "Agent spec for loop-sim (py:module:fn | cmd:./script | http(s)://url). Omit to dry-run with a mock agent."
+    required: false
+    default: ""
   path:
     description: "Repo path to audit (command: audit). Defaults to the checked-out repo."
     required: false
@@ -121,8 +129,34 @@ runs:
         done
         release-gate audit "${{ inputs.path }}" $NOTIFY_FLAGS --json > /dev/null 2>&1 || true
 
+    - name: Run release-gate loop-sim
+      if: inputs.command == 'loop-sim'
+      id: loop-sim
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.scenarios }}" ]; then
+          echo "::error::command: loop-sim requires a 'scenarios' input (path to scenarios.yaml)"
+          exit 1
+        fi
+        AGENT_FLAG=""
+        if [ -n "${{ inputs.agent }}" ]; then
+          AGENT_FLAG="--agent ${{ inputs.agent }}"
+        fi
+
+        set +e
+        release-gate loop-sim "${{ inputs.scenarios }}" $AGENT_FLAG
+        EXIT_CODE=$?
+        set -e
+
+        # loop-sim exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK
+        if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then
+          echo "Loop readiness: HOLD (allowed — set fail-on-warn: true to block)"
+          exit 0
+        fi
+        exit $EXIT_CODE
+
     - name: Run release-gate ${{ inputs.command }}
-      if: inputs.command != 'audit'
+      if: inputs.command != 'audit' && inputs.command != 'loop-sim'
       id: gate
       shell: bash
       run: |

@@ -111,6 +111,7 @@ release-gate evidence-pack governance.yaml
 | `release-gate init` | Interactive setup wizard *(use `audit --emit-config` instead — pre-fills from your actual code)* |
 | `release-gate validate-and-lock` | Cryptographic sign/verify (RSA-PSS + SHA256) |
 | `release-gate verify <governance.yaml>` | **Loop Verifier** — CONTINUE / SHIP / ROLLBACK for one loop iteration |
+| `release-gate loop-sim <scenarios.yaml>` | **Loop Sim** — pre-deploy PROMOTE / HOLD / BLOCK from a scenario bank |
 
 ### Flags for `score`
 
@@ -286,6 +287,55 @@ If you use [Spaturzu](https://github.com/Nu11P01nt3r3xc3pt10n/spaturzu-sdks) for
 ```
 
 Release Gate uses the measured cost instead of an estimate.
+
+### Pre-deploy loop characterization — `loop-sim`
+
+`verify` judges *one live iteration*. `loop-sim` answers the question you have
+*before* you ship: **how does this agent behave in a looping environment?** A
+loop is a runtime behaviour, so you can't observe it ahead of time — but you can
+run the agent through a compact scenario bank in a looping harness and turn the
+aggregate trajectory into one decision: **PROMOTE / HOLD / BLOCK**.
+
+```bash
+release-gate loop-sim scenarios.yaml --agent py:my_pkg.agent:run
+```
+
+```
+  release-gate  |  Loop Sim
+
+  Scenarios   6  (4 normal · 2 adversarial)
+
+  Outcome match     5/6 scenarios reached their expected decision
+  Convergence       75% of normal scenarios shipped
+  Iterations        avg 2.3  P95 4  max 6
+  Cost / run        avg $0.06  P95 $0.19  max $0.31
+  Cost spikes       1 (16%): vague-refund
+  Adversarial       100% rolled back as required
+
+  Decision:  ⚠  HOLD
+             Convergence 75% is below the 90% target.
+```
+
+The decision is **safety-first**: any adversarial fixture that fails to ROLLBACK
+is an immediate BLOCK, as is sub-70% convergence or a worst-case cost over 2× the
+declared ceiling. Without `--agent` a deterministic mock agent runs, so you can
+dry-run the harness itself. Exit codes: **0** = PROMOTE · **10** = HOLD · **1** = BLOCK.
+
+The scenario bank (`examples/loop_scenarios.yaml`) carries a `loop:` block plus a
+compact `scenarios:` list of normal, edge, and adversarial tasks. Keep it
+representative, not exhaustive — the goal is a *defensible decision*, not full
+coverage.
+
+Gate it in CI the same way as `audit`:
+
+```yaml
+- uses: VamsiSudhakaran1/release-gate@v0.7.4
+  with:
+    command: loop-sim
+    scenarios: examples/loop_scenarios.yaml
+    agent: py:my_pkg.agent:run   # omit to dry-run with a mock
+    fail-on-warn: true           # block the merge on HOLD too
+```
 
 ---
 

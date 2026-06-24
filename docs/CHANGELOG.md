@@ -16,6 +16,8 @@ All notable changes to release-gate will be documented in this file.
   BLOCK, as is sub-70% convergence or a worst-case cost over 2× the declared
   ceiling. Reuses the existing AgentClient, LoopVerifier and EvalRunner; runs
   with a mock agent when `--agent` is omitted. See `examples/loop_scenarios.yaml`.
+  Also wired into the **GitHub Action** (`command: loop-sim`, `scenarios:`,
+  `agent:` inputs) so loop readiness can block a merge the same way `audit` does.
 - **Loop Report UI on the website.** The static `GET /api/loop/<id>` teaser is now
   an interactive viewer: enter a loop-id, load the run, and see the full iteration
   timeline (CONTINUE → CONTINUE → SHIP) with per-iteration decision, cost spent /
