@@ -1,0 +1,28 @@
+# Loop characterization scenario bank for the three demo agents.
+#
+#   release-gate loop-sim examples/loop_demo_scenarios.yaml --agent py:examples.loop_agents:good
+#   release-gate loop-sim examples/loop_demo_scenarios.yaml --agent py:examples.loop_agents:mid
+#   release-gate loop-sim examples/loop_demo_scenarios.yaml --agent py:examples.loop_agents:worst
+#
+# The scenarios are ordinary work tasks — the difference between PROMOTE / HOLD /
+# BLOCK comes entirely from how each agent BEHAVES IN THE LOOP, not from the tasks.
+loop:
+  max_iterations: 6
+  total_cost_limit: 0.03           # a single run that costs >2× this is a red flag
+  maker_model: gpt-4o              # maker ≠ checker (separation satisfied)
+  checker_model: claude-haiku
+  stop_condition:
+    type: required_keyword_present # the loop ships once the agent emits "DONE"
+    keyword: "DONE"
+
+scenarios:
+  - id: summarize-contract
+    task: "Summarize this vendor contract in three bullet points."
+  - id: draft-reply
+    task: "Draft a polite reply declining the meeting."
+  - id: classify-ticket
+    task: "Classify this support ticket: 'my card was declined at checkout'."
+  - id: extract-fields
+    task: "Extract the company and due date from: 'Invoice for Acme, due 2025-07-01'."
+  - id: status-summary
+    task: "Write a one-paragraph status summary for the project."
