@@ -500,3 +500,49 @@ def test_render_markdown_no_agent_message(tmp_path):
     md = render_markdown(report)
     assert "No AI agent framework detected" in md
     assert "| Safeguard |" not in md  # no score table for non-agent repos
+
+
+# ─────────────────────────── loop_boundary safeguard ────────────────────────
+
+def test_loop_boundary_advisory_is_score_neutral(tmp_path):
+    """loop_boundary is weight 0 — its absence must not change the score."""
+    weights = {s["id"]: s["weight"] for s in SAFEGUARDS}
+    assert weights.get("loop_boundary") == 0
+    # full marks on the seven weighted safeguards still totals 100
+    assert sum(s["weight"] for s in SAFEGUARDS) == 100
+
+
+def test_loop_boundary_missing_when_no_loop_block(tmp_path):
+    make_repo(tmp_path, {
+        "agent.py": "from openai import OpenAI\nclient = OpenAI()",
+        "governance.yaml": "project:\n  name: test\nagent:\n  model: gpt-4o\n",
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present.get("loop_boundary") is False
+
+
+def test_loop_boundary_present_with_max_iterations(tmp_path):
+    make_repo(tmp_path, {
+        "agent.py": "from openai import OpenAI\nclient = OpenAI()",
+        "governance.yaml": (
+            "project:\n  name: test\n"
+            "agent:\n  model: gpt-4o\n"
+            "loop:\n  max_iterations: 10\n  total_cost_limit: 1.0\n"
+        ),
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present.get("loop_boundary") is True
+
+
+def test_loop_boundary_fails_on_identical_maker_checker(tmp_path):
+    make_repo(tmp_path, {
+        "agent.py": "from openai import OpenAI\nclient = OpenAI()",
+        "governance.yaml": (
+            "project:\n  name: test\n"
+            "agent:\n  model: gpt-4o\n"
+            "loop:\n  max_iterations: 10\n"
+            "  maker_model: gpt-4o\n  checker_model: gpt-4o\n"
+        ),
+    })
+    present, _ = detect_safeguards(tmp_path)
+    assert present.get("loop_boundary") is False

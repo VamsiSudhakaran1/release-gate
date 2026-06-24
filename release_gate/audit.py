@@ -109,6 +109,16 @@ SAFEGUARDS = [
         "weight":    5,
         "risk":      "No record of which tools the agent called or why.",
     },
+    {
+        # Advisory (weight 0): surfaced in the report and the missing list but
+        # score-neutral, so it never perturbs the established 0-100 safeguard
+        # score. Flags repos that run agent loops without a declared boundary.
+        "id":        "loop_boundary",
+        "label":     "Loop boundary declared (loop: max_iterations / stop_condition)",
+        "dimension": "loop_safety",
+        "weight":    0,
+        "risk":      "Agent loop has no iteration cap, cost ceiling, or stop condition — it can spin without bound.",
+    },
 ]
 
 
@@ -123,6 +133,7 @@ COMPLIANCE_TAGS: Dict[str, List[str]] = {
     "auth_rate_limit":  ["OWASP-LLM:LLM01", "NIST-AI-RMF:MANAGE-1.3"],
     "eval_evidence":    ["NIST-AI-RMF:MEASURE-2.5", "EU-AI-Act:Art.9", "OWASP-LLM:LLM09"],
     "trace_policy":     ["NIST-AI-RMF:MEASURE-1.1", "EU-AI-Act:Art.12"],
+    "loop_boundary":    ["OWASP-LLM:LLM10", "NIST-AI-RMF:MANAGE-2.2"],
     # Code finding type keys
     "unbounded_llm_loop":    ["OWASP-LLM:LLM10", "NIST-AI-RMF:MANAGE-2.2"],
     "exec_sink":             ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"],
@@ -975,7 +986,7 @@ def emit_sarif(report: Dict[str, Any], path: str) -> None:
             "tool": {
                 "driver": {
                     "name": "release-gate",
-                    "version": "0.7.3",
+                    "version": "0.7.4",
                     "informationUri": "https://release-gate.com",
                     "rules": rules,
                 },
@@ -1246,7 +1257,7 @@ def render_terminal(report: Dict[str, Any]) -> None:
 
     if not report["has_ci_integration"]:
         print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
-        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.3', _BLUE)}")
+        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.4', _BLUE)}")
         step += 1
 
     print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")

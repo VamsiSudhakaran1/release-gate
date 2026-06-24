@@ -12,6 +12,10 @@
       "additionalProperties": true,
       "description": "Loop verification policy. Governs how Release Gate's /api/verify endpoint drives the Verify phase of an agent loop.",
       "properties": {
+        "mode": {
+          "type": "string", "enum": ["permissive", "strict"],
+          "description": "permissive (default): a clean iteration with no policy SHIPs. strict: max_iterations, total_cost_limit, max_tokens_per_iteration, stop_condition and checker_model must all be declared or every iteration ROLLBACKs."
+        },
         "max_iterations": {
           "type": "integer", "minimum": 1,
           "description": "Hard cap on loop iterations. Exceeding this triggers ROLLBACK."
@@ -37,8 +41,14 @@
           "description": "Model used for verification. Must differ from maker_model to avoid self-review bias."
         },
         "stop_condition": {
-          "type": "string",
-          "description": "When to SHIP: 'always_ship' (first clean iteration), or leave blank to let Release Gate decide from check results."
+          "type": ["string", "object"],
+          "description": "When to SHIP. Bare string ('always_ship', 'human_approval_required') or a typed object: {type: eval_pass_rate, min_pass_rate: 90}, {type: required_keyword_present|required_keyword_absent, keyword: '...'}, {type: artifact_exists, path: '...'}. Leave blank to let Release Gate decide from check results.",
+          "properties": {
+            "type": { "type": "string", "description": "Stop condition type." },
+            "min_pass_rate": { "type": "number", "minimum": 0, "maximum": 100 },
+            "keyword": { "type": "string" },
+            "path": { "type": "string" }
+          }
         }
       }
     },
