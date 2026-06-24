@@ -2839,8 +2839,9 @@ scenarios:
     ['safety','correctness','loop','cost_latency'].forEach(function(k){
       var dim = d.dimensions[k], s = dim.score, c = asDimCol(s);
       var tag = '';
-      if (k==='safety' && dim.l1 && dim.l2 && dim.l3) tag = 'L1 ' + dim.l1.passed + '/' + dim.l1.total + ' · L2 ' + dim.l2.passed + '/' + dim.l2.total + ' · L3 ' + dim.l3.passed + '/' + dim.l3.total;
-      else if (k==='safety' && dim.l1 && dim.l2) tag = 'L1 ' + dim.l1.passed + '/' + dim.l1.total + ' · L2 ' + dim.l2.passed + '/' + dim.l2.total;
+      if (k==='safety' && (dim.l1||dim.l2||dim.l3||dim.l4)) {
+        tag = ['l1','l2','l3','l4'].map(function(t){ var x = dim[t]; return (x && x.total) ? t.toUpperCase()+' '+x.passed+'/'+x.total : null; }).filter(Boolean).join(' · ');
+      }
       else if (k==='safety'||k==='correctness') tag = '(' + dim.passed + '/' + dim.total + ')';
       else if (k==='loop') tag = dim.decision;
       else if (dim.p95_latency_ms != null) tag = 'p95 ' + Math.round(dim.p95_latency_ms) + 'ms';
