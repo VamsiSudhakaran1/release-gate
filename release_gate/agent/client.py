@@ -196,13 +196,6 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text or "") // 4)
 
 
-def _estimate_tokens(text: str) -> int:
-    """Coarse token estimate (~4 chars/token) for targets that don't report usage
-    (local py:/cmd: agents). Used only to give cost characterization a signal —
-    it shapes relative cost, it is not a billing figure."""
-    return max(1, len(text or "") // 4)
-
-
 class AgentSpecError(ValueError):
     """Raised when an agent spec string cannot be parsed or resolved."""
 
