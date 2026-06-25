@@ -492,19 +492,43 @@ sent — it never leaves your machine.
 
 Paths are dot-separated and accept integer segments to index into / build up
 arrays (`messages.0.content`), so nested request and response shapes are
-reachable. No code, no wrapper:
+reachable. No code, no wrapper.
+
+> **Windows CMD/PowerShell:** use double quotes around the URL — single quotes
+> are not special on Windows and `&` is a command separator in CMD.
+> In PowerShell use double quotes or backtick-escape each `&` as `` `& ``.
 
 ```bash
-# A LangServe /invoke endpoint
+# macOS / Linux — single quotes protect the & from the shell
+release-gate agent-score \
+  'http://localhost:8000/simple#in=prompt&ctx=ctx&out=reply'
+```
+
+```cmd
+:: Windows CMD — double quotes
+release-gate agent-score "http://localhost:8000/simple#in=prompt&ctx=ctx&out=reply"
+```
+
+```powershell
+# Windows PowerShell — double quotes
+release-gate agent-score "http://localhost:8000/simple#in=prompt&ctx=ctx&out=reply"
+```
+
+More examples:
+
+```bash
+# LangServe /invoke
 release-gate agent-score \
   'http://localhost:8000/agent/invoke#in=input.question&out=output'
 
-# A plain FastAPI endpoint that takes {"prompt": ...} and returns {"reply": ...}
-release-gate agent-score 'https://my-agent.internal/run#in=prompt&out=reply'
-
-# An OpenAI-compatible chat endpoint — straight at the API, no wrapper
+# OpenAI-compatible chat — straight at the API, no wrapper (Linux/Mac)
 release-gate agent-score \
   'https://api.openai.com/v1/chat/completions#in=messages.0.content&out=choices.0.message.content&bearer_env=OPENAI_API_KEY&body.model=gpt-4o-mini&body.messages.0.role=user&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens'
+```
+
+```cmd
+:: Same — Windows CMD
+release-gate agent-score "https://api.openai.com/v1/chat/completions#in=messages.0.content&out=choices.0.message.content&bearer_env=OPENAI_API_KEY&body.model=gpt-4o-mini&body.messages.0.role=user&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens"
 ```
 
 If `out=` points at a field that isn't in the response, the call fails loudly

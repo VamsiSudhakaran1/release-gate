@@ -23,13 +23,20 @@ Run it:
 
 Then, in another shell, score it:
 
-    # /simple — map prompt/reply field names
-    release-gate agent-score \
-      'http://localhost:8000/simple#in=prompt&ctx=ctx&out=reply&usage_in=tokens.in&usage_out=tokens.out'
+    macOS / Linux (single quotes protect the & from the shell):
 
-    # /openai — nested request + response paths, static model field
-    release-gate agent-score \
-      'http://localhost:8000/openai#in=messages.0.content&out=choices.0.message.content&body.model=demo&body.messages.0.role=user&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens'
+      release-gate agent-score \
+        'http://localhost:8000/simple#in=prompt&ctx=ctx&out=reply&usage_in=tokens.in&usage_out=tokens.out'
+
+      release-gate agent-score \
+        'http://localhost:8000/openai#in=messages.0.content&out=choices.0.message.content&body.model=demo&body.messages.0.role=user&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens'
+
+    Windows CMD / PowerShell (use double quotes — single quotes are not
+    special on Windows and & is a CMD command separator):
+
+      release-gate agent-score "http://localhost:8000/simple#in=prompt&ctx=ctx&out=reply&usage_in=tokens.in&usage_out=tokens.out"
+
+      release-gate agent-score "http://localhost:8000/openai#in=messages.0.content&out=choices.0.message.content&body.model=demo&body.messages.0.role=user&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens"
 
 Stop it with Ctrl-C.
 """
@@ -107,8 +114,9 @@ class Handler(BaseHTTPRequestHandler):
 def main(host: str = "127.0.0.1", port: int = 8000) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"demo agent listening on http://{host}:{port}  (POST /simple, /openai)")
-    print("score it, e.g.:")
-    print(f"  release-gate agent-score 'http://{host}:{port}/simple#in=prompt&ctx=ctx&out=reply'")
+    print("score it from another shell:")
+    print(f"  Linux/Mac:  release-gate agent-score 'http://{host}:{port}/simple#in=prompt&ctx=ctx&out=reply'")
+    print(f"  Windows:    release-gate agent-score \"http://{host}:{port}/simple#in=prompt&ctx=ctx&out=reply\"")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
