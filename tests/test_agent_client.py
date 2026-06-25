@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from release_gate.agent import AgentClient, AgentResponse, AgentSpecError, RuntimeProfile
+from release_gate.agent.client import HttpFieldMap, _get_path, _set_path
 
 
 # --------------------------------------------------------------------------- #
@@ -159,6 +160,97 @@ def test_parse_http_openai_usage_keys():
     text, tin, tout = AgentClient._parse_http_body(body)
     assert text == "ok"
     assert tin == 11 and tout == 3
+
+
+# --------------------------------------------------------------------------- #
+# HTTP field mapping (the adapter)
+# --------------------------------------------------------------------------- #
+def test_fragment_does_not_leak_into_target():
+    c = AgentClient.from_spec("https://host/agent#in=prompt&out=reply")
+    assert c.target == "https://host/agent"  # fragment stripped from the URL
+    assert c.fieldmap.in_path == "prompt"
+    assert c.fieldmap.out_path == "reply"
+
+
+def test_default_fieldmap_when_no_fragment():
+    c = AgentClient.from_spec("https://host/agent")
+    assert c.fieldmap.is_default
+
+
+def test_unknown_fieldmap_key_raises():
+    with pytest.raises(AgentSpecError):
+        AgentClient.from_spec("https://host/agent#bogus=1")
+
+
+def test_set_and_get_nested_path():
+    body = {}
+    _set_path(body, "messages.0.content", "hi")
+    _set_path(body, "messages.0.role", "user")
+    assert body == {"messages": [{"content": "hi", "role": "user"}]}
+    assert _get_path(body, "messages.0.content") == "hi"
+    assert _get_path(body, "messages.5.content") is None
+    assert _get_path(body, "nope.here") is None
+
+
+def test_build_http_body_openai_shape():
+    c = AgentClient.from_spec(
+        "https://api/x#in=messages.0.content&body.model=gpt-4o-mini&body.messages.0.role=user"
+    )
+    body = c._build_http_body("hello", "")
+    assert body["model"] == "gpt-4o-mini"
+    assert body["messages"][0] == {"role": "user", "content": "hello"}
+
+
+def test_build_http_body_context_omitted_when_empty():
+    c = AgentClient.from_spec("https://host/a#in=q&ctx=c")
+    assert c._build_http_body("x", "") == {"q": "x"}
+    assert c._build_http_body("x", "ctx!") == {"q": "x", "c": "ctx!"}
+
+
+def test_static_body_coerces_scalars():
+    c = AgentClient.from_spec("https://host/a#body.temperature=0.5&body.stream=false&body.n=2")
+    body = c._build_http_body("x", "")
+    assert body["temperature"] == 0.5
+    assert body["stream"] is False
+    assert body["n"] == 2
+
+
+def test_parse_http_out_path_nested():
+    fm = HttpFieldMap.parse("out=choices.0.message.content")
+    body = json.dumps({"choices": [{"message": {"content": "the answer"}}]})
+    text, tin, tout = AgentClient._parse_http_body(body, fm)
+    assert text == "the answer"
+
+
+def test_parse_http_out_path_missing_raises():
+    fm = HttpFieldMap.parse("out=choices.0.text")
+    with pytest.raises(RuntimeError):
+        AgentClient._parse_http_body(json.dumps({"choices": []}), fm)
+
+
+def test_parse_http_mapped_usage_paths():
+    fm = HttpFieldMap.parse(
+        "out=choices.0.message.content&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens"
+    )
+    body = json.dumps({
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 4},
+    })
+    text, tin, tout = AgentClient._parse_http_body(body, fm)
+    assert text == "ok" and tin == 12 and tout == 4
+
+
+def test_bearer_env_missing_raises_at_invoke(monkeypatch):
+    monkeypatch.delenv("RG_TEST_TOKEN", raising=False)
+    c = AgentClient.from_spec("https://host/a#bearer_env=RG_TEST_TOKEN")
+    resp = c.invoke("x")
+    assert not resp.ok
+    assert "RG_TEST_TOKEN" in resp.error
+
+
+def test_method_defaults_to_post_and_overridable():
+    assert HttpFieldMap.parse("").method == "POST"
+    assert HttpFieldMap.parse("method=put").method == "PUT"
 
 
 # --------------------------------------------------------------------------- #

@@ -346,6 +346,10 @@ scores *behaviour* by actually running the agent through a battery of probes:
 ```bash
 release-gate agent-score py:my_pkg.agent:run     # or cmd:./agent.sh, or an http(s) URL
 release-gate agent-score https://my-agent.dev/run --evals my_evals.yaml
+
+# Already have an HTTP agent with different field names? Map them inline —
+# no wrapper. (See "HTTP field mapping" below.)
+release-gate agent-score 'http://localhost:8000/agent/invoke#in=input.question&out=output'
 ```
 
 ```
@@ -468,6 +472,43 @@ Runtime latency (avg / p50 / p95 / max), error rate, and token usage are
 captured into the readiness report and evidence pack. A failing or unreachable
 agent surfaces as a failed eval — no silent passes. Stdlib-only; no agent SDK
 required. See `examples/agent_example.py`.
+
+#### HTTP field mapping — point it at the agent you already have
+
+Most agents already speak HTTP, just not with release-gate's exact field names.
+Instead of writing a wrapper, append a `#`-fragment to the URL that **remaps the
+request and response fields**. The fragment is stripped before the request is
+sent — it never leaves your machine.
+
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `in=<path>` | request field for the eval input | `input` |
+| `ctx=<path>` | request field for the context | `context` |
+| `out=<path>` | response field holding the agent's text | search `response`/`output`/`text`/`content`/`message` |
+| `usage_in` / `usage_out` | response fields for token counts | the `usage` object |
+| `method=<verb>` | HTTP method | `POST` |
+| `bearer_env=<VAR>` | send `Authorization: Bearer $VAR` | — |
+| `body.<path>=<val>` | add a static field to the request body | — |
+
+Paths are dot-separated and accept integer segments to index into / build up
+arrays (`messages.0.content`), so nested request and response shapes are
+reachable. No code, no wrapper:
+
+```bash
+# A LangServe /invoke endpoint
+release-gate agent-score \
+  'http://localhost:8000/agent/invoke#in=input.question&out=output'
+
+# A plain FastAPI endpoint that takes {"prompt": ...} and returns {"reply": ...}
+release-gate agent-score 'https://my-agent.internal/run#in=prompt&out=reply'
+
+# An OpenAI-compatible chat endpoint — straight at the API, no wrapper
+release-gate agent-score \
+  'https://api.openai.com/v1/chat/completions#in=messages.0.content&out=choices.0.message.content&bearer_env=OPENAI_API_KEY&body.model=gpt-4o-mini&body.messages.0.role=user&usage_in=usage.prompt_tokens&usage_out=usage.completion_tokens'
+```
+
+If `out=` points at a field that isn't in the response, the call fails loudly
+(with the response's top-level keys) rather than scoring an empty string.
 
 ### Trace Validator
 
