@@ -25,6 +25,7 @@ from release_gate_api.db import (
     update_user_plan, list_users,
     set_user_password, create_password_reset, get_password_reset, mark_reset_used,
     save_verification, get_verifications_for_loop,
+    save_question, list_questions,
 )
 from release_gate_api.email_util import (
     send_password_reset, send_temp_password, app_base_url, send_email,
@@ -519,6 +520,31 @@ async def admin_list_users(authorization: Optional[str] = Header(default=None)):
     users = list_users(limit=500)
     # Never expose hashed passwords
     return {"users": [{"id": u["id"], "email": u["email"], "plan": u["plan"], "created_at": u.get("created_at")} for u in users]}
+
+
+class QuestionRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/questions")
+async def submit_question(body: QuestionRequest, authorization: Optional[str] = Header(default=None)):
+    """Submit a question from the FAQ. Signup-gated: only authenticated users can
+    ask, so every question carries an email we can reply to."""
+    user = _require_user(authorization)
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="question is required")
+    if len(q) > 2000:
+        raise HTTPException(status_code=400, detail="question is too long (max 2000 characters)")
+    qid = save_question(user["id"], user.get("email"), q)
+    return {"ok": True, "id": qid}
+
+
+@app.get("/api/admin/questions")
+async def admin_list_questions(authorization: Optional[str] = Header(default=None)):
+    """List submitted questions, newest first. Admin only."""
+    _require_admin(authorization)
+    return {"questions": list_questions(limit=500)}
 
 
 @app.post("/api/admin/set-plan")
