@@ -130,6 +130,16 @@ def init_db():
             )""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_verif_user   ON verifications(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_verif_loop   ON verifications(loop_id)")
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS questions (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                email       TEXT,
+                question    TEXT NOT NULL,
+                answered    INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL
+            )""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_questions_user ON questions(user_id)")
         else:
             cur.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -176,6 +186,12 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_verif_user ON verifications(user_id);
             CREATE INDEX IF NOT EXISTS idx_verif_loop ON verifications(loop_id);
+            CREATE TABLE IF NOT EXISTS questions (
+                id TEXT PRIMARY KEY, user_id TEXT NOT NULL, email TEXT,
+                question TEXT NOT NULL, answered INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_questions_user ON questions(user_id);
             """)
             # SQLite: add columns if they don't exist yet (ignore errors if already present)
             for col_sql in [
@@ -315,6 +331,36 @@ def save_run(repo_url: str, report: Dict, user_id: Optional[str] = None) -> str:
              frameworks, json.dumps(report), now),
         )
     return rid
+
+
+# ── Questions (FAQ submissions, signup-gated) ────────────────────────────────
+
+def save_question(user_id: str, email: Optional[str], question: str) -> str:
+    qid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    ph = _ph()
+    with get_db() as db:
+        cur = db.cursor()
+        cur.execute(
+            f"INSERT INTO questions (id, user_id, email, question, answered, created_at) "
+            f"VALUES ({ph},{ph},{ph},{ph},0,{ph})",
+            (qid, user_id, email, question, now),
+        )
+    return qid
+
+
+def list_questions(limit: int = 200) -> List[Dict]:
+    with get_db() as db:
+        cur = db.cursor()
+        if _USE_POSTGRES:
+            import psycopg2.extras
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"SELECT id, user_id, email, question, answered, created_at "
+            f"FROM questions ORDER BY created_at DESC LIMIT {int(limit)}"
+        )
+        rows = cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
 
 
 def get_runs_for_user(user_id: str, limit: int = 50) -> List[Dict]:
