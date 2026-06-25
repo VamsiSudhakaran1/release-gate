@@ -537,6 +537,16 @@ async def submit_question(body: QuestionRequest, authorization: Optional[str] = 
     if len(q) > 2000:
         raise HTTPException(status_code=400, detail="question is too long (max 2000 characters)")
     qid = save_question(user["id"], user.get("email"), q)
+    if ADMIN_EMAIL:
+        try:
+            asker = user.get("email") or "unknown"
+            send_email(
+                ADMIN_EMAIL,
+                f"New release-gate question from {asker}",
+                f"From: {asker}\n\n{q}\n\nView all questions: {app_base_url()}/api/admin/questions",
+            )
+        except Exception as exc:
+            print(f"[questions] email notify failed: {exc}", file=sys.stderr)
     return {"ok": True, "id": qid}
 
 
