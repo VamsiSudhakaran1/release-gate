@@ -1384,6 +1384,50 @@
   </div>
 </section>
 
+<!-- ═══════════════════════ FITS YOUR STACK ═══════════════════════ -->
+<section id="stack-fit" style="padding:72px 0;background:#f8f7ff;border-top:1px solid rgba(99,102,241,.1)">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Fits your stack</p>
+      <h2 class="section-title">Add the agent layer to the security tooling you already run</h2>
+      <p class="section-subtitle">SonarQube, Snyk and your SAST suite keep your <em>code</em> healthy. release-gate keeps your <em>agent</em> safe to ship. They&rsquo;re complementary &mdash; release-gate doesn&rsquo;t replace anything you already trust, it covers the layer those tools were never built to see.</p>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;max-width:960px;margin:0 auto 32px">
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:24px 26px">
+        <div style="font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text);opacity:.7;margin-bottom:12px">Your SAST tools cover</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:10px">The code layer</div>
+        <ul style="margin:0;padding-left:18px;font-size:.9rem;color:var(--text);line-height:1.9">
+          <li>SQL injection, XSS, CSRF, path traversal</li>
+          <li>Vulnerable &amp; outdated dependencies (CVEs)</li>
+          <li>Code smells, coverage, maintainability</li>
+          <li>Supply-chain &amp; license risk</li>
+        </ul>
+        <div style="margin-top:14px;font-size:.82rem;color:var(--text);opacity:.75;line-height:1.6">Keep running these. release-gate doesn&rsquo;t duplicate them.</div>
+      </div>
+
+      <div style="background:#fff;border:2px solid var(--accent);border-radius:14px;padding:24px 26px;box-shadow:0 8px 24px rgba(99,102,241,.12)">
+        <div style="font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);margin-bottom:12px">release-gate adds</div>
+        <div style="font-weight:700;color:var(--heading);margin-bottom:10px">The agent layer</div>
+        <ul style="margin:0;padding-left:18px;font-size:.9rem;color:var(--text);line-height:1.9">
+          <li>Prompt-injection surfaces in system prompts</li>
+          <li>Cost-runaway loops &amp; missing token ceilings</li>
+          <li>LLM output reaching <code style="font-size:.82em">eval</code>/<code style="font-size:.82em">exec</code>/shell sinks</li>
+          <li>Declared safeguards: budget ceiling, kill switch, owner, evals, trace policy</li>
+          <li>A single <strong>PROMOTE / HOLD / BLOCK</strong> ship decision</li>
+        </ul>
+        <div style="margin-top:14px;font-size:.82rem;color:var(--text);opacity:.75;line-height:1.6">The failure modes that only exist once an LLM is in the loop.</div>
+      </div>
+
+    </div>
+
+    <p style="max-width:720px;margin:0 auto;text-align:center;font-size:.95rem;color:var(--text);line-height:1.7">
+      A clean SonarQube report means your code won&rsquo;t leak a buffer or run an injected query. It says nothing about whether your agent has a budget ceiling, a kill switch, or a prompt-injection surface in its system message. release-gate closes that gap &mdash; so &ldquo;the code passed&rdquo; and &ldquo;the agent is safe to deploy&rdquo; finally mean the same thing.
+    </p>
+  </div>
+</section>
+
 <!-- ═══════════════════════ SECURITY & PRIVACY ═══════════════════════ -->
 <section id="security" style="padding:72px 0">
   <div class="container">
