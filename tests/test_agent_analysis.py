@@ -135,3 +135,16 @@ def test_secret_key_name_not_flagged():
     from release_gate.verify import _is_real_secret
     assert _is_real_secret('_REDDIT_TOKEN_SECRET = "REDDIT_TOKEN"') is False
     assert _is_real_secret('api_key = "sk-abc123def456ghi789xyz"') is True
+
+
+def test_dummy_sequential_key_not_flagged():
+    from release_gate.verify import _is_real_secret
+    # sequential dummy used in a test that proves secrets are blocked
+    assert _is_real_secret('mem.remember("never store sk-abcdefghijklmnopqrstuvwxyz123456")') is False
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5dE0fG"') is True
+
+
+def test_js_execsync_constant_command_not_flagged():
+    from release_gate.verify import _js_exec_is_dynamic
+    assert _js_exec_is_dynamic("execSync('git ls-files --cached', {cwd: d})") is False
+    assert _js_exec_is_dynamic("exec(`rm -rf ${dir}`)") is True
