@@ -408,6 +408,56 @@ def compute_score(present: Dict[str, bool],
     return score, decision
 
 
+def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
+                        agent_detected: bool = True) -> Dict[str, Any]:
+    """Objective code-safety score from the code findings alone.
+
+    This is the half of the audit that does NOT depend on adopting a
+    governance.yaml — it reflects the real risk in the source (prompt-injection
+    surfaces, exec sinks, uncapped LLM calls, hardcoded secrets). It moves
+    per-repo, so two different agents get two different scores.
+    """
+    findings = findings or []
+    high = sum(1 for f in findings if f.get("severity") in ("high", "critical"))
+    med = sum(1 for f in findings if f.get("severity") == "medium")
+    low = sum(1 for f in findings if f.get("severity") == "low")
+
+    if not agent_detected:
+        # No agent framework → nothing to score behaviorally.
+        return {"score": None, "decision": "N/A", "high": 0, "medium": 0, "low": 0,
+                "total": 0, "applicable": False}
+
+    score = max(0, 100 - 25 * high - 8 * med - 2 * low)
+    if high >= 3 or score < 50:
+        decision = "BLOCK"
+    elif high >= 1 or score < 80:
+        decision = "HOLD"
+    else:
+        decision = "PROMOTE"
+    return {"score": score, "decision": decision, "high": high, "medium": med,
+            "low": low, "total": len(findings), "applicable": True}
+
+
+def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
+    """Governance-maturity score from declared/detected safeguards.
+
+    This is the half that release-gate exists to drive: have you DECLARED the
+    safeguards (budget ceiling, kill switch, owner, evals, trace policy …) so
+    they can be enforced. Low here means 'undeclared', not 'unsafe'.
+    """
+    total_weight = sum(s["weight"] for s in SAFEGUARDS)
+    earned = sum(s["weight"] for s in SAFEGUARDS if present.get(s["id"], False))
+    score = round(earned / total_weight * 100)
+    n_present = sum(1 for s in SAFEGUARDS if present.get(s["id"], False))
+    if score >= PROMOTE_THRESHOLD:
+        level = "Mature"
+    elif score >= HOLD_THRESHOLD:
+        level = "Partial"
+    else:
+        level = "Undeclared"
+    return {"score": score, "level": level, "present": n_present, "total": len(SAFEGUARDS)}
+
+
 # ─────────────────────────── URL / remote repo support ──────────────────────
 
 def _is_github_url(target: str) -> bool:
@@ -563,6 +613,8 @@ def build_report(root: Path) -> Dict[str, Any]:
     ]
 
     score, decision = compute_score(present, code_findings)
+    code_safety = compute_code_safety(code_findings, agent_detected=agent_detected)
+    governance = compute_governance(present)
     has_ci = _has_github_actions_integration(root)
 
     # Enrich each safeguard with its evidence/issues for the report + UI.
@@ -615,6 +667,8 @@ def build_report(root: Path) -> Dict[str, Any]:
         "code_findings":      code_findings,
         "score":              score,
         "decision":           decision,
+        "code_safety":        code_safety,
+        "governance":         governance,
         "real_checks":        real_check_results,
     }
 
@@ -1192,6 +1246,25 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
           f"{_col(f'{score} / 100', score_col, _BOLD)}   "
           f"{_col(bar_fill, score_col)}{_col(bar_empty, _MUTED)}")
     print()
+
+    # Two-axis split: Agent Code Safety (objective) + Governance (declared).
+    cs = report.get("code_safety") or {}
+    gov = report.get("governance") or {}
+    if cs.get("applicable"):
+        cs_col = _GREEN if cs["decision"] == "PROMOTE" else (_YELLOW if cs["decision"] == "HOLD" else _RED)
+        cs_score = f"{cs['score']}/100"
+        cs_counts = f"{cs['high']} high · {cs['medium']} med · {cs['low']} low"
+        print(f"  {_col('Agent Code Safety', _BOLD)}  {_col(cs_score, cs_col, _BOLD)}  "
+              f"{_col(cs['decision'], cs_col)}   {_col(cs_counts, _MUTED)}")
+        print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — the agent-layer SAST misses', _MUTED)}")
+    if gov:
+        gov_col = _GREEN if gov["level"] == "Mature" else (_YELLOW if gov["level"] == "Partial" else _RED)
+        gov_score = f"{gov['score']}/100"
+        gov_counts = f"{gov['present']}/{gov['total']} safeguards declared"
+        print(f"  {_col('Governance       ', _BOLD)}  {_col(gov_score, gov_col, _BOLD)}  "
+              f"{_col(gov['level'], gov_col)}   {_col(gov_counts, _MUTED)}")
+    print()
+
     icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
     print(f"  {_col(f'Decision:  {icon}  {decision}', dec_col, _BOLD)}")
     print()
