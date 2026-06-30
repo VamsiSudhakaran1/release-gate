@@ -530,6 +530,41 @@ def _looks_placeholder(line: str) -> bool:
     return bool(_SECRET_PLACEHOLDER_RE.search(line))
 
 
+# Capture the assigned value so we can tell a real credential from a key/env-var
+# NAME (e.g. `SECRET = "REDDIT_TOKEN"` is a lookup key, not a token). A taOS
+# maintainer caught exactly this false positive.
+_ASSIGNED_VALUE_RE = re.compile(
+    r"(?:api[_\-]?key|secret|token|password|passwd|apikey)\s*[:=]\s*['\"]([^'\"]+)['\"]",
+    re.IGNORECASE)
+
+
+def _is_real_secret(line: str) -> bool:
+    """True only if the line plausibly contains an actual credential value."""
+    if _looks_placeholder(line):
+        return False
+    # Strong, unambiguous: a provider key prefix.
+    if re.search(r"\b(?:sk-[A-Za-z0-9]{16,}|rg_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}"
+                 r"|AKIA[A-Z0-9]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})", line):
+        return True
+    m = _ASSIGNED_VALUE_RE.search(line)
+    if not m:
+        return False
+    val = m.group(1).strip()
+    # A key/env-var NAME, not a value: ALL_CAPS_WITH_UNDERSCORES or a dotted path.
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", val):
+        return False
+    if "." in val and " " not in val and "/" not in val:
+        return False
+    # Real secrets are long and high-entropy.
+    if len(val) < 20:
+        return False
+    has_digit = any(c.isdigit() for c in val)
+    has_alpha = any(c.isalpha() for c in val)
+    has_mixed_or_special = (any(c.islower() for c in val) and any(c.isupper() for c in val)) \
+        or any(not c.isalnum() for c in val)
+    return has_alpha and (has_digit or has_mixed_or_special)
+
+
 def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
     """Python source — real AST analysis (LLM calls, exec sinks, prompt
     injection) plus a placeholder-aware secret scan.
@@ -546,7 +581,7 @@ def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
         s = line.strip()
         if s.startswith("#"):
             continue
-        if _SECRET_RE.search(line) and not _looks_placeholder(line):
+        if _SECRET_RE.search(line) and _is_real_secret(line):
             findings.append(_finding(
                 "high", "Hardcoded secret / API key", rel, i, "<redacted>",
                 "Move secrets to environment variables or a secrets manager — never commit them.",
@@ -614,7 +649,7 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
             code = _strip_js_strings(line)
 
         # Hardcoded API key
-        if _JS_SECRET_RE.search(line) and not _looks_placeholder(line):
+        if _JS_SECRET_RE.search(line) and _is_real_secret(line):
             findings.append(_finding(
                 "high", "Hardcoded secret / API key", rel, i, "<redacted>",
                 "Move secrets to environment variables or a secrets manager — never commit them.",

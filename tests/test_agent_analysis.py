@@ -100,3 +100,38 @@ def test_dynamic_exec_without_taint_is_medium():
     src = "code = build()\nexec(code)\n"
     fs = analyze_python(src, "x.py")
     assert any(f["title"] == "Dynamic execution sink" for f in fs)
+
+
+# ── Regressions from the taOS maintainer's review (real false positives) ─────
+
+def test_subprocess_popen_list_arg_not_flagged():
+    src = (
+        "import subprocess\n"
+        "def launch(url, browser):\n"
+        "    subprocess.Popen([browser, f'--app={url}'])\n"
+    )
+    assert "Dynamic execution sink" not in titles(src)
+    assert "Dangerous execution sink" not in titles(src)
+
+
+def test_method_named_exec_not_a_sink():
+    # PocketFlow Node lifecycle: def exec(self, ...) is a method, not exec()
+    src = (
+        "class Node:\n"
+        "    def exec(self, prep_res):\n"
+        "        return prep_res\n"
+    )
+    assert "Dynamic execution sink" not in titles(src)
+    assert "Dangerous execution sink" not in titles(src)
+
+
+def test_os_popen_still_flagged():
+    src = "import os\ndef run(cmd):\n    return os.popen(cmd).read()\n"
+    assert any(t in ("Dangerous execution sink", "Dynamic execution sink") for t in titles(src))
+
+
+def test_secret_key_name_not_flagged():
+    # SECRET = "REDDIT_TOKEN" is a lookup KEY NAME, not a credential (taOS).
+    from release_gate.verify import _is_real_secret
+    assert _is_real_secret('_REDDIT_TOKEN_SECRET = "REDDIT_TOKEN"') is False
+    assert _is_real_secret('api_key = "sk-abc123def456ghi789xyz"') is True

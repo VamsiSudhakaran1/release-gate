@@ -131,6 +131,7 @@ class _Analyzer(ast.NodeVisitor):
         self.llm_aliases: Set[str] = set()    # names bound to LLM modules/ctors
         self.llm_vars: Set[str] = set()        # vars holding an LLM client
         self.tainted: Set[str] = set()         # vars holding model output / input
+        self.llm_signal = False                # repo actually invokes/constructs an LLM
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -154,6 +155,7 @@ class _Analyzer(ast.NodeVisitor):
         targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
         ctor = _ctor_name(node.value)
         if ctor and (ctor in LLM_CONSTRUCTORS or ctor in self.llm_aliases):
+            self.llm_signal = True
             for t in targets:
                 self.llm_vars.add(t)
         # x = <llm call>  → x is model output (tainted)
@@ -204,6 +206,7 @@ class _Analyzer(ast.NodeVisitor):
     def _check_llm_token_ceiling(self, node: ast.Call):
         if not self._is_llm_call(node):
             return
+        self.llm_signal = True
         kwargs = {k.arg.lower() for k in node.keywords if k.arg}
         if kwargs & TOKEN_KEYS:
             return
@@ -224,14 +227,15 @@ class _Analyzer(ast.NodeVisitor):
             kind = func.id + "()"
         elif isinstance(func, ast.Attribute):
             dotted = _dotted(func) or ""
-            if dotted.endswith("os.system") or dotted == "system" and "os" in (_root_name(func) or ""):
+            low = dotted.lower()
+            if low.endswith("os.system"):
                 kind = "os.system()"
-            elif dotted.endswith("os.system"):
-                kind = "os.system()"
-            elif ".popen" in dotted.lower():
+            elif low.endswith("os.popen"):     # specifically os.popen, NOT subprocess.Popen
                 kind = "os.popen()"
-            elif _root_name(func) == "subprocess" or ".subprocess." in ("." + dotted):
-                # subprocess.* is only a shell-injection sink with shell=True
+            elif ".subprocess." in ("." + dotted) or _root_name(func) == "subprocess":
+                # subprocess.run/Popen/call is a shell-injection sink ONLY with
+                # shell=True. A list-argument call (subprocess.Popen([...])) runs
+                # no shell and is not flagged — that was a real false positive.
                 shell_true = any(
                     k.arg == "shell" and isinstance(k.value, ast.Constant) and k.value.value is True
                     for k in node.keywords
@@ -297,6 +301,19 @@ class _Analyzer(ast.NodeVisitor):
             "line": getattr(node, "lineno", 0), "snippet": "",
             "recommendation": rec,
         }
+
+
+def has_llm_usage(source: str) -> bool:
+    """True if the file actually constructs or calls an LLM (not just imports/mentions)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    a = _Analyzer("x")
+    a.visit(tree)
+    a.llm_signal = False
+    a.visit(tree)  # second pass so assignments inform call classification
+    return a.llm_signal or bool(a.llm_vars)
 
 
 def analyze_python(source: str, rel: str) -> List[Dict[str, Any]]:
