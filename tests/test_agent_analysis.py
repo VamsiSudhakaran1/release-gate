@@ -175,3 +175,22 @@ def test_resolved_llm_var_still_flagged():
         "out = llm.invoke(prompt)\n"
     )
     assert "LLM call with no token ceiling" in titles(src)
+
+
+def test_shell_command_clearing_env_not_a_secret():
+    from release_gate.verify import _is_real_secret
+    assert _is_real_secret('cmd = f\'set "ANTHROPIC_API_KEY=" && {tgt} /login\'') is False
+
+
+def test_constant_interpolation_in_system_prompt_not_flagged():
+    # f"{BROWSER_SYSTEM_MESSAGE}..." interpolates a constant, not user input
+    src = 'm=[{"role":"system","content": f"{BROWSER_SYSTEM_MESSAGE}\\nNote"}]\n'
+    assert "Interpolated system prompt (injection surface)" not in titles(src)
+
+
+def test_js_execsync_bare_var_is_medium_interp_is_high():
+    from release_gate.verify import _scan_js_file
+    bare = _scan_js_file("a.js", "const r = execSync(cmd, {shell:true})\n")
+    interp = _scan_js_file("b.js", "const r = execSync(`run ${userInput}`)\n")
+    assert any(f["severity"] == "medium" for f in bare)
+    assert any(f["severity"] == "high" for f in interp)

@@ -19,6 +19,7 @@ Returns findings in the same shape as release_gate.verify._finding.
 from __future__ import annotations
 
 import ast
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 # ── Known LLM SDK surface ────────────────────────────────────────────────────
@@ -281,9 +282,16 @@ class _Analyzer(ast.NodeVisitor):
                 content_val = v
         if role_is_system and isinstance(content_val, ast.JoinedStr):
             interp = [v for v in content_val.values if isinstance(v, ast.FormattedValue)]
-            if interp:
+            # Only the interpolations that could be DYNAMIC matter. An ALL_CAPS
+            # name (BROWSER_SYSTEM_MESSAGE) is a module constant, not user input,
+            # so interpolating it is not an injection surface.
+            def _is_constanty(fv):
+                ns = _names_in(fv.value)
+                return ns and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", n) for n in ns)
+            dynamic = [fv for fv in interp if not _is_constanty(fv)]
+            if dynamic:
                 names = set()
-                for fv in interp:
+                for fv in dynamic:
                     names |= _names_in(fv.value)
                 tainted = bool(names & self.tainted) or any(
                     any(h in n.lower() for h in INPUT_HINTS) for n in names)
