@@ -512,9 +512,15 @@ def _finalize_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Filter tooling-path runtime findings + de-dup. Applied at EVERY return of
     scan_code_findings (including the max-files early exit on big repos)."""
     # Build/CI/tooling scripts are not the agent runtime, so an exec sink or loop
-    # there is not an agent-layer risk. Keep secrets (bad to commit anywhere).
-    findings = [f for f in findings
-                if not (_is_tooling_path(f["file"]) and f["title"] in _RUNTIME_ONLY_TITLES)]
+    # there is not an agent-layer risk. And a hardcoded secret in a *_test.py is a
+    # test fixture, not a leaked credential.
+    def _drop(f):
+        if _is_tooling_path(f["file"]) and f["title"] in _RUNTIME_ONLY_TITLES:
+            return True
+        if _is_test_path(f["file"]) and f["title"] == "Hardcoded secret / API key":
+            return True
+        return False
+    findings = [f for f in findings if not _drop(f)]
     seen = set()
     unique = []
     for f in findings:
@@ -538,7 +544,20 @@ _TOOLING_PATH_RE = re.compile(
 
 
 def _is_tooling_path(rel: str) -> bool:
-    return bool(_TOOLING_PATH_RE.search(rel.replace("\\", "/")))
+    rel = rel.replace("\\", "/")
+    return bool(_TOOLING_PATH_RE.search(rel) or _is_test_path(rel))
+
+
+# Test/spec FILES (not just tests/ dirs): config_test.py, test_foo.py, x.spec.ts…
+_TEST_FILE_RE = re.compile(
+    r"(^|/)(?:test_[^/]+|[^/]+_test|[^/]+\.test|[^/]+\.spec|[^/]+_spec)\.[A-Za-z]+$",
+    re.IGNORECASE)
+
+
+def _is_test_path(rel: str) -> bool:
+    rel = rel.replace("\\", "/")
+    return bool(_TEST_FILE_RE.search(rel)
+                or re.search(r"(^|/)(tests?|__tests__|e2e|cypress)(/|$)", rel, re.IGNORECASE))
 
 
 # Lines that match the secret regex but are obviously placeholders/env reads —
