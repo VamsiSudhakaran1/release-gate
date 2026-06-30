@@ -521,7 +521,7 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
 # governance _PLACEHOLDER_RE above, which validates governance.yaml values.)
 _SECRET_PLACEHOLDER_RE = re.compile(
     r"your[_\-]?(?:api|key|token|secret)|x{4,}|\.\.\.|<[^>]+>|example|changeme|"
-    r"placeholder|dummy|test[_\-]?key|insert[_\-]?your|\bfake\b|\bsample\b|"
+    r"placeholder|dummy|test[_\-]?key|insert[_\-]?your|\bfake\b|\bsample\b|\bdemo\b|"
     r"os\.environ|getenv|process\.env|settings\.|config\.|\$\{",
     re.IGNORECASE)
 
@@ -570,8 +570,12 @@ def _is_real_secret(line: str) -> bool:
     if not m:
         return False
     val = m.group(1).strip()
-    # A key/env-var NAME, not a value: ALL_CAPS_WITH_UNDERSCORES or a dotted path.
+    # A key/env-var NAME, not a value: ALL_CAPS_WITH_UNDERSCORES.
     if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", val):
+        return False
+    # A code identifier / handler name (snake_case, camelCase) — not a secret,
+    # e.g. "handle_skills_clawhub_get_token".
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", val):
         return False
     if "." in val and " " not in val and "/" not in val:
         return False

@@ -148,3 +148,10 @@ def test_js_execsync_constant_command_not_flagged():
     from release_gate.verify import _js_exec_is_dynamic
     assert _js_exec_is_dynamic("execSync('git ls-files --cached', {cwd: d})") is False
     assert _js_exec_is_dynamic("exec(`rm -rf ${dir}`)") is True
+
+
+def test_handler_name_and_demo_secret_not_flagged():
+    from release_gate.verify import _is_real_secret
+    assert _is_real_secret('TOKEN: "handle_skills_clawhub_get_token"') is False  # identifier
+    assert _is_real_secret('JWT_SECRET = "production-demo-secret"') is False       # demo
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5"') is True
