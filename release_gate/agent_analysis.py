@@ -210,6 +210,24 @@ class _Analyzer(ast.NodeVisitor):
         self._check_exec_sink(node)
         self.generic_visit(node)
 
+    def visit_While(self, node: ast.While):
+        # An infinite loop (`while True:` / `while 1:`) wrapping an LLM call is
+        # the AutoGPT-style runaway: completion criteria may never be met, so it
+        # spins and burns budget. A break alone is not a cap — that's the bug.
+        test = node.test
+        infinite = isinstance(test, ast.Constant) and bool(test.value)
+        if infinite:
+            for n in ast.walk(node):
+                if isinstance(n, ast.Call) and self._is_llm_call(n):
+                    self.findings.append(self._f(
+                        "high", "Unbounded loop around an LLM call", node,
+                        "An infinite loop wraps an LLM call with no iteration cap. "
+                        "If the stop condition is never met it spins forever, "
+                        "burning tokens and budget. Add an explicit max-iterations ceiling.",
+                    ))
+                    break
+        self.generic_visit(node)
+
     def _check_llm_token_ceiling(self, node: ast.Call):
         if not self._is_llm_call(node):
             return
