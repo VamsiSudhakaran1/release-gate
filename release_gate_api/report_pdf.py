@@ -87,22 +87,23 @@ def render_report_pdf(
                  new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
-    # ── Score + decision band ───────────────────────────────────────────
-    dcol = _DECISION_COLOR.get(decision, MUTED)
-    pdf.set_draw_color(*dcol)
-    pdf.set_line_width(0.6)
-    y0 = pdf.get_y()
-    pdf.set_fill_color(248, 247, 255)
-    pdf.rect(18, y0, pdf.epw, 22, style="DF")
-    pdf.set_xy(22, y0 + 4)
-    pdf.set_font("Helvetica", "B", 26)
-    pdf.set_text_color(*HEADING)
-    pdf.cell(40, 14, _ascii(f"{score if score is not None else '--'}/100"))
-    pdf.set_xy(70, y0 + 4)
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(*dcol)
-    pdf.cell(0, 14, _ascii(decision or "UNKNOWN"))
-    pdf.set_y(y0 + 26)
+    # ── Two-axis scorecard: Agent Code Safety + Governance ──────────────
+    cs = report.get("code_safety") or {}
+    gov = report.get("governance") or {}
+    if cs.get("applicable"):
+        cs_col = _DECISION_COLOR.get((cs.get("decision") or "").upper(), MUTED)
+        _axis_band(pdf, "Agent Code Safety", cs.get("score"), cs.get("decision"),
+                   f"{cs.get('high',0)} high / {cs.get('medium',0)} med / {cs.get('low',0)} low",
+                   cs_col)
+    else:
+        dcol = _DECISION_COLOR.get(decision, MUTED)
+        _axis_band(pdf, "Readiness", score, decision, "", dcol)
+    if gov:
+        lvl = gov.get("level", "")
+        gcol = GREEN if lvl == "Mature" else (AMBER if lvl == "Partial" else RED)
+        _axis_band(pdf, "Governance", gov.get("score"), lvl,
+                   f"{gov.get('present',0)}/{gov.get('total',0)} safeguards declared", gcol)
+    pdf.ln(2)
 
     # ── Summary counts ──────────────────────────────────────────────────
     passed_sg = sum(1 for v in safeguards.values()
@@ -197,6 +198,33 @@ def render_report_pdf(
 
     out = pdf.output()
     return bytes(out)
+
+
+def _axis_band(pdf, title: str, score, label, sub, color) -> None:
+    """Render one score axis as a left-bordered band."""
+    y0 = pdf.get_y()
+    pdf.set_fill_color(248, 247, 255)
+    pdf.set_draw_color(*color)
+    pdf.set_line_width(0.6)
+    pdf.rect(18, y0, pdf.epw, 16, style="DF")
+    pdf.set_xy(21, y0 + 2.5)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(*MUTED)
+    pdf.cell(0, 4, _ascii(title.upper()), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_xy(21, y0 + 6.5)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(*HEADING)
+    pdf.cell(34, 8, _ascii(f"{score if score is not None else '--'}/100"))
+    pdf.set_xy(58, y0 + 7.5)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(*color)
+    pdf.cell(40, 6, _ascii(str(label or "")))
+    if sub:
+        pdf.set_xy(100, y0 + 8)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*MUTED)
+        pdf.cell(0, 5, _ascii(sub))
+    pdf.set_y(y0 + 18)
 
 
 def _section(pdf, title: str) -> None:

@@ -408,14 +408,46 @@ def compute_score(present: Dict[str, bool],
     return score, decision
 
 
+# Per-finding base penalty by severity. The score is built by *pattern*, not by
+# raw count: ten uncapped LLM calls are one systemic discipline gap, not ten
+# independent failures — so each finding TYPE saturates. This keeps the score a
+# believable gradient (a repo with one injection surface ≠ a repo riddled with
+# exec sinks) instead of every agent repo flooring to 0.
+_SEVERITY_BASE = {"critical": 24, "high": 22, "medium": 9, "low": 2.5}
+_TYPE_CAP_MULT = 2.2   # one finding type can cost at most base * this
+
+
+def _code_safety_factors(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Per-type penalty breakdown so the score can explain itself."""
+    import math
+    by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for f in findings:
+        by_type.setdefault(f.get("title") or f.get("type") or "finding", []).append(f)
+    factors = []
+    for title, items in by_type.items():
+        sev = (items[0].get("severity") or "low").lower()
+        base = _SEVERITY_BASE.get(sev, 2.5)
+        n = len(items)
+        # First occurrence costs `base`; each additional one adds a shrinking
+        # amount (log growth), capped so a single repeated pattern can't alone
+        # zero the score.
+        penalty = min(base * (1 + 0.7 * math.log(n)) if n > 1 else base, base * _TYPE_CAP_MULT)
+        factors.append({"title": title, "severity": sev, "count": n,
+                        "penalty": round(penalty, 1)})
+    # Heaviest first — that's the order a reader cares about.
+    factors.sort(key=lambda x: x["penalty"], reverse=True)
+    return factors
+
+
 def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
                         agent_detected: bool = True) -> Dict[str, Any]:
-    """Objective code-safety score from the code findings alone.
+    """Objective Agent Code Safety score from the code findings alone.
 
-    This is the half of the audit that does NOT depend on adopting a
-    governance.yaml — it reflects the real risk in the source (prompt-injection
-    surfaces, exec sinks, uncapped LLM calls, hardcoded secrets). It moves
-    per-repo, so two different agents get two different scores.
+    The half of the audit that does NOT depend on adopting a governance.yaml: it
+    reflects real agent-layer risk in the source (prompt-injection surfaces,
+    exec sinks fed by model output, uncapped LLM calls, hardcoded secrets) — the
+    risks generic SAST/SonarQube don't model. It moves per-repo, and per finding
+    *pattern* with diminishing returns, so the number is a believable gradient.
     """
     findings = findings or []
     high = sum(1 for f in findings if f.get("severity") in ("high", "critical"))
@@ -425,17 +457,23 @@ def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
     if not agent_detected:
         # No agent framework → nothing to score behaviorally.
         return {"score": None, "decision": "N/A", "high": 0, "medium": 0, "low": 0,
-                "total": 0, "applicable": False}
+                "total": 0, "applicable": False, "factors": []}
 
-    score = max(0, 100 - 25 * high - 8 * med - 2 * low)
-    if high >= 3 or score < 50:
+    factors = _code_safety_factors(findings)
+    score = max(0, round(100 - sum(f["penalty"] for f in factors)))
+
+    # Verdict is count-driven so it can't be gamed by the curve:
+    #   PROMOTE only when there's nothing of note (no high, no medium).
+    #   any high or ≥3 mediums, or a low score → escalate.
+    if high >= 3 or score < 45:
         decision = "BLOCK"
-    elif high >= 1 or score < 80:
+    elif high >= 1 or med >= 1 or score < 85:
         decision = "HOLD"
     else:
         decision = "PROMOTE"
     return {"score": score, "decision": decision, "high": high, "medium": med,
-            "low": low, "total": len(findings), "applicable": True}
+            "low": low, "total": len(findings), "applicable": True,
+            "factors": factors}
 
 
 def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
@@ -1256,7 +1294,13 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
         cs_counts = f"{cs['high']} high · {cs['medium']} med · {cs['low']} low"
         print(f"  {_col('Agent Code Safety', _BOLD)}  {_col(cs_score, cs_col, _BOLD)}  "
               f"{_col(cs['decision'], cs_col)}   {_col(cs_counts, _MUTED)}")
-        print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — the agent-layer SAST misses', _MUTED)}")
+        factors = cs.get("factors") or []
+        if factors:
+            driving = "; ".join(f"{f['title']} ×{f['count']} (-{f['penalty']:g})"
+                                for f in factors[:3])
+            print(f"     {_col('Driving the score: ' + driving, _MUTED)}")
+        else:
+            print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — the agent-layer SAST misses', _MUTED)}")
     if gov:
         gov_col = _GREEN if gov["level"] == "Mature" else (_YELLOW if gov["level"] == "Partial" else _RED)
         gov_score = f"{gov['score']}/100"

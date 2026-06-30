@@ -2530,8 +2530,15 @@
 
   function renderReportDetail(data) {
     var rpt = data.report || {};
-    var score = (data.score != null ? data.score : (rpt.score != null ? rpt.score : '—'));
-    var decision = (data.decision || rpt.decision || 'HOLD').toUpperCase();
+    var cs = rpt.code_safety || null;
+    var gov = rpt.governance || null;
+    var score, decision;
+    if (cs && cs.applicable && cs.score != null) {
+      score = cs.score; decision = (cs.decision || 'HOLD').toUpperCase();
+    } else {
+      score = (data.score != null ? data.score : (rpt.score != null ? rpt.score : '—'));
+      decision = (data.decision || rpt.decision || 'HOLD').toUpperCase();
+    }
     var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
     var repoShort = (data.repo_url || '').replace('https://github.com/', '');
     var dateStr = data.created_at ? new Date(data.created_at).toLocaleString() : '—';
@@ -2554,6 +2561,25 @@
       '<div><div style="font-size:1.15rem;font-weight:800;color:var(--heading)">' + escHtml(repoShort || 'Report') + '</div>' +
       '<div style="margin-top:4px"><span class="pg-decision-badge ' + decClass + '">' + escHtml(decision) + '</span>' +
       ' <span style="font-size:.8rem;opacity:.7;margin-left:8px">' + escHtml(dateStr) + '</span></div></div></div>';
+
+    // Two-axis scorecard
+    if ((cs && cs.applicable) || gov) {
+      var ax = '<div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">';
+      if (cs && cs.applicable && cs.score != null) {
+        ax += _axisCard('Agent Code Safety', cs.score, cs.decision,
+          (cs.high||0)+' high · '+(cs.medium||0)+' med · '+(cs.low||0)+' low',
+          'Injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SAST misses.',
+          _decClass(cs.decision));
+      }
+      if (gov) {
+        ax += _axisCard('Governance', gov.score, gov.level,
+          (gov.present||0)+'/'+(gov.total||0)+' declared',
+          'Declared, enforceable safeguards. Low = undeclared, not unsafe.',
+          _decClass(gov.level === 'Mature' ? 'PROMOTE' : gov.level === 'Partial' ? 'HOLD' : 'BLOCK'));
+      }
+      ax += '</div>';
+      h += ax;
+    }
 
     // Metrics row
     h += '<div class="rpt-row" style="margin-top:18px">' +
@@ -2858,9 +2884,15 @@
     var resEl = document.getElementById('as-results');
     var findings = report.code_findings || [];
     var lockedCount = report._code_findings_count;
-    var decision = (report.decision || 'HOLD').toUpperCase();
+    var cs = report.code_safety || null;
+    var decision, score;
+    if (cs && cs.applicable && cs.score != null) {
+      decision = (cs.decision || 'HOLD').toUpperCase(); score = cs.score;
+    } else {
+      decision = (report.decision || 'HOLD').toUpperCase();
+      score = (report.score != null ? report.score : '—');
+    }
     var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
-    var score = (report.score != null ? report.score : '—');
     var repoShort = (url || '').replace('https://github.com/', '').replace('https://', '');
 
     var sev = { high:0, medium:0, low:0 };
