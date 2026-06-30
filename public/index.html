@@ -3295,11 +3295,20 @@
       }
     }
 
-    // Web report link — only for logged-in users where run_id was returned
+    // Web report link + PDF download — only for logged-in users where run_id was returned
     var runLinkEl = document.getElementById('pg-run-link');
     if (runLinkEl) {
       if (data._run_id) {
-        runLinkEl.innerHTML = '<a href="/r/' + encodeURIComponent(data._run_id) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border-radius:8px;border:1px solid #c4b5fd;">&#x1F4CA; View full report + trend history &rarr;</a>';
+        var rid = encodeURIComponent(data._run_id);
+        var isPaid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
+        var pdfLabel = isPaid ? '&#x2B07;&#xFE0F; Download full PDF report'
+                              : '&#x2B07;&#xFE0F; Download PDF (summary)';
+        runLinkEl.innerHTML =
+          '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">' +
+            '<a href="/r/' + rid + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border-radius:8px;border:1px solid #c4b5fd;">&#x1F4CA; View full report + trend history &rarr;</a>' +
+            '<button type="button" onclick="downloadRunPdf(\'' + data._run_id + '\', this)" style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-weight:600;font-size:.85rem;padding:8px 14px;background:#6366f1;border-radius:8px;border:none;cursor:pointer;">' + pdfLabel + '</button>' +
+          '</div>' +
+          (isPaid ? '' : '<div style="font-size:.78rem;color:#6b7280;margin-top:6px;">Free reports show a summary. <a href="#pricing" style="color:#6366f1;font-weight:600;">Upgrade to Pro</a> for every finding with file:line, fixes &amp; compliance mapping.</div>');
         runLinkEl.style.display = 'block';
       } else {
         runLinkEl.style.display = 'none';
@@ -3313,6 +3322,34 @@
     // Hide sample output once a real scan has run
     var sampleSection = document.getElementById('sample-output-section');
     if (sampleSection) sampleSection.style.display = 'none';
+  }
+
+  // Download the PDF report for a run. The endpoint is auth-gated, so we fetch
+  // with the Bearer header and save the blob (a plain <a href> can't send it).
+  async function downloadRunPdf(runId, btn) {
+    var original = btn ? btn.innerHTML : null;
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Preparing PDF…'; }
+    try {
+      var res = await fetch(API_BASE + '/api/run/' + encodeURIComponent(runId) + '/report.pdf', {
+        headers: getToken() ? { 'Authorization': 'Bearer ' + getToken() } : {}
+      });
+      if (!res.ok) {
+        if (res.status === 401) { openAuthModal('signup'); return; }
+        throw new Error('Could not generate the report (HTTP ' + res.status + ').');
+      }
+      var blob = await res.blob();
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'release-gate-report-' + runId + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+    } catch (e) {
+      alert(e.message || 'PDF download failed.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
   }
 
   async function runAutoFix() {
