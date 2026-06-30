@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 # Ensure release_gate package is importable
@@ -710,6 +710,46 @@ async def run_detail(run_id: str, authorization: Optional[str] = Header(default=
         "created_at": run.get("created_at"),
         "report": report,
     }
+
+
+# Plans that unlock the full detailed report (PDF + web). Everyone else gets
+# the summary tier, which teases the locked detail to drive an upgrade.
+PAID_REPORT_PLANS = {"pro", "enterprise", "admin"}
+
+
+@app.get("/api/run/{run_id}/report.pdf")
+async def run_report_pdf(run_id: str, authorization: Optional[str] = Header(default=None)):
+    """Downloadable PDF report for a run. Owner-only.
+
+    Free plan → summary PDF (score, decision, finding counts, teaser).
+    Pro/Enterprise → full PDF with every finding (file:line + fixes) and the
+    compliance mapping.
+    """
+    user = _require_user(authorization)
+    run = get_run(run_id)
+    if not run or run.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    full = user.get("plan", "free") in PAID_REPORT_PLANS
+    try:
+        from release_gate_api.report_pdf import render_report_pdf
+        pdf_bytes = render_report_pdf(
+            run.get("report") or {},
+            repo_url=run.get("repo_url", ""),
+            run_id=run_id,
+            full=full,
+            created_at=run.get("created_at"),
+        )
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PDF generation is temporarily unavailable")
+
+    tier = "full" if full else "summary"
+    filename = f"release-gate-{tier}-{run_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── API tokens ─────────────────────────────────────────────────────────────

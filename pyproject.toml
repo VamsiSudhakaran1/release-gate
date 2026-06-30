@@ -43,6 +43,7 @@ dependencies = [
     "httpx>=0.27.0",
     "psycopg2-binary>=2.9.9",
     "PyJWT>=2.8.0",
+    "fpdf2>=2.7.0",  # pure-Python PDF report generation (paid detailed report)
 ]
 
 # Supply-chain note: for reproducible production installs, pin dependencies with
