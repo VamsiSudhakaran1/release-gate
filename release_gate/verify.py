@@ -579,6 +579,10 @@ def _is_real_secret(line: str) -> bool:
         return False
     if "." in val and " " not in val and "/" not in val:
         return False
+    # Shell metacharacters / template markers → a command or template string, not
+    # a credential (e.g. `set "ANTHROPIC_API_KEY=" && {cmd} /login`).
+    if re.search(r"[&|;$`<>{}]", val) or "/" in val:
+        return False
     # Real secrets are long and high-entropy.
     if len(val) < 20:
         return False
@@ -701,8 +705,14 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
         # exec/eval sink — only when the command is DYNAMIC. A constant string
         # literal (execSync('git ls-files ...')) is not an injection sink.
         if code and _JS_EXEC_SINK_RE.search(code) and _js_exec_is_dynamic(line):
+            # Interpolation/concatenation = clearly dynamic command → high.
+            # A bare variable argument → medium (can't prove the source without
+            # JS dataflow; many are internal install/CLI commands).
+            interpolated = "${" in line or bool(re.search(r"['\"`]\s*\+|\+\s*['\"`]", line))
             findings.append(_finding(
-                "high", "Dangerous execution sink", rel, i, stripped[:120],
+                "high" if interpolated else "medium",
+                "Dangerous execution sink" if interpolated else "Dynamic execution sink",
+                rel, i, stripped[:120],
                 "eval/new Function/child_process.exec on a dynamic command is a "
                 "remote-code-execution risk if model or user input reaches it. "
                 "Use a fixed argument list or strictly validate/sandbox the input.",
