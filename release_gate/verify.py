@@ -538,14 +538,34 @@ _ASSIGNED_VALUE_RE = re.compile(
     re.IGNORECASE)
 
 
+def _looks_dummy_token(tok: str) -> bool:
+    """True if a key-shaped token is obviously a placeholder/test value, e.g.
+    sk-abcdefghijklmnopqrstuvwxyz123456 (sequential), sk-xxxxxxxx, sk-1234..."""
+    body = re.sub(r"^(?:sk-|rg_|ghp_|AKIA|xox[baprs]-)", "", tok)
+    if len(body) < 8:
+        return False
+    # Longest run of consecutive-ordinal characters (abcdef… / 123456…).
+    run = best = 1
+    for a, b in zip(body, body[1:]):
+        run = run + 1 if ord(b) - ord(a) == 1 else 1
+        best = max(best, run)
+    if best >= 8:
+        return True
+    if len(set(body.lower())) <= 4:                      # mostly one repeated char
+        return True
+    return bool(re.search(r"abcdef|qwerty|123456|x{4,}|test|dummy|example|fake|sample",
+                          tok, re.IGNORECASE))
+
+
 def _is_real_secret(line: str) -> bool:
     """True only if the line plausibly contains an actual credential value."""
     if _looks_placeholder(line):
         return False
-    # Strong, unambiguous: a provider key prefix.
-    if re.search(r"\b(?:sk-[A-Za-z0-9]{16,}|rg_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}"
-                 r"|AKIA[A-Z0-9]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})", line):
-        return True
+    # Strong, unambiguous: a provider key prefix — unless it's a dummy/test token.
+    m = re.search(r"\b(sk-[A-Za-z0-9]{16,}|rg_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}"
+                  r"|AKIA[A-Z0-9]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})", line)
+    if m:
+        return not _looks_dummy_token(m.group(1))
     m = _ASSIGNED_VALUE_RE.search(line)
     if not m:
         return False
@@ -622,6 +642,25 @@ _JS_EXEC_SINK_RE = re.compile(
 )
 
 
+def _js_exec_is_dynamic(line: str) -> bool:
+    """True if a JS exec/eval call takes a dynamic command (not a constant string).
+
+    `execSync('git ls-files')` → constant → not a sink. `exec(`...${x}`)` or
+    `execSync(userCmd)` → dynamic → real risk.
+    """
+    m = re.search(r"(?:eval|new\s+Function|execSync|spawnSync|spawn|exec)\s*\(", line)
+    if not m:
+        return True  # be conservative if we can't locate the call
+    rest = line[m.end():].lstrip()
+    if not rest:
+        return True
+    if rest[0] in "'\"`":
+        # First argument is a string literal — dynamic only if it interpolates
+        # (${...}) or is concatenated with a variable.
+        return "${" in line or bool(re.search(r"['\"`]\s*\+", line))
+    return True  # bare identifier / expression argument
+
+
 def _strip_js_strings(line: str) -> str:
     """Blank string/template-literal contents so matches inside strings (e.g.
     require('child_process')) don't register as code."""
@@ -655,12 +694,14 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "Move secrets to environment variables or a secrets manager — never commit them.",
             ))
 
-        # exec/eval sink (matched on string-stripped, non-import code only)
-        if code and _JS_EXEC_SINK_RE.search(code):
+        # exec/eval sink — only when the command is DYNAMIC. A constant string
+        # literal (execSync('git ls-files ...')) is not an injection sink.
+        if code and _JS_EXEC_SINK_RE.search(code) and _js_exec_is_dynamic(line):
             findings.append(_finding(
                 "high", "Dangerous execution sink", rel, i, stripped[:120],
-                "eval/new Function/child_process.exec near model or user input is a "
-                "remote-code-execution risk. Remove it or strictly validate/sandbox inputs.",
+                "eval/new Function/child_process.exec on a dynamic command is a "
+                "remote-code-execution risk if model or user input reaches it. "
+                "Use a fixed argument list or strictly validate/sandbox the input.",
             ))
 
         # Unbounded LLM loop: while/for loop containing LLM call within a nearby window
