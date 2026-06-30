@@ -200,6 +200,43 @@ def _parse_owner_repo(url: str):
     return (parts[0], parts[1]) if len(parts) >= 2 else (None, None)
 
 
+import re as _re
+
+_GH_NAME_RE = _re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def _normalize_repo_input(raw: str) -> Optional[str]:
+    """Turn forgiving user input into a canonical GitHub/GitLab repo URL.
+
+    Accepts a full URL, ``github.com/owner/repo``, a bare ``owner/repo``, and a
+    pasted CLI command (``release-gate audit owner/repo``). Returns None for
+    anything that isn't a parseable repo — the web endpoint then shows a clear
+    error instead of silently treating it as a local path and reporting
+    'no agent framework detected'.
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    # Strip a pasted shell/CLI prefix: "$ release-gate audit <x>", "rg audit <x>".
+    s = _re.sub(r"^\$?\s*(?:release-gate|rg)\s+audit\s+", "", s, flags=_re.IGNORECASE).strip()
+    s = _re.sub(r"^audit\s+", "", s, flags=_re.IGNORECASE).strip()
+    s = s.strip().strip('"').strip("'").rstrip("/")
+    if not s:
+        return None
+    low = s.lower()
+    if low.startswith(("http://", "https://")):
+        return s if ("github.com/" in low or "gitlab.com/" in low) else None
+    if low.startswith(("github.com/", "www.github.com/", "gitlab.com/")):
+        return "https://" + s.lstrip("/")
+    # Bare owner/repo
+    parts = s.split("/")
+    if len(parts) == 2:
+        owner, repo = parts[0], parts[1].replace(".git", "")
+        if _GH_NAME_RE.match(owner) and _GH_NAME_RE.match(repo):
+            return f"https://github.com/{owner}/{repo}"
+    return None
+
+
 def _run_audit(url: str) -> Dict[str, Any]:
     """Run release-gate audit and return the raw report dict.
 
@@ -284,9 +321,13 @@ async def audit_public(body: AuditRequest, request: Request, authorization: Opti
     - Starter (free): full results, 10/month limit
     - Pro/Enterprise: unlimited
     """
-    url = body.url.strip()
+    url = _normalize_repo_input(body.url)
     if not url:
-        raise HTTPException(status_code=400, detail="url is required")
+        raise HTTPException(
+            status_code=400,
+            detail="That doesn't look like a GitHub repo. Paste a URL like "
+                   "https://github.com/owner/repo (or just owner/repo).",
+        )
 
     user = _current_user(authorization)
 
