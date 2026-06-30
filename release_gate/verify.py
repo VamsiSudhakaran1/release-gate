@@ -516,87 +516,41 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
     return unique
 
 
+# Lines that match the secret regex but are obviously placeholders/env reads —
+# flagging these destroys credibility, so filter them out. (Distinct from the
+# governance _PLACEHOLDER_RE above, which validates governance.yaml values.)
+_SECRET_PLACEHOLDER_RE = re.compile(
+    r"your[_\-]?(?:api|key|token|secret)|x{4,}|\.\.\.|<[^>]+>|example|changeme|"
+    r"placeholder|dummy|test[_\-]?key|insert[_\-]?your|\bfake\b|\bsample\b|"
+    r"os\.environ|getenv|process\.env|settings\.|config\.|\$\{",
+    re.IGNORECASE)
+
+
+def _looks_placeholder(line: str) -> bool:
+    return bool(_SECRET_PLACEHOLDER_RE.search(line))
+
+
 def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
-    findings: List[Dict[str, Any]] = []
-    lines = text.splitlines()
-    is_js = rel.endswith((".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"))
+    """Python source — real AST analysis (LLM calls, exec sinks, prompt
+    injection) plus a placeholder-aware secret scan.
 
-    for i, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        # skip Python/JS comment lines
-        if stripped.startswith("#") or stripped.startswith("//"):
+    The structural analysis lives in release_gate.agent_analysis so it can
+    resolve what's actually an LLM client and trace input into sinks, instead of
+    pattern-matching method names. This is what makes a finding trustworthy
+    enough to put in front of a maintainer.
+    """
+    from release_gate.agent_analysis import analyze_python
+    findings: List[Dict[str, Any]] = list(analyze_python(text, rel))
+
+    for i, line in enumerate(text.splitlines(), start=1):
+        s = line.strip()
+        if s.startswith("#"):
             continue
-
-        # Dangerous execution sinks (Python + Node)
-        if _EXEC_SINK_RE.search(line):
-            findings.append(_finding(
-                "high", "Dangerous execution sink", rel, i, stripped,
-                "eval/exec/shell=True/child_process.exec can execute arbitrary input. "
-                "If any model output reaches this, it's remote code execution. "
-                "Remove it or strictly validate inputs.",
-            ))
-
-        # Hardcoded secrets
-        if _SECRET_RE.search(line):
+        if _SECRET_RE.search(line) and not _looks_placeholder(line):
             findings.append(_finding(
                 "high", "Hardcoded secret / API key", rel, i, "<redacted>",
                 "Move secrets to environment variables or a secrets manager — never commit them.",
             ))
-
-        # Unbounded loop near an LLM call (Python: while True:  JS: while(true))
-        py_infinite = re.match(r"while\s+True\s*:", stripped)
-        js_infinite = is_js and _JS_WHILE_RE.match(stripped)
-        if py_infinite or js_infinite:
-            window = "\n".join(lines[i - 1:i + 6])
-            if _LLM_CALL_RE.search(window) or (is_js and _JS_LLM_CALL_RE.search(window)):
-                findings.append(_finding(
-                    "high", "Unbounded loop around an LLM call", rel, i, stripped,
-                    "An infinite loop wrapping an LLM call with no iteration cap can spin "
-                    "forever, burning tokens and budget. Add a max-iterations ceiling.",
-                ))
-
-    # LLM calls without a token ceiling
-    call_re = _JS_LLM_CALL_RE if is_js else _LLM_CALL_RE
-    for m in call_re.finditer(text):
-        start = m.start()
-        line_no = text.count("\n", 0, start) + 1
-        window = text[start:start + 400]
-        token_keys = ("max_tokens", "max_output_tokens", "max_completion_tokens", "maxTokens", "maxOutputTokens")
-        if not any(k in window for k in token_keys):
-            snippet = text[start:text.find("\n", start) if text.find("\n", start) != -1 else start + 80].strip()
-            findings.append(_finding(
-                "medium", "LLM call with no token ceiling", rel, line_no, snippet[:120],
-                "No max_tokens on this call — a single response can run away on length "
-                "and cost. Set an explicit max_tokens/max_output_tokens.",
-            ))
-
-    # Prompt-injection surface: Python f-string system prompt
-    if not is_js:
-        for m in _SYSTEM_PROMPT_FSTRING_RE.finditer(text):
-            start = m.start()
-            line_no = text.count("\n", 0, start) + 1
-            window = text[max(0, start - 200):start + 200]
-            if re.search(r"f['\"][^'\"]*\{", window):
-                line_text = text.splitlines()[line_no - 1].strip() if line_no - 1 < len(text.splitlines()) else ""
-                findings.append(_finding(
-                    "medium", "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
-                    "User-controlled values interpolated into a system/developer prompt are "
-                    "a prompt-injection vector. Keep untrusted input in user-role messages "
-                    "and validate it.",
-                ))
-
-    # JS/TS: template literal in system prompt role
-    if is_js:
-        for m in _JS_SYSTEM_TMPL_RE.finditer(text):
-            start = m.start()
-            line_no = text.count("\n", 0, start) + 1
-            line_text = text.splitlines()[line_no - 1].strip() if line_no - 1 < len(text.splitlines()) else ""
-            findings.append(_finding(
-                "medium", "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
-                "Template literal with ${} inside a system-role message is a "
-                "prompt-injection vector. Keep user-controlled data in user-role messages.",
-            ))
-
     return findings
 
 
@@ -623,13 +577,23 @@ _JS_SECRET_RE = re.compile(
     r"sk-[A-Za-z0-9]{20,}"
     r"|ANTHROPIC_API_KEY\s*=\s*[\"'][a-zA-Z0-9]{20,}[\"']"
 )
+# Require an actual call, not a bare `child_process` import/identifier.
 _JS_EXEC_SINK_RE = re.compile(
     r"\beval\s*\("
     r"|new\s+Function\s*\("
-    r"|child_process"
-    r"|execSync\s*\("
-    r"|spawnSync\s*\("
+    r"|child_process\.(?:exec|execSync|spawn|spawnSync)\s*\("
+    r"|\bexecSync\s*\("
+    r"|\bexec\s*\([^)]*\$\{"        # exec(`...${x}`) — interpolated command
 )
+
+
+def _strip_js_strings(line: str) -> str:
+    """Blank string/template-literal contents so matches inside strings (e.g.
+    require('child_process')) don't register as code."""
+    line = re.sub(r'"(?:[^"\\]|\\.)*"', '""', line)
+    line = re.sub(r"'(?:[^'\\]|\\.)*'", "''", line)
+    line = re.sub(r"`(?:[^`\\]|\\.)*`", "``", line)
+    return line
 
 
 def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
@@ -643,19 +607,25 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
         if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
             continue
 
+        # Skip import/require lines — they're not execution.
+        if stripped.startswith(("import ", "export ")) or "require(" in stripped:
+            code = ""
+        else:
+            code = _strip_js_strings(line)
+
         # Hardcoded API key
-        if _JS_SECRET_RE.search(line):
+        if _JS_SECRET_RE.search(line) and not _looks_placeholder(line):
             findings.append(_finding(
                 "high", "Hardcoded secret / API key", rel, i, "<redacted>",
                 "Move secrets to environment variables or a secrets manager — never commit them.",
             ))
 
-        # exec/eval sink
-        if _JS_EXEC_SINK_RE.search(line):
+        # exec/eval sink (matched on string-stripped, non-import code only)
+        if code and _JS_EXEC_SINK_RE.search(code):
             findings.append(_finding(
                 "high", "Dangerous execution sink", rel, i, stripped[:120],
-                "eval/new Function/child_process/execSync near LLM output is a remote-code-execution risk. "
-                "Remove it or strictly validate inputs before passing to these sinks.",
+                "eval/new Function/child_process.exec near model or user input is a "
+                "remote-code-execution risk. Remove it or strictly validate/sandbox inputs.",
             ))
 
         # Unbounded LLM loop: while/for loop containing LLM call within a nearby window
