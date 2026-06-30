@@ -263,3 +263,17 @@ def test_bounded_loop_not_flagged():
         "    c.chat.completions.create(model='x', messages=m, max_tokens=50)\n"
     )
     assert "Unbounded loop around an LLM call" not in titles(src)
+
+
+def test_secrets_in_test_files_are_fixtures():
+    import tempfile, os
+    from pathlib import Path
+    from release_gate.verify import scan_code_findings, _is_test_path
+    assert _is_test_path("autogpt_libs/auth/config_test.py")
+    assert not _is_test_path("superagi/agent/output_handler.py")
+    d = tempfile.mkdtemp()
+    (Path(d) / "config_test.py").write_text('secret = "environment-secret-key-with-proper-length-123456"\n')
+    (Path(d) / "app.py").write_text('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5dE0fG"\n')
+    titles = [(f["file"], f["title"]) for f in scan_code_findings(Path(d))]
+    assert not any("config_test" in fn for fn, t in titles)   # test fixture dropped
+    assert any(t == "Hardcoded secret / API key" for fn, t in titles)  # real one kept
