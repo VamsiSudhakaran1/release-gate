@@ -823,6 +823,7 @@
   <nav>
     <a class="logo" onclick="goHome();return false;" href="#">&#x1F6AA; release-gate</a>
     <ul class="nav-links">
+      <li><a href="#agent-scan">Agent Scan</a></li>
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
       <li><a href="#loop-section">Loop Verify</a></li>
@@ -841,7 +842,7 @@
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
     <h1>Know before you ship.</h1>
-    <p class="hero-sub">Paste any public GitHub repo URL — release-gate scans for 7 deployment safeguards and shows you exactly what's in place and what's missing. Takes 10 seconds. No install needed.</p>
+    <p class="hero-sub">Paste any public GitHub repo URL — release-gate gives you two scores: <strong>Agent Code Safety</strong> (injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SonarQube misses) and <strong>Governance</strong> (your declared safeguards). Takes 10 seconds. No install needed.</p>
     <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">release-gate starts as a 10-second repo audit, then becomes a CI gate that blocks unsafe AI releases before they reach production.</p>
 
     <!-- Hero playground input -->
@@ -865,13 +866,15 @@
 
       <!-- Inline results — shown here once a scan completes -->
       <div id="playground-results" style="display:none;background:#fff;border-radius:18px;box-shadow:0 4px 32px rgba(99,102,241,.12);padding:28px 32px;margin-top:20px;text-align:left;">
-        <div style="display:flex;align-items:center;gap:20px;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;gap:20px;margin-bottom:14px;">
           <div class="pg-score-circle" id="pg-score-circle"></div>
           <div>
             <div id="pg-decision-badge" class="pg-decision-badge"></div>
             <div id="pg-repo-label" style="margin-top:6px;font-size:.85rem;color:var(--text);"></div>
           </div>
         </div>
+        <!-- Two-axis scorecard: Agent Code Safety (objective, from findings) + Governance (declared) -->
+        <div id="pg-axes" style="display:none;gap:14px;margin-bottom:14px;flex-wrap:wrap;"></div>
         <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
         <div id="pg-stack-tags" style="display:none;margin-bottom:14px;flex-wrap:wrap;gap:6px;align-items:center;"></div>
         <ul class="pg-checklist" id="pg-checklist"></ul>
@@ -976,6 +979,56 @@
         <p>Unprotected endpoint = denial-of-wallet attack in minutes.</p>
       </div>
 
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ AGENT SAFETY SCAN ═══════════════════════ -->
+<section id="agent-scan" style="padding:72px 0;background:#f8f7ff;border-top:1px solid rgba(99,102,241,.1);scroll-margin-top:72px">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Agent Safety Scan</p>
+      <h2 class="section-title">Scan your agent code for the risks SAST tools miss</h2>
+      <p class="section-subtitle">Point it at any GitHub repo running an LLM agent. It finds the failure modes that only exist once a model is in the loop &mdash; prompt-injection surfaces, exec sinks fed by model output, LLM calls with no token ceiling, and hardcoded keys. SonarQube won&rsquo;t flag these; this is the layer on top.</p>
+    </div>
+
+    <div style="max-width:720px;margin:0 auto">
+      <!-- Mode toggle: static repo scan vs live endpoint scan -->
+      <div style="display:inline-flex;background:#ede9fe;border-radius:10px;padding:4px;margin-bottom:14px">
+        <button id="as-tab-repo" onclick="setScanMode('repo')" style="border:none;background:#fff;color:var(--heading);font-weight:700;font-size:.85rem;padding:8px 16px;border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08)">Scan a repo</button>
+        <button id="as-tab-live" onclick="setScanMode('live')" style="border:none;background:transparent;color:var(--accent);font-weight:700;font-size:.85rem;padding:8px 16px;border-radius:8px;cursor:pointer">Scan a live endpoint</button>
+      </div>
+
+      <!-- Repo mode -->
+      <div id="as-mode-repo">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <input id="as-url-input" type="text" placeholder="https://github.com/your-org/your-agent"
+            style="flex:1;min-width:240px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;font-size:.95rem"
+            onkeydown="if(event.key==='Enter')runAgentScan()">
+          <button id="as-run-btn" onclick="runAgentScan()" class="btn-primary"
+            style="padding:13px 24px;border:none;border-radius:10px;font-weight:700;cursor:pointer">Scan agent</button>
+        </div>
+        <div style="font-size:.8rem;color:#6b7280;margin-top:8px">
+          Paste any public GitHub repo that runs an LLM agent &mdash; e.g. <code>github.com/your-org/your-agent</code>. Sign up free to see every finding with file:line.
+        </div>
+      </div>
+
+      <!-- Live endpoint mode -->
+      <div id="as-mode-live" style="display:none">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <input id="as-live-input" type="text" placeholder="https://your-agent.example.com/run#in=prompt&amp;ctx=ctx&amp;out=reply"
+            style="flex:1;min-width:240px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;font-size:.95rem"
+            onkeydown="if(event.key==='Enter')runLiveScan()">
+          <button id="as-live-btn" onclick="runLiveScan()" class="btn-primary"
+            style="padding:13px 24px;border:none;border-radius:10px;font-weight:700;cursor:pointer">Scan endpoint</button>
+        </div>
+        <div style="font-size:.8rem;color:#6b7280;margin-top:8px">
+          Same as the CLI: <code>release-gate agent-score "URL#in=prompt&amp;ctx=ctx&amp;out=reply"</code>. The <code>#</code>-fragment maps your request/response fields. We send canary injection probes and check if your agent leaks the planted secret. <strong>Public URLs only</strong> &mdash; to test a localhost agent, use the CLI. <span id="as-live-auth-note"></span>
+        </div>
+      </div>
+
+      <div id="as-error" style="display:none;color:var(--red);font-size:.88rem;margin-top:10px"></div>
+      <div id="as-results" style="display:none;margin-top:22px"></div>
     </div>
   </div>
 </section>
@@ -1498,8 +1551,18 @@
       </details>
 
       <details class="faq-item">
-        <summary>What does it actually test?</summary>
-        <div class="faq-a">Four weighted dimensions. <strong>Safety</strong> plants a canary secret in the agent's context and runs a tiered prompt-injection / exfiltration battery (L1 direct → L4 multi-turn); a confirmed leak is a hard BLOCK. <strong>Correctness</strong> runs your domain evals. <strong>Loop behavior</strong> checks convergence and catches runaways. <strong>Cost &amp; latency</strong> characterizes per-call spend. A high total can't buy back a weak dimension — promote floors keep a broken-but-safe agent out of PROMOTE.</div>
+        <summary>Why two scores — Agent Code Safety and Governance?</summary>
+        <div class="faq-a">Because they answer different questions, and collapsing them into one number hides the truth. <strong>Agent Code Safety</strong> is <em>objective</em>: it scans your source for the agent-layer risks — prompt-injection surfaces, <code>exec</code>/shell sinks fed by model output, LLM calls with no token ceiling, hardcoded keys. It moves per repo and doesn't depend on adopting anything from us. <strong>Governance</strong> is <em>maturity</em>: have you <em>declared</em> the enforceable safeguards (budget ceiling, kill switch, owner, evals, trace policy)? A low Governance score means <strong>undeclared, not unsafe</strong>. Keeping them separate is why a clean codebase with no config still scores well on safety — no circular "you didn't adopt our file" penalty. Each score also shows the findings driving it, so it's never a black box.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>Isn't Agent Code Safety just SonarQube?</summary>
+        <div class="faq-a">No. SonarQube and SAST tools find SQL injection, XSS, CVEs and code smells — the <em>code</em> layer. Agent Code Safety finds the failure modes that only exist once an LLM is in the loop: user input flowing into a system prompt, model output reaching <code>exec</code>/a shell, an uncapped loop that can burn $10k overnight, a missing kill switch. SonarQube has no concept of any of those. Keep your SAST suite — this is the agent layer on top, not a replacement.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>What does the live agent battery test?</summary>
+        <div class="faq-a">When you point release-gate at a live agent (CLI <code>agent-score</code> or the on-site live scan), it runs four weighted dimensions. <strong>Safety</strong> plants a canary secret in the agent's context and runs a tiered prompt-injection / exfiltration battery (L1 direct → L4 multi-turn); a confirmed leak is a hard BLOCK. <strong>Correctness</strong> runs your domain evals. <strong>Loop behavior</strong> checks convergence and catches runaways. <strong>Cost &amp; latency</strong> characterizes per-call spend. A high total can't buy back a weak dimension — promote floors keep a broken-but-safe agent out of PROMOTE.</div>
       </details>
 
       <details class="faq-item">
@@ -2477,8 +2540,15 @@
 
   function renderReportDetail(data) {
     var rpt = data.report || {};
-    var score = (data.score != null ? data.score : (rpt.score != null ? rpt.score : '—'));
-    var decision = (data.decision || rpt.decision || 'HOLD').toUpperCase();
+    var cs = rpt.code_safety || null;
+    var gov = rpt.governance || null;
+    var score, decision;
+    if (cs && cs.applicable && cs.score != null) {
+      score = cs.score; decision = (cs.decision || 'HOLD').toUpperCase();
+    } else {
+      score = (data.score != null ? data.score : (rpt.score != null ? rpt.score : '—'));
+      decision = (data.decision || rpt.decision || 'HOLD').toUpperCase();
+    }
     var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
     var repoShort = (data.repo_url || '').replace('https://github.com/', '');
     var dateStr = data.created_at ? new Date(data.created_at).toLocaleString() : '—';
@@ -2501,6 +2571,25 @@
       '<div><div style="font-size:1.15rem;font-weight:800;color:var(--heading)">' + escHtml(repoShort || 'Report') + '</div>' +
       '<div style="margin-top:4px"><span class="pg-decision-badge ' + decClass + '">' + escHtml(decision) + '</span>' +
       ' <span style="font-size:.8rem;opacity:.7;margin-left:8px">' + escHtml(dateStr) + '</span></div></div></div>';
+
+    // Two-axis scorecard
+    if ((cs && cs.applicable) || gov) {
+      var ax = '<div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">';
+      if (cs && cs.applicable && cs.score != null) {
+        ax += _axisCard('Agent Code Safety', cs.score, cs.decision,
+          (cs.high||0)+' high · '+(cs.medium||0)+' med · '+(cs.low||0)+' low',
+          'Injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SAST misses.',
+          _decClass(cs.decision));
+      }
+      if (gov) {
+        ax += _axisCard('Governance', gov.score, gov.level,
+          (gov.present||0)+'/'+(gov.total||0)+' declared',
+          'Declared, enforceable safeguards. Low = undeclared, not unsafe.',
+          _decClass(gov.level === 'Mature' ? 'PROMOTE' : gov.level === 'Partial' ? 'HOLD' : 'BLOCK'));
+      }
+      ax += '</div>';
+      h += ax;
+    }
 
     // Metrics row
     h += '<div class="rpt-row" style="margin-top:18px">' +
@@ -2560,11 +2649,15 @@
     }
 
     // Export
+    var rid = data.id || '';
+    var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
     h += '<div class="rpt-export">' +
+      (rid ? '<button onclick="downloadRunPdf(\'' + escHtml(rid) + '\', this)" style="background:var(--accent);color:#fff;border:none">&#x2B07;&nbsp; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' : '') +
       '<button onclick="exportReportJson()">&#x2B07;&nbsp; Download JSON</button>' +
       '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
       (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
-      '</div>';
+      '</div>' +
+      (rid && !paid ? '<div style="font-size:.78rem;color:#6b7280;margin-top:8px">The PDF summary shows score, decision &amp; counts. <a href="#pricing" style="color:var(--accent);font-weight:600">Upgrade to Pro</a> for a PDF with every finding (file:line + fixes) &amp; compliance mapping.</div>' : '');
 
     document.getElementById('report-modal-body').innerHTML = h;
   }
@@ -2746,6 +2839,206 @@
       btn.disabled = false;
       spinner.classList.remove('active');
     }
+  }
+
+  // ── Agent Safety Scan (foregrounds the agent-specific code findings) ──────
+  async function runAgentScan() {
+    var input = document.getElementById('as-url-input');
+    var url = input.value.trim();
+    if (!url) { input.focus(); return; }
+    var btn = document.getElementById('as-run-btn');
+    var errEl = document.getElementById('as-error');
+    var resEl = document.getElementById('as-results');
+    btn.disabled = true; btn.textContent = 'Scanning…';
+    errEl.style.display = 'none';
+    try {
+      var res = await fetch(API_BASE + '/api/audit', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' },
+          getToken() ? { 'Authorization': 'Bearer ' + getToken() } : {}),
+        body: JSON.stringify({ url: url })
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        var d = data && data.detail;
+        if (d && typeof d === 'object' && d.private_repo) {
+          errEl.innerHTML = (d.message || 'This repo is private.') +
+            ' <a href="' + d.install_url + '" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">Install release-gate-ai →</a>';
+        } else {
+          errEl.textContent = (d && typeof d === 'string') ? d : 'Scan failed (HTTP ' + res.status + ').';
+        }
+        errEl.style.display = 'block';
+        resEl.style.display = 'none';
+        return;
+      }
+      var report = data.report || data;
+      if (data.run_id) report._run_id = data.run_id;
+      renderAgentScan(report, url);
+    } catch (e) {
+      errEl.textContent = 'Could not reach the scanner. Please try again.';
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Scan agent';
+    }
+  }
+
+  var AS_RISK_BLURB = {
+    'Interpolated system prompt (injection surface)': 'User input flows into a system prompt — a prompt-injection entry point.',
+    'Dangerous execution sink': 'Model-influenced data can reach exec/eval/shell — potential code execution.',
+    'LLM call with no token ceiling': 'No max_tokens — a runaway loop can burn unbounded cost.',
+    'Hardcoded secret / API key': 'A credential appears in source — rotate it and move to env/secrets.',
+    'Unbounded loop around LLM call': 'A loop wraps an LLM call with no iteration cap — cost runaway risk.'
+  };
+
+  function renderAgentScan(report, url) {
+    var resEl = document.getElementById('as-results');
+    var findings = report.code_findings || [];
+    var lockedCount = report._code_findings_count;
+    var cs = report.code_safety || null;
+    var decision, score;
+    if (cs && cs.applicable && cs.score != null) {
+      decision = (cs.decision || 'HOLD').toUpperCase(); score = cs.score;
+    } else {
+      decision = (report.decision || 'HOLD').toUpperCase();
+      score = (report.score != null ? report.score : '—');
+    }
+    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
+    var repoShort = (url || '').replace('https://github.com/', '').replace('https://', '');
+
+    var sev = { high:0, medium:0, low:0 };
+    findings.forEach(function(f){ if (sev[f.severity] != null) sev[f.severity]++; });
+
+    var h = '';
+    h += '<div style="display:flex;align-items:center;gap:16px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px">' +
+      '<div class="pg-score-circle ' + decClass + '" style="width:64px;height:64px;font-size:1.5rem">' + score + '</div>' +
+      '<div style="flex:1"><div style="font-weight:800;color:var(--heading)">' + escHtml(repoShort || 'Agent scan') + '</div>' +
+      '<div style="margin-top:4px"><span class="pg-decision-badge ' + decClass + '">' + escHtml(decision) + '</span></div></div>' +
+      '</div>';
+
+    // Agent-risk findings — the foreground of this view.
+    if (getToken() && findings.length) {
+      var order = { high:0, medium:1, low:2 };
+      var sevColor = { high:'#dc2626', medium:'#d97706', low:'#6b7280' };
+      h += '<div style="display:flex;gap:8px;margin:16px 0 10px;flex-wrap:wrap;font-size:.82rem;font-weight:700">' +
+        '<span style="color:#dc2626">' + sev.high + ' high</span><span style="color:#d97706">' + sev.medium + ' medium</span><span style="color:#6b7280">' + sev.low + ' low</span></div>';
+      findings.slice().sort(function(a,b){ return (order[a.severity]||9)-(order[b.severity]||9); }).forEach(function(f){
+        var c = sevColor[f.severity] || '#6b7280';
+        var blurb = AS_RISK_BLURB[f.title] || '';
+        h += '<div style="background:#fff;border:1px solid var(--border);border-left:3px solid ' + c + ';border-radius:10px;padding:12px 14px;margin-bottom:8px">' +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<span style="background:' + c + ';color:#fff;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:5px">' + (f.severity || '?').toUpperCase() + '</span>' +
+          '<span style="font-weight:700;color:var(--heading);font-size:.88rem">' + escHtml(f.title) + '</span>' +
+          (f.file ? '<span style="font-family:monospace;font-size:.78rem;color:#6b7280">' + escHtml(f.file) + ':' + (f.line != null ? f.line : '?') + '</span>' : '') +
+          '</div>' +
+          (blurb ? '<div style="font-size:.82rem;color:#6b7280;margin-top:5px">' + escHtml(blurb) + '</div>' : '') +
+          (f.recommendation ? '<div style="font-size:.82rem;color:var(--heading);margin-top:5px">&#x1F6E0;&#xFE0F; ' + escHtml(f.recommendation) + '</div>' : '') +
+          '</div>';
+      });
+      // Report + PDF actions
+      if (report._run_id) {
+        var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
+        h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">' +
+          '<a href="/r/' + encodeURIComponent(report._run_id) + '" target="_blank" rel="noopener" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">&#x1F4CA; Full report &rarr;</a>' +
+          '<button onclick="downloadRunPdf(\'' + report._run_id + '\', this)" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">&#x2B07;&#xFE0F; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' +
+          '</div>';
+      }
+    } else if (getToken() && !findings.length) {
+      h += '<p style="margin-top:14px;color:var(--green);font-weight:600">&#x2705; No agent-specific code risks detected in the scanned source.</p>';
+    } else {
+      // Anonymous: findings are locked — tease the count and drive signup.
+      var n = (lockedCount != null) ? lockedCount : '?';
+      h += '<div style="margin-top:14px;background:#fff;border:1px dashed #c4b5fd;border-radius:12px;padding:20px;text-align:center">' +
+        '<div style="font-size:1.6rem;font-weight:800;color:var(--accent)">&#x1F512; ' + n + ' agent risk' + (n === 1 ? '' : 's') + ' found</div>' +
+        '<div style="font-size:.88rem;color:#6b7280;margin:8px 0 14px">Injection surfaces, exec sinks, uncapped LLM calls &amp; hardcoded keys — with exact file:line and fixes.</div>' +
+        '<button onclick="openAuthModal(\'signup\')" class="btn-primary" style="padding:11px 22px;border:none;border-radius:9px;font-weight:700;cursor:pointer">Sign up free to see every finding</button>' +
+        '</div>';
+    }
+
+    resEl.innerHTML = h;
+    resEl.style.display = 'block';
+  }
+
+  function setScanMode(mode) {
+    var repo = mode === 'repo';
+    document.getElementById('as-mode-repo').style.display = repo ? 'block' : 'none';
+    document.getElementById('as-mode-live').style.display = repo ? 'none' : 'block';
+    var tr = document.getElementById('as-tab-repo'), tl = document.getElementById('as-tab-live');
+    tr.style.background = repo ? '#fff' : 'transparent';
+    tr.style.color = repo ? 'var(--heading)' : 'var(--accent)';
+    tr.style.boxShadow = repo ? '0 1px 3px rgba(0,0,0,.08)' : 'none';
+    tl.style.background = repo ? 'transparent' : '#fff';
+    tl.style.color = repo ? 'var(--accent)' : 'var(--heading)';
+    tl.style.boxShadow = repo ? 'none' : '0 1px 3px rgba(0,0,0,.08)';
+    document.getElementById('as-results').style.display = 'none';
+    document.getElementById('as-error').style.display = 'none';
+    var note = document.getElementById('as-live-auth-note');
+    if (note) note.innerHTML = getToken() ? '' : '<a href="#" onclick="openAuthModal(\'signup\');return false" style="color:var(--accent);font-weight:600">Sign up free</a> to run a live scan.';
+  }
+
+  async function runLiveScan() {
+    if (!getToken()) { openAuthModal('signup'); return; }
+    var input = document.getElementById('as-live-input');
+    var url = input.value.trim();
+    if (!url) { input.focus(); return; }
+    var btn = document.getElementById('as-live-btn');
+    var errEl = document.getElementById('as-error');
+    var resEl = document.getElementById('as-results');
+    btn.disabled = true; btn.textContent = 'Probing…';
+    errEl.style.display = 'none';
+    try {
+      var res = await fetch(API_BASE + '/api/agent-scan-live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({ url: url })
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = (data && data.detail) ? data.detail : 'Live scan failed (HTTP ' + res.status + ').';
+        errEl.style.display = 'block';
+        resEl.style.display = 'none';
+        return;
+      }
+      renderLiveScan(data);
+    } catch (e) {
+      errEl.textContent = 'Could not reach the scanner. Please try again.';
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Scan endpoint';
+    }
+  }
+
+  function renderLiveScan(data) {
+    var resEl = document.getElementById('as-results');
+    var decision = (data.decision || 'HOLD').toUpperCase();
+    var decClass = decision === 'PROMOTE' ? 'promote' : (decision === 'HOLD' ? 'hold' : 'block');
+    var statusColor = { RESISTED:'#16a34a', LEAKED:'#dc2626', ERROR:'#6b7280' };
+    var h = '';
+    h += '<div style="display:flex;align-items:center;gap:16px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px">' +
+      '<div class="pg-decision-badge ' + decClass + '" style="font-size:1rem;padding:8px 16px">' + escHtml(decision) + '</div>' +
+      '<div style="flex:1"><div style="font-weight:700;color:var(--heading);font-size:.9rem">' + escHtml(data.headline || '') + '</div>' +
+      '<div style="font-size:.8rem;color:#6b7280;margin-top:4px;word-break:break-all">' + escHtml(data.target || '') + '</div></div></div>';
+
+    h += '<div style="display:flex;gap:8px;margin:14px 0 10px;flex-wrap:wrap;font-size:.82rem;font-weight:700">' +
+      '<span style="color:#16a34a">' + (data.resisted||0) + ' resisted</span>' +
+      '<span style="color:#dc2626">' + ((data.l1&&data.l1.leaked||0)+(data.l2&&data.l2.leaked||0)) + ' leaked</span>' +
+      (data.errored ? '<span style="color:#6b7280">' + data.errored + ' errored</span>' : '') +
+      '</div>';
+
+    (data.results || []).forEach(function(r){
+      var c = statusColor[r.status] || '#6b7280';
+      h += '<div style="background:#fff;border:1px solid var(--border);border-left:3px solid ' + c + ';border-radius:10px;padding:10px 14px;margin-bottom:7px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+        '<span style="background:' + c + ';color:#fff;font-size:.66rem;font-weight:700;padding:2px 8px;border-radius:5px">' + escHtml(r.status || '?') + '</span>' +
+        '<span style="font-weight:600;color:var(--heading);font-size:.85rem">' + escHtml(r.name) + '</span>' +
+        '<span style="font-size:.74rem;color:#6b7280">' + escHtml(r.tier || '') + '</span>' +
+        (r.error ? '<span style="font-size:.74rem;color:#dc2626">' + escHtml(r.error) + '</span>' : '') +
+        '</div>';
+    });
+
+    if (data.note) {
+      h += '<div style="font-size:.78rem;color:#6b7280;margin-top:10px;padding:10px 14px;background:#f8f7ff;border-radius:8px">' + escHtml(data.note) + '</div>';
+    }
+    resEl.innerHTML = h;
+    resEl.style.display = 'block';
   }
 
   // ── Loop Verifier playground ──────────────────────────────────────────────
@@ -3125,18 +3418,65 @@
     setTimeout(function() { runPlaygroundAudit(); }, 400);
   }
 
+  function _decClass(d) {
+    d = (d || '').toUpperCase();
+    return d === 'PROMOTE' ? 'promote' : d === 'HOLD' ? 'hold' : 'block';
+  }
+
+  function _axisCard(title, score, label, sub, blurb, cls) {
+    var col = cls === 'promote' ? '#16a34a' : cls === 'hold' ? '#d97706' : '#dc2626';
+    return '<div style="flex:1;min-width:210px;background:#fff;border:1px solid var(--border);border-top:3px solid ' + col + ';border-radius:12px;padding:14px 16px">' +
+      '<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#6b7280">' + escHtml(title) + '</div>' +
+      '<div style="display:flex;align-items:baseline;gap:10px;margin:4px 0 2px">' +
+      '<span style="font-size:1.7rem;font-weight:800;color:var(--heading)">' + score + (typeof score === 'number' ? '<span style="font-size:.9rem;color:#9ca3af">/100</span>' : '') + '</span>' +
+      '<span style="font-size:.8rem;font-weight:700;color:' + col + '">' + escHtml(label || '') + '</span>' +
+      '</div>' +
+      '<div style="font-size:.76rem;color:#6b7280;font-weight:600">' + escHtml(sub || '') + '</div>' +
+      '<div style="font-size:.74rem;color:#9ca3af;margin-top:6px;line-height:1.5">' + blurb + '</div>' +
+      '</div>';
+  }
+
   function renderPlaygroundResults(data, repoUrl) {
-    var score = data.score !== undefined ? data.score : '—';
-    var decision = (data.decision || 'HOLD').toUpperCase();
-    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
+    // Lead with Agent Code Safety (objective, from findings) when available;
+    // fall back to the legacy combined score otherwise.
+    var cs = data.code_safety || null;
+    var gov = data.governance || null;
+    var leadScore, leadDecision;
+    if (cs && cs.applicable && cs.score !== null && cs.score !== undefined) {
+      leadScore = cs.score; leadDecision = (cs.decision || 'HOLD').toUpperCase();
+    } else {
+      leadScore = data.score !== undefined ? data.score : '—';
+      leadDecision = (data.decision || 'HOLD').toUpperCase();
+    }
+    var decClass = _decClass(leadDecision);
 
     var circle = document.getElementById('pg-score-circle');
-    circle.textContent = score;
+    circle.textContent = leadScore;
     circle.className = 'pg-score-circle ' + decClass;
 
     var badge = document.getElementById('pg-decision-badge');
-    badge.textContent = decision;
+    badge.textContent = leadDecision;
     badge.className = 'pg-decision-badge ' + decClass;
+
+    // Two-axis cards — Agent Code Safety vs Governance maturity.
+    var axes = document.getElementById('pg-axes');
+    if (axes) {
+      var cards = '';
+      if (cs && cs.applicable && cs.score !== null && cs.score !== undefined) {
+        var risk = (cs.high || 0) + ' high · ' + (cs.medium || 0) + ' med · ' + (cs.low || 0) + ' low';
+        cards += _axisCard('Agent Code Safety', cs.score, cs.decision, risk,
+          'Injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SAST tools miss.', _decClass(cs.decision));
+      } else if (cs && !cs.applicable) {
+        cards += _axisCard('Agent Code Safety', '—', 'N/A', 'no agent framework detected',
+          'No LLM agent code found to analyze.', 'hold');
+      }
+      if (gov) {
+        cards += _axisCard('Governance', gov.score, gov.level, (gov.present || 0) + '/' + (gov.total || 0) + ' declared',
+          'Declared, enforceable safeguards (budget, kill switch, owner, evals…). Low = undeclared, not unsafe.', _decClass(gov.level === 'Mature' ? 'PROMOTE' : gov.level === 'Partial' ? 'HOLD' : 'BLOCK'));
+      }
+      axes.innerHTML = cards;
+      axes.style.display = cards ? 'flex' : 'none';
+    }
 
     var repoLabel = document.getElementById('pg-repo-label');
     repoLabel.innerHTML = escHtml(repoUrl.replace('https://github.com/', '')) +
@@ -3295,11 +3635,20 @@
       }
     }
 
-    // Web report link — only for logged-in users where run_id was returned
+    // Web report link + PDF download — only for logged-in users where run_id was returned
     var runLinkEl = document.getElementById('pg-run-link');
     if (runLinkEl) {
       if (data._run_id) {
-        runLinkEl.innerHTML = '<a href="/r/' + encodeURIComponent(data._run_id) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border-radius:8px;border:1px solid #c4b5fd;">&#x1F4CA; View full report + trend history &rarr;</a>';
+        var rid = encodeURIComponent(data._run_id);
+        var isPaid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
+        var pdfLabel = isPaid ? '&#x2B07;&#xFE0F; Download full PDF report'
+                              : '&#x2B07;&#xFE0F; Download PDF (summary)';
+        runLinkEl.innerHTML =
+          '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">' +
+            '<a href="/r/' + rid + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border-radius:8px;border:1px solid #c4b5fd;">&#x1F4CA; View full report + trend history &rarr;</a>' +
+            '<button type="button" onclick="downloadRunPdf(\'' + data._run_id + '\', this)" style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-weight:600;font-size:.85rem;padding:8px 14px;background:#6366f1;border-radius:8px;border:none;cursor:pointer;">' + pdfLabel + '</button>' +
+          '</div>' +
+          (isPaid ? '' : '<div style="font-size:.78rem;color:#6b7280;margin-top:6px;">Free reports show a summary. <a href="#pricing" style="color:#6366f1;font-weight:600;">Upgrade to Pro</a> for every finding with file:line, fixes &amp; compliance mapping.</div>');
         runLinkEl.style.display = 'block';
       } else {
         runLinkEl.style.display = 'none';
@@ -3313,6 +3662,34 @@
     // Hide sample output once a real scan has run
     var sampleSection = document.getElementById('sample-output-section');
     if (sampleSection) sampleSection.style.display = 'none';
+  }
+
+  // Download the PDF report for a run. The endpoint is auth-gated, so we fetch
+  // with the Bearer header and save the blob (a plain <a href> can't send it).
+  async function downloadRunPdf(runId, btn) {
+    var original = btn ? btn.innerHTML : null;
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Preparing PDF…'; }
+    try {
+      var res = await fetch(API_BASE + '/api/run/' + encodeURIComponent(runId) + '/report.pdf', {
+        headers: getToken() ? { 'Authorization': 'Bearer ' + getToken() } : {}
+      });
+      if (!res.ok) {
+        if (res.status === 401) { openAuthModal('signup'); return; }
+        throw new Error('Could not generate the report (HTTP ' + res.status + ').');
+      }
+      var blob = await res.blob();
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'release-gate-report-' + runId + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+    } catch (e) {
+      alert(e.message || 'PDF download failed.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
   }
 
   async function runAutoFix() {

@@ -13,6 +13,7 @@ from typing import Dict, Any
 # Add package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from release_gate.web_cta import print_web_cta, web_url
 from release_gate.checks.action_budget import ActionBudgetCheck
 from release_gate.checks.input_contract import InputContractCheck
 from release_gate.checks.fallback_declared import FallbackDeclaredCheck
@@ -335,6 +336,11 @@ def print_results(results, decision, policy=None):
                             elif isinstance(value, str) and len(value) < 100:
                                 print(f"   {key}: {value}")
 
+    n_fail = sum(1 for r in results.values() if r.get('status') == 'FAIL')
+    print_web_cta(
+        teaser=f"Decision: {decision}" + (f" · {n_fail} failing check(s)" if n_fail else ""),
+        locked=n_fail or None,
+    )
     print("\n" + "="*80 + "\n")
 
 
@@ -554,7 +560,7 @@ def _gather_score_inputs(config_path, evals_path, traces_path, agent_spec=None):
     return config, check_results, impact, eval_results, trace_results, runtime
 
 
-def _print_score_report(scoring, project, evals, traces, impact, runtime=None):
+def _print_score_report(scoring, project, evals, traces, impact, runtime=None, full=False):
     """Render a readiness score report to the terminal."""
     score = scoring["readiness_score"]
     decision = scoring["decision"]
@@ -583,29 +589,42 @@ def _print_score_report(scoring, project, evals, traces, impact, runtime=None):
     print()
 
     print(f"  Score            {score} / 100   confidence: {conf}\n")
-    print("  Dimension Breakdown:")
-    for dim, info in scoring["dimensions"].items():
-        s = info["score"]
-        bar = "█" * (s // 10) + "░" * (10 - s // 10)
-        weight = info.get("weight", DIMENSION_WEIGHTS.get(dim))
-        wtxt = f"(wt {int(weight * 100)}%)" if weight is not None else ""
-        print(f"    {dim:<16} {s:>3}  {bar}  {wtxt}")
-    print()
-
     crits = scoring["critical_failures"]
-    if crits:
-        print("  Critical failures:")
-        for c in crits:
-            label = c.get("check", "unknown")
-            src = c.get("source")
-            src_txt = f" [{src}]" if src else ""
-            print(f"    ✗ {label}{src_txt} — {c.get('reason', '')}")
+    if full:
+        print("  Dimension Breakdown:")
+        for dim, info in scoring["dimensions"].items():
+            s = info["score"]
+            bar = "█" * (s // 10) + "░" * (10 - s // 10)
+            weight = info.get("weight", DIMENSION_WEIGHTS.get(dim))
+            wtxt = f"(wt {int(weight * 100)}%)" if weight is not None else ""
+            print(f"    {dim:<16} {s:>3}  {bar}  {wtxt}")
+        print()
+
+        if crits:
+            print("  Critical failures:")
+            for c in crits:
+                label = c.get("check", "unknown")
+                src = c.get("source")
+                src_txt = f" [{src}]" if src else ""
+                print(f"    ✗ {label}{src_txt} — {c.get('reason', '')}")
+        else:
+            print("  Critical failures  none")
+        print()
     else:
-        print("  Critical failures  none")
-    print()
+        # Concise default — one-line dimension scores + critical-failure count.
+        dims = "   ".join(f"{dim} {info['score']}" for dim, info in scoring["dimensions"].items())
+        print(f"  {dims}")
+        if crits:
+            print(f"  {len(crits)} critical failure(s) — run with --full for detail, or see the report online.")
+        print()
 
     icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
     print(f"  Decision:  {icon}  {decision}  (score {score}/100)")
+    n_crit = len(crits)
+    print_web_cta(
+        teaser=f"{score}/100 · {decision}" + (f" · {n_crit} critical failure(s)" if n_crit else ""),
+        locked=n_crit or None,
+    )
     print("\n" + "=" * 80 + "\n")
 
 
@@ -654,7 +673,8 @@ def run_score_command(config_path, evals_path, traces_path, html_report, evidenc
     project = config.get("project", {}).get("name", "AI Agent")
 
     scoring = ReadinessScorer().score(check_results, impact, eval_results, trace_results)
-    _print_score_report(scoring, project, eval_results, trace_results, impact, runtime)
+    _print_score_report(scoring, project, eval_results, trace_results, impact, runtime,
+                        full=('--full' in sys.argv or '--verbose' in sys.argv))
 
     data = _build_evidence_data(scoring, project, eval_results, trace_results, impact, runtime)
 
@@ -673,7 +693,7 @@ def run_score_command(config_path, evals_path, traces_path, html_report, evidenc
     sys.exit(_score_exit_code(scoring["decision"]))
 
 
-def _print_regression_report(result):
+def _print_regression_report(result, full=False):
     """Render a regression comparison report to the terminal."""
     print("\n" + "=" * 80)
     print("\U0001f6aa release-gate  |  Regression Gate  v0.7.4")
@@ -683,29 +703,44 @@ def _print_regression_report(result):
     print(f"  Candidate score   {result['current_score']} / 100   {result['candidate_decision']}")
     print(f"  Score delta       {result['score_delta']:+d} points\n")
 
-    if result["regressions"]:
-        print("  Regressions (dropped > threshold):")
-        for r in result["regressions"]:
-            tag = "  CRITICAL" if r.get("severity") == "critical" else ""
-            print(f"    ✗ {r['area']:<16} {r['baseline']} → {r['candidate']}  "
-                  f"({r['delta']:+d}){tag}")
-        print()
+    if full:
+        if result["regressions"]:
+            print("  Regressions (dropped > threshold):")
+            for r in result["regressions"]:
+                tag = "  CRITICAL" if r.get("severity") == "critical" else ""
+                print(f"    ✗ {r['area']:<16} {r['baseline']} → {r['candidate']}  "
+                      f"({r['delta']:+d}){tag}")
+            print()
 
-    if result["improvements"]:
-        print("  Improvements:")
-        for r in result["improvements"]:
-            print(f"    ✓ {r['area']:<16} {r['baseline']} → {r['candidate']}  ({r['delta']:+d})")
-        print()
+        if result["improvements"]:
+            print("  Improvements:")
+            for r in result["improvements"]:
+                print(f"    ✓ {r['area']:<16} {r['baseline']} → {r['candidate']}  ({r['delta']:+d})")
+            print()
 
-    if result["new_critical_failures"]:
-        print("  New critical failures in candidate:")
-        for c in result["new_critical_failures"]:
-            print(f"    ✗ {c}")
+        if result["new_critical_failures"]:
+            print("  New critical failures in candidate:")
+            for c in result["new_critical_failures"]:
+                print(f"    ✗ {c}")
+            print()
+    else:
+        # Concise default — tallies only; per-area detail behind --full / online.
+        nr = len(result["regressions"]); ni = len(result["improvements"])
+        nc = len(result["new_critical_failures"])
+        print(f"  {nr} regression(s)   {ni} improvement(s)" +
+              (f"   {nc} new critical failure(s)" if nc else ""))
+        if nr or nc:
+            print("  Run with --full for the per-area breakdown, or open the report online.")
         print()
 
     decision = result["decision"]
     icon = {"PROMOTE": "✓", "PASS": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
     print(f"  Decision:  {icon}  {decision}  — {result['reason']}")
+    n_reg = len(result.get("regressions", []))
+    print_web_cta(
+        teaser=f"{result['score_delta']:+d} pts · {decision}" + (f" · {n_reg} regression(s)" if n_reg else ""),
+        locked=n_reg or None,
+    )
     print("\n" + "=" * 80 + "\n")
 
 
@@ -730,7 +765,7 @@ def run_compare_command(baseline_path, candidate_path):
     candidate = _load(candidate_path)
 
     result = RegressionGate().compare(baseline, candidate)
-    _print_regression_report(result)
+    _print_regression_report(result, full=('--full' in sys.argv or '--verbose' in sys.argv))
 
     sys.exit(1 if result["decision"] == "BLOCK" else
              10 if result["decision"] == "HOLD" else 0)
@@ -759,6 +794,11 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
     print(f"  ✓  {paths['markdown']}")
     print(f"  ✓  {paths['html']}\n")
 
+    print_web_cta(
+        teaser=f"{scoring['decision']} · {scoring['readiness_score']}/100",
+        label="Shareable web report & PDF",
+    )
+
     sys.exit(_score_exit_code(scoring["decision"]))
 
 
@@ -769,6 +809,7 @@ def print_help():
     print("="*80)
     print("\nUsage:")
     print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
+    print("  release-gate audit [path|url] --full          # Full breakdown (default is a concise summary)")
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
     print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
     print("  release-gate audit [path|url] --badge         # README badge snippet for your score")
@@ -787,6 +828,8 @@ def print_help():
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("\nOptions for 'agent-score':")
+    print("  --full                                  Show the full breakdown (per-dimension bars, tiers, top issues)")
+    print("                                          Default output is a concise summary; the full report lives online")
     print("  --evals <evals.yaml>                    Add domain correctness cases")
     print("  --strict                                Any confirmed canary leak (L2/L3/L4) BLOCKs instead of HOLDs")
     print("  --runs <N>                              Run the battery N times; report the worst (averages out LLM randomness)")
@@ -931,7 +974,7 @@ def main():
             }
             print(_json.dumps(out, indent=2))
         else:
-            render_audit_terminal(report)
+            render_audit_terminal(report, full=('--full' in sys.argv or '--verbose' in sys.argv))
 
         # Dispatch notifications
         if notify_targets and INTEGRATIONS_AVAILABLE:
@@ -1263,6 +1306,12 @@ def _run_verify_command():
 
     print()
 
+    print_web_cta(
+        teaser=f"{result.decision} · iteration {result.iteration} · "
+               f"${result.cost_so_far:.4f} spent",
+        locked=(len(result.violations or []) + len(result.warnings or [])) or None,
+    )
+
     # Exit codes: 0 = SHIP, 10 = CONTINUE (not done yet), 1 = ROLLBACK
     sys.exit(0 if result.decision == 'SHIP' else (10 if result.decision == 'CONTINUE' else 1))
 
@@ -1295,6 +1344,7 @@ def _run_loop_sim_command():
     scen_path = args[0]
     agent_spec = _flag(sys.argv, '--agent')
     as_json    = '--json' in sys.argv
+    show_full  = '--full' in sys.argv or '--verbose' in sys.argv
 
     try:
         doc = _yaml.safe_load(open(scen_path, encoding='utf-8').read()) or {}
@@ -1351,28 +1401,45 @@ def _run_loop_sim_command():
     print(f"  Outcome match     {result.scenarios_passed}/{result.scenarios_run} "
           f"scenarios reached their expected decision")
     print(f"  Convergence       {conv_pct:.0f}% of normal scenarios shipped")
-    print(f"  Iterations        avg {result.avg_iterations:.1f}  "
-          f"P95 {result.p95_iterations}  max {result.max_iterations}")
-    print(f"  Cost / run        avg ${result.avg_cost:.4f}  "
-          f"P95 ${result.p95_cost:.4f}  max ${result.max_cost:.4f}")
-    if result.spike_scenarios:
-        print(f"  Cost spikes       {len(result.spike_scenarios)} "
-              f"({len(result.spike_scenarios) * 100 // max(1, result.scenarios_run)}%): "
-              f"{', '.join(result.spike_scenarios[:4])}")
-    if n_adv:
-        print(f"  Adversarial       {result.adversarial_pass_rate * 100:.0f}% rolled back as required")
+    if show_full:
+        print(f"  Iterations        avg {result.avg_iterations:.1f}  "
+              f"P95 {result.p95_iterations}  max {result.max_iterations}")
+        print(f"  Cost / run        avg ${result.avg_cost:.4f}  "
+              f"P95 ${result.p95_cost:.4f}  max ${result.max_cost:.4f}")
+        if result.spike_scenarios:
+            print(f"  Cost spikes       {len(result.spike_scenarios)} "
+                  f"({len(result.spike_scenarios) * 100 // max(1, result.scenarios_run)}%): "
+                  f"{', '.join(result.spike_scenarios[:4])}")
+        if n_adv:
+            print(f"  Adversarial       {result.adversarial_pass_rate * 100:.0f}% rolled back as required")
 
-    if result.top_violations or result.top_warnings:
-        print(f"\n  {_BOLD}Top issues{_RESET}")
-        for v in result.top_violations:
-            print(f"    {_RED}✗{_RESET} {v}")
-        for w in result.top_warnings:
-            print(f"    {_YELLOW}⚠{_RESET} {w}")
+        if result.top_violations or result.top_warnings:
+            print(f"\n  {_BOLD}Top issues{_RESET}")
+            for v in result.top_violations:
+                print(f"    {_RED}✗{_RESET} {v}")
+            for w in result.top_warnings:
+                print(f"    {_YELLOW}⚠{_RESET} {w}")
+    else:
+        n_iss = len(result.top_violations or []) + len(result.top_warnings or [])
+        if n_iss or result.spike_scenarios:
+            bits = []
+            if result.spike_scenarios:
+                bits.append(f"{len(result.spike_scenarios)} cost spike(s)")
+            if n_iss:
+                bits.append(f"{n_iss} issue(s)")
+            print(f"  {' · '.join(bits)} — run with --full for detail, or see the report online.")
 
     print(f"\n  Decision:   {colour}{_BOLD}{icon}  {result.decision}{_RESET}")
     for reason in result.reasons:
         print(f"  {' ' * 12}{reason}")
     print()
+
+    n_viol = len(result.top_violations or [])
+    print_web_cta(
+        teaser=f"{result.decision} · {conv_pct:.0f}% convergence · "
+               f"{result.scenarios_passed}/{result.scenarios_run} matched",
+        locked=(len(result.spike_scenarios or []) + n_viol) or None,
+    )
 
     _exit_loop_sim(result.decision)
 
@@ -1406,6 +1473,7 @@ def _run_agent_score_command():
     evals_path = _flag(sys.argv, '--evals')
     as_json    = '--json' in sys.argv
     show_frameworks = '--frameworks' in sys.argv
+    show_full  = '--full' in sys.argv or '--verbose' in sys.argv
     strict     = '--strict' in sys.argv
     report_path      = _flag(sys.argv, '--report')
     html_report_path = _flag(sys.argv, '--html-report')
@@ -1498,37 +1566,51 @@ def _run_agent_score_command():
         "safety": "Safety", "correctness": "Correctness",
         "loop": "Loop behavior", "cost_latency": "Cost & latency",
     }
-    weakest = min(result.dimensions, key=lambda k: result.dimensions[k]["score"])
-    for key in ("safety", "correctness", "loop", "cost_latency"):
-        d = result.dimensions[key]
-        s = d["score"]
-        tag = ""
-        tier_line = ""
-        if key == "safety":
-            tag = f"({d['passed']}/{d['total']})"
-            # Break the per-tier results onto their own indented line — four tiers
-            # don't fit inline.
-            tiers = [(name.upper(), d.get(name)) for name in ("l1", "l2", "l3", "l4")]
-            parts = [f"{lbl} {t['passed']}/{t['total']}" for lbl, t in tiers if t and t.get("total")]
-            if parts:
-                tier_line = "  ·  ".join(parts)
-        elif key == "correctness":
-            tag = f"({d['passed']}/{d['total']})"
-        elif key == "loop":
-            tag = d["decision"]
-        elif key == "cost_latency" and d.get("p95_latency_ms") is not None:
-            tag = f"p95 {d['p95_latency_ms']:.0f}ms"
-        weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
-        print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
-              f"{_MUTED}{tag:<26}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
-        if tier_line:
-            print(f"  {' ' * 15}{_MUTED}{tier_line}{_RESET}")
+    if show_full:
+        # Full breakdown — per-dimension bars, per-tier safety split, top issues.
+        weakest = min(result.dimensions, key=lambda k: result.dimensions[k]["score"])
+        for key in ("safety", "correctness", "loop", "cost_latency"):
+            d = result.dimensions[key]
+            s = d["score"]
+            tag = ""
+            tier_line = ""
+            if key == "safety":
+                tag = f"({d['passed']}/{d['total']})"
+                # Break the per-tier results onto their own indented line — four tiers
+                # don't fit inline.
+                tiers = [(name.upper(), d.get(name)) for name in ("l1", "l2", "l3", "l4")]
+                parts = [f"{lbl} {t['passed']}/{t['total']}" for lbl, t in tiers if t and t.get("total")]
+                if parts:
+                    tier_line = "  ·  ".join(parts)
+            elif key == "correctness":
+                tag = f"({d['passed']}/{d['total']})"
+            elif key == "loop":
+                tag = d["decision"]
+            elif key == "cost_latency" and d.get("p95_latency_ms") is not None:
+                tag = f"p95 {d['p95_latency_ms']:.0f}ms"
+            weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
+            print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
+                  f"{_MUTED}{tag:<26}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
+            if tier_line:
+                print(f"  {' ' * 15}{_MUTED}{tier_line}{_RESET}")
 
-    if result.issues:
-        print(f"\n  {_BOLD}Top issues{_RESET}")
-        for it in result.issues[:5]:
-            mark = _RED + '✗' if it['severity'] in ('critical', 'high') else _YELLOW + '⚠'
-            print(f"    {mark}{_RESET} {it['detail']}  {_MUTED}({it['dimension']}){_RESET}")
+        if result.issues:
+            print(f"\n  {_BOLD}Top issues{_RESET}")
+            for it in result.issues[:5]:
+                mark = _RED + '✗' if it['severity'] in ('critical', 'high') else _YELLOW + '⚠'
+                print(f"    {mark}{_RESET} {it['detail']}  {_MUTED}({it['dimension']}){_RESET}")
+    else:
+        # Basic view (default) — a compact one-line dimension summary. The full
+        # per-tier/per-issue breakdown lives behind --full and on the website.
+        summary = "   ".join(
+            f"{labels[k]} {_dcol(result.dimensions[k]['score'])}{result.dimensions[k]['score']}{_RESET}"
+            for k in ("safety", "correctness", "loop", "cost_latency")
+        )
+        print(f"  {summary}")
+        n_issues = len(result.issues or [])
+        if n_issues:
+            print(f"\n  {_MUTED}{n_issues} issue(s) found — run with {_RESET}--full{_MUTED} "
+                  f"for the breakdown, or open the full report online.{_RESET}")
 
     print(f"\n  Decision:  {col}{_BOLD}{icon}  {result.decision}{_RESET}")
     for reason in result.reasons:
@@ -1537,10 +1619,17 @@ def _run_agent_score_command():
 
     if show_frameworks:
         _print_framework_view(result.as_dict(), _BOLD, _RESET, _GREEN, _YELLOW, _RED, _MUTED)
-    else:
+    elif show_full:
         print(f"  {_MUTED}Map to OWASP / NIST / EU AI Act:  "
               f"release-gate agent-score {agent_spec} --frameworks{_RESET}")
-    print()
+        print()
+
+    n_issues = len(result.issues or [])
+    hidden = max(0, n_issues - 5)
+    print_web_cta(
+        teaser=f"{result.score}/100 · {result.decision}" + (f" · {n_issues} issue(s)" if n_issues else ""),
+        locked=hidden or None,
+    )
 
     _exit_agent_score(result.decision)
 

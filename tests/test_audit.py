@@ -455,12 +455,27 @@ def test_project_name_from_url():
 
 # ─────────────────────────── badge + markdown (self-serve) ───────────────────
 
-def test_badge_url_block_is_red(tmp_path):
+def test_badge_url_reflects_agent_code_safety(tmp_path):
+    # The badge now reflects the objective Agent Code Safety axis, not the
+    # (circular) governance-driven combined score. Clean agent code with no
+    # findings → PROMOTE/green even without a governance.yaml.
     from release_gate.audit import badge_url
     make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
     report = build_report(tmp_path)
     url = badge_url(report)
     assert url.startswith("https://img.shields.io/badge/")
+    assert "agent%20code%20safety" in url
+
+
+def test_badge_url_block_is_red_with_high_findings():
+    # A report carrying high-severity code findings → BLOCK/red badge.
+    from release_gate.audit import badge_url
+    report = {
+        "agent_detected": True,
+        "code_safety": {"applicable": True, "score": 20, "decision": "BLOCK",
+                        "high": 4, "medium": 2, "low": 0},
+    }
+    url = badge_url(report)
     assert "BLOCK" in url
     assert url.endswith("-red")
 
@@ -488,7 +503,8 @@ def test_render_markdown_has_score_and_table(tmp_path):
     report = build_report(tmp_path)
     md = render_markdown(report)
     assert "AI Release Readiness Audit" in md
-    assert "Score:" in md
+    assert "Agent Code Safety:" in md
+    assert "Governance:" in md
     assert "| Safeguard | Status | Why |" in md
     assert "gpt-4-turbo" in md
     assert "--emit-config" in md  # next-step guidance present when safeguards missing

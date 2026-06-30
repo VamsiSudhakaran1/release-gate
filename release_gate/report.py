@@ -98,6 +98,12 @@ def render_terminal(impact: Dict[str, Any], check_results: Dict[str, Any]) -> No
     verdict_icons = {"BLOCK": "✗  BLOCKED", "WARN": "⚠  WARNING", "PASS": "✓  APPROVED"}
     print(f"  FINAL VERDICT:  {verdict_icons.get(verdict, verdict)}")
     _hr("=")
+
+    from release_gate.web_cta import print_web_cta
+    print_web_cta(
+        teaser=f"{verdict} · ${delta['monthly']:,.0f}/mo at stake in a runaway loop",
+        locked=len(gaps) or None,
+    )
     print()
 
 

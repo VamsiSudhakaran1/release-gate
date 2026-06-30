@@ -408,6 +408,94 @@ def compute_score(present: Dict[str, bool],
     return score, decision
 
 
+# Per-finding base penalty by severity. The score is built by *pattern*, not by
+# raw count: ten uncapped LLM calls are one systemic discipline gap, not ten
+# independent failures — so each finding TYPE saturates. This keeps the score a
+# believable gradient (a repo with one injection surface ≠ a repo riddled with
+# exec sinks) instead of every agent repo flooring to 0.
+_SEVERITY_BASE = {"critical": 24, "high": 22, "medium": 9, "low": 2.5}
+_TYPE_CAP_MULT = 2.2   # one finding type can cost at most base * this
+
+
+def _code_safety_factors(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Per-type penalty breakdown so the score can explain itself."""
+    import math
+    by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for f in findings:
+        by_type.setdefault(f.get("title") or f.get("type") or "finding", []).append(f)
+    factors = []
+    for title, items in by_type.items():
+        sev = (items[0].get("severity") or "low").lower()
+        base = _SEVERITY_BASE.get(sev, 2.5)
+        n = len(items)
+        # First occurrence costs `base`; each additional one adds a shrinking
+        # amount (log growth), capped so a single repeated pattern can't alone
+        # zero the score.
+        penalty = min(base * (1 + 0.7 * math.log(n)) if n > 1 else base, base * _TYPE_CAP_MULT)
+        factors.append({"title": title, "severity": sev, "count": n,
+                        "penalty": round(penalty, 1)})
+    # Heaviest first — that's the order a reader cares about.
+    factors.sort(key=lambda x: x["penalty"], reverse=True)
+    return factors
+
+
+def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
+                        agent_detected: bool = True) -> Dict[str, Any]:
+    """Objective Agent Code Safety score from the code findings alone.
+
+    The half of the audit that does NOT depend on adopting a governance.yaml: it
+    reflects real agent-layer risk in the source (prompt-injection surfaces,
+    exec sinks fed by model output, uncapped LLM calls, hardcoded secrets) — the
+    risks generic SAST/SonarQube don't model. It moves per-repo, and per finding
+    *pattern* with diminishing returns, so the number is a believable gradient.
+    """
+    findings = findings or []
+    high = sum(1 for f in findings if f.get("severity") in ("high", "critical"))
+    med = sum(1 for f in findings if f.get("severity") == "medium")
+    low = sum(1 for f in findings if f.get("severity") == "low")
+
+    if not agent_detected:
+        # No agent framework → nothing to score behaviorally.
+        return {"score": None, "decision": "N/A", "high": 0, "medium": 0, "low": 0,
+                "total": 0, "applicable": False, "factors": []}
+
+    factors = _code_safety_factors(findings)
+    score = max(0, round(100 - sum(f["penalty"] for f in factors)))
+
+    # Verdict is count-driven so it can't be gamed by the curve:
+    #   PROMOTE only when there's nothing of note (no high, no medium).
+    #   any high or ≥3 mediums, or a low score → escalate.
+    if high >= 3 or score < 45:
+        decision = "BLOCK"
+    elif high >= 1 or med >= 1 or score < 85:
+        decision = "HOLD"
+    else:
+        decision = "PROMOTE"
+    return {"score": score, "decision": decision, "high": high, "medium": med,
+            "low": low, "total": len(findings), "applicable": True,
+            "factors": factors}
+
+
+def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
+    """Governance-maturity score from declared/detected safeguards.
+
+    This is the half that release-gate exists to drive: have you DECLARED the
+    safeguards (budget ceiling, kill switch, owner, evals, trace policy …) so
+    they can be enforced. Low here means 'undeclared', not 'unsafe'.
+    """
+    total_weight = sum(s["weight"] for s in SAFEGUARDS)
+    earned = sum(s["weight"] for s in SAFEGUARDS if present.get(s["id"], False))
+    score = round(earned / total_weight * 100)
+    n_present = sum(1 for s in SAFEGUARDS if present.get(s["id"], False))
+    if score >= PROMOTE_THRESHOLD:
+        level = "Mature"
+    elif score >= HOLD_THRESHOLD:
+        level = "Partial"
+    else:
+        level = "Undeclared"
+    return {"score": score, "level": level, "present": n_present, "total": len(SAFEGUARDS)}
+
+
 # ─────────────────────────── URL / remote repo support ──────────────────────
 
 def _is_github_url(target: str) -> bool:
@@ -563,6 +651,8 @@ def build_report(root: Path) -> Dict[str, Any]:
     ]
 
     score, decision = compute_score(present, code_findings)
+    code_safety = compute_code_safety(code_findings, agent_detected=agent_detected)
+    governance = compute_governance(present)
     has_ci = _has_github_actions_integration(root)
 
     # Enrich each safeguard with its evidence/issues for the report + UI.
@@ -615,6 +705,8 @@ def build_report(root: Path) -> Dict[str, Any]:
         "code_findings":      code_findings,
         "score":              score,
         "decision":           decision,
+        "code_safety":        code_safety,
+        "governance":         governance,
         "real_checks":        real_check_results,
     }
 
@@ -1024,21 +1116,44 @@ def badge_url(report: Dict[str, Any]) -> str:
     visible on the repo front page — turning the audit into something a
     maintainer runs on their *own* repo, not something done to them.
     """
-    score = report.get("score", 0)
-    decision = report.get("decision", "BLOCK")
     if not report.get("agent_detected", True):
         return ("https://img.shields.io/badge/"
                 "release--gate-no%20agent%20detected-lightgrey")
+    # Prefer the objective Agent Code Safety axis — it reflects real risk in the
+    # source, not whether the repo adopted a governance.yaml, so it's the
+    # credible thing to show on a README.
+    cs = report.get("code_safety") or {}
+    if cs.get("applicable") and cs.get("score") is not None:
+        score, decision = cs["score"], cs["decision"]
+        label = "agent%20code%20safety"
+    else:
+        score = report.get("score", 0)
+        decision = report.get("decision", "BLOCK")
+        label = "release--gate"
     color = {"PROMOTE": "brightgreen", "HOLD": "yellow", "BLOCK": "red"}.get(decision, "lightgrey")
-    label = "release--gate"
     message = f"{score}%2F100 {decision}".replace(" ", "%20")
     return f"https://img.shields.io/badge/{label}-{message}-{color}"
 
 
+def governance_badge_url(report: Dict[str, Any]) -> str:
+    """Optional second badge for the governance-maturity axis."""
+    gov = report.get("governance") or {}
+    if not gov:
+        return ""
+    color = {"Mature": "brightgreen", "Partial": "yellow", "Undeclared": "red"}.get(
+        gov.get("level"), "lightgrey")
+    message = f"{gov.get('score', 0)}%2F100 {gov.get('level', '')}".replace(" ", "%20")
+    return f"https://img.shields.io/badge/governance-{message}-{color}"
+
+
 def badge_markdown(report: Dict[str, Any]) -> str:
-    """A copy-paste README snippet: the badge linking to release-gate."""
-    return (f"[![AI deployment readiness]({badge_url(report)})]"
-            f"(https://github.com/VamsiSudhakaran1/release-gate)")
+    """A copy-paste README snippet: the badge(s) linking to release-gate."""
+    link = "https://github.com/VamsiSudhakaran1/release-gate"
+    md = f"[![Agent Code Safety]({badge_url(report)})]({link})"
+    gov_badge = governance_badge_url(report)
+    if gov_badge:
+        md += f" [![Governance]({gov_badge})]({link})"
+    return md
 
 
 def render_markdown(report: Dict[str, Any]) -> str:
@@ -1068,10 +1183,26 @@ def render_markdown(report: Dict[str, Any]) -> str:
         out.append(f"  •  **Model:** `{report['detected_model']}`")
     out.append("")
 
-    score = report.get("score", 0)
-    decision = report.get("decision", "BLOCK")
-    emoji = {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(decision, "⚪")
-    out.append(f"### {emoji} Score: **{score} / 100** — {decision}")
+    cs = report.get("code_safety") or {}
+    gov = report.get("governance") or {}
+    emoji_for = lambda d: {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(d, "⚪")
+    if cs.get("applicable") and cs.get("score") is not None:
+        ce = emoji_for(cs["decision"])
+        out.append(f"### {ce} Agent Code Safety: **{cs['score']} / 100** — {cs['decision']}")
+        out.append(f"_{cs.get('high',0)} high · {cs.get('medium',0)} medium · "
+                   f"{cs.get('low',0)} low — injection surfaces, exec sinks & uncapped LLM calls "
+                   f"(the agent-layer risks SAST tools miss)._")
+        factors = cs.get("factors") or []
+        if factors:
+            driving = "; ".join(f"{f['title']} ×{f['count']}" for f in factors[:3])
+            out.append("")
+            out.append(f"_Driving the score: {driving}._")
+    if gov:
+        ge = {"Mature": "🟢", "Partial": "🟡", "Undeclared": "🔴"}.get(gov.get("level"), "⚪")
+        out.append("")
+        out.append(f"### {ge} Governance: **{gov.get('score',0)} / 100** — {gov.get('level','')}")
+        out.append(f"_{gov.get('present',0)}/{gov.get('total',0)} safeguards declared. "
+                   f"Low = undeclared, not unsafe._")
     out.append("")
     out.append(badge_markdown(report))
     out.append("")
@@ -1138,7 +1269,7 @@ def _col(text, *codes):
     return "".join(codes) + text + _RESET
 
 
-def render_terminal(report: Dict[str, Any]) -> None:
+def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     div = "─" * 72
 
     print()
@@ -1192,77 +1323,117 @@ def render_terminal(report: Dict[str, Any]) -> None:
           f"{_col(f'{score} / 100', score_col, _BOLD)}   "
           f"{_col(bar_fill, score_col)}{_col(bar_empty, _MUTED)}")
     print()
+
+    # Two-axis split: Agent Code Safety (objective) + Governance (declared).
+    cs = report.get("code_safety") or {}
+    gov = report.get("governance") or {}
+    if cs.get("applicable"):
+        cs_col = _GREEN if cs["decision"] == "PROMOTE" else (_YELLOW if cs["decision"] == "HOLD" else _RED)
+        cs_score = f"{cs['score']}/100"
+        cs_counts = f"{cs['high']} high · {cs['medium']} med · {cs['low']} low"
+        print(f"  {_col('Agent Code Safety', _BOLD)}  {_col(cs_score, cs_col, _BOLD)}  "
+              f"{_col(cs['decision'], cs_col)}   {_col(cs_counts, _MUTED)}")
+        factors = cs.get("factors") or []
+        if factors:
+            driving = "; ".join(f"{f['title']} ×{f['count']} (-{f['penalty']:g})"
+                                for f in factors[:3])
+            print(f"     {_col('Driving the score: ' + driving, _MUTED)}")
+        else:
+            print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — the agent-layer SAST misses', _MUTED)}")
+    if gov:
+        gov_col = _GREEN if gov["level"] == "Mature" else (_YELLOW if gov["level"] == "Partial" else _RED)
+        gov_score = f"{gov['score']}/100"
+        gov_counts = f"{gov['present']}/{gov['total']} safeguards declared"
+        print(f"  {_col('Governance       ', _BOLD)}  {_col(gov_score, gov_col, _BOLD)}  "
+              f"{_col(gov['level'], gov_col)}   {_col(gov_counts, _MUTED)}")
+    print()
+
     icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
     print(f"  {_col(f'Decision:  {icon}  {decision}', dec_col, _BOLD)}")
     print()
     print(f"  {div}")
 
-    # Missing safeguards
     missing = report["missing"]
-    if missing:
-        print(f"\n  {_col('Missing safeguards  (' + str(len(missing)) + ')', _RED, _BOLD)}\n")
-        for s in missing:
-            print(f"  {_col('✗', _RED)}  {_col(s['label'], _BOLD)}")
-            print(f"     {_col('Risk:', _MUTED)} {s['risk']}")
-        print()
-
-    # Passing safeguards
     passing = report["passing"]
-    if passing:
-        print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
-        for s in passing:
-            print(f"  {_col('✓', _GREEN)}  {s['label']}")
+    findings = report.get("code_findings", []) or []
+
+    if not full:
+        # Concise default — a one-line tally; the full breakdown lives behind
+        # --full and on the website.
+        print(f"\n  {_col('✓ ' + str(len(passing)) + ' safeguard(s) present', _GREEN)}"
+              f"    {_col('✗ ' + str(len(missing)) + ' missing', _RED if missing else _MUTED)}"
+              f"    {_col(str(len(findings)) + ' code finding(s)', _RED if findings else _MUTED)}")
+        if missing:
+            top = ", ".join(s["label"] for s in missing[:3])
+            more = f" +{len(missing) - 3} more" if len(missing) > 3 else ""
+            print(f"  {_col('Missing:', _MUTED)} {top}{more}")
+        print(f"\n  {_col('Run with --full for the breakdown, or open the full report online.', _MUTED)}")
         print()
-
-    # Real check results (if governance.yaml was found and parsed)
-    real = report.get("real_checks")
-    if real:
-        print(f"  {_col('Governance check results', _BOLD)}\n")
-        for name, result in sorted(real.items()):
-            status = result.get("status", "?")
-            sym = "✓" if status == "PASS" else ("⚠" if status == "WARN" else "✗")
-            col = _GREEN if status == "PASS" else (_YELLOW if status == "WARN" else _RED)
-            print(f"  {_col(sym, col)}  {name:<25} {_col(status, col)}")
-        print()
-
-    print(f"  {div}")
-
-    # Next steps
-    print(f"\n  {_col('Next steps', _BOLD)}\n")
-    step = 1
-
-    if not report["governance_file"]:
-        print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
-        print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
-        print(f"     Fill in the TODO lines, then score before every deploy.")
-        step += 1
-
-    if missing:
-        unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
-        if unresolved_safeguards:
-            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
+    else:
+        # Missing safeguards
+        if missing:
+            print(f"\n  {_col('Missing safeguards  (' + str(len(missing)) + ')', _RED, _BOLD)}\n")
             for s in missing:
-                if s["id"] != "governance_file":
-                    print(f"     • {s['label']}")
+                print(f"  {_col('✗', _RED)}  {_col(s['label'], _BOLD)}")
+                print(f"     {_col('Risk:', _MUTED)} {s['risk']}")
+            print()
+
+        # Passing safeguards
+        if passing:
+            print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
+            for s in passing:
+                print(f"  {_col('✓', _GREEN)}  {s['label']}")
+            print()
+
+        # Real check results (if governance.yaml was found and parsed)
+        real = report.get("real_checks")
+        if real:
+            print(f"  {_col('Governance check results', _BOLD)}\n")
+            for name, result in sorted(real.items()):
+                status = result.get("status", "?")
+                sym = "✓" if status == "PASS" else ("⚠" if status == "WARN" else "✗")
+                col = _GREEN if status == "PASS" else (_YELLOW if status == "WARN" else _RED)
+                print(f"  {_col(sym, col)}  {name:<25} {_col(status, col)}")
+            print()
+
+        print(f"  {div}")
+
+        # Next steps
+        print(f"\n  {_col('Next steps', _BOLD)}\n")
+        step = 1
+
+        if not report["governance_file"]:
+            print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
+            print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
+            print(f"     Fill in the TODO lines, then score before every deploy.")
             step += 1
 
-    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
-    print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
-    step += 1
+        if missing:
+            unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
+            if unresolved_safeguards:
+                print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
+                for s in missing:
+                    if s["id"] != "governance_file":
+                        print(f"     • {s['label']}")
+                step += 1
 
-    if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
-        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
-        print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
+        print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
         step += 1
 
-    if not report["has_ci_integration"]:
-        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
-        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.4', _BLUE)}")
-        step += 1
+        if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
+            print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+            step += 1
 
-    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
-    print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
-    step += 1
+        if not report["has_ci_integration"]:
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
+            print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.4', _BLUE)}")
+            step += 1
+
+        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
+        print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
+        step += 1
 
     # Web report link — show deep link if run was saved via authenticated API,
     # otherwise show the homepage so CLI users know where to scan via the web.

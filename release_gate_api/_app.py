@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 # Ensure release_gate package is importable
@@ -712,6 +712,46 @@ async def run_detail(run_id: str, authorization: Optional[str] = Header(default=
     }
 
 
+# Plans that unlock the full detailed report (PDF + web). Everyone else gets
+# the summary tier, which teases the locked detail to drive an upgrade.
+PAID_REPORT_PLANS = {"pro", "enterprise", "admin"}
+
+
+@app.get("/api/run/{run_id}/report.pdf")
+async def run_report_pdf(run_id: str, authorization: Optional[str] = Header(default=None)):
+    """Downloadable PDF report for a run. Owner-only.
+
+    Free plan → summary PDF (score, decision, finding counts, teaser).
+    Pro/Enterprise → full PDF with every finding (file:line + fixes) and the
+    compliance mapping.
+    """
+    user = _require_user(authorization)
+    run = get_run(run_id)
+    if not run or run.get("user_id") != user["id"]:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    full = user.get("plan", "free") in PAID_REPORT_PLANS
+    try:
+        from release_gate_api.report_pdf import render_report_pdf
+        pdf_bytes = render_report_pdf(
+            run.get("report") or {},
+            repo_url=run.get("repo_url", ""),
+            run_id=run_id,
+            full=full,
+            created_at=run.get("created_at"),
+        )
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PDF generation is temporarily unavailable")
+
+    tier = "full" if full else "summary"
+    filename = f"release-gate-{tier}-{run_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ── API tokens ─────────────────────────────────────────────────────────────
 
 @app.post("/api/tokens")
@@ -977,6 +1017,40 @@ async def agent_score_demo(body: AgentScoreDemoRequest):
         agent_callable, agent_label=f"demo:{variant}", profile=profile,
     )
     return result.as_dict()
+
+
+class LiveScanRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/agent-scan-live")
+async def agent_scan_live(body: LiveScanRequest, request: Request = None,
+                          authorization: Optional[str] = Header(default=None)):
+    """Behavioral safety scan of a LIVE agent endpoint.
+
+    Sends canary injection/exfiltration probes to the URL and reports whether
+    the agent leaks the planted secret. Auth-required and rate-limited; the
+    target is SSRF-guarded (public http(s) only, no redirects, no server creds).
+    """
+    user = _require_user(authorization)
+    # Strict rate limit — each scan fans out to several outbound calls.
+    ip = _client_ip(request)
+    if not _check_rate_limit(f"livescan:user:{user['id']}", limit=5, window=3600) or \
+       not _check_rate_limit(f"livescan:ip:{ip}", limit=10, window=3600):
+        raise HTTPException(status_code=429,
+                            detail="Live-scan limit reached. Please wait, or use the CLI for unlimited scans.")
+    url = (body.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    from release_gate_api.live_scan import run_live_scan
+    from release_gate_api.net_guard import UnsafeUrlError
+    try:
+        return run_live_scan(url)
+    except UnsafeUrlError as exc:
+        raise HTTPException(status_code=400, detail=f"Unsafe target: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Scan failed: {exc}")
 
 
 # ── Health ─────────────────────────────────────────────────────────────────
