@@ -155,3 +155,23 @@ def test_handler_name_and_demo_secret_not_flagged():
     assert _is_real_secret('TOKEN: "handle_skills_clawhub_get_token"') is False  # identifier
     assert _is_real_secret('JWT_SECRET = "production-demo-secret"') is False       # demo
     assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5"') is True
+
+
+def test_service_wrapper_named_llm_not_flagged():
+    # llm = services.get("llm"); llm.complete(...) is an app wrapper, not a
+    # resolvable SDK call — don't claim 'no token ceiling' on a name guess.
+    src = (
+        "def handle(services, args):\n"
+        "    llm = services.get('llm')\n"
+        "    return llm.complete(args.get('prompt', ''))\n"
+    )
+    assert "LLM call with no token ceiling" not in titles(src)
+
+
+def test_resolved_llm_var_still_flagged():
+    src = (
+        "from langchain_openai import ChatOpenAI\n"
+        "llm = ChatOpenAI()\n"
+        "out = llm.invoke(prompt)\n"
+    )
+    assert "LLM call with no token ceiling" in titles(src)
