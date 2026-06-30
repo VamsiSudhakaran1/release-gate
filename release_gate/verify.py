@@ -553,7 +553,8 @@ def _looks_dummy_token(tok: str) -> bool:
         return True
     if len(set(body.lower())) <= 4:                      # mostly one repeated char
         return True
-    return bool(re.search(r"abcdef|qwerty|123456|x{4,}|test|dummy|example|fake|sample",
+    return bool(re.search(r"abcdef|qwerty|123456|x{4,}|test|dummy|example|fake|sample|"
+                          r"your[_-]|change[_-]?me|my[_-]secret|placeholder|replace",
                           tok, re.IGNORECASE))
 
 
@@ -576,6 +577,10 @@ def _is_real_secret(line: str) -> bool:
     # A code identifier / handler name (snake_case, camelCase) — not a secret,
     # e.g. "handle_skills_clawhub_get_token".
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", val):
+        return False
+    # Lowercase dictionary words joined by hyphens/underscores — a slug or demo
+    # value, not a credential: "my-secret-verify-token", "dev-secret-change-me".
+    if re.fullmatch(r"[a-z]+(?:[-_][a-z]+)+", val):
         return False
     if "." in val and " " not in val and "/" not in val:
         return False
@@ -621,7 +626,7 @@ _JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs"}
 
 # Patterns for JS/TS-specific scanning
 _JS_UNBOUNDED_LOOP_RE = re.compile(
-    r"\b(?:while|for)\b", re.IGNORECASE
+    r"while\s*\(\s*true\s*\)|for\s*\(\s*;\s*;\s*\)", re.IGNORECASE
 )
 _JS_LLM_SINK_RE = re.compile(
     r"(?:streamText|generateText|chat\.completions|messages\.create|\.invoke\s*\(|\.stream\s*\()"
@@ -718,7 +723,9 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "Use a fixed argument list or strictly validate/sandbox the input.",
             ))
 
-        # Unbounded LLM loop: while/for loop containing LLM call within a nearby window
+        # Unbounded LLM loop — ONLY a truly unbounded loop (while(true) / for(;;)).
+        # A bounded `while (i < max)` or a `for await (... of stream)` (just
+        # consuming a response stream) is not a runaway and must not be flagged.
         if _JS_UNBOUNDED_LOOP_RE.match(stripped):
             window = "\n".join(lines[i - 1:i + 8])
             if _JS_LLM_SINK_RE.search(window):

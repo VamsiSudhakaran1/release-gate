@@ -55,6 +55,11 @@ INPUT_HINTS = ("request", "req", "body", "payload", "params", "query", "prompt",
                "user_input", "message", "msg", "content", "input", "data",
                "response", "completion", "output", "result", "text", "reply",
                "llm_output", "answer", "args")
+# Names that clearly denote EXTERNAL user/request input (→ high severity for a
+# system-prompt interpolation). Generic vars (summary_text, content, output)
+# are app/model-generated and rate only medium.
+STRONG_INPUT_HINTS = ("request", "req", "body", "payload", "params", "query",
+                      "user_input", "user_msg", "user_message", "prompt", "args")
 
 
 def _dotted(node: ast.AST) -> Optional[str]:
@@ -293,10 +298,11 @@ class _Analyzer(ast.NodeVisitor):
                 names = set()
                 for fv in dynamic:
                     names |= _names_in(fv.value)
-                tainted = bool(names & self.tainted) or any(
-                    any(h in n.lower() for h in INPUT_HINTS) for n in names)
+                # High only when a clearly external user/request value flows in.
+                # Generic/app/model-generated names (summary_text, content) → medium.
+                strong = any(any(h in n.lower() for h in STRONG_INPUT_HINTS) for n in names)
                 self.findings.append(self._f(
-                    "high" if tainted else "medium",
+                    "high" if strong else "medium",
                     "Interpolated system prompt (injection surface)", content_val,
                     "User/model-influenced text is interpolated into a system "
                     "prompt. Move untrusted input into a clearly-delimited user "

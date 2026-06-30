@@ -194,3 +194,33 @@ def test_js_execsync_bare_var_is_medium_interp_is_high():
     interp = _scan_js_file("b.js", "const r = execSync(`run ${userInput}`)\n")
     assert any(f["severity"] == "medium" for f in bare)
     assert any(f["severity"] == "high" for f in interp)
+
+
+def test_placeholder_and_slug_secrets_rejected():
+    from release_gate.verify import _is_real_secret
+    assert _is_real_secret('token="xoxb-YOUR-BOT-TOKEN"') is False
+    assert _is_real_secret('verify_token="my-secret-verify-token"') is False
+    assert _is_real_secret('_DEFAULT_SECRET = "dev-secret-change-me"') is False
+    assert _is_real_secret('t = "xoxb-9aZ2kQ7mN4pL8vR1tY6wX3bC"') is True
+
+
+def test_js_only_truly_unbounded_loops_flagged():
+    from release_gate.verify import _scan_js_file
+    bounded = _scan_js_file("a.ts", "while (i < this.maxToolCalls) {\n  await llm.invoke(p)\n}\n")
+    stream = _scan_js_file("b.ts", "for await (const c of stream) {\n  process(c)\n}\n")
+    unbounded = _scan_js_file("c.ts", "while (true) {\n  await generateText(p)\n}\n")
+    assert not any("Unbounded" in f["title"] for f in bounded)
+    assert not any("Unbounded" in f["title"] for f in stream)
+    assert any("Unbounded" in f["title"] for f in unbounded)
+
+
+def test_injection_severity_strong_vs_generic():
+    # generic/app-generated name → medium; clear user input → high
+    generic = analyze_python(
+        'def f(summary_text):\n m=[{"role":"system","content": f"S {summary_text}"}]\n', "x.py")
+    strong = analyze_python(
+        'def f(user_input):\n m=[{"role":"system","content": f"S {user_input}"}]\n', "x.py")
+    g = [f for f in generic if "injection" in f["title"].lower()]
+    s = [f for f in strong if "injection" in f["title"].lower()]
+    assert g and g[0]["severity"] == "medium"
+    assert s and s[0]["severity"] == "high"
