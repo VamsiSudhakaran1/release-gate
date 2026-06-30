@@ -1116,21 +1116,44 @@ def badge_url(report: Dict[str, Any]) -> str:
     visible on the repo front page — turning the audit into something a
     maintainer runs on their *own* repo, not something done to them.
     """
-    score = report.get("score", 0)
-    decision = report.get("decision", "BLOCK")
     if not report.get("agent_detected", True):
         return ("https://img.shields.io/badge/"
                 "release--gate-no%20agent%20detected-lightgrey")
+    # Prefer the objective Agent Code Safety axis — it reflects real risk in the
+    # source, not whether the repo adopted a governance.yaml, so it's the
+    # credible thing to show on a README.
+    cs = report.get("code_safety") or {}
+    if cs.get("applicable") and cs.get("score") is not None:
+        score, decision = cs["score"], cs["decision"]
+        label = "agent%20code%20safety"
+    else:
+        score = report.get("score", 0)
+        decision = report.get("decision", "BLOCK")
+        label = "release--gate"
     color = {"PROMOTE": "brightgreen", "HOLD": "yellow", "BLOCK": "red"}.get(decision, "lightgrey")
-    label = "release--gate"
     message = f"{score}%2F100 {decision}".replace(" ", "%20")
     return f"https://img.shields.io/badge/{label}-{message}-{color}"
 
 
+def governance_badge_url(report: Dict[str, Any]) -> str:
+    """Optional second badge for the governance-maturity axis."""
+    gov = report.get("governance") or {}
+    if not gov:
+        return ""
+    color = {"Mature": "brightgreen", "Partial": "yellow", "Undeclared": "red"}.get(
+        gov.get("level"), "lightgrey")
+    message = f"{gov.get('score', 0)}%2F100 {gov.get('level', '')}".replace(" ", "%20")
+    return f"https://img.shields.io/badge/governance-{message}-{color}"
+
+
 def badge_markdown(report: Dict[str, Any]) -> str:
-    """A copy-paste README snippet: the badge linking to release-gate."""
-    return (f"[![AI deployment readiness]({badge_url(report)})]"
-            f"(https://github.com/VamsiSudhakaran1/release-gate)")
+    """A copy-paste README snippet: the badge(s) linking to release-gate."""
+    link = "https://github.com/VamsiSudhakaran1/release-gate"
+    md = f"[![Agent Code Safety]({badge_url(report)})]({link})"
+    gov_badge = governance_badge_url(report)
+    if gov_badge:
+        md += f" [![Governance]({gov_badge})]({link})"
+    return md
 
 
 def render_markdown(report: Dict[str, Any]) -> str:
@@ -1160,10 +1183,26 @@ def render_markdown(report: Dict[str, Any]) -> str:
         out.append(f"  •  **Model:** `{report['detected_model']}`")
     out.append("")
 
-    score = report.get("score", 0)
-    decision = report.get("decision", "BLOCK")
-    emoji = {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(decision, "⚪")
-    out.append(f"### {emoji} Score: **{score} / 100** — {decision}")
+    cs = report.get("code_safety") or {}
+    gov = report.get("governance") or {}
+    emoji_for = lambda d: {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(d, "⚪")
+    if cs.get("applicable") and cs.get("score") is not None:
+        ce = emoji_for(cs["decision"])
+        out.append(f"### {ce} Agent Code Safety: **{cs['score']} / 100** — {cs['decision']}")
+        out.append(f"_{cs.get('high',0)} high · {cs.get('medium',0)} medium · "
+                   f"{cs.get('low',0)} low — injection surfaces, exec sinks & uncapped LLM calls "
+                   f"(the agent-layer risks SAST tools miss)._")
+        factors = cs.get("factors") or []
+        if factors:
+            driving = "; ".join(f"{f['title']} ×{f['count']}" for f in factors[:3])
+            out.append("")
+            out.append(f"_Driving the score: {driving}._")
+    if gov:
+        ge = {"Mature": "🟢", "Partial": "🟡", "Undeclared": "🔴"}.get(gov.get("level"), "⚪")
+        out.append("")
+        out.append(f"### {ge} Governance: **{gov.get('score',0)} / 100** — {gov.get('level','')}")
+        out.append(f"_{gov.get('present',0)}/{gov.get('total',0)} safeguards declared. "
+                   f"Low = undeclared, not unsafe._")
     out.append("")
     out.append(badge_markdown(report))
     out.append("")
