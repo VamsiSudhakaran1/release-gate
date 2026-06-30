@@ -1019,6 +1019,40 @@ async def agent_score_demo(body: AgentScoreDemoRequest):
     return result.as_dict()
 
 
+class LiveScanRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/agent-scan-live")
+async def agent_scan_live(body: LiveScanRequest, request: Request = None,
+                          authorization: Optional[str] = Header(default=None)):
+    """Behavioral safety scan of a LIVE agent endpoint.
+
+    Sends canary injection/exfiltration probes to the URL and reports whether
+    the agent leaks the planted secret. Auth-required and rate-limited; the
+    target is SSRF-guarded (public http(s) only, no redirects, no server creds).
+    """
+    user = _require_user(authorization)
+    # Strict rate limit — each scan fans out to several outbound calls.
+    ip = _client_ip(request)
+    if not _check_rate_limit(f"livescan:user:{user['id']}", limit=5, window=3600) or \
+       not _check_rate_limit(f"livescan:ip:{ip}", limit=10, window=3600):
+        raise HTTPException(status_code=429,
+                            detail="Live-scan limit reached. Please wait, or use the CLI for unlimited scans.")
+    url = (body.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    from release_gate_api.live_scan import run_live_scan
+    from release_gate_api.net_guard import UnsafeUrlError
+    try:
+        return run_live_scan(url)
+    except UnsafeUrlError as exc:
+        raise HTTPException(status_code=400, detail=f"Unsafe target: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"Scan failed: {exc}")
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")

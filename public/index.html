@@ -991,16 +991,40 @@
     </div>
 
     <div style="max-width:720px;margin:0 auto">
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <input id="as-url-input" type="text" placeholder="https://github.com/your-org/your-agent"
-          style="flex:1;min-width:240px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;font-size:.95rem"
-          onkeydown="if(event.key==='Enter')runAgentScan()">
-        <button id="as-run-btn" onclick="runAgentScan()" class="btn-primary"
-          style="padding:13px 24px;border:none;border-radius:10px;font-weight:700;cursor:pointer">Scan agent</button>
+      <!-- Mode toggle: static repo scan vs live endpoint scan -->
+      <div style="display:inline-flex;background:#ede9fe;border-radius:10px;padding:4px;margin-bottom:14px">
+        <button id="as-tab-repo" onclick="setScanMode('repo')" style="border:none;background:#fff;color:var(--heading);font-weight:700;font-size:.85rem;padding:8px 16px;border-radius:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08)">Scan a repo</button>
+        <button id="as-tab-live" onclick="setScanMode('live')" style="border:none;background:transparent;color:var(--accent);font-weight:700;font-size:.85rem;padding:8px 16px;border-radius:8px;cursor:pointer">Scan a live endpoint</button>
       </div>
-      <div id="as-hint" style="font-size:.8rem;color:#6b7280;margin-top:8px">
-        Try a public repo &mdash; e.g. <code>github.com/luohy15/y-agent</code>. Sign up free to see every finding with file:line.
+
+      <!-- Repo mode -->
+      <div id="as-mode-repo">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <input id="as-url-input" type="text" placeholder="https://github.com/your-org/your-agent"
+            style="flex:1;min-width:240px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;font-size:.95rem"
+            onkeydown="if(event.key==='Enter')runAgentScan()">
+          <button id="as-run-btn" onclick="runAgentScan()" class="btn-primary"
+            style="padding:13px 24px;border:none;border-radius:10px;font-weight:700;cursor:pointer">Scan agent</button>
+        </div>
+        <div style="font-size:.8rem;color:#6b7280;margin-top:8px">
+          Paste any public GitHub repo that runs an LLM agent &mdash; e.g. <code>github.com/your-org/your-agent</code>. Sign up free to see every finding with file:line.
+        </div>
       </div>
+
+      <!-- Live endpoint mode -->
+      <div id="as-mode-live" style="display:none">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <input id="as-live-input" type="text" placeholder="https://your-agent.example.com/run#in=prompt&amp;ctx=ctx&amp;out=reply"
+            style="flex:1;min-width:240px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;font-size:.95rem"
+            onkeydown="if(event.key==='Enter')runLiveScan()">
+          <button id="as-live-btn" onclick="runLiveScan()" class="btn-primary"
+            style="padding:13px 24px;border:none;border-radius:10px;font-weight:700;cursor:pointer">Scan endpoint</button>
+        </div>
+        <div style="font-size:.8rem;color:#6b7280;margin-top:8px">
+          Same as the CLI: <code>release-gate agent-score "URL#in=prompt&amp;ctx=ctx&amp;out=reply"</code>. The <code>#</code>-fragment maps your request/response fields. We send canary injection probes and check if your agent leaks the planted secret. <strong>Public URLs only</strong> &mdash; to test a localhost agent, use the CLI. <span id="as-live-auth-note"></span>
+        </div>
+      </div>
+
       <div id="as-error" style="display:none;color:var(--red);font-size:.88rem;margin-top:10px"></div>
       <div id="as-results" style="display:none;margin-top:22px"></div>
     </div>
@@ -2886,6 +2910,89 @@
         '</div>';
     }
 
+    resEl.innerHTML = h;
+    resEl.style.display = 'block';
+  }
+
+  function setScanMode(mode) {
+    var repo = mode === 'repo';
+    document.getElementById('as-mode-repo').style.display = repo ? 'block' : 'none';
+    document.getElementById('as-mode-live').style.display = repo ? 'none' : 'block';
+    var tr = document.getElementById('as-tab-repo'), tl = document.getElementById('as-tab-live');
+    tr.style.background = repo ? '#fff' : 'transparent';
+    tr.style.color = repo ? 'var(--heading)' : 'var(--accent)';
+    tr.style.boxShadow = repo ? '0 1px 3px rgba(0,0,0,.08)' : 'none';
+    tl.style.background = repo ? 'transparent' : '#fff';
+    tl.style.color = repo ? 'var(--accent)' : 'var(--heading)';
+    tl.style.boxShadow = repo ? 'none' : '0 1px 3px rgba(0,0,0,.08)';
+    document.getElementById('as-results').style.display = 'none';
+    document.getElementById('as-error').style.display = 'none';
+    var note = document.getElementById('as-live-auth-note');
+    if (note) note.innerHTML = getToken() ? '' : '<a href="#" onclick="openAuthModal(\'signup\');return false" style="color:var(--accent);font-weight:600">Sign up free</a> to run a live scan.';
+  }
+
+  async function runLiveScan() {
+    if (!getToken()) { openAuthModal('signup'); return; }
+    var input = document.getElementById('as-live-input');
+    var url = input.value.trim();
+    if (!url) { input.focus(); return; }
+    var btn = document.getElementById('as-live-btn');
+    var errEl = document.getElementById('as-error');
+    var resEl = document.getElementById('as-results');
+    btn.disabled = true; btn.textContent = 'Probing…';
+    errEl.style.display = 'none';
+    try {
+      var res = await fetch(API_BASE + '/api/agent-scan-live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
+        body: JSON.stringify({ url: url })
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = (data && data.detail) ? data.detail : 'Live scan failed (HTTP ' + res.status + ').';
+        errEl.style.display = 'block';
+        resEl.style.display = 'none';
+        return;
+      }
+      renderLiveScan(data);
+    } catch (e) {
+      errEl.textContent = 'Could not reach the scanner. Please try again.';
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Scan endpoint';
+    }
+  }
+
+  function renderLiveScan(data) {
+    var resEl = document.getElementById('as-results');
+    var decision = (data.decision || 'HOLD').toUpperCase();
+    var decClass = decision === 'PROMOTE' ? 'promote' : (decision === 'HOLD' ? 'hold' : 'block');
+    var statusColor = { RESISTED:'#16a34a', LEAKED:'#dc2626', ERROR:'#6b7280' };
+    var h = '';
+    h += '<div style="display:flex;align-items:center;gap:16px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px">' +
+      '<div class="pg-decision-badge ' + decClass + '" style="font-size:1rem;padding:8px 16px">' + escHtml(decision) + '</div>' +
+      '<div style="flex:1"><div style="font-weight:700;color:var(--heading);font-size:.9rem">' + escHtml(data.headline || '') + '</div>' +
+      '<div style="font-size:.8rem;color:#6b7280;margin-top:4px;word-break:break-all">' + escHtml(data.target || '') + '</div></div></div>';
+
+    h += '<div style="display:flex;gap:8px;margin:14px 0 10px;flex-wrap:wrap;font-size:.82rem;font-weight:700">' +
+      '<span style="color:#16a34a">' + (data.resisted||0) + ' resisted</span>' +
+      '<span style="color:#dc2626">' + ((data.l1&&data.l1.leaked||0)+(data.l2&&data.l2.leaked||0)) + ' leaked</span>' +
+      (data.errored ? '<span style="color:#6b7280">' + data.errored + ' errored</span>' : '') +
+      '</div>';
+
+    (data.results || []).forEach(function(r){
+      var c = statusColor[r.status] || '#6b7280';
+      h += '<div style="background:#fff;border:1px solid var(--border);border-left:3px solid ' + c + ';border-radius:10px;padding:10px 14px;margin-bottom:7px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+        '<span style="background:' + c + ';color:#fff;font-size:.66rem;font-weight:700;padding:2px 8px;border-radius:5px">' + escHtml(r.status || '?') + '</span>' +
+        '<span style="font-weight:600;color:var(--heading);font-size:.85rem">' + escHtml(r.name) + '</span>' +
+        '<span style="font-size:.74rem;color:#6b7280">' + escHtml(r.tier || '') + '</span>' +
+        (r.error ? '<span style="font-size:.74rem;color:#dc2626">' + escHtml(r.error) + '</span>' : '') +
+        '</div>';
+    });
+
+    if (data.note) {
+      h += '<div style="font-size:.78rem;color:#6b7280;margin-top:10px;padding:10px 14px;background:#f8f7ff;border-radius:8px">' + escHtml(data.note) + '</div>';
+    }
     resEl.innerHTML = h;
     resEl.style.display = 'block';
   }
