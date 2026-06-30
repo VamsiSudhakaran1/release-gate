@@ -190,12 +190,13 @@ class _Analyzer(ast.NodeVisitor):
                 return True
             return self.llm_imported and (root in self.llm_vars or root in self.llm_aliases)
         if attr in RECEIVER_QUALIFIED_CALLS:
-            # Only when we KNOW the receiver is an LLM client: a var assigned from
-            # an LLM constructor, an imported LLM name, or the unambiguous name
-            # `llm`. Generic names (client/agent/chat/model) are NOT assumed —
-            # that's the difference between a finding you can trust and noise.
-            return (root in self.llm_vars or root in self.llm_aliases
-                    or (root or "").lower() == "llm")
+            # Only when we can RESOLVE the receiver to an LLM client: a var
+            # assigned from an LLM constructor, or an imported LLM module/name.
+            # We do NOT guess from the variable name — `llm = services.get("llm")`
+            # is an app wrapper, not a known SDK call, and `max_tokens` may be
+            # handled inside it. A name-based guess is not a finding you can put
+            # in front of a maintainer.
+            return root in self.llm_vars or root in self.llm_aliases
         return False
 
     def visit_Call(self, node: ast.Call):
