@@ -25,18 +25,26 @@ Output:
   Agents  OpenAI / Agents SDK (4 files), LangChain (12 files)
 
   Readiness Score   42 / 100   ████░░░░░░
-  Decision:  ⚠  HOLD
 
-  Missing safeguards (3):
-  ✗  Governance config      No deployment policy — nothing to gate on.
-  ✗  Budget / cost ceiling  Runaway loop could exhaust API credits silently.
-  ✗  Trace / tool policy    No record of which tools the agent called or why.
+  Agent Code Safety  28/100  BLOCK   4 high · 18 med · 0 low
+     Driving the score: Dangerous execution sink ×4; LLM call with no token ceiling ×18
+  Governance         50/100  Partial   4/8 safeguards declared
 
-  Next step:
-  release-gate audit . --emit-config -o governance.yaml
+  Decision:  ✗  BLOCK
 ```
 
-Then scaffold a ready-to-commit governance config from the scan:
+Two axes, on purpose:
+
+- **Agent Code Safety** — an *objective* score from the code itself: prompt-injection
+  surfaces, `exec`/shell sinks fed by model output, LLM calls with no token ceiling,
+  hardcoded keys. It moves per repo and doesn't depend on adopting anything. These are
+  the agent-layer risks generic SAST/SonarQube don't model — release-gate is the layer
+  on top, not a replacement.
+- **Governance** — maturity of your *declared, enforceable* safeguards (budget ceiling,
+  kill switch, owner, evals, trace policy…). Low here means **undeclared, not unsafe**.
+
+Run `--full` for the per-finding breakdown, or scaffold a ready-to-commit governance
+config from the scan:
 
 ```bash
 release-gate audit . --emit-config -o governance.yaml
@@ -46,7 +54,15 @@ release-gate score governance.yaml
 
 ## What is release-gate?
 
-release-gate sits between your tests and your deployment. It runs evals, validates agent execution traces, checks cost budgets, and scores your AI agent across six governance dimensions — then gives you one number and one decision.
+release-gate sits between your tests and your deployment. It scans your agent code for
+the failure modes that only exist once an LLM is in the loop, runs evals, validates
+execution traces, checks cost budgets — then gives you two honest scores and one
+decision: **PROMOTE / HOLD / BLOCK**.
+
+**SonarQube tells you your _code_ is safe. release-gate tells you your _agent_ is safe to
+ship.** They're complementary — keep your SAST suite; release-gate covers the agent layer
+it was never built to see (prompt-injection surfaces, cost-runaway loops, missing kill
+switches).
 
 ```
 $ release-gate score governance.yaml --evals evals.yaml
@@ -99,9 +115,9 @@ release-gate evidence-pack governance.yaml
 
 | Command | What it does |
 |---------|-------------|
-| `release-gate audit [path\|url]` | **Scan any repo** — detects agent frameworks, scores 7 deployment safeguards, returns PROMOTE / HOLD / BLOCK. No config needed. |
+| `release-gate audit [path\|url]` | **Scan any repo** — detects agent frameworks, scores **Agent Code Safety** (from real code findings) + **Governance** (declared safeguards), returns PROMOTE / HOLD / BLOCK. No config needed. Add `--full` for the per-finding breakdown. |
 | `release-gate audit . --emit-config` | **Scaffold governance.yaml** — generates a pre-filled config from what the scan found |
-| `release-gate audit . --badge` | **README badge** — shields.io snippet for your readiness score |
+| `release-gate audit . --badge` | **README badge** — shields.io snippet for your Agent Code Safety (+ optional Governance) score |
 | `release-gate audit . --markdown` | **CI job summary** — GitHub-flavored report, auto-written to `$GITHUB_STEP_SUMMARY` |
 | `release-gate score <config.yaml>` | **0–100 readiness score** — evaluates 6 dimensions, returns PROMOTE / HOLD / BLOCK |
 | `release-gate compare <baseline.json> <candidate.json>` | **Regression gate** — blocks if any dimension drops >10 pts vs baseline |

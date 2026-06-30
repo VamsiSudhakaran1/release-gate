@@ -842,7 +842,7 @@
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
     <h1>Know before you ship.</h1>
-    <p class="hero-sub">Paste any public GitHub repo URL — release-gate scans for 7 deployment safeguards and shows you exactly what's in place and what's missing. Takes 10 seconds. No install needed.</p>
+    <p class="hero-sub">Paste any public GitHub repo URL — release-gate gives you two scores: <strong>Agent Code Safety</strong> (injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SonarQube misses) and <strong>Governance</strong> (your declared safeguards). Takes 10 seconds. No install needed.</p>
     <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">release-gate starts as a 10-second repo audit, then becomes a CI gate that blocks unsafe AI releases before they reach production.</p>
 
     <!-- Hero playground input -->
@@ -1551,8 +1551,18 @@
       </details>
 
       <details class="faq-item">
-        <summary>What does it actually test?</summary>
-        <div class="faq-a">Four weighted dimensions. <strong>Safety</strong> plants a canary secret in the agent's context and runs a tiered prompt-injection / exfiltration battery (L1 direct → L4 multi-turn); a confirmed leak is a hard BLOCK. <strong>Correctness</strong> runs your domain evals. <strong>Loop behavior</strong> checks convergence and catches runaways. <strong>Cost &amp; latency</strong> characterizes per-call spend. A high total can't buy back a weak dimension — promote floors keep a broken-but-safe agent out of PROMOTE.</div>
+        <summary>Why two scores — Agent Code Safety and Governance?</summary>
+        <div class="faq-a">Because they answer different questions, and collapsing them into one number hides the truth. <strong>Agent Code Safety</strong> is <em>objective</em>: it scans your source for the agent-layer risks — prompt-injection surfaces, <code>exec</code>/shell sinks fed by model output, LLM calls with no token ceiling, hardcoded keys. It moves per repo and doesn't depend on adopting anything from us. <strong>Governance</strong> is <em>maturity</em>: have you <em>declared</em> the enforceable safeguards (budget ceiling, kill switch, owner, evals, trace policy)? A low Governance score means <strong>undeclared, not unsafe</strong>. Keeping them separate is why a clean codebase with no config still scores well on safety — no circular "you didn't adopt our file" penalty. Each score also shows the findings driving it, so it's never a black box.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>Isn't Agent Code Safety just SonarQube?</summary>
+        <div class="faq-a">No. SonarQube and SAST tools find SQL injection, XSS, CVEs and code smells — the <em>code</em> layer. Agent Code Safety finds the failure modes that only exist once an LLM is in the loop: user input flowing into a system prompt, model output reaching <code>exec</code>/a shell, an uncapped loop that can burn $10k overnight, a missing kill switch. SonarQube has no concept of any of those. Keep your SAST suite — this is the agent layer on top, not a replacement.</div>
+      </details>
+
+      <details class="faq-item">
+        <summary>What does the live agent battery test?</summary>
+        <div class="faq-a">When you point release-gate at a live agent (CLI <code>agent-score</code> or the on-site live scan), it runs four weighted dimensions. <strong>Safety</strong> plants a canary secret in the agent's context and runs a tiered prompt-injection / exfiltration battery (L1 direct → L4 multi-turn); a confirmed leak is a hard BLOCK. <strong>Correctness</strong> runs your domain evals. <strong>Loop behavior</strong> checks convergence and catches runaways. <strong>Cost &amp; latency</strong> characterizes per-call spend. A high total can't buy back a weak dimension — promote floors keep a broken-but-safe agent out of PROMOTE.</div>
       </details>
 
       <details class="faq-item">
