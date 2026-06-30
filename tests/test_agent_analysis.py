@@ -239,3 +239,27 @@ def test_tooling_path_exec_sinks_filtered():
     # build-script exec sink dropped; the real agent-runtime eval kept
     assert not any(f["file"].startswith("scripts") for f in scan_code_findings(Path(d)))
     assert "Dangerous execution sink" in titles
+
+
+def test_autogpt_style_unbounded_loop_flagged():
+    src = (
+        "from openai import OpenAI\n"
+        "c = OpenAI()\n"
+        "def run(goal):\n"
+        "    ctx = goal\n"
+        "    while True:\n"
+        "        r = c.chat.completions.create(model='gpt-4', messages=[{'role':'user','content':ctx}])\n"
+        "        ctx = r.choices[0].message.content\n"
+        "        if 'DONE' in ctx: break\n"
+    )
+    assert "Unbounded loop around an LLM call" in titles(src)
+
+
+def test_bounded_loop_not_flagged():
+    src = (
+        "from openai import OpenAI\n"
+        "c = OpenAI()\n"
+        "for i in range(10):\n"
+        "    c.chat.completions.create(model='x', messages=m, max_tokens=50)\n"
+    )
+    assert "Unbounded loop around an LLM call" not in titles(src)
