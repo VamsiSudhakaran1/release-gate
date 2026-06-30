@@ -1138,7 +1138,7 @@ def _col(text, *codes):
     return "".join(codes) + text + _RESET
 
 
-def render_terminal(report: Dict[str, Any]) -> None:
+def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     div = "─" * 72
 
     print()
@@ -1197,72 +1197,87 @@ def render_terminal(report: Dict[str, Any]) -> None:
     print()
     print(f"  {div}")
 
-    # Missing safeguards
     missing = report["missing"]
-    if missing:
-        print(f"\n  {_col('Missing safeguards  (' + str(len(missing)) + ')', _RED, _BOLD)}\n")
-        for s in missing:
-            print(f"  {_col('✗', _RED)}  {_col(s['label'], _BOLD)}")
-            print(f"     {_col('Risk:', _MUTED)} {s['risk']}")
-        print()
-
-    # Passing safeguards
     passing = report["passing"]
-    if passing:
-        print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
-        for s in passing:
-            print(f"  {_col('✓', _GREEN)}  {s['label']}")
+    findings = report.get("code_findings", []) or []
+
+    if not full:
+        # Concise default — a one-line tally; the full breakdown lives behind
+        # --full and on the website.
+        print(f"\n  {_col('✓ ' + str(len(passing)) + ' safeguard(s) present', _GREEN)}"
+              f"    {_col('✗ ' + str(len(missing)) + ' missing', _RED if missing else _MUTED)}"
+              f"    {_col(str(len(findings)) + ' code finding(s)', _RED if findings else _MUTED)}")
+        if missing:
+            top = ", ".join(s["label"] for s in missing[:3])
+            more = f" +{len(missing) - 3} more" if len(missing) > 3 else ""
+            print(f"  {_col('Missing:', _MUTED)} {top}{more}")
+        print(f"\n  {_col('Run with --full for the breakdown, or open the full report online.', _MUTED)}")
         print()
-
-    # Real check results (if governance.yaml was found and parsed)
-    real = report.get("real_checks")
-    if real:
-        print(f"  {_col('Governance check results', _BOLD)}\n")
-        for name, result in sorted(real.items()):
-            status = result.get("status", "?")
-            sym = "✓" if status == "PASS" else ("⚠" if status == "WARN" else "✗")
-            col = _GREEN if status == "PASS" else (_YELLOW if status == "WARN" else _RED)
-            print(f"  {_col(sym, col)}  {name:<25} {_col(status, col)}")
-        print()
-
-    print(f"  {div}")
-
-    # Next steps
-    print(f"\n  {_col('Next steps', _BOLD)}\n")
-    step = 1
-
-    if not report["governance_file"]:
-        print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
-        print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
-        print(f"     Fill in the TODO lines, then score before every deploy.")
-        step += 1
-
-    if missing:
-        unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
-        if unresolved_safeguards:
-            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
+    else:
+        # Missing safeguards
+        if missing:
+            print(f"\n  {_col('Missing safeguards  (' + str(len(missing)) + ')', _RED, _BOLD)}\n")
             for s in missing:
-                if s["id"] != "governance_file":
-                    print(f"     • {s['label']}")
+                print(f"  {_col('✗', _RED)}  {_col(s['label'], _BOLD)}")
+                print(f"     {_col('Risk:', _MUTED)} {s['risk']}")
+            print()
+
+        # Passing safeguards
+        if passing:
+            print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
+            for s in passing:
+                print(f"  {_col('✓', _GREEN)}  {s['label']}")
+            print()
+
+        # Real check results (if governance.yaml was found and parsed)
+        real = report.get("real_checks")
+        if real:
+            print(f"  {_col('Governance check results', _BOLD)}\n")
+            for name, result in sorted(real.items()):
+                status = result.get("status", "?")
+                sym = "✓" if status == "PASS" else ("⚠" if status == "WARN" else "✗")
+                col = _GREEN if status == "PASS" else (_YELLOW if status == "WARN" else _RED)
+                print(f"  {_col(sym, col)}  {name:<25} {_col(status, col)}")
+            print()
+
+        print(f"  {div}")
+
+        # Next steps
+        print(f"\n  {_col('Next steps', _BOLD)}\n")
+        step = 1
+
+        if not report["governance_file"]:
+            print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
+            print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
+            print(f"     Fill in the TODO lines, then score before every deploy.")
             step += 1
 
-    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
-    print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
-    step += 1
+        if missing:
+            unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
+            if unresolved_safeguards:
+                print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
+                for s in missing:
+                    if s["id"] != "governance_file":
+                        print(f"     • {s['label']}")
+                step += 1
 
-    if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
-        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
-        print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
+        print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
         step += 1
 
-    if not report["has_ci_integration"]:
-        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
-        print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.4', _BLUE)}")
-        step += 1
+        if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
+            print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+            step += 1
 
-    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
-    print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
-    step += 1
+        if not report["has_ci_integration"]:
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
+            print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.7.4', _BLUE)}")
+            step += 1
+
+        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
+        print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
+        step += 1
 
     # Web report link — show deep link if run was saved via authenticated API,
     # otherwise show the homepage so CLI users know where to scan via the web.
