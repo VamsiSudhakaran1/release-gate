@@ -823,6 +823,7 @@
   <nav>
     <a class="logo" onclick="goHome();return false;" href="#">&#x1F6AA; release-gate</a>
     <ul class="nav-links">
+      <li><a href="#agent-scan">Agent Scan</a></li>
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
       <li><a href="#loop-section">Loop Verify</a></li>
@@ -976,6 +977,32 @@
         <p>Unprotected endpoint = denial-of-wallet attack in minutes.</p>
       </div>
 
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ AGENT SAFETY SCAN ═══════════════════════ -->
+<section id="agent-scan" style="padding:72px 0;background:#f8f7ff;border-top:1px solid rgba(99,102,241,.1);scroll-margin-top:72px">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Agent Safety Scan</p>
+      <h2 class="section-title">Scan your agent code for the risks SAST tools miss</h2>
+      <p class="section-subtitle">Point it at any GitHub repo running an LLM agent. It finds the failure modes that only exist once a model is in the loop &mdash; prompt-injection surfaces, exec sinks fed by model output, LLM calls with no token ceiling, and hardcoded keys. SonarQube won&rsquo;t flag these; this is the layer on top.</p>
+    </div>
+
+    <div style="max-width:720px;margin:0 auto">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <input id="as-url-input" type="text" placeholder="https://github.com/your-org/your-agent"
+          style="flex:1;min-width:240px;padding:13px 16px;border:1px solid var(--border);border-radius:10px;font-size:.95rem"
+          onkeydown="if(event.key==='Enter')runAgentScan()">
+        <button id="as-run-btn" onclick="runAgentScan()" class="btn-primary"
+          style="padding:13px 24px;border:none;border-radius:10px;font-weight:700;cursor:pointer">Scan agent</button>
+      </div>
+      <div id="as-hint" style="font-size:.8rem;color:#6b7280;margin-top:8px">
+        Try a public repo &mdash; e.g. <code>github.com/luohy15/y-agent</code>. Sign up free to see every finding with file:line.
+      </div>
+      <div id="as-error" style="display:none;color:var(--red);font-size:.88rem;margin-top:10px"></div>
+      <div id="as-results" style="display:none;margin-top:22px"></div>
     </div>
   </div>
 </section>
@@ -2560,11 +2587,15 @@
     }
 
     // Export
+    var rid = data.id || '';
+    var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
     h += '<div class="rpt-export">' +
+      (rid ? '<button onclick="downloadRunPdf(\'' + escHtml(rid) + '\', this)" style="background:var(--accent);color:#fff;border:none">&#x2B07;&nbsp; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' : '') +
       '<button onclick="exportReportJson()">&#x2B07;&nbsp; Download JSON</button>' +
       '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
       (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
-      '</div>';
+      '</div>' +
+      (rid && !paid ? '<div style="font-size:.78rem;color:#6b7280;margin-top:8px">The PDF summary shows score, decision &amp; counts. <a href="#pricing" style="color:var(--accent);font-weight:600">Upgrade to Pro</a> for a PDF with every finding (file:line + fixes) &amp; compliance mapping.</div>' : '');
 
     document.getElementById('report-modal-body').innerHTML = h;
   }
@@ -2746,6 +2777,117 @@
       btn.disabled = false;
       spinner.classList.remove('active');
     }
+  }
+
+  // ── Agent Safety Scan (foregrounds the agent-specific code findings) ──────
+  async function runAgentScan() {
+    var input = document.getElementById('as-url-input');
+    var url = input.value.trim();
+    if (!url) { input.focus(); return; }
+    var btn = document.getElementById('as-run-btn');
+    var errEl = document.getElementById('as-error');
+    var resEl = document.getElementById('as-results');
+    btn.disabled = true; btn.textContent = 'Scanning…';
+    errEl.style.display = 'none';
+    try {
+      var res = await fetch(API_BASE + '/api/audit', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' },
+          getToken() ? { 'Authorization': 'Bearer ' + getToken() } : {}),
+        body: JSON.stringify({ url: url })
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        var d = data && data.detail;
+        if (d && typeof d === 'object' && d.private_repo) {
+          errEl.innerHTML = (d.message || 'This repo is private.') +
+            ' <a href="' + d.install_url + '" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">Install release-gate-ai →</a>';
+        } else {
+          errEl.textContent = (d && typeof d === 'string') ? d : 'Scan failed (HTTP ' + res.status + ').';
+        }
+        errEl.style.display = 'block';
+        resEl.style.display = 'none';
+        return;
+      }
+      var report = data.report || data;
+      if (data.run_id) report._run_id = data.run_id;
+      renderAgentScan(report, url);
+    } catch (e) {
+      errEl.textContent = 'Could not reach the scanner. Please try again.';
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Scan agent';
+    }
+  }
+
+  var AS_RISK_BLURB = {
+    'Interpolated system prompt (injection surface)': 'User input flows into a system prompt — a prompt-injection entry point.',
+    'Dangerous execution sink': 'Model-influenced data can reach exec/eval/shell — potential code execution.',
+    'LLM call with no token ceiling': 'No max_tokens — a runaway loop can burn unbounded cost.',
+    'Hardcoded secret / API key': 'A credential appears in source — rotate it and move to env/secrets.',
+    'Unbounded loop around LLM call': 'A loop wraps an LLM call with no iteration cap — cost runaway risk.'
+  };
+
+  function renderAgentScan(report, url) {
+    var resEl = document.getElementById('as-results');
+    var findings = report.code_findings || [];
+    var lockedCount = report._code_findings_count;
+    var decision = (report.decision || 'HOLD').toUpperCase();
+    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
+    var score = (report.score != null ? report.score : '—');
+    var repoShort = (url || '').replace('https://github.com/', '').replace('https://', '');
+
+    var sev = { high:0, medium:0, low:0 };
+    findings.forEach(function(f){ if (sev[f.severity] != null) sev[f.severity]++; });
+
+    var h = '';
+    h += '<div style="display:flex;align-items:center;gap:16px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px">' +
+      '<div class="pg-score-circle ' + decClass + '" style="width:64px;height:64px;font-size:1.5rem">' + score + '</div>' +
+      '<div style="flex:1"><div style="font-weight:800;color:var(--heading)">' + escHtml(repoShort || 'Agent scan') + '</div>' +
+      '<div style="margin-top:4px"><span class="pg-decision-badge ' + decClass + '">' + escHtml(decision) + '</span></div></div>' +
+      '</div>';
+
+    // Agent-risk findings — the foreground of this view.
+    if (getToken() && findings.length) {
+      var order = { high:0, medium:1, low:2 };
+      var sevColor = { high:'#dc2626', medium:'#d97706', low:'#6b7280' };
+      h += '<div style="display:flex;gap:8px;margin:16px 0 10px;flex-wrap:wrap;font-size:.82rem;font-weight:700">' +
+        '<span style="color:#dc2626">' + sev.high + ' high</span><span style="color:#d97706">' + sev.medium + ' medium</span><span style="color:#6b7280">' + sev.low + ' low</span></div>';
+      findings.slice().sort(function(a,b){ return (order[a.severity]||9)-(order[b.severity]||9); }).forEach(function(f){
+        var c = sevColor[f.severity] || '#6b7280';
+        var blurb = AS_RISK_BLURB[f.title] || '';
+        h += '<div style="background:#fff;border:1px solid var(--border);border-left:3px solid ' + c + ';border-radius:10px;padding:12px 14px;margin-bottom:8px">' +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+          '<span style="background:' + c + ';color:#fff;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:5px">' + (f.severity || '?').toUpperCase() + '</span>' +
+          '<span style="font-weight:700;color:var(--heading);font-size:.88rem">' + escHtml(f.title) + '</span>' +
+          (f.file ? '<span style="font-family:monospace;font-size:.78rem;color:#6b7280">' + escHtml(f.file) + ':' + (f.line != null ? f.line : '?') + '</span>' : '') +
+          '</div>' +
+          (blurb ? '<div style="font-size:.82rem;color:#6b7280;margin-top:5px">' + escHtml(blurb) + '</div>' : '') +
+          (f.recommendation ? '<div style="font-size:.82rem;color:var(--heading);margin-top:5px">&#x1F6E0;&#xFE0F; ' + escHtml(f.recommendation) + '</div>' : '') +
+          '</div>';
+      });
+      // Report + PDF actions
+      if (report._run_id) {
+        var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
+        h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">' +
+          '<a href="/r/' + encodeURIComponent(report._run_id) + '" target="_blank" rel="noopener" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px">&#x1F4CA; Full report &rarr;</a>' +
+          '<button onclick="downloadRunPdf(\'' + report._run_id + '\', this)" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">&#x2B07;&#xFE0F; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' +
+          '</div>';
+      }
+    } else if (getToken() && !findings.length) {
+      h += '<p style="margin-top:14px;color:var(--green);font-weight:600">&#x2705; No agent-specific code risks detected in the scanned source.</p>';
+    } else {
+      // Anonymous: findings are locked — tease the count and drive signup.
+      var n = (lockedCount != null) ? lockedCount : '?';
+      h += '<div style="margin-top:14px;background:#fff;border:1px dashed #c4b5fd;border-radius:12px;padding:20px;text-align:center">' +
+        '<div style="font-size:1.6rem;font-weight:800;color:var(--accent)">&#x1F512; ' + n + ' agent risk' + (n === 1 ? '' : 's') + ' found</div>' +
+        '<div style="font-size:.88rem;color:#6b7280;margin:8px 0 14px">Injection surfaces, exec sinks, uncapped LLM calls &amp; hardcoded keys — with exact file:line and fixes.</div>' +
+        '<button onclick="openAuthModal(\'signup\')" class="btn-primary" style="padding:11px 22px;border:none;border-radius:9px;font-weight:700;cursor:pointer">Sign up free to see every finding</button>' +
+        '</div>';
+    }
+
+    resEl.innerHTML = h;
+    resEl.style.display = 'block';
   }
 
   // ── Loop Verifier playground ──────────────────────────────────────────────
