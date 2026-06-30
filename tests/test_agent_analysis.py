@@ -224,3 +224,18 @@ def test_injection_severity_strong_vs_generic():
     s = [f for f in strong if "injection" in f["title"].lower()]
     assert g and g[0]["severity"] == "medium"
     assert s and s[0]["severity"] == "high"
+
+
+def test_tooling_path_exec_sinks_filtered():
+    import tempfile, os
+    from pathlib import Path
+    from release_gate.verify import scan_code_findings
+    d = tempfile.mkdtemp()
+    os.makedirs(Path(d) / "scripts")
+    os.makedirs(Path(d) / "agent")
+    (Path(d) / "scripts" / "build.mjs").write_text("const r = execSync(`cmd -v ${x}`)\n")
+    (Path(d) / "agent" / "run.py").write_text("def f(user_input):\n    return eval(user_input)\n")
+    titles = [f["title"] for f in scan_code_findings(Path(d))]
+    # build-script exec sink dropped; the real agent-runtime eval kept
+    assert not any(f["file"].startswith("scripts") for f in scan_code_findings(Path(d)))
+    assert "Dangerous execution sink" in titles

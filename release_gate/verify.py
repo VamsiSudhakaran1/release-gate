@@ -494,7 +494,7 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
                 continue
             count += 1
             if count > max_files:
-                return findings
+                return _finalize_findings(findings)
             fpath = Path(dirpath) / fname
             try:
                 text = fpath.read_bytes()[:max_bytes].decode("utf-8", errors="ignore")
@@ -505,7 +505,16 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
                 findings.extend(_scan_js_file(rel, text))
             else:
                 findings.extend(_scan_file(rel, text))
-    # De-dup identical (file, line, title)
+    return _finalize_findings(findings)
+
+
+def _finalize_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Filter tooling-path runtime findings + de-dup. Applied at EVERY return of
+    scan_code_findings (including the max-files early exit on big repos)."""
+    # Build/CI/tooling scripts are not the agent runtime, so an exec sink or loop
+    # there is not an agent-layer risk. Keep secrets (bad to commit anywhere).
+    findings = [f for f in findings
+                if not (_is_tooling_path(f["file"]) and f["title"] in _RUNTIME_ONLY_TITLES)]
     seen = set()
     unique = []
     for f in findings:
@@ -514,6 +523,22 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
             seen.add(key)
             unique.append(f)
     return unique
+
+
+# Finding types that only matter in the deployed agent runtime, not in
+# build/test/example tooling.
+_RUNTIME_ONLY_TITLES = {
+    "Dangerous execution sink", "Dynamic execution sink",
+    "Unbounded loop around an LLM call",
+}
+_TOOLING_PATH_RE = re.compile(
+    r"(^|/)(scripts?|build|dist|\.github|examples?|tests?|__tests__|test|docs?|"
+    r"benchmarks?|bench|e2e|cypress|electron|webpack|rollup|vite|setup\.py|conftest)(/|\.|$)",
+    re.IGNORECASE)
+
+
+def _is_tooling_path(rel: str) -> bool:
+    return bool(_TOOLING_PATH_RE.search(rel.replace("\\", "/")))
 
 
 # Lines that match the secret regex but are obviously placeholders/env reads —
