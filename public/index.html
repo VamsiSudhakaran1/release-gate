@@ -1561,6 +1561,20 @@
       </details>
 
       <details class="faq-item">
+        <summary>What kinds of issues does the scan actually catch?</summary>
+        <div class="faq-a">The agent-layer failure modes behind real, documented incidents:
+          <ul style="margin:8px 0 0;padding-left:18px;line-height:1.9">
+            <li><strong>Prompt-injection surface</strong> — untrusted input interpolated into a <em>system</em> prompt. The pattern behind the Chevrolet dealership bot being talked into &ldquo;selling&rdquo; a car for $1, and OWASP&rsquo;s #1 LLM risk.</li>
+            <li><strong>Uncapped LLM calls / no cost ceiling</strong> — a single call or loop with no <code>max_tokens</code> or budget. The pattern behind the $4k weekend bills and $6.5k runaway-agent stories.</li>
+            <li><strong>Unbounded loop around an LLM call</strong> — <code>while True:</code> with no iteration cap and a stop condition that may never trigger. The AutoGPT-style runaway that turns a $5 task into $400.</li>
+            <li><strong>Exec/eval sinks reachable from model output</strong> — <code>eval()</code>, <code>exec()</code>, <code>shell=True</code>, <code>new Function()</code> fed by model or user input — a remote-code-execution path.</li>
+            <li><strong>Hardcoded secrets</strong> in agent code (a convenience check; use a dedicated scanner for full coverage).</li>
+          </ul>
+          <div style="margin-top:8px">Each finding shows the exact file:line and the fix. The analyzer parses the code (AST), not keywords, so it flags <code>client.chat.completions.create(...)</code> without a ceiling but not a harmless <code>wizard.run()</code>.</div>
+        </div>
+      </details>
+
+      <details class="faq-item">
         <summary>What does the live agent battery test?</summary>
         <div class="faq-a">When you point release-gate at a live agent (CLI <code>agent-score</code> or the on-site live scan), it runs four weighted dimensions. <strong>Safety</strong> plants a canary secret in the agent's context and runs a tiered prompt-injection / exfiltration battery (L1 direct → L4 multi-turn); a confirmed leak is a hard BLOCK. <strong>Correctness</strong> runs your domain evals. <strong>Loop behavior</strong> checks convergence and catches runaways. <strong>Cost &amp; latency</strong> characterizes per-call spend. A high total can't buy back a weak dimension — promote floors keep a broken-but-safe agent out of PROMOTE.</div>
       </details>
