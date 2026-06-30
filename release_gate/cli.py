@@ -13,6 +13,7 @@ from typing import Dict, Any
 # Add package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from release_gate.web_cta import print_web_cta, web_url
 from release_gate.checks.action_budget import ActionBudgetCheck
 from release_gate.checks.input_contract import InputContractCheck
 from release_gate.checks.fallback_declared import FallbackDeclaredCheck
@@ -335,6 +336,11 @@ def print_results(results, decision, policy=None):
                             elif isinstance(value, str) and len(value) < 100:
                                 print(f"   {key}: {value}")
 
+    n_fail = sum(1 for r in results.values() if r.get('status') == 'FAIL')
+    print_web_cta(
+        teaser=f"Decision: {decision}" + (f" · {n_fail} failing check(s)" if n_fail else ""),
+        locked=n_fail or None,
+    )
     print("\n" + "="*80 + "\n")
 
 
@@ -606,6 +612,11 @@ def _print_score_report(scoring, project, evals, traces, impact, runtime=None):
 
     icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
     print(f"  Decision:  {icon}  {decision}  (score {score}/100)")
+    n_crit = len(crits)
+    print_web_cta(
+        teaser=f"{score}/100 · {decision}" + (f" · {n_crit} critical failure(s)" if n_crit else ""),
+        locked=n_crit or None,
+    )
     print("\n" + "=" * 80 + "\n")
 
 
@@ -706,6 +717,11 @@ def _print_regression_report(result):
     decision = result["decision"]
     icon = {"PROMOTE": "✓", "PASS": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
     print(f"  Decision:  {icon}  {decision}  — {result['reason']}")
+    n_reg = len(result.get("regressions", []))
+    print_web_cta(
+        teaser=f"{result['score_delta']:+d} pts · {decision}" + (f" · {n_reg} regression(s)" if n_reg else ""),
+        locked=n_reg or None,
+    )
     print("\n" + "=" * 80 + "\n")
 
 
@@ -758,6 +774,11 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
     print(f"  ✓  {paths['json']}")
     print(f"  ✓  {paths['markdown']}")
     print(f"  ✓  {paths['html']}\n")
+
+    print_web_cta(
+        teaser=f"{scoring['decision']} · {scoring['readiness_score']}/100",
+        label="Shareable web report & PDF",
+    )
 
     sys.exit(_score_exit_code(scoring["decision"]))
 
@@ -1263,6 +1284,12 @@ def _run_verify_command():
 
     print()
 
+    print_web_cta(
+        teaser=f"{result.decision} · iteration {result.iteration} · "
+               f"${result.cost_so_far:.4f} spent",
+        locked=(len(result.violations or []) + len(result.warnings or [])) or None,
+    )
+
     # Exit codes: 0 = SHIP, 10 = CONTINUE (not done yet), 1 = ROLLBACK
     sys.exit(0 if result.decision == 'SHIP' else (10 if result.decision == 'CONTINUE' else 1))
 
@@ -1373,6 +1400,13 @@ def _run_loop_sim_command():
     for reason in result.reasons:
         print(f"  {' ' * 12}{reason}")
     print()
+
+    n_viol = len(result.top_violations or [])
+    print_web_cta(
+        teaser=f"{result.decision} · {conv_pct:.0f}% convergence · "
+               f"{result.scenarios_passed}/{result.scenarios_run} matched",
+        locked=(len(result.spike_scenarios or []) + n_viol) or None,
+    )
 
     _exit_loop_sim(result.decision)
 
@@ -1541,6 +1575,13 @@ def _run_agent_score_command():
         print(f"  {_MUTED}Map to OWASP / NIST / EU AI Act:  "
               f"release-gate agent-score {agent_spec} --frameworks{_RESET}")
     print()
+
+    n_issues = len(result.issues or [])
+    hidden = max(0, n_issues - 5)
+    print_web_cta(
+        teaser=f"{result.score}/100 · {result.decision}" + (f" · {n_issues} issue(s)" if n_issues else ""),
+        locked=hidden or None,
+    )
 
     _exit_agent_score(result.decision)
 
