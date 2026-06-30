@@ -808,6 +808,8 @@ def print_help():
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("\nOptions for 'agent-score':")
+    print("  --full                                  Show the full breakdown (per-dimension bars, tiers, top issues)")
+    print("                                          Default output is a concise summary; the full report lives online")
     print("  --evals <evals.yaml>                    Add domain correctness cases")
     print("  --strict                                Any confirmed canary leak (L2/L3/L4) BLOCKs instead of HOLDs")
     print("  --runs <N>                              Run the battery N times; report the worst (averages out LLM randomness)")
@@ -1440,6 +1442,7 @@ def _run_agent_score_command():
     evals_path = _flag(sys.argv, '--evals')
     as_json    = '--json' in sys.argv
     show_frameworks = '--frameworks' in sys.argv
+    show_full  = '--full' in sys.argv or '--verbose' in sys.argv
     strict     = '--strict' in sys.argv
     report_path      = _flag(sys.argv, '--report')
     html_report_path = _flag(sys.argv, '--html-report')
@@ -1532,37 +1535,51 @@ def _run_agent_score_command():
         "safety": "Safety", "correctness": "Correctness",
         "loop": "Loop behavior", "cost_latency": "Cost & latency",
     }
-    weakest = min(result.dimensions, key=lambda k: result.dimensions[k]["score"])
-    for key in ("safety", "correctness", "loop", "cost_latency"):
-        d = result.dimensions[key]
-        s = d["score"]
-        tag = ""
-        tier_line = ""
-        if key == "safety":
-            tag = f"({d['passed']}/{d['total']})"
-            # Break the per-tier results onto their own indented line — four tiers
-            # don't fit inline.
-            tiers = [(name.upper(), d.get(name)) for name in ("l1", "l2", "l3", "l4")]
-            parts = [f"{lbl} {t['passed']}/{t['total']}" for lbl, t in tiers if t and t.get("total")]
-            if parts:
-                tier_line = "  ·  ".join(parts)
-        elif key == "correctness":
-            tag = f"({d['passed']}/{d['total']})"
-        elif key == "loop":
-            tag = d["decision"]
-        elif key == "cost_latency" and d.get("p95_latency_ms") is not None:
-            tag = f"p95 {d['p95_latency_ms']:.0f}ms"
-        weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
-        print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
-              f"{_MUTED}{tag:<26}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
-        if tier_line:
-            print(f"  {' ' * 15}{_MUTED}{tier_line}{_RESET}")
+    if show_full:
+        # Full breakdown — per-dimension bars, per-tier safety split, top issues.
+        weakest = min(result.dimensions, key=lambda k: result.dimensions[k]["score"])
+        for key in ("safety", "correctness", "loop", "cost_latency"):
+            d = result.dimensions[key]
+            s = d["score"]
+            tag = ""
+            tier_line = ""
+            if key == "safety":
+                tag = f"({d['passed']}/{d['total']})"
+                # Break the per-tier results onto their own indented line — four tiers
+                # don't fit inline.
+                tiers = [(name.upper(), d.get(name)) for name in ("l1", "l2", "l3", "l4")]
+                parts = [f"{lbl} {t['passed']}/{t['total']}" for lbl, t in tiers if t and t.get("total")]
+                if parts:
+                    tier_line = "  ·  ".join(parts)
+            elif key == "correctness":
+                tag = f"({d['passed']}/{d['total']})"
+            elif key == "loop":
+                tag = d["decision"]
+            elif key == "cost_latency" and d.get("p95_latency_ms") is not None:
+                tag = f"p95 {d['p95_latency_ms']:.0f}ms"
+            weak = f"  {_RED}← weakest{_RESET}" if key == weakest and s < 80 else ""
+            print(f"  {labels[key]:<15}{_dcol(s)}{s:>3}{_RESET}  {_dcol(s)}{_bar(s)}{_RESET}  "
+                  f"{_MUTED}{tag:<26}{_RESET}wt {int(WEIGHTS_PCT[key])}%{weak}")
+            if tier_line:
+                print(f"  {' ' * 15}{_MUTED}{tier_line}{_RESET}")
 
-    if result.issues:
-        print(f"\n  {_BOLD}Top issues{_RESET}")
-        for it in result.issues[:5]:
-            mark = _RED + '✗' if it['severity'] in ('critical', 'high') else _YELLOW + '⚠'
-            print(f"    {mark}{_RESET} {it['detail']}  {_MUTED}({it['dimension']}){_RESET}")
+        if result.issues:
+            print(f"\n  {_BOLD}Top issues{_RESET}")
+            for it in result.issues[:5]:
+                mark = _RED + '✗' if it['severity'] in ('critical', 'high') else _YELLOW + '⚠'
+                print(f"    {mark}{_RESET} {it['detail']}  {_MUTED}({it['dimension']}){_RESET}")
+    else:
+        # Basic view (default) — a compact one-line dimension summary. The full
+        # per-tier/per-issue breakdown lives behind --full and on the website.
+        summary = "   ".join(
+            f"{labels[k]} {_dcol(result.dimensions[k]['score'])}{result.dimensions[k]['score']}{_RESET}"
+            for k in ("safety", "correctness", "loop", "cost_latency")
+        )
+        print(f"  {summary}")
+        n_issues = len(result.issues or [])
+        if n_issues:
+            print(f"\n  {_MUTED}{n_issues} issue(s) found — run with {_RESET}--full{_MUTED} "
+                  f"for the breakdown, or open the full report online.{_RESET}")
 
     print(f"\n  Decision:  {col}{_BOLD}{icon}  {result.decision}{_RESET}")
     for reason in result.reasons:
@@ -1571,10 +1588,10 @@ def _run_agent_score_command():
 
     if show_frameworks:
         _print_framework_view(result.as_dict(), _BOLD, _RESET, _GREEN, _YELLOW, _RED, _MUTED)
-    else:
+    elif show_full:
         print(f"  {_MUTED}Map to OWASP / NIST / EU AI Act:  "
               f"release-gate agent-score {agent_spec} --frameworks{_RESET}")
-    print()
+        print()
 
     n_issues = len(result.issues or [])
     hidden = max(0, n_issues - 5)
