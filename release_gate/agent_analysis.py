@@ -49,6 +49,30 @@ RECEIVER_QUALIFIED_CALLS = {
 TOKEN_KEYS = {"max_tokens", "max_output_tokens", "max_completion_tokens",
               "maxtokens", "maxoutputtokens"}
 
+# ── Dangerous-sink registry (data-driven, so extending is a one-line change) ──
+# Bare builtin calls: Name(id) -> label. These are unambiguous (a method named
+# `eval`/`compile` is an Attribute, not a Name, so PyTorch's model.eval() and
+# re.compile() are NOT matched here).
+_BUILTIN_SINKS = {
+    "eval": "eval()",
+    "exec": "exec()",
+    "compile": "compile()",
+    "__import__": "__import__()",
+}
+# Dotted calls matched by exact suffix: dotted-name -> label. Deserialization
+# sinks (pickle/marshal) execute arbitrary code on untrusted input.
+_ATTR_SINKS = {
+    "os.system": "os.system()",
+    "os.popen": "os.popen()",
+    "pickle.loads": "pickle.loads()",
+    "pickle.load": "pickle.load()",
+    "cpickle.loads": "pickle.loads()",
+    "cpickle.load": "pickle.load()",
+    "marshal.loads": "marshal.loads()",
+    "dill.loads": "dill.loads()",
+}
+_SAFE_YAML_LOADERS = ("safeloader", "csafeloader", "baseloader")
+
 # Names that strongly suggest externally-controlled / model input — used for the
 # reachability heuristic on execution sinks.
 INPUT_HINTS = ("request", "req", "body", "payload", "params", "query", "prompt",
@@ -244,31 +268,41 @@ class _Analyzer(ast.NodeVisitor):
             "length and cost. Pass an explicit max_tokens / max_output_tokens.",
         ))
 
-    def _check_exec_sink(self, node: ast.Call):
+    def _sink_kind(self, node: ast.Call) -> Optional[str]:
+        """Registry-driven: return a human label if this call is a dangerous
+        sink, else None. Adding a new sink is a one-line registry edit."""
         func = node.func
-        kind = None
-        args = list(node.args)
-        if isinstance(func, ast.Name) and func.id in ("eval", "exec"):
-            kind = func.id + "()"
-        elif isinstance(func, ast.Attribute):
-            dotted = _dotted(func) or ""
-            low = dotted.lower()
-            if low.endswith("os.system"):
-                kind = "os.system()"
-            elif low.endswith("os.popen"):     # specifically os.popen, NOT subprocess.Popen
-                kind = "os.popen()"
-            elif ".subprocess." in ("." + dotted) or _root_name(func) == "subprocess":
-                # subprocess.run/Popen/call is a shell-injection sink ONLY with
-                # shell=True. A list-argument call (subprocess.Popen([...])) runs
-                # no shell and is not flagged — that was a real false positive.
-                shell_true = any(
-                    k.arg == "shell" and isinstance(k.value, ast.Constant) and k.value.value is True
-                    for k in node.keywords
-                )
-                if shell_true:
-                    kind = "subprocess(shell=True)"
+        if isinstance(func, ast.Name):
+            return _BUILTIN_SINKS.get(func.id)
+        if not isinstance(func, ast.Attribute):
+            return None
+        dotted = (_dotted(func) or "").lower()
+        for suffix, label in _ATTR_SINKS.items():
+            if dotted.endswith(suffix):
+                return label
+        # subprocess.* is a shell-injection sink ONLY with shell=True. A list-arg
+        # call (subprocess.Popen([...])) runs no shell and is not flagged.
+        if ".subprocess." in ("." + dotted) or _root_name(func) == "subprocess":
+            if any(k.arg == "shell" and isinstance(k.value, ast.Constant) and k.value.value is True
+                   for k in node.keywords):
+                return "subprocess(shell=True)"
+            return None
+        # yaml.load(...) is unsafe UNLESS given a Safe/Base Loader. yaml.safe_load
+        # isn't in the registry, so it's never flagged.
+        if dotted.endswith("yaml.load"):
+            for k in node.keywords:
+                if k.arg and k.arg.lower() == "loader":
+                    ld = (_dotted(k.value) or getattr(k.value, "attr", "") or "").lower()
+                    if any(safe in ld for safe in _SAFE_YAML_LOADERS):
+                        return None
+            return "yaml.load()"
+        return None
+
+    def _check_exec_sink(self, node: ast.Call):
+        kind = self._sink_kind(node)
         if not kind:
             return
+        args = list(node.args)
         # Benign: every argument is a constant literal (e.g. os.system('clear')).
         if _is_all_constant(args):
             return

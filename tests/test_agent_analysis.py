@@ -277,3 +277,19 @@ def test_secrets_in_test_files_are_fixtures():
     titles = [(f["file"], f["title"]) for f in scan_code_findings(Path(d))]
     assert not any("config_test" in fn for fn, t in titles)   # test fixture dropped
     assert any(t == "Hardcoded secret / API key" for fn, t in titles)  # real one kept
+
+
+def test_broadened_deserialization_and_dynamic_sinks():
+    # pickle/marshal/yaml.load/__import__ are code-execution sinks too, not just eval
+    assert "Dangerous execution sink" in titles("def f(data):\n import pickle\n return pickle.loads(data)\n")
+    assert "Dangerous execution sink" in titles("def f(payload):\n import yaml\n return yaml.load(payload)\n")
+    assert "Dangerous execution sink" in titles("def f(request):\n import marshal\n return marshal.loads(request.body)\n")
+    assert any("execution sink" in t.lower() for t in titles("def f(user_input):\n return __import__(user_input)\n"))
+
+
+def test_sink_registry_false_positive_guards():
+    # model.eval() (PyTorch), re.compile, yaml.safe_load, SafeLoader → NOT sinks
+    assert not any("sink" in t.lower() for t in titles("model.eval()\n"))
+    assert not any("sink" in t.lower() for t in titles("import re\nre.compile(pattern)\n"))
+    assert not any("sink" in t.lower() for t in titles("import yaml\nyaml.safe_load(x)\n"))
+    assert not any("sink" in t.lower() for t in titles("import yaml\nyaml.load(x, Loader=yaml.SafeLoader)\n"))
