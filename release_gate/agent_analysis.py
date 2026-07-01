@@ -162,6 +162,7 @@ class _Analyzer(ast.NodeVisitor):
         self.llm_vars: Set[str] = set()        # vars holding an LLM client
         self.tainted: Set[str] = set()         # vars holding model output / input
         self.llm_signal = False                # repo actually invokes/constructs an LLM
+        self.file_has_llm = False              # this file is agent code (set after pass 1)
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -313,17 +314,24 @@ class _Analyzer(ast.NodeVisitor):
         reachable = bool(arg_names & self.tainted) or any(
             any(h in n.lower() for h in INPUT_HINTS) for n in arg_names)
         if reachable:
+            # The agent-specific, undismissable case: model/user input reaches a
+            # code-execution sink. This is what SonarQube/Bandit can't see.
             self.findings.append(self._f(
                 "high", "Dangerous execution sink", node,
-                f"{kind} receives a dynamic value that can carry model or user "
-                "input — a remote-code-execution path. Remove it or strictly "
-                "validate/sandbox the input.",
+                f"{kind} receives a value that can carry model or user input — a "
+                "remote-code-execution path. Remove it or strictly validate/"
+                "sandbox the input.",
             ))
-        else:
+        elif self.file_has_llm:
+            # A dynamic sink in agent code we can't prove is reachable → a quiet
+            # LOW nudge ('confirm your sandbox'), not a score-tanking finding. We
+            # are NOT a generic SAST tool: a dynamic exec/pickle in non-agent code
+            # is Bandit's job, not ours, so outside agent files we stay silent.
             self.findings.append(self._f(
-                "medium", "Dynamic execution sink", node,
-                f"{kind} is called with a non-constant argument. Confirm no model "
-                "or user input can reach it; prefer a fixed argument list.",
+                "low", "Dynamic execution sink (agent code)", node,
+                f"{kind} runs a non-constant value in agent code. Confirm no model "
+                "or user output can reach it; a deliberate code tool should be "
+                "sandboxed.",
             ))
 
     # -- f-string system prompts ------------------------------------------
@@ -392,6 +400,9 @@ def analyze_python(source: str, rel: str) -> List[Dict[str, Any]]:
     a = _Analyzer(rel)
     # Two passes so assignments/imports seen anywhere inform call classification.
     a.visit(tree)
+    # Whether this file is genuinely agent code (constructs/calls an LLM) — used
+    # to keep dynamic-sink LOW nudges scoped to agent files, not generic Python.
+    a.file_has_llm = a.llm_signal or bool(a.llm_vars)
     a.findings.clear()
     a.visit(tree)
     # de-dupe (two passes) by (title, line)
