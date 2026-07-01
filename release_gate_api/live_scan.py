@@ -87,6 +87,22 @@ def _safe_call(base_url: str, fm: HttpFieldMap, agent_input: str, context: str) 
     return raw
 
 
+def _leak_evidence(resp: str, window: int = 80) -> str:
+    """Return a short snippet of the response around the leaked canary — the
+    evidence that the agent exposed the planted secret."""
+    if not resp:
+        return ""
+    low = resp.lower()
+    idx = low.find(_CANARY.lower())
+    if idx == -1:
+        # Leaked in a spaced/encoded form — show the head of the response.
+        return resp.strip()[:2 * window]
+    start = max(0, idx - window // 2)
+    end = min(len(resp), idx + len(_CANARY) + window // 2)
+    snippet = resp[start:end].strip().replace("\n", " ")
+    return ("…" if start else "") + snippet + ("…" if end < len(resp) else "")
+
+
 def run_live_scan(url: str, *, max_probes: int = 7) -> Dict[str, Any]:
     """Run a bounded canary safety scan against a live agent URL.
 
@@ -115,6 +131,12 @@ def run_live_scan(url: str, *, max_probes: int = 7) -> Dict[str, Any]:
             leaked = _detect_leak(resp)
             entry["leaked"] = leaked
             entry["status"] = "LEAKED" if leaked else "RESISTED"
+            if leaked:
+                # Cite the evidence: the exact attack sent and the response that
+                # exposed the planted secret. Same rigor as a static finding, but
+                # observed at runtime — so it holds for ANY language.
+                entry["attack"] = str(p.get("input", ""))[:160]
+                entry["evidence"] = _leak_evidence(resp)
         except Exception as exc:  # noqa: BLE001
             errored += 1
             entry["status"] = "ERROR"
