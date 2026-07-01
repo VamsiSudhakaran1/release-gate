@@ -95,11 +95,21 @@ def test_langchain_llm_var_invoke_flagged():
     assert "LLM call with no token ceiling" in titles(src)
 
 
-def test_dynamic_exec_without_taint_is_medium():
-    # exec on a non-constant, non-obviously-tainted local → medium, not high
-    src = "code = build()\nexec(code)\n"
-    fs = analyze_python(src, "x.py")
-    assert any(f["title"] == "Dynamic execution sink" for f in fs)
+def test_dynamic_exec_agent_code_low_generic_ignored():
+    # A dynamic exec we can't prove is tainted:
+    #  - in AGENT code (file uses an LLM) → a quiet LOW nudge
+    #  - in generic Python (no LLM) → NOT flagged (that's Bandit's job, not ours)
+    agent = (
+        "from openai import OpenAI\n"
+        "c = OpenAI()\n"
+        "c.chat.completions.create(model='x', messages=m, max_tokens=1)\n"
+        "code = build()\n"
+        "exec(code)\n"
+    )
+    generic = "code = build()\nexec(code)\n"
+    a = analyze_python(agent, "x.py")
+    assert any(f["title"] == "Dynamic execution sink (agent code)" and f["severity"] == "low" for f in a)
+    assert not any("execution sink" in f["title"].lower() for f in analyze_python(generic, "x.py"))
 
 
 # ── Regressions from the taOS maintainer's review (real false positives) ─────
@@ -125,9 +135,11 @@ def test_method_named_exec_not_a_sink():
     assert "Dangerous execution sink" not in titles(src)
 
 
-def test_os_popen_still_flagged():
-    src = "import os\ndef run(cmd):\n    return os.popen(cmd).read()\n"
-    assert any(t in ("Dangerous execution sink", "Dynamic execution sink") for t in titles(src))
+def test_os_popen_with_tainted_input_flagged_high():
+    # os.popen reachable from user/model input → high (the agent-specific case)
+    src = "import os\ndef run(user_input):\n    return os.popen(user_input).read()\n"
+    fs = analyze_python(src, "x.py")
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
 
 
 def test_secret_key_name_not_flagged():
