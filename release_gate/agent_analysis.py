@@ -84,6 +84,11 @@ INPUT_HINTS = ("request", "req", "body", "payload", "params", "query", "prompt",
 # are app/model-generated and rate only medium.
 STRONG_INPUT_HINTS = ("request", "req", "body", "payload", "params", "query",
                       "user_input", "user_msg", "user_message", "prompt", "args")
+# For evidence: classify a tainted value's origin so findings can name it.
+MODEL_SOURCE_HINTS = ("response", "reply", "completion", "assistant", "answer",
+                      "llm_output", "generation", "output", "result", "content", "text")
+USER_SOURCE_HINTS = ("request", "req", "body", "payload", "params", "query",
+                     "user_input", "prompt", "message", "msg", "input", "args", "data")
 
 
 def _dotted(node: ast.AST) -> Optional[str]:
@@ -299,6 +304,21 @@ class _Analyzer(ast.NodeVisitor):
             return "yaml.load()"
         return None
 
+    def _reaching_taint(self, arg_names):
+        """Return (value_name, source_label) for the tainted value reaching a
+        sink, or None. Names the evidence a judge would cite."""
+        for n in arg_names:
+            low = n.lower()
+            if n in self.tainted and any(h in low for h in MODEL_SOURCE_HINTS):
+                return n, "the model's own output"
+            if any(h in low for h in MODEL_SOURCE_HINTS):
+                return n, "model output"
+        for n in arg_names:
+            low = n.lower()
+            if any(h in low for h in USER_SOURCE_HINTS) or n in self.tainted:
+                return n, "external user/request input"
+        return None
+
     def _check_exec_sink(self, node: ast.Call):
         kind = self._sink_kind(node)
         if not kind:
@@ -308,19 +328,21 @@ class _Analyzer(ast.NodeVisitor):
         if _is_all_constant(args):
             return
         # Reachability: does a tainted (model/user) value flow into the sink?
-        arg_names = set()
-        for a in args:
-            arg_names |= _names_in(a)
-        reachable = bool(arg_names & self.tainted) or any(
-            any(h in n.lower() for h in INPUT_HINTS) for n in arg_names)
-        if reachable:
-            # The agent-specific, undismissable case: model/user input reaches a
-            # code-execution sink. This is what SonarQube/Bandit can't see.
+        arg_names = [n for a in args for n in _names_in(a)]
+        reaching = self._reaching_taint(arg_names)
+        if reaching:
+            # The agent-specific, undismissable case: name the exact value and its
+            # source so the finding reads like evidence, not a pattern hit — and
+            # say which layer structurally misses it.
+            value, source = reaching
             self.findings.append(self._f(
                 "high", "Dangerous execution sink", node,
-                f"{kind} receives a value that can carry model or user input — a "
-                "remote-code-execution path. Remove it or strictly validate/"
-                "sandbox the input.",
+                f"{kind} executes `{value}` — {source}. A prompt injection your "
+                "input guardrail can't catch (it succeeds inside the model) or a "
+                "bad tool result becomes remote code execution here, after your "
+                "output evaluator has already scored the text. Parse with "
+                "ast.literal_eval/json, or sandbox execution.",
+                evidence=f"{source} `{value}` -> {kind}",
             ))
         elif self.file_has_llm:
             # A dynamic sink in agent code we can't prove is reachable → a quiet
@@ -370,11 +392,12 @@ class _Analyzer(ast.NodeVisitor):
                 ))
         self.generic_visit(node)
 
-    def _f(self, severity: str, title: str, node: ast.AST, rec: str) -> Dict[str, Any]:
+    def _f(self, severity: str, title: str, node: ast.AST, rec: str,
+           evidence: str = "") -> Dict[str, Any]:
         return {
             "severity": severity, "title": title, "file": self.rel,
             "line": getattr(node, "lineno", 0), "snippet": "",
-            "recommendation": rec,
+            "recommendation": rec, "evidence": evidence,
         }
 
 
