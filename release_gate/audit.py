@@ -39,6 +39,20 @@ FRAMEWORK_SIGNALS: Dict[str, List[str]] = {
                                  "import vertexai", "from vertexai"],
     "HuggingFace Transformers": ["from transformers","import transformers"],
     "Ollama":                   ["from ollama",     "import ollama",    "ollama.chat"],
+    "Google GenAI (new SDK)":   ["from google import genai", "from google.genai", "import google.genai"],
+    "Groq":                     ["from groq",       "import groq"],
+    "Mistral":                  ["from mistralai",  "import mistralai"],
+    "Cohere":                   ["import cohere",   "from cohere"],
+    "Together":                 ["from together",   "import together"],
+    "AWS Bedrock":              ["bedrock-runtime", "client('bedrock", 'client("bedrock', "AnthropicBedrock"],
+    "PydanticAI":               ["from pydantic_ai","import pydantic_ai"],
+    "DSPy":                     ["import dspy",     "from dspy"],
+    "Semantic Kernel":          ["import semantic_kernel", "from semantic_kernel"],
+    "smolagents":               ["from smolagents", "import smolagents"],
+    "Agno / Phidata":           ["from agno",       "import agno", "from phi.", "import phi"],
+    "Instructor":               ["import instructor","from instructor"],
+    "Haystack":                 ["from haystack",   "import haystack"],
+    "MCP":                      ["from mcp",        "import mcp", "modelcontextprotocol"],
 }
 
 PYTHON_EXTENSIONS = {".py"}
@@ -53,7 +67,12 @@ JS_FRAMEWORK_SIGNALS: Dict[str, List[str]] = {
     "LangGraph.js":        ["from '@langchain/langgraph'", "langgraph"],
     "Vercel AI SDK":       ["from 'ai'", 'from "ai"', "@ai-sdk/"],
     "Mastra":              ["from '@mastra'", 'from "mastra"', "@mastra/core"],
-    "Google Generative AI":["@google/generative-ai", "google-generativeai"],
+    "Google Generative AI":["@google/generative-ai", "@google/genai", "google-generativeai"],
+    "Groq":                ["from 'groq-sdk'", 'from "groq-sdk"', "require('groq-sdk')"],
+    "Mistral":             ["@mistralai/", "from 'mistralai'"],
+    "Cohere":              ["from 'cohere-ai'", 'from "cohere-ai"'],
+    "LlamaIndex.ts":       ["from 'llamaindex'", 'from "llamaindex"'],
+    "MCP":                 ["@modelcontextprotocol", "from 'mcp'"],
 }
 
 
@@ -191,6 +210,24 @@ def _read_snippet(path: Path) -> str:
         return path.read_bytes()[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
     except OSError:
         return ""
+
+
+def _repo_has_llm_calls(root: Path, max_files: int = 1500) -> bool:
+    """True if any Python file makes a resolvable LLM call — a signal that
+    doesn't depend on recognizing the import name (catches new/niche SDKs and
+    OpenAI-compatible clients that call .chat.completions.create directly)."""
+    from release_gate.agent_analysis import has_llm_usage
+    count = 0
+    for f in root.rglob("*.py"):
+        count += 1
+        if count > max_files:
+            break
+        try:
+            if has_llm_usage(f.read_bytes()[:MAX_FILE_BYTES].decode("utf-8", "ignore")):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def detect_frameworks(root: Path) -> Dict[str, int]:
@@ -635,6 +672,12 @@ def build_report(root: Path) -> Dict[str, Any]:
     root = root.resolve()
     frameworks = detect_frameworks(root)
     agent_detected = len(frameworks) > 0
+    # Fallback: an import-name list can never be complete (new SDKs, raw HTTP,
+    # custom wrappers). If no named framework matched, look for an actual
+    # resolvable LLM CALL in the code — that catches agents we'd otherwise miss.
+    if not agent_detected and _repo_has_llm_calls(root):
+        agent_detected = True
+        frameworks = {"LLM (direct SDK / API call)": 1}
     detected_model = detect_model(root)
 
     # Strict verification: validity + cross-checks (not keyword presence).

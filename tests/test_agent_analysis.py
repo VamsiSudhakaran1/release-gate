@@ -305,3 +305,22 @@ def test_sink_registry_false_positive_guards():
     assert not any("sink" in t.lower() for t in titles("import re\nre.compile(pattern)\n"))
     assert not any("sink" in t.lower() for t in titles("import yaml\nyaml.safe_load(x)\n"))
     assert not any("sink" in t.lower() for t in titles("import yaml\nyaml.load(x, Loader=yaml.SafeLoader)\n"))
+
+
+def test_agent_detection_beyond_import_names():
+    import tempfile
+    from pathlib import Path
+    from release_gate.audit import build_report
+    # An SDK not on the old list (Groq) — now detected
+    g = tempfile.mkdtemp()
+    (Path(g) / "a.py").write_text("from groq import Groq\nc=Groq()\nc.chat.completions.create(model='x', messages=m)\n")
+    assert build_report(Path(g)).get("agent_detected") is True
+    # A resolvable LLM call via an UNRECOGNIZED import → caught by the call fallback
+    w = tempfile.mkdtemp()
+    (Path(w) / "b.py").write_text("import wrap\nc=wrap.make()\nc.chat.completions.create(model='x', messages=m)\n")
+    r = build_report(Path(w))
+    assert r.get("agent_detected") is True
+    # Genuinely no LLM → stays N/A (no false 'agent detected')
+    n = tempfile.mkdtemp()
+    (Path(n) / "c.py").write_text("import os\ndef f(x): return os.getcwd()\n")
+    assert build_report(Path(n)).get("agent_detected") is False
