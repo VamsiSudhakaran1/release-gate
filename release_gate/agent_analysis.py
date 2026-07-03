@@ -28,6 +28,8 @@ LLM_IMPORT_ROOTS = {
     "together", "google", "vertexai", "langchain", "langchain_openai",
     "langchain_anthropic", "langchain_community", "langchain_core",
     "llama_index", "llamaindex", "boto3",  # boto3 only treated as LLM via bedrock client name
+    "dspy", "instructor", "haystack", "semantic_kernel", "smolagents", "agno",
+    "phi", "pydantic_ai", "transformers",
 }
 # Constructors that yield an LLM/chat client instance.
 LLM_CONSTRUCTORS = {
