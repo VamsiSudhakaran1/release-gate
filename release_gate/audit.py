@@ -230,6 +230,42 @@ def _repo_has_llm_calls(root: Path, max_files: int = 1500) -> bool:
     return False
 
 
+# Cross-language LLM signals — strong tells that appear in Go/Rust/Java/etc.
+# agent code even though we can't statically analyze those languages yet.
+_MULTILANG_LLM_SIGNALS = (
+    "anthropic-sdk-go", "go-openai", "langchaingo", "anthropic.newclient",
+    "openai.newclient", "api.anthropic.com", "api.openai.com", "generativelanguage.googleapis",
+    "async-openai", "openai-api-rs", "anthropic-rs", "com.anthropic", "com.openai",
+    "com.theokanning.openai", "claude-sonnet", "claude-opus", "claude-3", "claude-4",
+    "gpt-4o", "gpt-4-turbo", "gpt-4.1", "gpt-5", "chat/completions",
+)
+_OTHER_LANG_EXTS = {".go": "Go", ".rs": "Rust", ".java": "Java", ".kt": "Kotlin",
+                    ".rb": "Ruby", ".cs": "C#", ".php": "PHP", ".swift": "Swift",
+                    ".cpp": "C++", ".ex": "Elixir"}
+
+
+def detect_other_language_agent(root: Path, max_files: int = 2000) -> set:
+    """Return the set of non-Python/JS languages in which this repo shows LLM
+    usage — so we can honestly say 'this IS an agent, in a language we don't
+    statically analyze yet' instead of a misleading 'not an agent'."""
+    langs = set()
+    count = 0
+    skip = {".git", "node_modules", "vendor", "target", "build", "dist", "__pycache__"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        for fname in filenames:
+            lang = _OTHER_LANG_EXTS.get(Path(fname).suffix)
+            if not lang:
+                continue
+            count += 1
+            if count > max_files:
+                return langs
+            c = _read_snippet(Path(dirpath) / fname).lower()
+            if any(sig in c for sig in _MULTILANG_LLM_SIGNALS):
+                langs.add(lang)
+    return langs
+
+
 def detect_frameworks(root: Path) -> Dict[str, int]:
     """Return {framework_name: file_count} for every detected framework."""
     hits: Dict[str, int] = {}
@@ -477,7 +513,9 @@ def _code_safety_factors(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 
 
 def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
-                        agent_detected: bool = True) -> Dict[str, Any]:
+                        agent_detected: bool = True,
+                        static_covered: bool = True,
+                        other_langs: Optional[List[str]] = None) -> Dict[str, Any]:
     """Objective Agent Code Safety score from the code findings alone.
 
     The half of the audit that does NOT depend on adopting a governance.yaml: it
@@ -492,9 +530,24 @@ def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
     low = sum(1 for f in findings if f.get("severity") == "low")
 
     if not agent_detected:
-        # No agent framework → nothing to score behaviorally.
+        # No LLM usage found at all → nothing to score behaviorally.
         return {"score": None, "decision": "N/A", "high": 0, "medium": 0, "low": 0,
-                "total": 0, "applicable": False, "factors": []}
+                "total": 0, "applicable": False, "factors": [],
+                "reason": "no_agent"}
+
+    if not static_covered:
+        # It IS an agent, but in a language our static analyzer can't parse (Go,
+        # Rust, Java…). Do NOT emit a misleading score — say so honestly and point
+        # to the language-agnostic behavioral scan.
+        langs = ", ".join(other_langs or []) or "this language"
+        return {"score": None, "decision": "N/A", "high": 0, "medium": 0, "low": 0,
+                "total": 0, "applicable": False, "factors": [],
+                "reason": "language_not_static",
+                "language": langs,
+                "note": f"Detected an LLM agent in {langs}. release-gate's static "
+                        f"analysis covers Python (deep) and JS/TS; {langs} isn't "
+                        f"parsed yet. Run the language-agnostic behavioral scan "
+                        f"(agent-score against its endpoint) for a verdict."}
 
     factors = _code_safety_factors(findings)
     score = max(0, round(100 - sum(f["penalty"] for f in factors)))
@@ -678,6 +731,16 @@ def build_report(root: Path) -> Dict[str, Any]:
     if not agent_detected and _repo_has_llm_calls(root):
         agent_detected = True
         frameworks = {"LLM (direct SDK / API call)": 1}
+    # Python/JS is where our STATIC analysis works. Detect agents in other
+    # languages (Go/Rust/Java…) so we don't falsely say "not an agent" — but
+    # flag that we can't statically analyze them (→ behavioral scan).
+    static_covered = agent_detected
+    other_langs = detect_other_language_agent(root) if not agent_detected else set()
+    if other_langs:
+        agent_detected = True
+        static_covered = False
+        for lang in sorted(other_langs):
+            frameworks[f"LLM agent ({lang})"] = 1
     detected_model = detect_model(root)
 
     # Strict verification: validity + cross-checks (not keyword presence).
@@ -694,7 +757,9 @@ def build_report(root: Path) -> Dict[str, Any]:
     ]
 
     score, decision = compute_score(present, code_findings)
-    code_safety = compute_code_safety(code_findings, agent_detected=agent_detected)
+    code_safety = compute_code_safety(code_findings, agent_detected=agent_detected,
+                                      static_covered=static_covered,
+                                      other_langs=sorted(other_langs))
     governance = compute_governance(present)
     has_ci = _has_github_actions_integration(root)
 
@@ -1383,6 +1448,12 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
             print(f"     {_col('Driving the score: ' + driving, _MUTED)}")
         else:
             print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — the agent-layer SAST misses', _MUTED)}")
+    elif cs.get("reason") == "language_not_static":
+        lang = cs.get("language", "this language")
+        print(f"  {_col('Agent Code Safety', _BOLD)}  {_col('N/A', _YELLOW, _BOLD)}   "
+              f"{_col(f'LLM agent in {lang} — not statically analyzed yet', _MUTED)}")
+        print(f"     {_col('Static analysis covers Python (deep) & JS/TS. For ' + lang + ', run the', _MUTED)}")
+        print(f"     {_col('language-agnostic behavioral scan:  release-gate agent-score <endpoint>', _BLUE)}")
     if gov:
         gov_col = _GREEN if gov["level"] == "Mature" else (_YELLOW if gov["level"] == "Partial" else _RED)
         gov_score = f"{gov['score']}/100"
