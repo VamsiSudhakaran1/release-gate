@@ -324,3 +324,22 @@ def test_agent_detection_beyond_import_names():
     n = tempfile.mkdtemp()
     (Path(n) / "c.py").write_text("import os\ndef f(x): return os.getcwd()\n")
     assert build_report(Path(n)).get("agent_detected") is False
+
+
+def test_go_agent_detected_not_falsely_dismissed():
+    import tempfile
+    from pathlib import Path
+    from release_gate.audit import build_report
+    d = tempfile.mkdtemp()
+    (Path(d) / "main.go").write_text(
+        'const Model = "claude-sonnet-4.5"\nimport "github.com/anthropics/anthropic-sdk-go"\n')
+    r = build_report(Path(d))
+    cs = r.get("code_safety") or {}
+    assert r.get("agent_detected") is True            # IS an agent (not dismissed)
+    assert any("Go" in k for k in r.get("frameworks", {}))
+    assert cs.get("applicable") is False              # but not statically scored
+    assert cs.get("reason") == "language_not_static"  # honest reason, not a false pass
+    # a pure-Go repo with no LLM signal stays not-an-agent
+    d2 = tempfile.mkdtemp()
+    (Path(d2) / "x.go").write_text('package main\nfunc main() { println("hi") }\n')
+    assert build_report(Path(d2)).get("agent_detected") is False
