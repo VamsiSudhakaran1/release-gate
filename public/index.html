@@ -842,8 +842,8 @@
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
     <h1>Know before you ship.</h1>
-    <p class="hero-sub">Paste any public GitHub repo URL — release-gate gives you two scores: <strong>Agent Code Safety</strong> (injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SonarQube misses) and <strong>Governance</strong> (your declared safeguards). Takes 10 seconds. No install needed.</p>
-    <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">release-gate starts as a 10-second repo audit, then becomes a CI gate that blocks unsafe AI releases before they reach production.</p>
+    <p class="hero-sub">The pre-deploy release gate for AI agents. Paste any repo — release-gate finds the agent-layer risks <strong>SAST, guardrails, and evaluators structurally miss</strong>: model output reaching <code>eval</code> (the CVE-2025-51472 RCE class), user input in a system prompt, LLM loops with no cost ceiling. Every finding cites its evidence. Takes 10 seconds.</p>
+    <p style="font-size:.97rem;color:var(--accent);font-weight:600;margin-bottom:26px;line-height:1.5">A SAST tool sees <code>eval(x)</code> but can't tell that <code>x</code> came from the model. That blind spot is the whole agent layer — and it's the gate release-gate stands on.</p>
 
     <!-- Hero playground input -->
     <div class="hero-scan-row">
