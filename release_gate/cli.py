@@ -841,6 +841,7 @@ def print_help():
     print("  release-gate audit [path|url] --full          # Full breakdown (default is a concise summary)")
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
     print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
+    print("  release-gate audit [path|url] --pr-comment    # Concise delta comment for a PR (pair with --baseline)")
     print("  release-gate audit [path|url] --badge         # README badge snippet for your score")
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
     print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
@@ -908,7 +909,7 @@ def main():
         from release_gate.audit import (
             _is_github_url, clone_and_audit, emit_config,
             render_markdown, badge_markdown, emit_sarif, compare_to_baseline,
-            apply_decision_mode, VALID_MODES,
+            apply_decision_mode, VALID_MODES, render_pr_comment,
         )
         target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
         mode = (_flag(sys.argv, '--mode') or 'ci').lower()
@@ -917,6 +918,7 @@ def main():
             sys.exit(1)
         as_json = '--json' in sys.argv
         as_markdown = '--markdown' in sys.argv
+        as_pr_comment = '--pr-comment' in sys.argv
         as_badge = '--badge' in sys.argv
         emit = '--emit-config' in sys.argv
         out_path = _flag(sys.argv, '--output') or _flag(sys.argv, '-o')
@@ -1018,6 +1020,20 @@ def main():
                     f.write(md)
             else:
                 print(md)
+        elif as_pr_comment:
+            comment = render_pr_comment(report, baseline_comparison)
+            summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+            if summary_path:
+                try:
+                    with open(summary_path, 'a', encoding='utf-8') as f:
+                        f.write(comment + "\n")
+                except OSError:
+                    pass
+            if out_path:
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(comment)
+            else:
+                print(comment)
         elif as_json:
             import json as _json
             out = {k: v for k, v in report.items() if k != 'real_checks'}
@@ -1053,7 +1069,8 @@ def main():
         # Baseline mode: exit code based on net-new regressions only ("don't
         # make the release worse"). Pre-existing debt from the baseline is
         # never counted against you.
-        if baseline_comparison is not None and not as_json and not as_markdown:
+        if (baseline_comparison is not None and not as_json
+                and not as_markdown and not as_pr_comment):
             _print_baseline_diff(baseline_comparison)
         if baseline_comparison is not None:
             verdict = baseline_comparison.get('verdict', 'PASS')

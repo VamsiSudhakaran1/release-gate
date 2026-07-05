@@ -18,8 +18,43 @@ from release_gate.audit import (
     emit_config,
     apply_decision_mode,
     compare_to_baseline,
+    render_pr_comment,
     SAFEGUARDS,
 )
+
+
+# ─────────────────────────── PR comment ─────────────────────────────────────
+
+def test_pr_comment_snapshot_no_baseline(tmp_path):
+    _risky_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="audit")
+    md = render_pr_comment(report)
+    assert "release-gate:" in md
+    assert "Dangerous execution sink" in md
+    assert "release-gate.com" in md  # footer link
+
+
+def test_pr_comment_delta_leads_with_verdict(tmp_path):
+    clean = tmp_path / "clean"; clean.mkdir()
+    _clean_agent_repo(clean)
+    risky = tmp_path / "risky"; risky.mkdir()
+    _risky_agent_repo(risky)
+    diff = compare_to_baseline(build_report(risky, mode="ci"),
+                               build_report(clean, mode="ci"))
+    md = render_pr_comment(build_report(risky, mode="ci"), diff)
+    assert "vs baseline" in md
+    assert "BLOCK" in md
+    assert "New findings:" in md
+
+
+def test_pr_comment_clean_delta_says_no_new(tmp_path):
+    clean = tmp_path / "clean"; clean.mkdir()
+    _clean_agent_repo(clean)
+    report = build_report(clean, mode="ci")
+    diff = compare_to_baseline(report, report)
+    md = render_pr_comment(report, diff)
+    assert "No new code findings" in md
+    assert "Governance unchanged" in md
 
 
 def _make(tmp_path, files):
