@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 
-> **v0.8.0** — Real AST-based agent-code analysis (not grep): findings cite the evidence — *"the model's own output `assistant_reply` → `eval()`"*. Two honest axes (**Agent Code Safety** + **Governance**), a **language-agnostic** behavioral canary/injection battery, and multi-language agent detection (Python-deep, Go/Rust/JS detected → routed to the behavioral scan).
+> **v0.8.1** — Team-adoption workflow: **policy modes** (`--mode audit\|ci\|strict`), a **baseline gate** (`--baseline` — fail only on net-new regressions), **PR comments** (`--pr-comment`), **suppressions** (`.release-gate-ignore`), **evidence-first findings** (severity · confidence · confirmed/inferred · impact), and severity-ordered output. Built on v0.8.0's real AST-based agent-code analysis (not grep): findings cite the evidence — *"the model's own output `assistant_reply` → `eval()`"* — across two honest axes (**Agent Code Safety** + **Governance**), a **language-agnostic** behavioral canary/injection battery, and multi-language agent detection.
 
 **Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
 
@@ -69,7 +69,7 @@ switches).
 ```
 $ release-gate score governance.yaml --evals evals.yaml
 
-  release-gate  |  Readiness Scorer  v0.7.4
+  release-gate  |  Readiness Scorer  v0.8.1
 
   Project          customer-support-agent  v1.0.0
   Checks run       5  (5 pass, 0 warn, 0 fail)
@@ -405,7 +405,7 @@ coverage.
 Gate it in CI the same way as `audit`:
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.8.0
+- uses: VamsiSudhakaran1/release-gate@v0.8.1
   with:
     command: loop-sim
     scenarios: examples/loop_scenarios.yaml
@@ -736,7 +736,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.8.0
+        uses: VamsiSudhakaran1/release-gate@v0.8.1
         with:
           command: score
           config: governance.yaml
@@ -748,7 +748,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.8.0
+- uses: VamsiSudhakaran1/release-gate@v0.8.1
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run
