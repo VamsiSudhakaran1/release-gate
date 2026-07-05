@@ -57,6 +57,46 @@ def test_pr_comment_clean_delta_says_no_new(tmp_path):
     assert "Governance unchanged" in md
 
 
+# ─────────────────────────── suppressions ───────────────────────────────────
+
+def test_suppression_removes_finding_from_scoring(tmp_path):
+    _make(tmp_path, {"a.py": (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "r = client.chat.completions.create(model='gpt-4', messages=m)\n"),
+        ".release-gate-ignore.yaml": (
+        "ignore:\n  - rule: missing_max_tokens\n    file: a.py\n"
+        "    reason: provider default is fine\n    expires: 2099-01-01\n")})
+    report = build_report(tmp_path, mode="ci")
+    titles = [f["title"] for f in report["code_findings"]]
+    assert "LLM call with no token ceiling" not in titles
+    assert len(report["suppressed"]) == 1
+    assert report["suppressed"][0]["suppressed_by"]["reason"]
+
+
+def test_no_suppress_flag_shows_everything(tmp_path):
+    _make(tmp_path, {"a.py": (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "r = client.chat.completions.create(model='gpt-4', messages=m)\n"),
+        ".release-gate-ignore.yaml": (
+        "ignore:\n  - rule: missing_max_tokens\n    expires: 2099-01-01\n")})
+    report = build_report(tmp_path, mode="ci", apply_ignore=False)
+    titles = [f["title"] for f in report["code_findings"]]
+    assert "LLM call with no token ceiling" in titles
+    assert report["suppressed"] == []
+
+
+def test_expired_suppression_does_not_hide(tmp_path):
+    from release_gate.audit import apply_suppressions
+    import datetime
+    findings = [{"title": "Dangerous execution sink", "file": "a.py"}]
+    rules = [{"rule": "exec_sink", "reason": "x", "expires": "2020-01-01"}]
+    kept, suppressed, expired = apply_suppressions(
+        findings, rules, today=datetime.date(2026, 7, 5))
+    assert kept == findings           # not hidden
+    assert suppressed == []
+    assert len(expired) == 1          # surfaced as lapsed
+
+
 def _make(tmp_path, files):
     for name, body in files.items():
         (tmp_path / name).write_text(body)

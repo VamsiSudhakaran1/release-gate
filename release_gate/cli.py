@@ -846,6 +846,7 @@ def print_help():
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
     print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
     print("  release-gate audit [path|url] --write-baseline FILE  # Save current audit as a baseline")
+    print("  release-gate audit [path|url] --no-suppress   # Ignore .release-gate-ignore (show everything)")
     print("  release-gate audit [path|url] --mode audit|ci|strict # Policy lens (default: ci)")
     print("      audit  = advisory (public repos): missing governance -> REVIEW, never a harsh BLOCK")
     print("      ci     = enforce declared policy (default)")
@@ -932,6 +933,7 @@ def main():
         if sarif_path is None and '--sarif' in sys.argv:
             sarif_path = 'release-gate.sarif'
         baseline_arg = _flag(sys.argv, '--baseline')
+        no_suppress = '--no-suppress' in sys.argv
 
         try:
             if _is_github_url(target):
@@ -950,7 +952,7 @@ def main():
                         changed_files = set(diff_result.stdout.strip().splitlines())
                     except Exception:
                         changed_files = None
-                    report = build_report(_Path(target))
+                    report = build_report(_Path(target), apply_ignore=not no_suppress)
                     if changed_files is not None:
                         # Filter code_findings to only those in changed files
                         report['code_findings'] = [
@@ -958,7 +960,7 @@ def main():
                             if f.get('file') in changed_files
                         ]
                 else:
-                    report = build_report(_Path(target))
+                    report = build_report(_Path(target), apply_ignore=not no_suppress)
         except RuntimeError as exc:
             print(f"Error: {exc}")
             sys.exit(1)

@@ -672,6 +672,96 @@ def apply_decision_mode(report: Dict[str, Any], mode: str = "ci") -> Dict[str, A
     return report
 
 
+# ─────────────────────────── Suppressions (.release-gate-ignore) ────────────
+
+SUPPRESS_FILENAMES = [
+    ".release-gate-ignore.yaml", ".release-gate-ignore.yml",
+    ".release-gate-ignore",
+]
+
+
+def load_suppressions(root: Path) -> List[Dict[str, Any]]:
+    """Load ignore rules from a .release-gate-ignore(.yaml) at the repo root.
+
+    Schema (a documented disagreement, not a silent mute):
+
+        ignore:
+          - rule: missing_max_tokens          # finding type key or title text
+            file: helpers/perplexity_search.py # optional; exact path or glob
+            reason: Provider default is fine    # required in spirit — why
+            expires: 2026-10-01                 # optional ISO date; then it lapses
+
+    Returns the list of rule dicts (empty if no file / unparseable).
+    """
+    for name in SUPPRESS_FILENAMES:
+        p = root / name
+        if p.is_file():
+            try:
+                import yaml
+                data = yaml.safe_load(_read_snippet(p)) or {}
+            except Exception:
+                return []
+            rules = data.get("ignore") or data.get("suppress") or []
+            return [r for r in rules if isinstance(r, dict)]
+    return []
+
+
+def _suppression_matches(rule: Dict[str, Any], finding: Dict[str, Any]) -> bool:
+    import fnmatch
+    rkey = str(rule.get("rule") or "").strip().lower()
+    if rkey:
+        title = (finding.get("title") or "")
+        type_key = _finding_type_key(title).lower()
+        if rkey != type_key and rkey != title.lower() and rkey not in title.lower():
+            return False
+    fpat = rule.get("file")
+    if fpat:
+        f = finding.get("file") or ""
+        if not (fnmatch.fnmatch(f, str(fpat)) or f == fpat or str(fpat) in f):
+            return False
+    return True
+
+
+def apply_suppressions(findings: List[Dict[str, Any]],
+                       suppressions: List[Dict[str, Any]],
+                       today=None) -> Tuple[List[Dict[str, Any]],
+                                            List[Dict[str, Any]],
+                                            List[Dict[str, Any]]]:
+    """Partition findings into (kept, suppressed, expired_rules).
+
+    Suppressed findings are removed from scoring/gating but recorded for
+    transparency. An EXPIRED rule does NOT suppress — a stale ignore must never
+    silently hide a live risk; it's surfaced so the team re-confirms or removes
+    it. This is the difference between an accountable mute and a rug.
+    """
+    import datetime
+    today = today or datetime.date.today()
+    active: List[Dict[str, Any]] = []
+    expired: List[Dict[str, Any]] = []
+    for r in suppressions:
+        exp = r.get("expires")
+        if exp:
+            try:
+                if datetime.date.fromisoformat(str(exp)) < today:
+                    expired.append(r)
+                    continue
+            except ValueError:
+                pass  # unparseable date → treat as non-expiring, don't crash
+        active.append(r)
+
+    kept: List[Dict[str, Any]] = []
+    suppressed: List[Dict[str, Any]] = []
+    for f in findings:
+        match = next((r for r in active if _suppression_matches(r, f)), None)
+        if match:
+            suppressed.append({**f, "suppressed_by": {
+                "rule": match.get("rule"), "reason": match.get("reason"),
+                "expires": match.get("expires")}})
+        else:
+            kept.append(f)
+    return kept, suppressed, expired
+
+
 # ─────────────────────────── URL / remote repo support ──────────────────────
 
 def _is_github_url(target: str) -> bool:
@@ -806,12 +896,16 @@ def _github_api_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
 
 # ─────────────────────────── Report builder ─────────────────────────────────
 
-def build_report(root: Path, mode: str = "ci") -> Dict[str, Any]:
+def build_report(root: Path, mode: str = "ci",
+                 apply_ignore: bool = True) -> Dict[str, Any]:
     """Full audit report for a repo path.
 
     ``mode`` selects the policy lens (audit/ci/strict) used to interpret the
     top-level decision — see apply_decision_mode(). Defaults to ci for
     backward compatibility; the scores themselves are mode-independent.
+
+    ``apply_ignore`` honors a .release-gate-ignore file at the repo root when
+    True (default); set False for an unfiltered view (`--no-suppress`).
     """
     root = root.resolve()
     frameworks = detect_frameworks(root)
@@ -846,6 +940,17 @@ def build_report(root: Path, mode: str = "ci") -> Dict[str, Any]:
         {**f, "compliance_tags": COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), [])}
         for f in raw_findings
     ]
+
+    # Suppressions: a documented, expiring disagreement. Suppressed findings are
+    # removed from scoring/gating; expired rules lapse and are surfaced so a
+    # stale ignore never silently hides a live risk.
+    suppressed_findings: List[Dict[str, Any]] = []
+    expired_suppressions: List[Dict[str, Any]] = []
+    if apply_ignore:
+        supps = load_suppressions(root)
+        if supps:
+            code_findings, suppressed_findings, expired_suppressions = \
+                apply_suppressions(code_findings, supps)
 
     score, decision = compute_score(present, code_findings)
     code_safety = compute_code_safety(code_findings, agent_detected=agent_detected,
@@ -902,6 +1007,8 @@ def build_report(root: Path, mode: str = "ci") -> Dict[str, Any]:
         "missing":            missing,
         "passing":            passing,
         "code_findings":      code_findings,
+        "suppressed":         suppressed_findings,
+        "expired_suppressions": expired_suppressions,
         "score":              score,
         "decision":           decision,
         "code_safety":        code_safety,
@@ -1711,6 +1818,17 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     missing = report["missing"]
     passing = report["passing"]
     findings = report.get("code_findings", []) or []
+    suppressed = report.get("suppressed", []) or []
+    expired = report.get("expired_suppressions", []) or []
+
+    if suppressed:
+        _msg = f"{len(suppressed)} finding(s) suppressed by .release-gate-ignore"
+        print(f"\n  {_col(_msg, _MUTED)}")
+    if expired:
+        _rules = ", ".join(str(r.get("rule", "?")) for r in expired)
+        _emsg = (f"⚠ {len(expired)} suppression(s) EXPIRED and no longer apply: "
+                 f"{_rules}")
+        print(f"  {_col(_emsg, _YELLOW)}")
 
     if not full:
         # Concise default — a one-line tally; the full breakdown lives behind
