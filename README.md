@@ -132,6 +132,63 @@ release-gate evidence-pack governance.yaml
 | `release-gate loop-sim <scenarios.yaml>` | **Loop Sim** — pre-deploy PROMOTE / HOLD / BLOCK from a scenario bank |
 | `release-gate agent-score <agent-spec>` | **Agent Score** — run a behavior battery against a live agent, 0-100 + decision |
 
+### Flags for `audit` (team adoption)
+
+| Flag | Description |
+|------|-------------|
+| `--mode audit\|ci\|strict` | **Policy lens.** `audit` = advisory (public repos): missing governance → REVIEW, never a harsh BLOCK. `ci` = enforce declared policy (default). `strict` = regulated: BLOCK on any missing critical safeguard or high finding. |
+| `--baseline <file.json>` | **Don't-make-it-worse gate.** Blocks only on *net-new* highs, newly-missing critical safeguards, or a code-safety score regression — pre-existing debt never punishes you. |
+| `--write-baseline <file.json>` | Snapshot the current audit as a baseline for future diff runs. |
+| `--pr-comment` | **Concise delta comment** for a PR (pair with `--baseline`). Leads with the net-new verdict + score delta, not a 200-line report. Auto-written to `$GITHUB_STEP_SUMMARY`. |
+| `--sarif [file]` | Emit **SARIF 2.1.0** so findings show up in GitHub Code Scanning. |
+| `--no-suppress` | Ignore `.release-gate-ignore` and show every finding. |
+| `--full` | Per-finding breakdown with confidence · basis · evidence · impact. |
+
+Every finding carries **`severity`**, **`confidence`** (high/medium/low), **`basis`** (`confirmed` vs `inferred`), **`evidence`**, and **`impact`** — so a developer can tell a confirmed exec-sink flow from an inferred advisory pattern at a glance.
+
+#### Suppressions — `.release-gate-ignore.yaml`
+
+A documented, expiring disagreement (not a silent mute). Drop this at the repo root:
+
+```yaml
+ignore:
+  - rule: missing_max_tokens                 # finding type key or title text
+    file: helpers/perplexity_search.py       # optional — exact path or glob
+    reason: Provider default is acceptable here
+    expires: 2026-10-01                        # optional — after this it LAPSES
+```
+
+Suppressed findings drop out of scoring and the gate. An **expired** rule stops suppressing and is surfaced in the report — a stale ignore never silently hides a live risk.
+
+#### GitHub Actions — the adoption workflow
+
+```yaml
+name: release-gate
+on: [pull_request]
+
+jobs:
+  ai-release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install release-gate
+        run: pip install release-gate
+      - name: Audit — gate on net-new regressions only
+        run: |
+          release-gate audit . \
+            --mode ci \
+            --baseline release-gate-baseline.json \
+            --pr-comment \
+            --sarif release-gate.sarif \
+            --output release-gate-comment.md
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: release-gate.sarif
+```
+
+Commit `release-gate-baseline.json` once (`release-gate audit . --write-baseline release-gate-baseline.json`); after that, CI only fails when a PR makes things **worse**.
+
 ### Flags for `score`
 
 | Flag | Description |
@@ -348,7 +405,7 @@ coverage.
 Gate it in CI the same way as `audit`:
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.7.4
+- uses: VamsiSudhakaran1/release-gate@v0.8.0
   with:
     command: loop-sim
     scenarios: examples/loop_scenarios.yaml
@@ -679,7 +736,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.7.4
+        uses: VamsiSudhakaran1/release-gate@v0.8.0
         with:
           command: score
           config: governance.yaml
@@ -691,7 +748,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.7.4
+- uses: VamsiSudhakaran1/release-gate@v0.8.0
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run

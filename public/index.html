@@ -934,8 +934,8 @@
 <section id="checks-explained">
   <div class="container">
     <div class="section-header">
-      <h2 class="section-title">Why these 7 checks?</h2>
-      <p class="section-subtitle">Every check maps to a real production failure. No checkbox theater.</p>
+      <h2 class="section-title">The governance safeguards</h2>
+      <p class="section-subtitle">One of two axes. Every safeguard maps to a real production failure &mdash; no checkbox theater. The other axis, <strong>Agent Code Safety</strong>, scans the code itself for the agent-layer risks SAST misses (below).</p>
     </div>
 
     <div class="checks-grid">
@@ -1126,7 +1126,7 @@
       <div class="cli-col">
         <h3>&#x2699;&#xFE0F; GitHub Actions</h3>
         <div class="term-block">
-<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.7.4</span>
+<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.8.0</span>
   <span class="yaml-key">with</span>:
     <span class="yaml-key">command</span>: <span class="yaml-str">audit</span>
     <span class="yaml-key">path</span>: <span class="yaml-str">.</span>
@@ -3650,7 +3650,8 @@
         var files = [];
         if (needsGovernance) files.push('<code>governance.yaml</code>');
         if (needsEvals) files.push('<code>evals.yaml</code>');
-        preview.innerHTML = files.join(' + ');
+        preview.innerHTML = files.length ? files.join(' + ')
+          : 'the recommended governance scaffolding';
       }
     }
 
