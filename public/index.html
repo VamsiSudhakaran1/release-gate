@@ -2944,10 +2944,10 @@
       var sevColor = { high:'#dc2626', medium:'#d97706', low:'#6b7280' };
       h += '<div style="display:flex;gap:8px;margin:16px 0 10px;flex-wrap:wrap;font-size:.82rem;font-weight:700">' +
         '<span style="color:#dc2626">' + sev.high + ' high</span><span style="color:#d97706">' + sev.medium + ' medium</span><span style="color:#6b7280">' + sev.low + ' low</span></div>';
-      findings.slice().sort(function(a,b){ return (order[a.severity]||9)-(order[b.severity]||9); }).forEach(function(f){
+      var renderAsFinding = function(f) {
         var c = sevColor[f.severity] || '#6b7280';
         var blurb = AS_RISK_BLURB[f.title] || '';
-        h += '<div style="background:#fff;border:1px solid var(--border);border-left:3px solid ' + c + ';border-radius:10px;padding:12px 14px;margin-bottom:8px">' +
+        return '<div style="background:#fff;border:1px solid var(--border);border-left:3px solid ' + c + ';border-radius:10px;padding:12px 14px;margin-bottom:8px">' +
           '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
           '<span style="background:' + c + ';color:#fff;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:5px">' + (f.severity || '?').toUpperCase() + '</span>' +
           '<span style="font-weight:700;color:var(--heading);font-size:.88rem">' + escHtml(f.title) + '</span>' +
@@ -2956,7 +2956,19 @@
           (blurb ? '<div style="font-size:.82rem;color:#6b7280;margin-top:5px">' + escHtml(blurb) + '</div>' : '') +
           (f.recommendation ? '<div style="font-size:.82rem;color:var(--heading);margin-top:5px">&#x1F6E0;&#xFE0F; ' + escHtml(f.recommendation) + '</div>' : '') +
           '</div>';
-      });
+      };
+      var asOrdered = findings.slice().sort(function(a,b){ return (order[a.severity]||9)-(order[b.severity]||9); });
+      var asTop = asOrdered.filter(function(f){ return f.severity !== 'low'; });
+      var asLows = asOrdered.filter(function(f){ return f.severity === 'low'; });
+      asTop.forEach(function(f){ h += renderAsFinding(f); });
+      if (asLows.length === 1) {
+        h += renderAsFinding(asLows[0]);
+      } else if (asLows.length > 1) {
+        h += '<details style="margin-bottom:8px">' +
+          '<summary style="cursor:pointer;font-size:.82rem;color:#6b7280;font-weight:700;padding:4px 0">' +
+          '&#x25B8; ' + asLows.length + ' low-severity advisories (expand)</summary>' +
+          '<div style="margin-top:8px">' + asLows.map(renderAsFinding).join('') + '</div></details>';
+      }
       // Report + PDF actions
       if (report._run_id) {
         var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
@@ -3579,11 +3591,14 @@
       var sevColor = { high: '#dc2626', medium: '#d97706', low: '#6b7280' };
       var sevLabel = { high: 'HIGH', medium: 'MED', low: 'LOW' };
       if (findings.length) {
-        var fHtml = '<div style="font-weight:700;font-size:.9rem;color:#1f2937;margin-bottom:8px;">' +
-          '&#x1F50D; Code risks (' + findings.length + ') — AI-specific issues in your source</div>';
-        findings.slice(0, 12).forEach(function(f) {
+        var sevRank = { critical: 0, high: 1, medium: 2, low: 3 };
+        var ordered = findings.slice().sort(function(a, b) {
+          return (sevRank[a.severity] == null ? 9 : sevRank[a.severity]) -
+                 (sevRank[b.severity] == null ? 9 : sevRank[b.severity]);
+        });
+        var renderFinding = function(f) {
           var c = sevColor[f.severity] || '#6b7280';
-          fHtml += '<div style="border-left:3px solid ' + c + ';background:#fafafa;padding:8px 12px;margin-bottom:6px;border-radius:0 6px 6px 0;">' +
+          return '<div style="border-left:3px solid ' + c + ';background:#fafafa;padding:8px 12px;margin-bottom:6px;border-radius:0 6px 6px 0;">' +
             '<div style="display:flex;gap:8px;align-items:center;">' +
             '<span style="background:' + c + ';color:#fff;font-size:.65rem;font-weight:700;padding:1px 6px;border-radius:4px;">' + (sevLabel[f.severity] || '?') + '</span>' +
             '<span style="font-weight:600;font-size:.84rem;color:#1f2937;">' + escHtml(f.title) + '</span>' +
@@ -3591,7 +3606,25 @@
             '</div>' +
             '<div style="font-size:.78rem;color:#4b5563;margin-top:4px;">' + escHtml(f.recommendation) + '</div>' +
             '</div>';
-        });
+        };
+        var top = ordered.filter(function(f) { return f.severity !== 'low'; });
+        var lows = ordered.filter(function(f) { return f.severity === 'low'; });
+        var fHtml = '<div style="font-weight:700;font-size:.9rem;color:#1f2937;margin-bottom:8px;">' +
+          '&#x1F50D; Code risks (' + findings.length + ') — AI-specific issues in your source</div>';
+        top.slice(0, 12).forEach(function(f) { fHtml += renderFinding(f); });
+        // Multiple low-severity advisories collapse into an expandable group so
+        // they never bury the high findings that lead the list.
+        if (lows.length) {
+          if (lows.length === 1) {
+            fHtml += renderFinding(lows[0]);
+          } else {
+            fHtml += '<details style="margin-top:2px;">' +
+              '<summary style="cursor:pointer;font-size:.8rem;color:#6b7280;font-weight:600;padding:4px 0;">' +
+              '&#x25B8; ' + lows.length + ' low-severity advisories (expand)</summary>' +
+              '<div style="margin-top:6px;">' +
+              lows.map(renderFinding).join('') + '</div></details>';
+          }
+        }
         findingsEl.innerHTML = fHtml;
       } else if (lockedCount > 0) {
         findingsEl.innerHTML = '<div style="border:1px dashed #c7d2fe;background:#f5f5ff;padding:12px;border-radius:8px;font-size:.84rem;color:#4338ca;">' +
