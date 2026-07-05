@@ -489,6 +489,9 @@ def compute_score(present: Dict[str, bool],
 _SEVERITY_BASE = {"critical": 24, "high": 22, "medium": 9, "low": 2.5}
 _TYPE_CAP_MULT = 2.2   # one finding type can cost at most base * this
 
+# Display ordering: most-actionable first.
+_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
 
 def _code_safety_factors(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Per-type penalty breakdown so the score can explain itself."""
@@ -951,6 +954,11 @@ def build_report(root: Path, mode: str = "ci",
         if supps:
             code_findings, suppressed_findings, expired_suppressions = \
                 apply_suppressions(code_findings, supps)
+
+    # Order findings by severity (critical → high → medium → low), stable within
+    # a severity, so every consumer (CLI, website, markdown, JSON) shows the
+    # actionable ones first instead of whatever file order the scan produced.
+    code_findings.sort(key=lambda f: _SEV_RANK.get(f.get("severity"), 9))
 
     score, decision = compute_score(present, code_findings)
     code_safety = compute_code_safety(code_findings, agent_detected=agent_detected,
@@ -1830,7 +1838,20 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
                  f"{_rules}")
         print(f"  {_col(_emsg, _YELLOW)}")
 
+    # Highest-severity findings surface first, regardless of mode.
+    _highs = [f for f in findings if f.get("severity") in ("critical", "high")]
+    _meds = [f for f in findings if f.get("severity") == "medium"]
+    _lows = [f for f in findings if f.get("severity") == "low"]
+
     if not full:
+        # Concise default — lead with the actionable high findings, then a tally.
+        if _highs:
+            print(f"\n  {_col('Top code risks (high severity)', _RED, _BOLD)}")
+            for f in _highs[:3]:
+                print(f"  {_col('✗ HIGH', _RED)}  {_col(f['title'], _BOLD)}  "
+                      f"{_col(f['file'] + ':' + str(f['line']), _MUTED)}")
+            if len(_highs) > 3:
+                print(f"  {_col('  +' + str(len(_highs) - 3) + ' more high', _RED)}")
         # Concise default — a one-line tally; the full breakdown lives behind
         # --full and on the website.
         print(f"\n  {_col('✓ ' + str(len(passing)) + ' safeguard(s) present', _GREEN)}"
@@ -1858,11 +1879,12 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
                 print(f"  {_col('✓', _GREEN)}  {s['label']}")
             print()
 
-        # Code findings — evidence-first: severity, confidence · basis, location.
+        # Code findings — evidence-first, high severity first. Lows are grouped
+        # into a compact advisory block so they don't bury the real risks.
         if findings:
             print(f"  {_col('Code findings  (' + str(len(findings)) + ')', _BOLD)}\n")
-            sev_col = {"high": _RED, "medium": _YELLOW, "low": _MUTED}
-            for f in findings:
+            sev_col = {"critical": _RED, "high": _RED, "medium": _YELLOW, "low": _MUTED}
+            for f in _highs + _meds:
                 sc = sev_col.get(f.get("severity"), _MUTED)
                 conf = f.get("confidence", "medium")
                 basis = f.get("basis", "inferred")
@@ -1873,6 +1895,12 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
                     print(f"     {_col('Evidence: ' + f['evidence'], _MUTED)}")
                 if f.get("impact"):
                     print(f"     {_col('Impact:   ' + f['impact'], _MUTED)}")
+            if _lows:
+                _lhdr = f"▸ Low severity · advisory  ({len(_lows)})"
+                print(f"\n  {_col(_lhdr, _MUTED, _BOLD)}")
+                for f in _lows:
+                    _lline = f"· {f['title']}  {f['file']}:{f['line']}"
+                    print(f"     {_col(_lline, _MUTED)}")
             print()
 
         # Real check results (if governance.yaml was found and parsed)

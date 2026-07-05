@@ -85,6 +85,22 @@ def test_no_suppress_flag_shows_everything(tmp_path):
     assert report["suppressed"] == []
 
 
+def test_findings_sorted_high_severity_first(tmp_path):
+    # Two uncapped calls (low) BEFORE the eval (high) in file order — the high
+    # must still surface first in code_findings.
+    _make(tmp_path, {"agent.py": (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "r1 = client.chat.completions.create(model='gpt-4', messages=a)\n"
+        "r2 = client.chat.completions.create(model='gpt-4', messages=b)\n"
+        "def h(user_input):\n    return eval(user_input)\n")})
+    report = build_report(tmp_path, mode="ci")
+    sevs = [f["severity"] for f in report["code_findings"]]
+    assert sevs[0] in ("high", "critical")
+    # non-increasing severity ordering
+    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    assert sevs == sorted(sevs, key=lambda s: rank.get(s, 9))
+
+
 def test_expired_suppression_does_not_hide(tmp_path):
     from release_gate.audit import apply_suppressions
     import datetime
