@@ -245,7 +245,7 @@ def _run_audit(url: str) -> Dict[str, Any]:
     """
     from release_gate.audit import (
         _is_github_url, clone_and_audit, build_report,
-        badge_url, badge_markdown, PrivateRepoError,
+        badge_url, badge_markdown, PrivateRepoError, apply_decision_mode,
     )
     if _is_github_url(url):
         try:
@@ -280,6 +280,10 @@ def _run_audit(url: str) -> Dict[str, Any]:
     else:
         from pathlib import Path
         report = build_report(Path(url))
+    # Public scanning is advisory — you're auditing someone else's repo. Missing
+    # governance becomes REVIEW ("not enough policy"), not a harsh BLOCK. The
+    # objective code-safety axis still surfaces real risk.
+    apply_decision_mode(report, "audit")
     report["badge_url"] = badge_url(report)
     report["badge_markdown"] = badge_markdown(report)
     return report

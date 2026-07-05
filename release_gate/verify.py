@@ -765,6 +765,9 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "eval/new Function/child_process.exec on a dynamic command is a "
                 "remote-code-execution risk if model or user input reaches it. "
                 "Use a fixed argument list or strictly validate/sandbox the input.",
+                confidence="high" if interpolated else "low",
+                basis="confirmed" if interpolated else "inferred",
+                impact="Remote code execution if model/user output reaches this sink.",
             ))
 
         # Unbounded LLM loop — ONLY a truly unbounded loop (while(true) / for(;;)).
@@ -777,6 +780,8 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                     "high", "Unbounded loop around an LLM call", rel, i, stripped[:120],
                     "A loop wrapping an LLM call with no iteration cap can spin forever, "
                     "burning tokens and budget. Add a max-iterations ceiling.",
+                    confidence="high", basis="confirmed",
+                    impact="Runaway cost / no termination guarantee.",
                 ))
 
     # Missing max tokens: generateText/streamText/etc. without maxTokens nearby
@@ -794,9 +799,13 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
         if not _JS_MAX_TOKENS_NEARBY_RE.search(window):
             snippet = text[start:text.find("\n", start) if text.find("\n", start) != -1 else start + 80].strip()
             findings.append(_finding(
-                "medium", "LLM call with no token ceiling", rel, line_no, snippet[:120],
-                "No maxTokens on this call — a single response can run away on length and cost. "
-                "Set an explicit maxTokens.",
+                "low", "LLM call with no token ceiling", rel, line_no, snippet[:120],
+                "No maxTokens on this call — a single response can run to the model's max "
+                "output. Not a vulnerability by itself; set an explicit maxTokens to bound "
+                "latency and cost.",
+                confidence="medium", basis="inferred",
+                impact="Unpredictable latency/cost on a single call. Not a vulnerability "
+                       "by itself.",
             ))
 
     # Prompt injection risk: template literal with req./params./body. near messages array or systemPrompt
@@ -811,13 +820,16 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                 "Template literal interpolating request parameters (req., params., body.) inside a messages "
                 "array or systemPrompt is a prompt-injection vector. Sanitize or keep untrusted input "
                 "in user-role messages only.",
+                confidence="high", basis="confirmed",
+                impact="Prompt-injection surface: untrusted request data reaches the prompt.",
             ))
 
     return findings
 
 
 def _finding(severity: str, title: str, file: str, line: int, snippet: str,
-             recommendation: str) -> Dict[str, Any]:
+             recommendation: str, confidence: str = "medium",
+             basis: str = "inferred", impact: str = "") -> Dict[str, Any]:
     return {
         "severity": severity,
         "title": title,
@@ -825,4 +837,7 @@ def _finding(severity: str, title: str, file: str, line: int, snippet: str,
         "line": line,
         "snippet": snippet,
         "recommendation": recommendation,
+        "confidence": confidence,
+        "basis": basis,
+        "impact": impact,
     }

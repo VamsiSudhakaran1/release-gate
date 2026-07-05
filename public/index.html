@@ -200,6 +200,7 @@
     .pg-score-circle.promote { background: var(--green); }
     .pg-score-circle.hold    { background: var(--amber); }
     .pg-score-circle.block   { background: var(--red); }
+    .pg-score-circle.review  { background: #2563eb; }
 
     .pg-decision-badge {
       display: inline-block; padding: 6px 18px; border-radius: 20px;
@@ -208,6 +209,7 @@
     .pg-decision-badge.promote { background: #dcfce7; color: #15803d; }
     .pg-decision-badge.hold    { background: #fef3c7; color: #92400e; }
     .pg-decision-badge.block   { background: #fee2e2; color: #991b1b; }
+    .pg-decision-badge.review  { background: #dbeafe; color: #1e40af; }
 
     .pg-checklist { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
     .sg-item {
@@ -2564,7 +2566,7 @@
       score = (data.score != null ? data.score : (rpt.score != null ? rpt.score : '—'));
       decision = (data.decision || rpt.decision || 'HOLD').toUpperCase();
     }
-    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
+    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : decision === 'REVIEW' ? 'review' : 'block';
     var repoShort = (data.repo_url || '').replace('https://github.com/', '');
     var dateStr = data.created_at ? new Date(data.created_at).toLocaleString() : '—';
 
@@ -2923,7 +2925,7 @@
       decision = (report.decision || 'HOLD').toUpperCase();
       score = (report.score != null ? report.score : '—');
     }
-    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : 'block';
+    var decClass = decision === 'PROMOTE' ? 'promote' : decision === 'HOLD' ? 'hold' : decision === 'REVIEW' ? 'review' : 'block';
     var repoShort = (url || '').replace('https://github.com/', '').replace('https://', '');
 
     var sev = { high:0, medium:0, low:0 };
@@ -3031,7 +3033,7 @@
   function renderLiveScan(data) {
     var resEl = document.getElementById('as-results');
     var decision = (data.decision || 'HOLD').toUpperCase();
-    var decClass = decision === 'PROMOTE' ? 'promote' : (decision === 'HOLD' ? 'hold' : 'block');
+    var decClass = decision === 'PROMOTE' ? 'promote' : (decision === 'HOLD' ? 'hold' : (decision === 'REVIEW' ? 'review' : 'block'));
     var statusColor = { RESISTED:'#16a34a', LEAKED:'#dc2626', ERROR:'#6b7280' };
     var h = '';
     h += '<div style="display:flex;align-items:center;gap:16px;background:#fff;border:1px solid var(--border);border-radius:14px;padding:18px 20px">' +
@@ -3449,11 +3451,13 @@
 
   function _decClass(d) {
     d = (d || '').toUpperCase();
-    return d === 'PROMOTE' ? 'promote' : d === 'HOLD' ? 'hold' : 'block';
+    return d === 'PROMOTE' ? 'promote' : d === 'HOLD' ? 'hold'
+         : d === 'REVIEW' ? 'review' : 'block';
   }
 
   function _axisCard(title, score, label, sub, blurb, cls) {
-    var col = cls === 'promote' ? '#16a34a' : cls === 'hold' ? '#d97706' : '#dc2626';
+    var col = cls === 'promote' ? '#16a34a' : cls === 'hold' ? '#d97706'
+            : cls === 'review' ? '#2563eb' : '#dc2626';
     return '<div style="flex:1;min-width:210px;background:#fff;border:1px solid var(--border);border-top:3px solid ' + col + ';border-radius:12px;padding:14px 16px">' +
       '<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#6b7280">' + escHtml(title) + '</div>' +
       '<div style="display:flex;align-items:baseline;gap:10px;margin:4px 0 2px">' +
