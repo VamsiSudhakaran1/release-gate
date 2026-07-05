@@ -1427,13 +1427,18 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     score_col = _GREEN if decision == "PROMOTE" else (_YELLOW if decision == "HOLD" else _RED)
     dec_col   = _GREEN if decision == "PROMOTE" else (_YELLOW if decision == "HOLD" else _RED)
 
-    print(f"  {_col('Readiness Score', _BOLD)}   "
+    cs = report.get("code_safety") or {}
+    _code_na = cs.get("reason") == "language_not_static"
+    _score_label = "Governance Readiness" if _code_na else "Readiness Score"
+    print(f"  {_col(_score_label, _BOLD)}   "
           f"{_col(f'{score} / 100', score_col, _BOLD)}   "
           f"{_col(bar_fill, score_col)}{_col(bar_empty, _MUTED)}")
+    if _code_na:
+        _lang = cs.get("language", "this language")
+        print("  " + _col(f"(governance only — agent code not statically analyzed for {_lang})", _MUTED))
     print()
 
     # Two-axis split: Agent Code Safety (objective) + Governance (declared).
-    cs = report.get("code_safety") or {}
     gov = report.get("governance") or {}
     if cs.get("applicable"):
         cs_col = _GREEN if cs["decision"] == "PROMOTE" else (_YELLOW if cs["decision"] == "HOLD" else _RED)

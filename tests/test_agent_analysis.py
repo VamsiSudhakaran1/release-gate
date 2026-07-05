@@ -343,3 +343,19 @@ def test_go_agent_detected_not_falsely_dismissed():
     d2 = tempfile.mkdtemp()
     (Path(d2) / "x.go").write_text('package main\nfunc main() { println("hi") }\n')
     assert build_report(Path(d2)).get("agent_detected") is False
+
+
+def test_go_agent_detected_but_flagged_not_statically_analyzed():
+    import tempfile
+    from pathlib import Path
+    from release_gate.audit import build_report
+    d = tempfile.mkdtemp()
+    (Path(d) / "main.go").write_text(
+        'package main\nconst Model = "claude-sonnet-4.5"\n'
+        'import "github.com/anthropics/anthropic-sdk-go"\n')
+    r = build_report(Path(d))
+    cs = r.get("code_safety") or {}
+    assert r.get("agent_detected") is True                    # it IS an agent
+    assert any("Go" in k for k in r.get("frameworks", {}))    # detected as Go
+    assert cs.get("applicable") is False                      # but not a misleading score
+    assert cs.get("reason") == "language_not_static"          # honest reason
