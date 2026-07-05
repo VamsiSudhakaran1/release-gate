@@ -170,6 +170,9 @@ class _Analyzer(ast.NodeVisitor):
         self.tainted: Set[str] = set()         # vars holding model output / input
         self.llm_signal = False                # repo actually invokes/constructs an LLM
         self.file_has_llm = False              # this file is agent code (set after pass 1)
+        # var/attr key -> set of param keys it holds (for `create(**params)`).
+        self.param_dicts: Dict[str, Set[str]] = {}
+        self._bounded_depth = 0                 # nesting inside statically-bounded loops
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -200,7 +203,45 @@ class _Analyzer(ast.NodeVisitor):
         if isinstance(node.value, ast.Call) and self._is_llm_call(node.value):
             for t in targets:
                 self.tainted.add(t)
+        # Track request-param dicts: `params = {...}` / `self.chat_params = {...}`.
+        # Keys only accumulate (union) so a value is never lost across the two
+        # analysis passes or a later `params["max_tokens"] = ...` write.
+        if isinstance(node.value, ast.Dict):
+            keys = {k.value.lower() for k in node.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            for t in node.targets:
+                key = self._param_key(t)
+                if key:
+                    self.param_dicts.setdefault(key, set()).update(keys)
+        # `params["max_tokens"] = ...` — a key write counts as declaring it.
+        for t in node.targets:
+            if isinstance(t, ast.Subscript):
+                base = self._param_key(t.value)
+                sk = t.slice
+                if base and isinstance(sk, ast.Constant) and isinstance(sk.value, str):
+                    self.param_dicts.setdefault(base, set()).add(sk.value.lower())
         self.generic_visit(node)
+
+    @staticmethod
+    def _param_key(node: ast.AST) -> Optional[str]:
+        """A stable key for a param-dict variable: `params` or `self.chat_params`."""
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return _dotted(node)
+        return None
+
+    def _record_param_update(self, node: ast.Call):
+        """`params.update({...})` — fold the literal's keys into the tracked set."""
+        f = node.func
+        if isinstance(f, ast.Attribute) and f.attr == "update" and node.args:
+            base = self._param_key(f.value)
+            arg = node.args[0]
+            if base and isinstance(arg, ast.Dict):
+                keys = {k.value.lower() for k in arg.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+                if keys:
+                    self.param_dicts.setdefault(base, set()).update(keys)
 
     # -- function params count as externally-controlled input --------------
     def visit_FunctionDef(self, node: ast.FunctionDef):
@@ -240,17 +281,49 @@ class _Analyzer(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         self._check_llm_token_ceiling(node)
         self._check_exec_sink(node)
+        self._record_param_update(node)
         self.generic_visit(node)
+
+    def visit_For(self, node: ast.For):
+        # `for _ in range(...)` / `for x in [literal]` statically bounds re-entry.
+        bounded = self._is_bounded_for(node)
+        if bounded:
+            self._bounded_depth += 1
+        self.generic_visit(node)
+        if bounded:
+            self._bounded_depth -= 1
+
+    visit_AsyncFor = visit_For
+
+    @staticmethod
+    def _is_bounded_for(node: ast.For) -> bool:
+        it = node.iter
+        if isinstance(it, ast.Call) and _root_name(it.func) == "range":
+            return True
+        return isinstance(it, (ast.List, ast.Tuple))
+
+    @staticmethod
+    def _loop_has_exit(node: ast.While) -> bool:
+        return any(isinstance(n, (ast.Return, ast.Break)) for n in ast.walk(node))
 
     def visit_While(self, node: ast.While):
         # An infinite loop (`while True:` / `while 1:`) wrapping an LLM call is
         # the AutoGPT-style runaway: completion criteria may never be met, so it
-        # spins and burns budget. A break alone is not a cap — that's the bug.
+        # spins and burns budget. A model-controlled `break` is NOT a cap.
+        #
+        # BUT: a `while True` nested inside a statically-bounded loop
+        # (`for _ in range(max_retry)`) that also has a reachable exit is capped
+        # by that outer loop — the common framework pattern where the outer loop
+        # drives retries and the inner loop processes one round. Flagging that as
+        # "unbounded" overstates it, so we stay quiet there (the token-ceiling
+        # check still applies to the call itself).
         test = node.test
         infinite = isinstance(test, ast.Constant) and bool(test.value)
         if infinite:
             for n in ast.walk(node):
                 if isinstance(n, ast.Call) and self._is_llm_call(n):
+                    if self._bounded_depth > 0 and self._loop_has_exit(node):
+                        break  # bounded by an enclosing for-loop → not a runaway
                     self.findings.append(self._f(
                         "high", "Unbounded loop around an LLM call", node,
                         "An infinite loop wraps an LLM call with no iteration cap. "
@@ -269,8 +342,31 @@ class _Analyzer(ast.NodeVisitor):
         kwargs = {k.arg.lower() for k in node.keywords if k.arg}
         if kwargs & TOKEN_KEYS:
             return
-        # also accept a spread (**params) — can't see inside, so stay quiet.
-        if any(k.arg is None for k in node.keywords):
+        # Spread params (`create(**self.chat_params)`) — the common framework
+        # pattern. Try to RESOLVE the dict to the literal it was built from: if
+        # we can see its keys and none is a token ceiling, that's a real (LOW)
+        # finding, not a blind spot. If we can't resolve it, stay quiet.
+        spreads = [k.value for k in node.keywords if k.arg is None]
+        if spreads:
+            resolved: Set[str] = set()
+            for sv in spreads:
+                key = self._param_key(sv)
+                if key is None or key not in self.param_dicts:
+                    return  # unresolvable spread → can't prove absence, stay quiet
+                resolved |= self.param_dicts[key]
+            if resolved & TOKEN_KEYS:
+                return  # the dict declares a ceiling → fine
+            self.findings.append(self._f(
+                "low", "LLM call parameter dict has no output ceiling", node,
+                "The request params for this LLM call are assembled in a dict with "
+                "no max_tokens / max_completion_tokens key, then passed via a "
+                "`**` spread. Output length and cost fall back to provider/model "
+                "defaults. Expose an explicit output ceiling (e.g. a max_tokens "
+                "argument merged into the params).",
+                confidence="medium", basis="inferred",
+                impact="Output length/cost depends on provider defaults; no "
+                       "explicit ceiling in the request params.",
+            ))
             return
         # Standalone, this is cost hygiene, NOT a vulnerability: every provider
         # caps output at the model's max anyway, so one uncapped call costs at

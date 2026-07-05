@@ -277,6 +277,86 @@ def test_bounded_loop_not_flagged():
     assert "Unbounded loop around an LLM call" not in titles(src)
 
 
+def test_while_true_nested_in_bounded_for_not_unbounded():
+    # LightAgent pattern: `while True` inside `for _ in range(max_retry)` with a
+    # reachable exit — the outer loop caps re-entry, so it's NOT a runaway.
+    src = (
+        "from openai import OpenAI\n"
+        "c = OpenAI()\n"
+        "def run(max_retry):\n"
+        "    for _ in range(max_retry):\n"
+        "        while True:\n"
+        "            r = c.chat.completions.create(model='x', messages=m, max_tokens=5)\n"
+        "            if done: return r\n"
+        "            break\n"
+    )
+    assert "Unbounded loop around an LLM call" not in titles(src)
+
+
+def test_outermost_while_true_still_unbounded():
+    # No enclosing bounded loop → still the AutoGPT runaway (regression guard).
+    src = (
+        "from openai import OpenAI\n"
+        "c = OpenAI()\n"
+        "def run(goal):\n"
+        "    while True:\n"
+        "        r = c.chat.completions.create(model='x', messages=m, max_tokens=5)\n"
+        "        if 'DONE' in r: break\n"
+    )
+    assert "Unbounded loop around an LLM call" in titles(src)
+
+
+# ── Spread-params token ceiling (the `create(**params)` framework pattern) ───
+
+def test_kwargs_param_dict_without_token_ceiling_flagged():
+    src = (
+        "class A:\n"
+        "    def run(self):\n"
+        "        self.chat_params = {\n"
+        "            'model': self.model,\n"
+        "            'messages': messages,\n"
+        "            'stream': False,\n"
+        "        }\n"
+        "        return self.client.chat.completions.create(**self.chat_params)\n"
+    )
+    assert "LLM call parameter dict has no output ceiling" in titles(src)
+
+
+def test_kwargs_param_dict_with_token_key_not_flagged():
+    src = (
+        "class A:\n"
+        "    def run(self):\n"
+        "        self.chat_params = {'model': self.model, 'messages': m, 'max_tokens': 256}\n"
+        "        return self.client.chat.completions.create(**self.chat_params)\n"
+    )
+    assert "LLM call parameter dict has no output ceiling" not in titles(src)
+
+
+def test_kwargs_param_dict_token_key_set_via_subscript_not_flagged():
+    src = (
+        "class A:\n"
+        "    def run(self, max_tokens=None):\n"
+        "        self.chat_params = {'model': self.model, 'messages': m}\n"
+        "        if max_tokens is not None:\n"
+        "            self.chat_params['max_tokens'] = max_tokens\n"
+        "        return self.client.chat.completions.create(**self.chat_params)\n"
+    )
+    assert "LLM call parameter dict has no output ceiling" not in titles(src)
+
+
+def test_unresolvable_spread_stays_quiet():
+    # We can't see inside **kwargs — must not fabricate a finding.
+    src = (
+        "from openai import OpenAI\n"
+        "c = OpenAI()\n"
+        "def run(**kwargs):\n"
+        "    return c.chat.completions.create(**kwargs)\n"
+    )
+    ts = titles(src)
+    assert "LLM call parameter dict has no output ceiling" not in ts
+    assert "LLM call with no token ceiling" not in ts
+
+
 def test_secrets_in_test_files_are_fixtures():
     import tempfile, os
     from pathlib import Path

@@ -1454,7 +1454,7 @@ def _finding_type_key(title: str) -> str:
         return "exec_sink"
     if "secret" in t or "api key" in t:
         return "hardcoded_secret"
-    if "token ceiling" in t or "max_tokens" in t:
+    if "token ceiling" in t or "max_tokens" in t or "output ceiling" in t:
         return "missing_max_tokens"
     if "injection" in t or "interpolated" in t:
         return "prompt_injection_risk"
