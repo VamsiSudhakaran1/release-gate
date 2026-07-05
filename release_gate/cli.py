@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """
 release-gate CLI - AI release decision engine
-Version: 0.8.0 — adds live agent runtime (--agent) and repo audit (badge, CI summary)
+Version: 0.8.1 — team-adoption workflow: policy modes (--mode), baseline gate
+         (--baseline), PR comments (--pr-comment), suppressions (.release-gate-ignore),
+         evidence-first findings (confidence/basis), severity-ordered output
 """
 import os
 import sys
@@ -567,7 +569,7 @@ def _print_score_report(scoring, project, evals, traces, impact, runtime=None, f
     conf = scoring["confidence"]
 
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.8.0")
+    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.8.1")
     print("=" * 80 + "\n")
 
     print(f"  Project          {project}")
@@ -696,7 +698,7 @@ def run_score_command(config_path, evals_path, traces_path, html_report, evidenc
 def _print_regression_report(result, full=False):
     """Render a regression comparison report to the terminal."""
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Regression Gate  v0.8.0")
+    print("\U0001f6aa release-gate  |  Regression Gate  v0.8.1")
     print("=" * 80 + "\n")
 
     print(f"  Baseline score    {result['previous_score']} / 100   {result['baseline_decision']}")
@@ -817,7 +819,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 
     paths = generate_evidence_pack(data, output_dir)
 
-    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.8.0\n")
+    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.8.1\n")
     print(f"  Decision: {scoring['decision']}  (score {scoring['readiness_score']}/100)\n")
     print(f"  ✓  {paths['json']}")
     print(f"  ✓  {paths['markdown']}")
@@ -834,7 +836,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print("\U0001f6aa release-gate v0.8.0  — AI release decision engine")
+    print("\U0001f6aa release-gate v0.8.1  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
     print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
