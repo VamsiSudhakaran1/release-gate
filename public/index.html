@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>release-gate | AI Agent Release Decision Engine</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3QgeD0iMSIgeT0iMSIgd2lkdGg9IjMwIiBoZWlnaHQ9IjMwIiByeD0iNy42IiBmaWxsPSIjMEIwQjBGIi8+PHJlY3QgeD0iOS43IiB5PSIxMiIgd2lkdGg9IjIuNiIgaGVpZ2h0PSIxMiIgcng9IjEuMiIgZmlsbD0iI0Y0RjFFOSIvPjxyZWN0IHg9IjE5LjciIHk9IjEyIiB3aWR0aD0iMi42IiBoZWlnaHQ9IjEyIiByeD0iMS4yIiBmaWxsPSIjRjRGMUU5Ii8+PHJlY3QgeD0iOCIgeT0iOC40IiB3aWR0aD0iMTYiIGhlaWdodD0iMi45IiByeD0iMS40NSIgZmlsbD0iI0M4QTI0QiIvPjwvc3ZnPg==">
+  <style id="brand-css">
+    .rg-logo { display:inline-flex; align-items:center; gap:9px; font-weight:700; letter-spacing:-.01em; }
+    .rg-logo svg { width:26px; height:26px; border-radius:7px; display:block; flex:none; }
+    .rg-logo .wm { color:#0B0B0F; }
+    .rg-logo .wm .g { color:#C8A24B; }         /* gold hyphen ties the accent into the wordmark */
+  </style>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -821,7 +828,7 @@
 <!-- ═══════════════════════ NAV ═══════════════════════ -->
 <header id="site-header">
   <nav>
-    <a class="logo" onclick="goHome();return false;" href="#">&#x1F6AA; release-gate</a>
+    <a class="logo rg-logo" onclick="goHome();return false;" href="#"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></a>
     <ul class="nav-links">
       <li><a href="#agent-scan">Agent Scan</a></li>
       <li><a href="#who-its-for">Who it's for</a></li>
@@ -1635,7 +1642,7 @@
 <footer>
   <div class="container">
     <div class="footer-row">
-      <div class="footer-logo">&#x1F6AA; release-gate</div>
+      <div class="footer-logo"><span class="rg-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></span></div>
       <div class="footer-links">
         <a href="#cli-section">CLI docs</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a>
