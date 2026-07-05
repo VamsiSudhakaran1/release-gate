@@ -16,8 +16,125 @@ from release_gate.audit import (
     detect_model,
     detect_safeguards,
     emit_config,
+    apply_decision_mode,
+    compare_to_baseline,
     SAFEGUARDS,
 )
+
+
+def _make(tmp_path, files):
+    for name, body in files.items():
+        (tmp_path / name).write_text(body)
+
+
+# ─────────────────────────── policy modes ───────────────────────────────────
+
+def _clean_agent_repo(tmp_path):
+    _make(tmp_path, {"agent.py": (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "def h(m):\n    return client.chat.completions.create("
+        "model='gpt-4', messages=m, max_tokens=100)\n")})
+
+
+def _risky_agent_repo(tmp_path):
+    _make(tmp_path, {"agent.py": (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "def h(user_input):\n"
+        "    client.chat.completions.create(model='gpt-4', messages=[], max_tokens=1)\n"
+        "    return eval(user_input)\n")})
+
+
+def test_audit_mode_clean_repo_is_review_not_block(tmp_path):
+    _clean_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="audit")
+    # No code risk + undeclared governance → advisory REVIEW, never a harsh BLOCK.
+    assert report["decision"] == "REVIEW"
+    assert report["mode"] == "audit"
+    assert report.get("decision_reason")
+
+
+def test_audit_mode_real_high_finding_holds(tmp_path):
+    _risky_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="audit")
+    assert report["decision"] in ("HOLD", "BLOCK")  # real code risk still surfaces
+
+
+def test_ci_mode_missing_governance_blocks(tmp_path):
+    _clean_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="ci")
+    assert report["decision"] == "BLOCK"  # historical enforce behavior preserved
+
+
+def test_strict_mode_blocks_on_missing_critical_safeguard(tmp_path):
+    _clean_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="strict")
+    assert report["decision"] == "BLOCK"
+    assert "critical safeguard" in report["decision_reason"]
+
+
+def test_apply_decision_mode_does_not_mutate_scores(tmp_path):
+    _risky_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="ci")
+    cs_before = dict(report["code_safety"])
+    apply_decision_mode(report, "audit")
+    assert report["code_safety"] == cs_before  # only the verdict is reinterpreted
+
+
+# ─────────────────────────── evidence quality ───────────────────────────────
+
+def test_findings_carry_confidence_and_basis(tmp_path):
+    _risky_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="ci")
+    for f in report["code_findings"]:
+        assert f.get("confidence") in ("high", "medium", "low")
+        assert f.get("basis") in ("confirmed", "inferred")
+    sink = next(f for f in report["code_findings"]
+                if f["title"] == "Dangerous execution sink")
+    assert sink["basis"] == "confirmed" and sink["confidence"] == "high"
+
+
+def test_standalone_token_ceiling_is_low(tmp_path):
+    _clean_agent_repo(tmp_path)  # has max_tokens → no finding; use uncapped one
+    _make(tmp_path, {"a.py": (
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "r = client.chat.completions.create(model='gpt-4', messages=m)\n")})
+    report = build_report(tmp_path, mode="ci")
+    tc = [f for f in report["code_findings"]
+          if f["title"] == "LLM call with no token ceiling"]
+    assert tc and all(f["severity"] == "low" for f in tc)
+
+
+def test_token_ceiling_elevated_inside_unbounded_loop():
+    from release_gate.agent_analysis import analyze_python
+    src = ("from openai import OpenAI\nclient = OpenAI()\n"
+           "while True:\n"
+           "    client.chat.completions.create(model='gpt-4', messages=m)\n")
+    fs = analyze_python(src, "x.py")
+    tc = [f for f in fs if f["title"] == "LLM call with no token ceiling"]
+    assert tc and tc[0]["severity"] == "medium"  # compound runaway-cost path
+
+
+# ─────────────────────────── baseline gate ──────────────────────────────────
+
+def test_baseline_blocks_on_new_high(tmp_path):
+    base = build_report(tmp_path / "b", mode="ci") if False else None
+    clean = tmp_path / "clean"; clean.mkdir()
+    _clean_agent_repo(clean)
+    risky = tmp_path / "risky"; risky.mkdir()
+    _risky_agent_repo(risky)
+    baseline = build_report(clean, mode="ci")
+    current = build_report(risky, mode="ci")
+    diff = compare_to_baseline(current, baseline)
+    assert diff["verdict"] == "BLOCK"
+    assert any("new high" in r for r in diff["reasons"])
+
+
+def test_baseline_pass_when_no_regression(tmp_path):
+    clean = tmp_path / "clean"; clean.mkdir()
+    _clean_agent_repo(clean)
+    report = build_report(clean, mode="ci")
+    diff = compare_to_baseline(report, report)  # compare to itself
+    assert diff["verdict"] == "PASS"
 
 
 # ─────────────────────────── helpers ────────────────────────────────────────

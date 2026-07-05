@@ -771,6 +771,35 @@ def run_compare_command(baseline_path, candidate_path):
              10 if result["decision"] == "HOLD" else 0)
 
 
+def _print_baseline_diff(diff):
+    """Render a baseline comparison as a concise 'don't make it worse' verdict."""
+    GREEN, YELLOW, RED, MUTED, BOLD, RESET = (
+        "\033[32m", "\033[33m", "\033[31m", "\033[90m", "\033[1m", "\033[0m")
+    verdict = diff.get('verdict', 'PASS')
+    col = {'PASS': GREEN, 'HOLD': YELLOW, 'BLOCK': RED}.get(verdict, MUTED)
+    icon = {'PASS': '✓', 'HOLD': '⚠', 'BLOCK': '✗'}.get(verdict, '?')
+    print()
+    print(f"  {BOLD}Baseline diff  (gate only on net-new regressions){RESET}")
+    delta = diff.get('code_safety_delta')
+    if delta is not None:
+        dcol = GREEN if delta >= 0 else RED
+        print(f"  {MUTED}Code safety:{RESET} {diff.get('baseline_code_safety')} "
+              f"→ {diff.get('current_code_safety')}  ({dcol}{delta:+d}{RESET})")
+    new_high = [f for f in diff.get('new_code_findings', [])
+                if f.get('severity') in ('high', 'critical')]
+    for f in new_high[:8]:
+        print(f"  {RED}+ NEW {f.get('severity','').upper()}{RESET}  "
+              f"{f.get('title')}  {MUTED}{f.get('file')}:{f.get('line')}{RESET}")
+    resolved = diff.get('resolved_code_findings', [])
+    if resolved:
+        print(f"  {GREEN}✓ {len(resolved)} finding(s) resolved since baseline{RESET}")
+    print()
+    for r in diff.get('reasons', []):
+        print(f"  {MUTED}· {r}{RESET}")
+    print(f"  {col}{BOLD}{icon}  Baseline verdict: {verdict}{RESET}")
+    print()
+
+
 def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
                               agent_spec=None):
     """Generate the full evidence pack (JSON + Markdown + HTML)."""
@@ -814,7 +843,12 @@ def print_help():
     print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
     print("  release-gate audit [path|url] --badge         # README badge snippet for your score")
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
-    print("  release-gate audit [path|url] --baseline BRANCH|FILE  # Only fail on net-new issues")
+    print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
+    print("  release-gate audit [path|url] --write-baseline FILE  # Save current audit as a baseline")
+    print("  release-gate audit [path|url] --mode audit|ci|strict # Policy lens (default: ci)")
+    print("      audit  = advisory (public repos): missing governance -> REVIEW, never a harsh BLOCK")
+    print("      ci     = enforce declared policy (default)")
+    print("      strict = regulated: BLOCK on any missing critical safeguard or high finding")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
@@ -874,8 +908,13 @@ def main():
         from release_gate.audit import (
             _is_github_url, clone_and_audit, emit_config,
             render_markdown, badge_markdown, emit_sarif, compare_to_baseline,
+            apply_decision_mode, VALID_MODES,
         )
         target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
+        mode = (_flag(sys.argv, '--mode') or 'ci').lower()
+        if mode not in VALID_MODES:
+            print(f"Error: --mode must be one of {', '.join(VALID_MODES)} (got {mode!r}).")
+            sys.exit(1)
         as_json = '--json' in sys.argv
         as_markdown = '--markdown' in sys.argv
         as_badge = '--badge' in sys.argv
@@ -921,6 +960,20 @@ def main():
         except RuntimeError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
+
+        # Re-interpret the decision under the chosen policy mode (audit/ci/strict).
+        apply_decision_mode(report, mode)
+
+        # Save the current report as a baseline for future diff-aware runs.
+        write_baseline = _flag(sys.argv, '--write-baseline')
+        if write_baseline:
+            try:
+                snapshot = {k: v for k, v in report.items() if k != 'real_checks'}
+                with open(write_baseline, 'w', encoding='utf-8') as bf:
+                    json.dump(snapshot, bf, indent=2)
+                print(f"Baseline written to: {write_baseline}")
+            except OSError as exc:
+                print(f"Warning: could not write baseline: {exc}")
 
         # Baseline comparison (JSON file mode)
         baseline_comparison = None
@@ -997,18 +1050,14 @@ def main():
         if not report.get('agent_detected', True):
             sys.exit(0)
 
-        # Baseline mode: exit code based on net-new issues only
+        # Baseline mode: exit code based on net-new regressions only ("don't
+        # make the release worse"). Pre-existing debt from the baseline is
+        # never counted against you.
+        if baseline_comparison is not None and not as_json and not as_markdown:
+            _print_baseline_diff(baseline_comparison)
         if baseline_comparison is not None:
-            new_block = [f for f in baseline_comparison.get('new_code_findings', [])
-                         if f.get('severity') == 'high']
-            new_sg_high = [s for s in baseline_comparison.get('new_safeguard_failures', [])
-                           if s.get('id') in ('governance_file', 'kill_switch', 'budget_ceiling')]
-            if new_block or new_sg_high:
-                sys.exit(1)   # BLOCK: new regressions
-            if (baseline_comparison.get('new_code_findings') or
-                    baseline_comparison.get('new_safeguard_failures')):
-                sys.exit(10)  # HOLD: net-new issues but not critical
-            sys.exit(0)       # no regressions
+            verdict = baseline_comparison.get('verdict', 'PASS')
+            sys.exit({'BLOCK': 1, 'HOLD': 10}.get(verdict, 0))
 
         decision = report['decision']
         sys.exit(1 if decision == 'BLOCK' else 10 if decision == 'HOLD' else 0)

@@ -586,6 +586,92 @@ def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
     return {"score": score, "level": level, "present": n_present, "total": len(SAFEGUARDS)}
 
 
+# ─────────────────────────── Policy modes ───────────────────────────────────
+
+# Missing any of these is what a regulated/internal team treats as a hard stop.
+CRITICAL_SAFEGUARDS = {"governance_file", "kill_switch", "budget_ceiling"}
+
+VALID_MODES = ("audit", "ci", "strict")
+
+
+def apply_decision_mode(report: Dict[str, Any], mode: str = "ci") -> Dict[str, Any]:
+    """Re-interpret the top-level decision according to the policy mode.
+
+    Not every repo should be judged the same way. The same findings mean
+    different things depending on who's asking:
+
+      audit   → advisory. For scanning someone else's / a public repo. Missing
+                governance is REVIEW ("not enough policy to judge"), never a
+                brutal BLOCK. Only genuine code-safety risk can BLOCK.
+      ci      → enforce the declared policy (the historical default). Governance
+                gaps and code findings both gate the release.
+      strict  → regulated. BLOCK on any missing CRITICAL safeguard or any high
+                code finding — no benefit of the doubt.
+
+    Sets report['mode'], report['decision'], report['decision_reason'] and
+    returns the report. The underlying scores are never mutated — only the
+    verdict's interpretation.
+    """
+    mode = mode if mode in VALID_MODES else "ci"
+    report["mode"] = mode
+
+    cs = report.get("code_safety") or {}
+    high = cs.get("high", 0) if cs.get("applicable") else 0
+    med = cs.get("medium", 0) if cs.get("applicable") else 0
+    cs_score = cs.get("score")
+    missing_ids = {s.get("id") for s in (report.get("missing") or [])}
+    missing_critical = missing_ids & CRITICAL_SAFEGUARDS
+
+    if mode == "ci":
+        # Historical behavior: compute_score already set report['decision'].
+        report.setdefault("decision_reason",
+                           "Enforcing declared policy (governance + code findings).")
+        return report
+
+    if mode == "strict":
+        decision = report.get("decision", "BLOCK")
+        reasons = []
+        if missing_critical:
+            decision = "BLOCK"
+            reasons.append("missing critical safeguard(s): "
+                           + ", ".join(sorted(missing_critical)))
+        if high >= 1:
+            decision = "BLOCK"
+            reasons.append(f"{high} high-severity code finding(s)")
+        report["decision"] = decision
+        report["decision_reason"] = (
+            "; ".join(reasons) if reasons
+            else "All critical safeguards present and no high findings.")
+        return report
+
+    # audit mode — advisory. Governance gaps never BLOCK; only real code risk does.
+    if cs.get("applicable"):
+        if high >= 3 or (isinstance(cs_score, int) and cs_score < 45):
+            decision, reason = "BLOCK", (
+                "Serious agent-code-safety risk in the source "
+                f"({high} high finding(s), code safety {cs_score}/100).")
+        elif high >= 1:
+            decision, reason = "HOLD", (
+                f"{high} high-severity code finding(s) to review before deploy.")
+        elif med >= 1:
+            decision, reason = "HOLD", (
+                f"{med} medium code finding(s); no high-severity risk.")
+        elif missing_ids:
+            decision, reason = "REVIEW", (
+                "Code looks clean, but governance is undeclared — not enough "
+                "policy to gate on. Advisory only.")
+        else:
+            decision, reason = "PROMOTE", "Clean code and full governance."
+    else:
+        # No static coverage (other-language agent) → we can't score the code.
+        decision, reason = "REVIEW", (
+            "Agent detected but not statically analyzable here — run the "
+            "behavioral scan. Advisory only.")
+    report["decision"] = decision
+    report["decision_reason"] = reason
+    return report
+
+
 # ─────────────────────────── URL / remote repo support ──────────────────────
 
 def _is_github_url(target: str) -> bool:
@@ -720,8 +806,13 @@ def _github_api_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
 
 # ─────────────────────────── Report builder ─────────────────────────────────
 
-def build_report(root: Path) -> Dict[str, Any]:
-    """Full audit report for a repo path."""
+def build_report(root: Path, mode: str = "ci") -> Dict[str, Any]:
+    """Full audit report for a repo path.
+
+    ``mode`` selects the policy lens (audit/ci/strict) used to interpret the
+    top-level decision — see apply_decision_mode(). Defaults to ci for
+    backward compatibility; the scores themselves are mode-independent.
+    """
     root = root.resolve()
     frameworks = detect_frameworks(root)
     agent_detected = len(frameworks) > 0
@@ -800,7 +891,7 @@ def build_report(root: Path) -> Dict[str, Any]:
         except Exception:
             pass
 
-    return {
+    report = {
         "path":               str(root),
         "agent_detected":     agent_detected,
         "frameworks":         frameworks,
@@ -817,6 +908,7 @@ def build_report(root: Path) -> Dict[str, Any]:
         "governance":         governance,
         "real_checks":        real_check_results,
     }
+    return apply_decision_mode(report, mode)
 
 
 # ─────────────────────────── Baseline / diff-aware mode ─────────────────────
@@ -850,11 +942,50 @@ def compare_to_baseline(current: Dict[str, Any],
     resolved_sgs = [s for s in (baseline.get("missing") or [])
                     if s.get("id") not in current_missing]
 
+    # Score regression on the objective axis. A drop here means the release got
+    # materially less safe even if no single finding crossed a hard threshold.
+    def _cs_score(r):
+        cs = r.get("code_safety") or {}
+        return cs.get("score") if cs.get("applicable") else None
+    cur_cs, base_cs = _cs_score(current), _cs_score(baseline)
+    cs_delta = (cur_cs - base_cs) if (cur_cs is not None and base_cs is not None) else None
+
+    # Gate verdict — the "don't make it worse" rule. We block only on NET-NEW
+    # serious regressions, never on pre-existing debt inherited from the baseline.
+    new_high = [f for f in new_findings if f.get("severity") in ("high", "critical")]
+    new_critical_sg = [s for s in new_sg_failures
+                       if s.get("id") in CRITICAL_SAFEGUARDS]
+    reasons: List[str] = []
+    if new_high:
+        reasons.append(f"{len(new_high)} new high-severity finding(s)")
+    if new_critical_sg:
+        reasons.append("newly missing critical safeguard(s): "
+                       + ", ".join(sorted(s.get("id") for s in new_critical_sg)))
+    if cs_delta is not None and cs_delta <= -10:
+        reasons.append(f"code safety regressed {cs_delta:+d} pts "
+                       f"({base_cs} → {cur_cs})")
+    other_new = (len(new_findings) - len(new_high)) + \
+                (len(new_sg_failures) - len(new_critical_sg))
+    if reasons:
+        verdict = "BLOCK"
+    elif other_new > 0:
+        verdict = "HOLD"
+        reasons.append(f"{other_new} net-new lower-severity issue(s)")
+    else:
+        verdict = "PASS"
+        reasons.append("No net-new highs, no critical safeguard lost, "
+                       "no score regression.")
+
     return {
         "new_code_findings":       new_findings,
         "resolved_code_findings":  resolved_findings,
         "new_safeguard_failures":  new_sg_failures,
         "resolved_safeguards":     resolved_sgs,
+        "code_safety_delta":       cs_delta,
+        "baseline_code_safety":    base_cs,
+        "current_code_safety":     cur_cs,
+        "verdict":                 verdict,
+        "reasons":                 reasons,
     }
 
 
@@ -1336,13 +1467,15 @@ def render_markdown(report: Dict[str, Any]) -> str:
     if findings:
         out.append(f"### 🔍 Code risks ({len(findings)})")
         out.append("")
-        out.append("| Severity | Issue | Location | Recommendation |")
-        out.append("| :---: | --- | --- | --- |")
+        out.append("| Severity | Confidence | Issue | Location | Recommendation |")
+        out.append("| :---: | :---: | --- | --- | --- |")
         sev_emoji = {"high": "🔴", "medium": "🟠", "low": "⚪"}
         for f in findings[:25]:
             em = sev_emoji.get(f.get("severity"), "⚪")
-            out.append(f"| {em} {f.get('severity','').upper()} | {f['title']} | "
-                       f"`{f['file']}:{f['line']}` | {f['recommendation']} |")
+            conf = f.get("confidence", "medium")
+            basis = f.get("basis", "inferred")
+            out.append(f"| {em} {f.get('severity','').upper()} | {conf} · {basis} | "
+                       f"{f['title']} | `{f['file']}:{f['line']}` | {f['recommendation']} |")
         out.append("")
 
     if missing:
@@ -1424,8 +1557,10 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     decision = report["decision"]
     bar_fill = "█" * (score // 10)
     bar_empty = "░" * (10 - score // 10)
-    score_col = _GREEN if decision == "PROMOTE" else (_YELLOW if decision == "HOLD" else _RED)
-    dec_col   = _GREEN if decision == "PROMOTE" else (_YELLOW if decision == "HOLD" else _RED)
+    def _dec_col(d):
+        return {"PROMOTE": _GREEN, "HOLD": _YELLOW, "REVIEW": _BLUE}.get(d, _RED)
+    score_col = _dec_col(decision)
+    dec_col   = _dec_col(decision)
 
     cs = report.get("code_safety") or {}
     _code_na = cs.get("reason") == "language_not_static"
@@ -1467,8 +1602,13 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
               f"{_col(gov['level'], gov_col)}   {_col(gov_counts, _MUTED)}")
     print()
 
-    icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗"}.get(decision, "?")
-    print(f"  {_col(f'Decision:  {icon}  {decision}', dec_col, _BOLD)}")
+    icon = {"PROMOTE": "✓", "HOLD": "⚠", "BLOCK": "✗", "REVIEW": "⟳"}.get(decision, "?")
+    mode = report.get("mode", "ci")
+    print(f"  {_col(f'Decision:  {icon}  {decision}', dec_col, _BOLD)}"
+          f"   {_col(f'[{mode} mode]', _MUTED)}")
+    reason = report.get("decision_reason")
+    if reason:
+        print(f"  {_col(reason, _MUTED)}")
     print()
     print(f"  {div}")
 
@@ -1502,6 +1642,23 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
             print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
             for s in passing:
                 print(f"  {_col('✓', _GREEN)}  {s['label']}")
+            print()
+
+        # Code findings — evidence-first: severity, confidence · basis, location.
+        if findings:
+            print(f"  {_col('Code findings  (' + str(len(findings)) + ')', _BOLD)}\n")
+            sev_col = {"high": _RED, "medium": _YELLOW, "low": _MUTED}
+            for f in findings:
+                sc = sev_col.get(f.get("severity"), _MUTED)
+                conf = f.get("confidence", "medium")
+                basis = f.get("basis", "inferred")
+                print(f"  {_col('•', sc)} {_col(f.get('severity','').upper(), sc, _BOLD)}  "
+                      f"{_col(conf + ' confidence · ' + basis, _MUTED)}  {_col(f['title'], _BOLD)}")
+                print(f"     {_col(f['file'] + ':' + str(f['line']), _MUTED)}")
+                if f.get("evidence"):
+                    print(f"     {_col('Evidence: ' + f['evidence'], _MUTED)}")
+                if f.get("impact"):
+                    print(f"     {_col('Impact:   ' + f['impact'], _MUTED)}")
             print()
 
         # Real check results (if governance.yaml was found and parsed)

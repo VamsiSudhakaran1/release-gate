@@ -256,6 +256,8 @@ class _Analyzer(ast.NodeVisitor):
                         "An infinite loop wraps an LLM call with no iteration cap. "
                         "If the stop condition is never met it spins forever, "
                         "burning tokens and budget. Add an explicit max-iterations ceiling.",
+                        confidence="high", basis="confirmed",
+                        impact="Runaway cost / no termination guarantee.",
                     ))
                     break
         self.generic_visit(node)
@@ -270,10 +272,21 @@ class _Analyzer(ast.NodeVisitor):
         # also accept a spread (**params) — can't see inside, so stay quiet.
         if any(k.arg is None for k in node.keywords):
             return
+        # Standalone, this is cost hygiene, NOT a vulnerability: every provider
+        # caps output at the model's max anyway, so one uncapped call costs at
+        # most a single full-length completion. We emit it LOW/inferred by
+        # default and only elevate to MEDIUM in analyze_python() when it
+        # co-occurs with an unbounded loop (the real runaway-cost compound).
+        # This is the demotion that keeps clean repos from getting a Medium ding
+        # for something ubiquitous and harmless.
         self.findings.append(self._f(
-            "medium", "LLM call with no token ceiling", node,
-            "This LLM call sets no max_tokens — a single response can run away on "
-            "length and cost. Pass an explicit max_tokens / max_output_tokens.",
+            "low", "LLM call with no token ceiling", node,
+            "This LLM call sets no max_tokens — a single response can run to the "
+            "model's max output. Not a vulnerability by itself; pass an explicit "
+            "max_tokens / max_output_tokens to bound latency and cost.",
+            confidence="medium", basis="inferred",
+            impact="Unpredictable latency/cost on a single call. Not a "
+                   "vulnerability by itself.",
         ))
 
     def _sink_kind(self, node: ast.Call) -> Optional[str]:
@@ -345,6 +358,8 @@ class _Analyzer(ast.NodeVisitor):
                 "output evaluator has already scored the text. Parse with "
                 "ast.literal_eval/json, or sandbox execution.",
                 evidence=f"{source} `{value}` -> {kind}",
+                confidence="high", basis="confirmed",
+                impact="Remote code execution if model/user output reaches this sink.",
             ))
         elif self.file_has_llm:
             # A dynamic sink in agent code we can't prove is reachable → a quiet
@@ -356,6 +371,9 @@ class _Analyzer(ast.NodeVisitor):
                 f"{kind} runs a non-constant value in agent code. Confirm no model "
                 "or user output can reach it; a deliberate code tool should be "
                 "sandboxed.",
+                confidence="low", basis="inferred",
+                impact="Potential code execution if untrusted input can reach it "
+                       "— reachability not proven.",
             ))
 
     # -- f-string system prompts ------------------------------------------
@@ -391,15 +409,25 @@ class _Analyzer(ast.NodeVisitor):
                     "User/model-influenced text is interpolated into a system "
                     "prompt. Move untrusted input into a clearly-delimited user "
                     "turn so it can't override system instructions.",
+                    confidence="high" if strong else "low",
+                    basis="confirmed" if strong else "inferred",
+                    impact="Prompt-injection surface: untrusted text can override "
+                           "system instructions.",
                 ))
         self.generic_visit(node)
 
     def _f(self, severity: str, title: str, node: ast.AST, rec: str,
-           evidence: str = "") -> Dict[str, Any]:
+           evidence: str = "", confidence: str = "medium",
+           basis: str = "inferred", impact: str = "") -> Dict[str, Any]:
+        # confidence: how sure we are this is what we say it is (high/medium/low).
+        # basis: "confirmed" = we can point at the exact tainted flow / structure;
+        #        "inferred"  = the pattern is present but reachability isn't proven.
+        # These let a developer triage instantly and let CI gate on confirmed-only.
         return {
             "severity": severity, "title": title, "file": self.rel,
             "line": getattr(node, "lineno", 0), "snippet": "",
             "recommendation": rec, "evidence": evidence,
+            "confidence": confidence, "basis": basis, "impact": impact,
         }
 
 
@@ -438,4 +466,16 @@ def analyze_python(source: str, rel: str) -> List[Dict[str, Any]]:
         if key not in seen:
             seen.add(key)
             out.append(f)
+    # Elevate uncapped LLM calls to MEDIUM only when this file ALSO has an
+    # unbounded loop around an LLM call — that's the real runaway-cost compound
+    # (each loop turn emits a max-length completion, unbounded). Alone they stay
+    # LOW. Severity follows blast radius, not the raw pattern.
+    if any(f["title"] == "Unbounded loop around an LLM call" for f in out):
+        for f in out:
+            if f["title"] == "LLM call with no token ceiling":
+                f["severity"] = "medium"
+                f["basis"] = "confirmed"
+                f["impact"] = ("Inside an unbounded loop with no output ceiling: "
+                               "each turn can emit a max-length completion, "
+                               "unbounded — a real runaway-cost path.")
     return out
