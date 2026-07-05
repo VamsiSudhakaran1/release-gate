@@ -1346,6 +1346,102 @@ def _finding_type_key(title: str) -> str:
     return "unbounded_llm_loop"
 
 
+# ─────────────────────────── PR comment (concise delta) ─────────────────────
+
+def render_pr_comment(report: Dict[str, Any],
+                      baseline_comparison: Optional[Dict[str, Any]] = None) -> str:
+    """A short, delta-first Markdown comment for a PR — not the full report.
+
+    For GitHub adoption this matters more than a dashboard: a developer wants
+    one glance at *what this PR changed*, not a wall of pre-existing debt. When
+    a baseline is present we lead with the diff and gate on net-new regressions
+    only ("don't make it worse"). Without a baseline we give a tight snapshot.
+    """
+    emoji = {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴", "REVIEW": "🔵"}
+    out: List[str] = []
+
+    if baseline_comparison is not None:
+        verdict = baseline_comparison.get("verdict", "PASS")
+        vemoji = {"PASS": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(verdict, "⚪")
+        out.append(f"### {vemoji} release-gate: {verdict} _(vs baseline)_")
+        out.append("")
+        delta = baseline_comparison.get("code_safety_delta")
+        if delta is not None:
+            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+            out.append(f"**Agent Code Safety:** "
+                       f"{baseline_comparison.get('baseline_code_safety')} → "
+                       f"{baseline_comparison.get('current_code_safety')} "
+                       f"({arrow} {delta:+d})")
+            out.append("")
+        new_findings = baseline_comparison.get("new_code_findings") or []
+        highs = [f for f in new_findings if f.get("severity") in ("high", "critical")]
+        others = [f for f in new_findings if f not in highs]
+        if new_findings:
+            out.append("**New findings:**")
+            for f in highs + others:
+                sev = (f.get("severity") or "").upper()
+                conf = f.get("confidence", "medium")
+                basis = f.get("basis", "inferred")
+                out.append(f"- **{sev}** ({conf} · {basis}): {f.get('title')}  "
+                           f"`{f.get('file')}:{f.get('line')}`")
+                rec = f.get("recommendation")
+                if rec:
+                    out.append(f"  ↳ {rec.split('.')[0]}.")
+            out.append("")
+        else:
+            out.append("**No new code findings.**")
+            out.append("")
+        if not highs:
+            out.append("_No new high-severity findings._")
+        new_sg = baseline_comparison.get("new_safeguard_failures") or []
+        if new_sg:
+            out.append("**Newly missing safeguards:** "
+                       + ", ".join(s.get("label", s.get("id", "")) for s in new_sg))
+        else:
+            out.append("_Governance unchanged._")
+        resolved = baseline_comparison.get("resolved_code_findings") or []
+        if resolved:
+            out.append(f"_✅ {len(resolved)} finding(s) resolved in this PR._")
+    else:
+        decision = report.get("decision", "BLOCK")
+        de = emoji.get(decision, "⚪")
+        mode = report.get("mode", "ci")
+        out.append(f"### {de} release-gate: {decision} _({mode} mode)_")
+        reason = report.get("decision_reason")
+        if reason:
+            out.append("")
+            out.append(f"_{reason}_")
+        out.append("")
+        cs = report.get("code_safety") or {}
+        gov = report.get("governance") or {}
+        if cs.get("applicable") and cs.get("score") is not None:
+            out.append(f"**Agent Code Safety:** {cs['score']}/100 — {cs['decision']} "
+                       f"({cs.get('high',0)} high · {cs.get('medium',0)} med · "
+                       f"{cs.get('low',0)} low)")
+        if gov:
+            out.append(f"**Governance:** {gov.get('score',0)}/100 — "
+                       f"{gov.get('level','')} ({gov.get('present',0)}/"
+                       f"{gov.get('total',0)} declared)")
+        out.append("")
+        findings = report.get("code_findings") or []
+        highs = [f for f in findings if f.get("severity") in ("high", "critical")]
+        if highs:
+            out.append("**High-severity findings:**")
+            for f in highs[:10]:
+                conf = f.get("confidence", "medium")
+                basis = f.get("basis", "inferred")
+                out.append(f"- **{(f.get('severity') or '').upper()}** "
+                           f"({conf} · {basis}): {f.get('title')}  "
+                           f"`{f.get('file')}:{f.get('line')}`")
+        else:
+            out.append("_No high-severity code findings._")
+
+    out.append("")
+    out.append("<sub>🚪 [release-gate](https://release-gate.com) · "
+               "the pre-deploy release gate for AI agents</sub>")
+    return "\n".join(out)
+
+
 # ─────────────────────────── Badge + Markdown (self-serve) ──────────────────
 
 def badge_url(report: Dict[str, Any]) -> str:
