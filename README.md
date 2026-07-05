@@ -1,13 +1,15 @@
 # release-gate
 
-**The CI/CD release decision engine for AI agents — audit, score, eval, and gate before you ship.**
+**The pre-deploy release gate for AI agents.** It renders an evidence-based **PROMOTE / HOLD / BLOCK** verdict — catching the agent-layer risks that SAST, guardrails, and evaluators structurally miss.
 
 [![PyPI version](https://badge.fury.io/py/release-gate.svg)](https://badge.fury.io/py/release-gate)
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 
-> **v0.7.4** — Start with `release-gate audit` to scan any repo in 30 seconds. Then score, eval, and gate before every deploy: **PROMOTE**, **HOLD**, or **BLOCK**.
+> **v0.8.0** — Real AST-based agent-code analysis (not grep): findings cite the evidence — *"the model's own output `assistant_reply` → `eval()`"*. Two honest axes (**Agent Code Safety** + **Governance**), a **language-agnostic** behavioral canary/injection battery, and multi-language agent detection (Python-deep, Go/Rust/JS detected → routed to the behavioral scan).
+
+**Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
 
 ## Try it in 30 seconds
 
