@@ -916,19 +916,13 @@
         <span style="width:11px;height:11px;border-radius:50%;background:#22c55e;display:inline-block"></span>
         <span style="color:var(--term-muted);font-size:.75rem;margin-left:6px">$ release-gate audit myorg/my-ai-agent</span>
       </div>
-      <div style="padding:14px 16px;line-height:1.9">
-        <div style="color:var(--term-muted)">Scanning <span style="color:var(--term-blue)">myorg/my-ai-agent</span> &middot; 7 checks &middot; code analysis&hellip;</div>
-        <div style="margin-top:8px"><span style="color:var(--term-yellow);font-weight:700">AI Release Readiness: 42/100 &mdash; HOLD</span></div>
-        <div style="margin-top:10px;color:var(--term-muted)">Safeguards:</div>
-        <div style="color:var(--term-red)">  ✗ governance config &nbsp;<span style="color:#4b5563;font-size:.75rem">project.name still a placeholder</span></div>
-        <div style="color:var(--term-red)">  ✗ eval evidence &nbsp;<span style="color:#4b5563;font-size:.75rem">no evals.yaml found</span></div>
-        <div style="color:var(--term-red)">  ✗ budget ceiling &nbsp;<span style="color:#4b5563;font-size:.75rem">max_daily_cost still # TODO</span></div>
-        <div style="color:var(--term-red)">  ✗ kill switch &nbsp;<span style="color:#4b5563;font-size:.75rem">location path does not exist</span></div>
-        <div style="color:var(--term-green)">  ✓ team owner</div>
-        <div style="color:var(--term-green)">  ✓ auth &amp; rate limiting</div>
-        <div style="color:var(--term-green)">  ✓ trace policy</div>
-        <div style="margin-top:8px;color:var(--term-red)">  &#x26A0; 1 high-severity code risk: LLM call inside unbounded loop (agent.py:42)</div>
-        <div style="margin-top:4px;color:var(--term-muted);font-size:.75rem">  Run <span style="color:var(--term-blue)">release-gate audit . --fix</span> to scaffold missing governance files</div>
+      <div style="padding:14px 16px;line-height:1.85">
+        <div style="color:var(--term-muted)">Agents <span style="color:var(--term-blue)">OpenAI / Agents SDK, LangChain</span></div>
+        <div style="margin-top:12px"><span style="color:var(--term-bright);font-weight:700">Agent Code Safety</span> &nbsp;<span style="color:var(--term-red);font-weight:700">28/100&nbsp; BLOCK</span> &nbsp;<span style="color:var(--term-muted);font-size:.78rem">4 high &middot; 18 med</span></div>
+        <div style="color:#8a6d3b;font-size:.78rem;padding-left:2px">&nbsp;&nbsp;the model&rsquo;s own output <span style="color:var(--term-yellow)">assistant_reply</span> &rarr; <span style="color:var(--term-red)">eval()</span> &nbsp;<span style="color:var(--term-muted)">agent.py:149</span></div>
+        <div style="margin-top:6px"><span style="color:var(--term-bright);font-weight:700">Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> &nbsp;<span style="color:var(--term-yellow);font-weight:700">50/100&nbsp; Partial</span> &nbsp;<span style="color:var(--term-muted);font-size:.78rem">4/8 safeguards declared</span></div>
+        <div style="margin-top:12px;color:var(--term-red);font-weight:700">Decision:  &#x2717;  BLOCK</div>
+        <div style="margin-top:8px;color:var(--term-muted);font-size:.75rem">The <span style="color:var(--term-red)">eval()</span> of model output is the CVE-2025-51472 RCE class &mdash; the agent-layer risk SAST, guardrails &amp; evaluators miss.</div>
       </div>
     </div>
   </div>
@@ -2787,6 +2781,12 @@
       decision: 'HOLD',
       agent_detected: true,
       frameworks: { 'OpenAI / Agents SDK': 4, 'LangChain': 12 },
+      code_safety: isKnownSafe
+        ? { score: 91, decision: 'HOLD', high: 0, medium: 1, low: 0, applicable: true }
+        : { score: 28, decision: 'BLOCK', high: 4, medium: 18, low: 0, applicable: true },
+      governance: isKnownSafe
+        ? { score: 62, level: 'Partial', present: 5, total: 8 }
+        : { score: 50, level: 'Partial', present: 4, total: 8 },
       safeguards: {
         governance_file:  false,
         eval_evidence:    isKnownSafe,
