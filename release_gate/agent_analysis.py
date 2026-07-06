@@ -173,6 +173,10 @@ class _Analyzer(ast.NodeVisitor):
         # var/attr key -> set of param keys it holds (for `create(**params)`).
         self.param_dicts: Dict[str, Set[str]] = {}
         self._bounded_depth = 0                 # nesting inside statically-bounded loops
+        # vars received from a LOCAL IPC pipe/duplex (multiprocessing) — trusted
+        # internal transport, NOT external input. `pickle.loads` on one of these
+        # is the stdlib logging/worker pattern, not an RCE surface.
+        self.local_ipc_vars: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -203,6 +207,11 @@ class _Analyzer(ast.NodeVisitor):
         if isinstance(node.value, ast.Call) and self._is_llm_call(node.value):
             for t in targets:
                 self.tainted.add(t)
+        # x = self._duplex.recv_bytes()  → x came off a LOCAL IPC pipe, which the
+        # process controls — trusted transport, not external input.
+        if isinstance(node.value, ast.Call) and self._is_local_ipc_recv(node.value):
+            for t in targets:
+                self.local_ipc_vars.add(t)
         # Track request-param dicts: `params = {...}` / `self.chat_params = {...}`.
         # Keys only accumulate (union) so a value is never lost across the two
         # analysis passes or a later `params["max_tokens"] = ...` write.
@@ -221,6 +230,19 @@ class _Analyzer(ast.NodeVisitor):
                 if base and isinstance(sk, ast.Constant) and isinstance(sk.value, str):
                     self.param_dicts.setdefault(base, set()).add(sk.value.lower())
         self.generic_visit(node)
+
+    # Receive-calls that pull bytes/objects off a connection, and receiver-name
+    # hints that mean it's a LOCAL IPC pipe (multiprocessing), not the network.
+    _IPC_RECV_METHODS = {"recv_bytes", "recv", "recv_pyobj", "recv_obj"}
+    _IPC_RECEIVER_HINTS = ("duplex", "pipe", "conn", "connection", "parent_conn",
+                           "child_conn", "_rx", "_tx", "ipc")
+
+    def _is_local_ipc_recv(self, node: ast.Call) -> bool:
+        f = node.func
+        if not isinstance(f, ast.Attribute) or f.attr not in self._IPC_RECV_METHODS:
+            return False
+        recv = (_dotted(f.value) or "").lower()
+        return any(h in recv for h in self._IPC_RECEIVER_HINTS)
 
     @staticmethod
     def _param_key(node: ast.AST) -> Optional[str]:
@@ -418,6 +440,10 @@ class _Analyzer(ast.NodeVisitor):
     def _reaching_taint(self, arg_names):
         """Return (value_name, source_label) for the tainted value reaching a
         sink, or None. Names the evidence a judge would cite."""
+        # A value received off a local IPC pipe is trusted internal transport,
+        # never external input — don't let a generic name ("data") make it look
+        # like a user-controlled RCE surface.
+        arg_names = [n for n in arg_names if n not in self.local_ipc_vars]
         for n in arg_names:
             low = n.lower()
             if n in self.tainted and any(h in low for h in MODEL_SOURCE_HINTS):

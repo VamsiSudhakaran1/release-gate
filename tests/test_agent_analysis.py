@@ -234,6 +234,39 @@ def test_hex_uuid_and_uppercase_placeholder_not_secrets():
     assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5"') is True
 
 
+def test_http_header_name_not_a_secret():
+    # bug caught auditing livekit/agents: HEADER_WORKER_TOKEN = "X-LiveKit-Worker-Token"
+    from release_gate.verify import _is_real_secret
+    assert _is_real_secret('HEADER_WORKER_TOKEN = "X-LiveKit-Worker-Token"') is False
+    assert _is_real_secret('API_KEY_HEADER = "X-Api-Key"') is False
+    assert _is_real_secret('h = "Content-Type"') is False
+    # a genuine key is still caught
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5"') is True
+
+
+def test_pickle_over_local_ipc_pipe_not_flagged():
+    # livekit ipc/log_queue.py pattern: data off a local duplex is trusted transport.
+    src = (
+        "import pickle\n"
+        "class H:\n"
+        "    def _monitor(self):\n"
+        "        while True:\n"
+        "            data = self._duplex.recv_bytes()\n"
+        "            record = pickle.loads(data)\n"
+    )
+    assert "Dangerous execution sink" not in titles(src)
+
+
+def test_pickle_from_network_still_flagged():
+    # Regression guard: pickle of genuinely external input stays HIGH.
+    src = (
+        "import pickle\n"
+        "def handle(request):\n"
+        "    return pickle.loads(request.body)\n"
+    )
+    assert "Dangerous execution sink" in titles(src)
+
+
 def test_secret_in_examples_dir_is_dropped():
     # A hardcoded secret in example/demo tooling is fixture data, not a leak.
     from release_gate.verify import _finalize_findings
