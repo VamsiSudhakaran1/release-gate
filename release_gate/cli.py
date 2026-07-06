@@ -848,6 +848,9 @@ def print_help():
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
     print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
     print("  release-gate audit [path|url] --write-baseline FILE  # Save current audit as a baseline")
+    print("  release-gate audit [path] --verify          # LLM second-opinion on findings (opt-in, BYO model)")
+    print("      Set RG_VERIFY_MODEL (+ RG_VERIFY_API_KEY), or RG_VERIFY_BASE_URL for a local model.")
+    print("      Advisory only — sends findings to YOUR model, never to release-gate; static decision still gates.")
     print("  release-gate audit [path|url] --no-suppress   # Ignore .release-gate-ignore (show everything)")
     print("  release-gate audit [path|url] --mode audit|ci|strict # Policy lens (default: ci)")
     print("      audit  = advisory (public repos): missing governance -> REVIEW, never a harsh BLOCK")
@@ -969,6 +972,22 @@ def main():
 
         # Re-interpret the decision under the chosen policy mode (audit/ci/strict).
         apply_decision_mode(report, mode)
+
+        # Optional LLM verification (opt-in, BYO model, advisory only). Never runs
+        # unless asked; sends only findings + a snippet to YOUR configured model;
+        # never contacts release-gate. The static decision stays the exit code.
+        if '--verify' in sys.argv:
+            if _is_github_url(target):
+                print("Note: --verify needs a local checkout — clone the repo, "
+                      "then run `release-gate audit . --verify`.")
+            elif report.get('agent_detected') and report.get('code_findings'):
+                from release_gate.llm_verify import verify_findings, VerifyConfigError
+                vmin = _flag(sys.argv, '--verify-min') or 'medium'
+                try:
+                    report['verify'] = verify_findings(
+                        report['code_findings'], _Path(target), min_severity=vmin)
+                except VerifyConfigError as exc:
+                    print(f"--verify skipped: {exc}\n")
 
         # Save the current report as a baseline for future diff-aware runs.
         write_baseline = _flag(sys.argv, '--write-baseline')
