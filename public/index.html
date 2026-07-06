@@ -4,6 +4,63 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>release-gate | AI Agent Release Decision Engine</title>
+  <meta name="description" content="The pre-deploy release gate for AI agents. Scan any repo for the agent-layer risks SAST misses — model output reaching eval(), prompt-injection surfaces, uncapped LLM loops — and get one PROMOTE / HOLD / BLOCK decision.">
+  <link rel="canonical" href="https://release-gate.com/">
+  <meta name="theme-color" content="#6366f1">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://release-gate.com/">
+  <meta property="og:site_name" content="release-gate">
+  <meta property="og:title" content="release-gate — AI Agent Release Decision Engine">
+  <meta property="og:description" content="Know before you ship. Scan any repo for the agent-layer risks SAST, guardrails, and evaluators structurally miss. Every finding cites its evidence. Takes 10 seconds.">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="release-gate — AI Agent Release Decision Engine">
+  <meta name="twitter:description" content="The pre-deploy release gate for AI agents. One PROMOTE / HOLD / BLOCK decision, every finding backed by evidence.">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "release-gate",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "url": "https://release-gate.com/",
+    "description": "Pre-deployment release gate for AI agents: scans agent code for prompt-injection surfaces, exec sinks fed by model output, and uncapped LLM loops, then returns a PROMOTE / HOLD / BLOCK decision.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "softwareHelp": "https://github.com/VamsiSudhakaran1/release-gate"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "How is release-gate different from guardrails like Lakera or NeMo?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Guardrails block a bad request at runtime — they live in the request path of a deployed agent. Release-gate answers a different question before you deploy: is this agent safe to ship at all? It returns one PROMOTE / HOLD / BLOCK verdict across safety, correctness, loop behavior, and cost." }
+      },
+      {
+        "@type": "Question",
+        "name": "Isn't Agent Code Safety just SonarQube?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. SAST tools find SQL injection, XSS, and CVEs — the code layer. Agent Code Safety finds failure modes that only exist once an LLM is in the loop: user input flowing into a system prompt, model output reaching exec or a shell, an uncapped loop that can burn thousands overnight." }
+      },
+      {
+        "@type": "Question",
+        "name": "What kinds of issues does the scan actually catch?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Prompt-injection surfaces, uncapped LLM calls with no cost ceiling, unbounded loops around LLM calls, exec/eval sinks reachable from model output, and hardcoded secrets. Each finding shows the exact file and line plus the fix." }
+      },
+      {
+        "@type": "Question",
+        "name": "Does it map to compliance frameworks?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. The same probe evidence rolls up to the OWASP LLM Top 10, the NIST AI RMF, and the EU AI Act — with honest NOT_ASSESSED where it doesn't test something." }
+      },
+      {
+        "@type": "Question",
+        "name": "Is the CLI free? Do you store my code?",
+        "acceptedAnswer": { "@type": "Answer", "text": "The CLI is 100% free and unlimited — no scan caps, no account, works in any CI pipeline. The audit clones your repo, scans it, and doesn't retain the code. The optional platform adds persistent history, team visibility, and an audit trail." }
+      }
+    ]
+  }
+  </script>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3QgeD0iMSIgeT0iMSIgd2lkdGg9IjMwIiBoZWlnaHQ9IjMwIiByeD0iNy42IiBmaWxsPSIjMEIwQjBGIi8+PHJlY3QgeD0iOS43IiB5PSIxMiIgd2lkdGg9IjIuNiIgaGVpZ2h0PSIxMiIgcng9IjEuMiIgZmlsbD0iI0Y0RjFFOSIvPjxyZWN0IHg9IjE5LjciIHk9IjEyIiB3aWR0aD0iMi42IiBoZWlnaHQ9IjEyIiByeD0iMS4yIiBmaWxsPSIjRjRGMUU5Ii8+PHJlY3QgeD0iOCIgeT0iOC40IiB3aWR0aD0iMTYiIGhlaWdodD0iMi45IiByeD0iMS40NSIgZmlsbD0iI0M4QTI0QiIvPjwvc3ZnPg==">
   <style id="brand-css">
     .rg-logo { display:inline-flex; align-items:center; gap:9px; font-weight:700; letter-spacing:-.01em; }
@@ -20,6 +77,7 @@
       --surface:     #ffffff;
       --border:      #e5e2f0;
       --text:        #4b5563;
+      --muted:       #6b7280;
       --heading:     #1e1b4b;
       --accent:      #6366f1;
       --accent-tint: #ede9fe;
@@ -39,6 +97,18 @@
     }
 
     html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+
+    /* Keyboard users get a visible route past the nav */
+    .skip-link {
+      position: absolute; left: -9999px; top: 0; z-index: 300;
+      background: var(--accent); color: #fff; font-weight: 700;
+      padding: 10px 18px; border-radius: 0 0 10px 0; font-size: .9rem;
+    }
+    .skip-link:focus { left: 0; }
 
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -79,6 +149,12 @@
       transition: opacity .15s;
     }
     .nav-cta:hover { opacity: .88; text-decoration: none !important; }
+    .nav-toggle {
+      display: none; background: none; border: none; cursor: pointer;
+      font-size: 1.45rem; line-height: 1; color: var(--heading);
+      padding: 4px 8px; border-radius: 8px;
+    }
+    .nav-toggle:hover { background: var(--accent-tint); }
 
     /* ── LAYOUT ── */
     .container { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
@@ -742,7 +818,17 @@
       }
     }
     @media (max-width: 768px) {
-      .nav-links { display: none; }
+      .nav-toggle { display: block; }
+      .nav-links {
+        display: none;
+        position: absolute; top: 100%; left: 0; right: 0;
+        flex-direction: column; gap: 0; align-items: stretch;
+        background: #fff; border-bottom: 1px solid var(--border);
+        box-shadow: 0 12px 24px rgba(30,27,75,.10);
+        padding: 6px 0;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links a { display: block; padding: 13px 24px; font-size: .95rem; }
       .hero { padding: 60px 0 40px; }
     }
     @media (max-width: 500px) {
@@ -827,15 +913,18 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">Skip to content</a>
+
 <!-- ═══════════════════════ NAV ═══════════════════════ -->
 <header id="site-header">
   <nav>
     <a class="logo rg-logo" onclick="goHome();return false;" href="#"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></a>
-    <ul class="nav-links">
+    <ul class="nav-links" id="nav-links">
       <li><a href="#agent-scan">Agent Scan</a></li>
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
       <li><a href="#loop-section">Loop Verify</a></li>
+      <li><a href="#enterprise">Pricing</a></li>
       <li><a href="#security">Security</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a></li>
@@ -843,11 +932,12 @@
     <div id="nav-auth-area" class="nav-user-chip">
       <button class="nav-btn primary" onclick="openAuthModal('signup')">Sign up free</button>
     </div>
+    <button class="nav-toggle" id="nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-links" onclick="toggleMobileNav()">&#9776;</button>
   </nav>
 </header>
 
 <!-- ═══════════════════════ HERO ═══════════════════════ -->
-<section class="hero">
+<section class="hero" id="main">
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
     <h1>Know before you ship.</h1>
@@ -856,7 +946,7 @@
 
     <!-- Hero playground input -->
     <div class="hero-scan-row">
-      <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
+      <input type="url" id="pg-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" aria-label="GitHub repository URL to audit" onkeydown="if(event.key==='Enter')runPlaygroundAudit()" />
       <button id="pg-run-btn" onclick="runPlaygroundAudit()">Audit in 10 seconds &rarr;</button>
     </div>
     <p class="hero-scan-hint">
@@ -1126,7 +1216,7 @@
       <div class="cli-col">
         <h3>&#x2699;&#xFE0F; GitHub Actions</h3>
         <div class="term-block">
-<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.8.0</span>
+<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.8.2</span>
   <span class="yaml-key">with</span>:
     <span class="yaml-key">command</span>: <span class="yaml-str">audit</span>
     <span class="yaml-key">path</span>: <span class="yaml-str">.</span>
@@ -1433,7 +1523,7 @@
           <li>Audit trail</li>
           <li>GitHub App org-wide</li>
         </ul>
-        <a href="mailto:Vamsi.sudhakaran@gmail.com?subject=release-gate%20Enterprise%20inquiry" class="tier-btn secondary">Contact us &rarr;</a>
+        <a href="mailto:vamsi.sudhakaran@gmail.com?subject=release-gate%20Enterprise%20inquiry" class="tier-btn secondary">Contact us &rarr;</a>
       </div>
 
     </div>
@@ -1628,7 +1718,7 @@
     <h2>Scan your repo now &mdash; takes 10 seconds</h2>
     <p class="cta-sub">No sign-up required for the first scan.</p>
     <div class="cta-scan-row">
-      <input type="url" id="cta-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" />
+      <input type="url" id="cta-url-input" placeholder="https://github.com/your-org/your-agent" autocomplete="off" aria-label="GitHub repository URL to scan" onkeydown="if(event.key==='Enter')runCtaScan()" />
       <button id="cta-run-btn" onclick="runCtaScan()">Scan &rarr;</button>
     </div>
   </div>
@@ -1641,13 +1731,20 @@
       <div class="footer-logo"><span class="rg-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></span></div>
       <div class="footer-links">
         <a href="#cli-section">CLI docs</a>
+        <a href="#enterprise">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://pypi.org/project/release-gate/" target="_blank" rel="noopener">PyPI</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/SECURITY.md" target="_blank" rel="noopener">Security policy</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/ROADMAP.md" target="_blank" rel="noopener">Roadmap</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
         <a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a>
-        <a href="mailto:Vamsi.sudhakaran@gmail.com?subject=release-gate%20inquiry">Contact us</a>
+        <a href="mailto:vamsi.sudhakaran@gmail.com?subject=release-gate%20inquiry">Contact us</a>
       </div>
     </div>
     <div class="footer-bottom">
       &copy; 2026 release-gate &mdash;
       <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/LICENSE">MIT License</a>
+      &middot; The scanning engine is open source &mdash; audit the code that audits your code.
     </div>
   </div>
 </footer>
@@ -1747,6 +1844,21 @@
   // ── Nav shadow on scroll ──
   window.addEventListener('scroll', function() {
     document.getElementById('site-header').classList.toggle('scrolled', window.scrollY > 10);
+  });
+
+  // ── Mobile nav ──
+  function toggleMobileNav(force) {
+    var links = document.getElementById('nav-links');
+    var btn = document.getElementById('nav-toggle');
+    var open = force !== undefined ? force : !links.classList.contains('open');
+    links.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+    btn.innerHTML = open ? '&times;' : '&#9776;';
+  }
+  // Picking a destination closes the menu so it never covers the section you asked for.
+  document.getElementById('nav-links').addEventListener('click', function(e) {
+    if (e.target.tagName === 'A') toggleMobileNav(false);
   });
 
   // ── API base ──
@@ -2530,6 +2642,13 @@
     if (e.key === 'Escape') {
       closeSafeguardDoc();
       closeRunReport();
+      toggleMobileNav(false);
+      // Auth modal too — unless it's the forced change-password view (close hidden).
+      var authModal = document.getElementById('auth-modal');
+      var authClose = document.querySelector('#auth-modal .auth-close');
+      if (authModal.classList.contains('open') && authClose && authClose.style.display !== 'none') {
+        closeAuthModal();
+      }
     }
   });
   document.getElementById('report-modal').addEventListener('click', function(e) {
@@ -2674,7 +2793,7 @@
       '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
       (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
       '</div>' +
-      (rid && !paid ? '<div style="font-size:.78rem;color:#6b7280;margin-top:8px">The PDF summary shows score, decision &amp; counts. <a href="#pricing" style="color:var(--accent);font-weight:600">Upgrade to Pro</a> for a PDF with every finding (file:line + fixes) &amp; compliance mapping.</div>' : '');
+      (rid && !paid ? '<div style="font-size:.78rem;color:#6b7280;margin-top:8px">The PDF summary shows score, decision &amp; counts. <a href="#enterprise" style="color:var(--accent);font-weight:600">Upgrade to Pro</a> for a PDF with every finding (file:line + fixes) &amp; compliance mapping.</div>' : '');
 
     document.getElementById('report-modal-body').innerHTML = h;
   }
@@ -3715,7 +3834,7 @@
             '<a href="/r/' + rid + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:#6366f1;font-weight:600;font-size:.85rem;padding:8px 14px;background:#f5f3ff;border-radius:8px;border:1px solid #c4b5fd;">&#x1F4CA; View full report + trend history &rarr;</a>' +
             '<button type="button" onclick="downloadRunPdf(\'' + data._run_id + '\', this)" style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-weight:600;font-size:.85rem;padding:8px 14px;background:#6366f1;border-radius:8px;border:none;cursor:pointer;">' + pdfLabel + '</button>' +
           '</div>' +
-          (isPaid ? '' : '<div style="font-size:.78rem;color:#6b7280;margin-top:6px;">Free reports show a summary. <a href="#pricing" style="color:#6366f1;font-weight:600;">Upgrade to Pro</a> for every finding with file:line, fixes &amp; compliance mapping.</div>');
+          (isPaid ? '' : '<div style="font-size:.78rem;color:#6b7280;margin-top:6px;">Free reports show a summary. <a href="#enterprise" style="color:#6366f1;font-weight:600;">Upgrade to Pro</a> for every finding with file:line, fixes &amp; compliance mapping.</div>');
         runLinkEl.style.display = 'block';
       } else {
         runLinkEl.style.display = 'none';
