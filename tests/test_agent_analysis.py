@@ -216,6 +216,32 @@ def test_placeholder_and_slug_secrets_rejected():
     assert _is_real_secret('t = "xoxb-9aZ2kQ7mN4pL8vR1tY6wX3bC"') is True
 
 
+def test_hex_uuid_and_uppercase_placeholder_not_secrets():
+    # Real-world false positives caught auditing intentkit / llama_index / fast-agent.
+    from release_gate.verify import _is_real_secret
+    # Ethereum zero address — matched only because "token" is in the var name.
+    assert _is_real_secret(
+        'gas_token = "0x0000000000000000000000000000000000000000"') is False
+    assert _is_real_secret('token = "0xdeadbeefcafebabe1234567890abcdef"') is False
+    # UPPERCASE-hyphenated placeholders / phonetic demo values.
+    assert _is_real_secret(
+        'search_service_api_key = "YOUR-AZURE-SEARCH-SERVICE-ADMIN-KEY"') is False
+    assert _is_real_secret('EXPECTED_SECRET = "WHISKEY-TANGO-FOXTROT-42"') is False
+    # A bare UUID default is an identifier format, not a live key.
+    assert _is_real_secret(
+        'api_key="a0f8a6ba-c32f-4407-af0c-169f1915490c"') is False
+    # A genuine provider key is still caught.
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5"') is True
+
+
+def test_secret_in_examples_dir_is_dropped():
+    # A hardcoded secret in example/demo tooling is fixture data, not a leak.
+    from release_gate.verify import _finalize_findings
+    f = {"severity": "high", "title": "Hardcoded secret / API key",
+         "file": "examples/mcp/demo/example.py", "line": 19}
+    assert _finalize_findings([f]) == []
+
+
 def test_js_only_truly_unbounded_loops_flagged():
     from release_gate.verify import _scan_js_file
     bounded = _scan_js_file("a.ts", "while (i < this.maxToolCalls) {\n  await llm.invoke(p)\n}\n")
