@@ -75,6 +75,12 @@ _ATTR_SINKS = {
 }
 _SAFE_YAML_LOADERS = ("safeloader", "csafeloader", "baseloader")
 
+# Deserialization sinks are ubiquitous for a framework's OWN internal transport
+# (multiprocessing IPC, caching, state persistence), so a name-inferred source
+# reaching one is NOT asserted as a confirmed RCE — see _check_exec_sink.
+_DESERIALIZATION_SINKS = {"pickle.loads()", "pickle.load()",
+                          "marshal.loads()", "dill.loads()"}
+
 # Names that strongly suggest externally-controlled / model input — used for the
 # reachability heuristic on execution sinks.
 INPUT_HINTS = ("request", "req", "body", "payload", "params", "query", "prompt",
@@ -168,6 +174,7 @@ class _Analyzer(ast.NodeVisitor):
         self.llm_aliases: Set[str] = set()    # names bound to LLM modules/ctors
         self.llm_vars: Set[str] = set()        # vars holding an LLM client
         self.tainted: Set[str] = set()         # vars holding model output / input
+        self.tainted_model: Set[str] = set()   # vars ASSIGNED from an LLM call in-scope
         self.llm_signal = False                # repo actually invokes/constructs an LLM
         self.file_has_llm = False              # this file is agent code (set after pass 1)
         # var/attr key -> set of param keys it holds (for `create(**params)`).
@@ -203,10 +210,13 @@ class _Analyzer(ast.NodeVisitor):
             self.llm_signal = True
             for t in targets:
                 self.llm_vars.add(t)
-        # x = <llm call>  → x is model output (tainted)
+        # x = <llm call>  → x is model output (tainted). Track it as CONFIRMED
+        # model output — we can see the source in scope, unlike a bare param whose
+        # name merely hints at input.
         if isinstance(node.value, ast.Call) and self._is_llm_call(node.value):
             for t in targets:
                 self.tainted.add(t)
+                self.tainted_model.add(t)
         # x = self._duplex.recv_bytes()  → x came off a LOCAL IPC pipe, which the
         # process controls — trusted transport, not external input.
         if isinstance(node.value, ast.Call) and self._is_local_ipc_recv(node.value):
@@ -438,22 +448,38 @@ class _Analyzer(ast.NodeVisitor):
         return None
 
     def _reaching_taint(self, arg_names):
-        """Return (value_name, source_label) for the tainted value reaching a
-        sink, or None. Names the evidence a judge would cite."""
+        """Return (value_name, source_label, confirmed) for the tainted value
+        reaching a sink, or None.
+
+        `confirmed` distinguishes evidence we can SEE (a value assigned from an
+        LLM call in scope, or an unambiguous external-input name like `request`)
+        from a value we only INFER from a generic/serialized name (`data`,
+        `message_ser`) whose real source isn't visible here. That distinction is
+        what keeps us from asserting "confirmed RCE" on a framework's own internal
+        pickling (the livekit / MetaGPT false-positive class).
+        """
         # A value received off a local IPC pipe is trusted internal transport,
-        # never external input — don't let a generic name ("data") make it look
-        # like a user-controlled RCE surface.
+        # never external input — don't let a generic name make it look like a
+        # user-controlled RCE surface.
         arg_names = [n for n in arg_names if n not in self.local_ipc_vars]
+        # Confirmed: assigned from an LLM call we can see in this file.
         for n in arg_names:
             low = n.lower()
-            if n in self.tainted and any(h in low for h in MODEL_SOURCE_HINTS):
-                return n, "the model's own output"
+            if n in self.tainted_model and any(h in low for h in MODEL_SOURCE_HINTS):
+                return n, "the model's own output", True
+        # Confirmed: an unambiguous external-input name (request/body/payload/…).
+        for n in arg_names:
+            low = n.lower()
+            if any(h in low for h in STRONG_INPUT_HINTS):
+                return n, "external user/request input", True
+        # Inferred: the name hints at model/user data, but the source isn't
+        # visible here (a bare parameter, a generic name). Present, not proven.
+        for n in arg_names:
+            low = n.lower()
             if any(h in low for h in MODEL_SOURCE_HINTS):
-                return n, "model output"
-        for n in arg_names:
-            low = n.lower()
+                return n, "possible model output", False
             if any(h in low for h in USER_SOURCE_HINTS) or n in self.tainted:
-                return n, "external user/request input"
+                return n, "data of unverified origin", False
         return None
 
     def _check_exec_sink(self, node: ast.Call):
@@ -468,10 +494,31 @@ class _Analyzer(ast.NodeVisitor):
         arg_names = [n for a in args for n in _names_in(a)]
         reaching = self._reaching_taint(arg_names)
         if reaching:
+            value, source, confirmed = reaching
+            # Deserialization (pickle/marshal/dill) is ubiquitous for a
+            # framework's OWN internal transport — IPC, caching, state persistence.
+            # So when the source is only INFERRED from a name, we do NOT assert a
+            # confirmed RCE (that's the livekit/MetaGPT false-positive class); we
+            # flag it MEDIUM/inferred: "real if the source is untrusted; confirm
+            # it." Code-execution sinks (eval/exec/os.system/…) are almost never
+            # benign, so they stay HIGH even on an inferred source.
+            if kind in _DESERIALIZATION_SINKS and not confirmed:
+                self.findings.append(self._f(
+                    "medium", "Deserialization of unverified data", node,
+                    f"{kind} deserializes `{value}`, whose source isn't visible "
+                    "here. If it can ever come from an untrusted channel (network, "
+                    "another process, a shared store, model/tool output) this is "
+                    "remote code execution; if it's always your own local/trusted "
+                    "data it's fine. Confirm the source, or use a safe format "
+                    "(json / a signed payload).",
+                    evidence=f"{kind} on `{value}` (source unverified)",
+                    confidence="medium", basis="inferred",
+                    impact="RCE only if an untrusted source can reach this sink — "
+                           "provenance not proven here.",
+                ))
+                return
             # The agent-specific, undismissable case: name the exact value and its
-            # source so the finding reads like evidence, not a pattern hit — and
-            # say which layer structurally misses it.
-            value, source = reaching
+            # source so the finding reads like evidence, not a pattern hit.
             self.findings.append(self._f(
                 "high", "Dangerous execution sink", node,
                 f"{kind} executes `{value}` — {source}. A prompt injection your "
@@ -480,7 +527,8 @@ class _Analyzer(ast.NodeVisitor):
                 "output evaluator has already scored the text. Parse with "
                 "ast.literal_eval/json, or sandbox execution.",
                 evidence=f"{source} `{value}` -> {kind}",
-                confidence="high", basis="confirmed",
+                confidence="high" if confirmed else "medium",
+                basis="confirmed" if confirmed else "inferred",
                 impact="Remote code execution if model/user output reaches this sink.",
             ))
         elif self.file_has_llm:
