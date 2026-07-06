@@ -652,6 +652,15 @@ def _is_real_secret(line: str) -> bool:
     if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
                     r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", val):
         return False
+    # An HTTP header NAME, not a secret value: "X-LiveKit-Worker-Token",
+    # "X-Api-Key". These live in HEADER_* constants and match only because the
+    # var name contains "token"/"key".
+    if re.fullmatch(r"[Xx]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", val):
+        return False
+    # Title-Case-hyphenated identifier — a header / constant name convention
+    # ("Worker-Token", "Content-Type"), never a random-case credential.
+    if re.fullmatch(r"[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)+", val):
+        return False
     # A code identifier / handler name (snake_case, camelCase) — not a secret,
     # e.g. "handle_skills_clawhub_get_token".
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", val):
