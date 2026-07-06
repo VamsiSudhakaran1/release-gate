@@ -45,7 +45,7 @@ def _gen_temp_password() -> str:
     # URL-safe, ~12 chars, human-typable
     return secrets.token_urlsafe(9)
 
-app = FastAPI(title="release-gate API", version="0.8.1")
+app = FastAPI(title="release-gate API", version="0.8.2")
 
 # ── Plan limits ────────────────────────────────────────────────────────────
 PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999, "admin": 999999}
@@ -1102,7 +1102,7 @@ async def agent_scan_live(body: LiveScanRequest, request: Request = None,
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.8.1"}
+    return {"status": "ok", "version": "0.8.2"}
 
 
 @app.get("/api/debug/github-app")
