@@ -431,9 +431,46 @@ def test_secrets_in_test_files_are_fixtures():
 
 
 def test_broadened_deserialization_and_dynamic_sinks():
-    # pickle/marshal/yaml.load/__import__ are code-execution sinks too, not just eval
-    assert "Dangerous execution sink" in titles("def f(data):\n import pickle\n return pickle.loads(data)\n")
+    # yaml.load on a strong external name (payload) stays a HIGH execution sink.
     assert "Dangerous execution sink" in titles("def f(payload):\n import yaml\n return yaml.load(payload)\n")
+    # pickle.loads on a GENERIC-named param ('data') is now MEDIUM/inferred — its
+    # source isn't visible, and internal pickling is ubiquitous (livekit/MetaGPT
+    # FP class). It's flagged, but not asserted as a confirmed RCE.
+    ts = titles("def f(data):\n import pickle\n return pickle.loads(data)\n")
+    assert "Deserialization of unverified data" in ts
+    assert "Dangerous execution sink" not in ts
+
+
+def test_pickle_of_strong_external_name_stays_high():
+    # request.body is an unambiguous external source → still a HIGH exec sink.
+    fs = analyze_python("def h(request):\n import pickle\n return pickle.loads(request.body)\n", "x.py")
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
+
+
+def test_pickle_of_confirmed_model_output_stays_high():
+    src = (
+        "from openai import OpenAI\nc = OpenAI()\n"
+        "import pickle\n"
+        "def go(m):\n"
+        "    reply = c.chat.completions.create(model='gpt-4', messages=m, max_tokens=5)\n"
+        "    return pickle.loads(reply)\n"
+    )
+    fs = analyze_python(src, "x.py")
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
+
+
+def test_internal_serialization_pickle_is_medium_inferred():
+    # MetaGPT serialize.py pattern: deserialize_message(message_ser) round-trips
+    # the framework's own Message — provenance not visible → MEDIUM/inferred.
+    src = (
+        "import pickle\n"
+        "def deserialize_message(message_ser):\n"
+        "    return pickle.loads(message_ser)\n"
+    )
+    fs = analyze_python(src, "x.py")
+    assert any(f["title"] == "Deserialization of unverified data"
+               and f["severity"] == "medium" and f["basis"] == "inferred" for f in fs)
+    assert not any(f["title"] == "Dangerous execution sink" for f in fs)
     assert "Dangerous execution sink" in titles("def f(request):\n import marshal\n return marshal.loads(request.body)\n")
     assert any("execution sink" in t.lower() for t in titles("def f(user_input):\n return __import__(user_input)\n"))
 

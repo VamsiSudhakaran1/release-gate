@@ -1458,7 +1458,7 @@ def _finding_type_key(title: str) -> str:
     t = title.lower()
     if "unbounded" in t or "infinite loop" in t:
         return "unbounded_llm_loop"
-    if "exec" in t or "execution sink" in t:
+    if "exec" in t or "execution sink" in t or "deserialization" in t:
         return "exec_sink"
     if "secret" in t or "api key" in t:
         return "hardcoded_secret"
