@@ -142,6 +142,23 @@ release-gate evidence-pack governance.yaml
 | `--pr-comment` | **Concise delta comment** for a PR (pair with `--baseline`). Leads with the net-new verdict + score delta, not a 200-line report. Auto-written to `$GITHUB_STEP_SUMMARY`. |
 | `--sarif [file]` | Emit **SARIF 2.1.0** so findings show up in GitHub Code Scanning. |
 | `--no-suppress` | Ignore `.release-gate-ignore` and show every finding. |
+| `--verify` | **LLM second opinion** on high/medium findings — `confirmed / refuted / uncertain` + reason. Opt-in, **bring-your-own model** (cloud or local), advisory only. |
+
+#### `--verify` — an optional LLM second opinion
+
+The static engine is deterministic and stays the gate. `--verify` adds an *advisory* pass that sends **only each finding + a small code window** to a model **you** configure, to catch context the static layer can't (internal serialization, header-name-as-secret, sandboxed-by-design). It **never contacts release-gate** and adds no telemetry; the static decision remains the CI exit code.
+
+```bash
+# Hosted model
+export RG_VERIFY_MODEL=<your-model>   RG_VERIFY_API_KEY=<key>
+release-gate audit . --verify
+
+# Fully local / air-gapped (Ollama, vLLM, llama.cpp)
+export RG_VERIFY_BASE_URL=http://localhost:11434/v1  RG_VERIFY_MODEL=llama3.1
+release-gate audit . --verify
+```
+
+Verdicts are written to a calibration corpus (`.release-gate-verify.jsonl`, or `RG_VERIFY_CORPUS`). Only findings ≥ `--verify-min` (default `medium`) are verified — no model call is spent on low-severity advisories.
 | `--full` | Per-finding breakdown with confidence · basis · evidence · impact. |
 
 Every finding carries **`severity`**, **`confidence`** (high/medium/low), **`basis`** (`confirmed` vs `inferred`), **`evidence`**, and **`impact`** — so a developer can tell a confirmed exec-sink flow from an inferred advisory pattern at a glance.

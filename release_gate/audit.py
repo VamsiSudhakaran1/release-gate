@@ -1729,6 +1729,18 @@ def _col(text, *codes):
     return "".join(codes) + text + _RESET
 
 
+def _verdict_tag(f: Dict[str, Any]) -> str:
+    """Render an LLM verifier verdict as a short coloured tag, or '' if none."""
+    v = (f.get("verdict") or {}).get("verdict")
+    if not v:
+        return ""
+    label = {"confirmed": "✓ verified REAL", "refuted": "✗ likely FALSE POSITIVE",
+             "uncertain": "? uncertain", "error": "verify n/a"}.get(v, v)
+    col = {"confirmed": _RED, "refuted": _GREEN,
+           "uncertain": _YELLOW, "error": _MUTED}.get(v, _MUTED)
+    return _col(f"[{label}]", col)
+
+
 def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     div = "─" * 72
 
@@ -1828,6 +1840,15 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     reason = report.get("decision_reason")
     if reason:
         print(f"  {_col(reason, _MUTED)}")
+    # Verifier summary (advisory — a model's second opinion on the findings).
+    vrf = report.get("verify")
+    if vrf and vrf.get("verified"):
+        c = vrf.get("counts", {})
+        bits = (f"{_col(str(c.get('confirmed', 0)) + ' confirmed', _RED)} · "
+                f"{_col(str(c.get('refuted', 0)) + ' likely FP', _GREEN)} · "
+                f"{_col(str(c.get('uncertain', 0)) + ' uncertain', _YELLOW)}")
+        print(f"  {_col('Verifier', _BOLD)} ({vrf.get('model')}):  {bits}"
+              f"   {_col('advisory — static decision above is the gate', _MUTED)}")
     print()
     print(f"  {div}")
 
@@ -1867,7 +1888,7 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
             print(f"\n  {_col('Top code risks (high severity)', _RED, _BOLD)}")
             for f in _highs[:3]:
                 print(f"  {_col('✗ HIGH', _RED)}  {_col(f['title'], _BOLD)}  "
-                      f"{_col(f['file'] + ':' + str(f['line']), _MUTED)}")
+                      f"{_col(f['file'] + ':' + str(f['line']), _MUTED)}  {_verdict_tag(f)}")
             if len(_highs) > 3:
                 print(f"  {_col('  +' + str(len(_highs) - 3) + ' more high', _RED)}")
         # Concise default — a one-line tally; the full breakdown lives behind
@@ -1907,12 +1928,16 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
                 conf = f.get("confidence", "medium")
                 basis = f.get("basis", "inferred")
                 print(f"  {_col('•', sc)} {_col(f.get('severity','').upper(), sc, _BOLD)}  "
-                      f"{_col(conf + ' confidence · ' + basis, _MUTED)}  {_col(f['title'], _BOLD)}")
+                      f"{_col(conf + ' confidence · ' + basis, _MUTED)}  {_col(f['title'], _BOLD)}"
+                      f"  {_verdict_tag(f)}")
                 print(f"     {_col(f['file'] + ':' + str(f['line']), _MUTED)}")
                 if f.get("evidence"):
                     print(f"     {_col('Evidence: ' + f['evidence'], _MUTED)}")
                 if f.get("impact"):
                     print(f"     {_col('Impact:   ' + f['impact'], _MUTED)}")
+                _vr = (f.get("verdict") or {}).get("reason")
+                if _vr:
+                    print(f"     {_col('Verifier: ' + _vr, _MUTED)}")
             if _lows:
                 _lhdr = f"▸ Low severity · advisory  ({len(_lows)})"
                 print(f"\n  {_col(_lhdr, _MUTED, _BOLD)}")
