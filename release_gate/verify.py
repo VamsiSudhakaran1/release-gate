@@ -517,7 +517,10 @@ def _finalize_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     def _drop(f):
         if _is_tooling_path(f["file"]) and f["title"] in _RUNTIME_ONLY_TITLES:
             return True
-        if _is_test_path(f["file"]) and f["title"] == "Hardcoded secret / API key":
+        # A hardcoded "secret" in example/demo/docs/test tooling is fixture data,
+        # not a leaked production credential — flagging it destroys credibility.
+        # (_is_tooling_path covers examples/, docs/, scripts/, tests/, …)
+        if _is_tooling_path(f["file"]) and f["title"] == "Hardcoded secret / API key":
             return True
         return False
     findings = [f for f in findings if not _drop(f)]
@@ -615,8 +618,23 @@ def _is_real_secret(line: str) -> bool:
     if not m:
         return False
     val = m.group(1).strip()
+    # A 0x-hex literal — an Ethereum address / hash / byte string (e.g. the
+    # zero address 0x0000…0000), never an API-key secret. `gas_token = "0x0…"`
+    # matched only because "token" is a substring of the var name.
+    if re.fullmatch(r"0x[0-9a-fA-F]+", val):
+        return False
     # A key/env-var NAME, not a value: ALL_CAPS_WITH_UNDERSCORES.
     if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", val):
+        return False
+    # UPPERCASE words joined by hyphens/underscores — a placeholder or constant,
+    # not a live credential: "YOUR-AZURE-SEARCH-SERVICE-ADMIN-KEY",
+    # "WHISKEY-TANGO-FOXTROT-42".
+    if re.fullmatch(r"[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+", val):
+        return False
+    # A bare UUID — an identifier format (often an example/default), not a
+    # high-entropy API key: "a0f8a6ba-c32f-4407-af0c-169f1915490c".
+    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+                    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", val):
         return False
     # A code identifier / handler name (snake_case, camelCase) — not a secret,
     # e.g. "handle_skills_clawhub_get_token".
