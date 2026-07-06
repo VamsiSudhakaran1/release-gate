@@ -101,6 +101,41 @@ def test_findings_sorted_high_severity_first(tmp_path):
     assert sevs == sorted(sevs, key=lambda s: rank.get(s, 9))
 
 
+def test_cookbook_findings_excluded_from_score(tmp_path):
+    # A framework whose core is clean but whose cookbook/ demo runs eval on user
+    # input: the demo must NOT drive the grade, but must still be surfaced.
+    (tmp_path / "pocketflow").mkdir()
+    (tmp_path / "pocketflow" / "core.py").write_text(
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        "def run(m):\n    return client.chat.completions.create("
+        "model='gpt-4', messages=m, max_tokens=50)\n")
+    (tmp_path / "cookbook").mkdir()
+    (tmp_path / "cookbook" / "agent.py").write_text(
+        "def tool(user_input):\n    return eval(user_input)\n")
+    report = build_report(tmp_path, mode="audit")
+    # Core is clean → nothing scored; the cookbook eval is surfaced separately.
+    assert report["code_findings"] == []
+    assert any(f["title"] == "Dangerous execution sink"
+               for f in report["example_findings"])
+    assert report["code_safety"]["score"] == 100
+
+
+def test_scan_code_findings_split_partitions_examples():
+    import tempfile, os
+    from pathlib import Path
+    from release_gate.verify import scan_code_findings
+    d = tempfile.mkdtemp()
+    os.makedirs(Path(d) / "src"); os.makedirs(Path(d) / "examples")
+    (Path(d) / "src" / "app.py").write_text(
+        "def f(user_input):\n    return eval(user_input)\n")
+    (Path(d) / "examples" / "demo.py").write_text(
+        "def g(user_input):\n    return eval(user_input)\n")
+    scored, excluded = scan_code_findings(Path(d), return_excluded=True)
+    assert any(f["file"].startswith("src") for f in scored)
+    assert not any(f["file"].startswith("examples") for f in scored)
+    assert any(f["file"].startswith("examples") for f in excluded)
+
+
 def test_expired_suppression_does_not_hide(tmp_path):
     from release_gate.audit import apply_suppressions
     import datetime

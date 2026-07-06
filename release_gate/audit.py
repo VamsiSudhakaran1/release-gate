@@ -935,14 +935,20 @@ def build_report(root: Path, mode: str = "ci",
     verify_results, gov_path = verify_safeguards_for(root)
     present = {sid: bool(r.get("present")) for sid, r in verify_results.items()}
 
-    # Tier 3: AI-specific static analysis of the code.
+    # Tier 3: AI-specific static analysis of the code. Findings in a repo's
+    # example/cookbook/tutorial/test code are partitioned out — they're demos,
+    # not the deployed framework, so they never drive the score (which is what
+    # makes the grade trustworthy to the maintainer). They're still surfaced,
+    # clearly labelled as unscored, under `example_findings`.
     from release_gate.verify import scan_code_findings
-    raw_findings = scan_code_findings(root) if agent_detected else []
-    # Enrich findings with compliance tags
-    code_findings = [
-        {**f, "compliance_tags": COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), [])}
-        for f in raw_findings
-    ]
+    if agent_detected:
+        raw_findings, raw_examples = scan_code_findings(root, return_excluded=True)
+    else:
+        raw_findings, raw_examples = [], []
+    def _tag(f):
+        return {**f, "compliance_tags": COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), [])}
+    code_findings = [_tag(f) for f in raw_findings]
+    example_findings = [_tag(f) for f in raw_examples]
 
     # Suppressions: a documented, expiring disagreement. Suppressed findings are
     # removed from scoring/gating; expired rules lapse and are surfaced so a
@@ -959,6 +965,7 @@ def build_report(root: Path, mode: str = "ci",
     # a severity, so every consumer (CLI, website, markdown, JSON) shows the
     # actionable ones first instead of whatever file order the scan produced.
     code_findings.sort(key=lambda f: _SEV_RANK.get(f.get("severity"), 9))
+    example_findings.sort(key=lambda f: _SEV_RANK.get(f.get("severity"), 9))
 
     score, decision = compute_score(present, code_findings)
     code_safety = compute_code_safety(code_findings, agent_detected=agent_detected,
@@ -1015,6 +1022,7 @@ def build_report(root: Path, mode: str = "ci",
         "missing":            missing,
         "passing":            passing,
         "code_findings":      code_findings,
+        "example_findings":   example_findings,
         "suppressed":         suppressed_findings,
         "expired_suppressions": expired_suppressions,
         "score":              score,
@@ -1828,6 +1836,16 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     findings = report.get("code_findings", []) or []
     suppressed = report.get("suppressed", []) or []
     expired = report.get("expired_suppressions", []) or []
+    examples = report.get("example_findings", []) or []
+
+    if examples:
+        ex_high = sum(1 for f in examples if f.get("severity") in ("high", "critical"))
+        bits = f"{len(examples)} finding(s)"
+        if ex_high:
+            bits += f" incl. {ex_high} high"
+        _emsg = (f"{bits} in example/cookbook/test paths — excluded from the "
+                 f"score (demo code, not the deployed framework)")
+        print(f"\n  {_col(_emsg, _MUTED)}")
 
     if suppressed:
         _msg = f"{len(suppressed)} finding(s) suppressed by .release-gate-ignore"

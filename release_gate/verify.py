@@ -481,8 +481,14 @@ _JS_WHILE_RE = re.compile(r"\bwhile\s*\(\s*true\s*\)", re.IGNORECASE)
 _SCANNABLE_EXTS = {".py", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"}
 
 
-def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_000) -> List[Dict[str, Any]]:
-    """Static analysis for AI-agent-specific risks. Returns a list of findings."""
+def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_000,
+                       return_excluded: bool = False):
+    """Static analysis for AI-agent-specific risks.
+
+    Returns the list of scored (production) findings. With return_excluded=True
+    returns (scored, excluded) where `excluded` are findings in non-production
+    paths (cookbook/examples/tests/docs/…) that must NOT drive the score.
+    """
     findings: List[Dict[str, Any]] = []
     skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv",
                  "dist", "build", "site-packages", ".tox", "tests", "test"}
@@ -494,7 +500,7 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
                 continue
             count += 1
             if count > max_files:
-                return _finalize_findings(findings)
+                return _finalize_findings(findings, split=return_excluded)
             fpath = Path(dirpath) / fname
             try:
                 text = fpath.read_bytes()[:max_bytes].decode("utf-8", errors="ignore")
@@ -505,33 +511,42 @@ def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_0
                 findings.extend(_scan_js_file(rel, text))
             else:
                 findings.extend(_scan_file(rel, text))
-    return _finalize_findings(findings)
+    return _finalize_findings(findings, split=return_excluded)
 
 
-def _finalize_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Filter tooling-path runtime findings + de-dup. Applied at EVERY return of
-    scan_code_findings (including the max-files early exit on big repos)."""
-    # Build/CI/tooling scripts are not the agent runtime, so an exec sink or loop
-    # there is not an agent-layer risk. And a hardcoded secret in a *_test.py is a
-    # test fixture, not a leaked credential.
-    def _drop(f):
-        if _is_tooling_path(f["file"]) and f["title"] in _RUNTIME_ONLY_TITLES:
-            return True
-        # A hardcoded "secret" in example/demo/docs/test tooling is fixture data,
-        # not a leaked production credential — flagging it destroys credibility.
-        # (_is_tooling_path covers examples/, docs/, scripts/, tests/, …)
-        if _is_tooling_path(f["file"]) and f["title"] == "Hardcoded secret / API key":
-            return True
-        return False
-    findings = [f for f in findings if not _drop(f)]
-    seen = set()
-    unique = []
+def _finalize_findings(findings: List[Dict[str, Any]], split: bool = False):
+    """De-dup, and partition out findings that live in NON-PRODUCTION code —
+    example / cookbook / tutorial / sample / test / docs / build tooling. Applied
+    at EVERY return of scan_code_findings (including the max-files early exit).
+
+    A finding in a repo's `cookbook/` or `examples/` teaching code is not a risk
+    in the deployed framework — it's a demo. Scoring a framework on its tutorials
+    (a coding-agent example that runs `subprocess(shell=True)`, or 57 uncapped LLM
+    calls across sample apps) makes the grade untrustworthy to the one person who
+    knows the repo best: its maintainer. So those never touch the score; with
+    split=True they are returned separately so they can still be shown, clearly
+    labelled as unscored.
+
+    By default returns just the scored (production) findings; with split=True
+    returns (scored, excluded).
+    """
+    def _dedup(items):
+        seen, out = set(), []
+        for f in items:
+            key = (f["file"], f["line"], f["title"])
+            if key not in seen:
+                seen.add(key)
+                out.append(f)
+        return out
+
+    scored, excluded = [], []
     for f in findings:
-        key = (f["file"], f["line"], f["title"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(f)
-    return unique
+        if _is_tooling_path(f["file"]):
+            excluded.append(f)
+        else:
+            scored.append(f)
+    scored, excluded = _dedup(scored), _dedup(excluded)
+    return (scored, excluded) if split else scored
 
 
 # Finding types that only matter in the deployed agent runtime, not in
@@ -541,7 +556,8 @@ _RUNTIME_ONLY_TITLES = {
     "Unbounded loop around an LLM call",
 }
 _TOOLING_PATH_RE = re.compile(
-    r"(^|/)(scripts?|build|dist|\.github|examples?|tests?|__tests__|test|docs?|"
+    r"(^|/)(scripts?|build|dist|\.github|examples?|cookbooks?|recipes?|samples?|"
+    r"demos?|tutorials?|tests?|__tests__|test|docs?|"
     r"benchmarks?|bench|e2e|cypress|electron|webpack|rollup|vite|setup\.py|conftest)(/|\.|$)",
     re.IGNORECASE)
 
