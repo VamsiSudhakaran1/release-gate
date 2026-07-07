@@ -55,9 +55,15 @@ dev = [
     "pytest>=9.0",
     "pytest-cov>=4.0",
 ]
+# Optional: expose the auditor as a local MCP server for MCP-capable agents.
+# Kept out of the base install so the CLI stays lean.
+mcp = [
+    "mcp>=1.2",
+]
 
 [project.scripts]
 release-gate = "release_gate.cli:unified_main"
+release-gate-mcp = "release_gate.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/VamsiSudhakaran1/release-gate"
