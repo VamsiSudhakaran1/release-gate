@@ -126,6 +126,12 @@
     color:var(--accent); margin-bottom:.5rem; }
   .rule p { margin:0; }
 
+  .wins { list-style:none; margin:1.2rem 0 0; padding:0; display:flex; flex-direction:column;
+    gap:1px; background:var(--hair); border:1px solid var(--hair); border-radius:12px; overflow:hidden; }
+  .wins li { background:var(--surface); padding:1rem 1.2rem; font-size:.95rem; line-height:1.5; }
+  .wins li b { color:var(--heading); }
+  .wins li .mark { color:var(--good); font-weight:700; margin-right:.55rem; }
+
   .cta { background:var(--band); color:var(--band-ink); border-radius:14px; padding:2rem 1.75rem; margin:3rem 0 1rem; }
   .cta h2 { color:#FBF8EF; margin-bottom:.5rem; }
   .cta p { color:var(--band-muted); margin-bottom:1.3rem; }
@@ -276,10 +282,26 @@
         verified verdict now feeds a calibration corpus. What this is: a methodology and
         a set of hand-checked findings across the real ecosystem, plus a public account
         of the false positives we eliminated. Honesty about the second is the point.</p>
-      <p>One finding closed the loop the way it should &mdash; we reported an unbounded
-        tool-call loop to the <strong>LightAgent</strong> maintainers, and they
-        <strong style="color:var(--good)">shipped a fix</strong>. A credible finding,
-        acted on. That's the bar.</p>
+      <p>Credible means acted-on. One finding closed the loop the way it should &mdash; we
+        surfaced an unbounded tool-call loop in <strong>LightAgent</strong>, and the fix
+        was <strong style="color:var(--good)">merged by the maintainer</strong>. That's the
+        bar, and it's a click, not a claim &mdash; see below.</p>
+    </section>
+
+    <section>
+      <p class="kicker">Confirmed in the wild</p>
+      <h2>Findings maintainers merged</h2>
+      <p>Every entry here is a release-gate finding that a maintainer of a real,
+        shipping framework fixed and merged &mdash; verifiable, not asserted. The list
+        grows as findings land.</p>
+      <ul class="wins">
+        <li><span class="mark">✓</span><b>LightAgent</b> &mdash; unbounded streaming
+          tool-call loop (the inner <code>while True</code> wasn't bounded by
+          <code>max_retry</code>; a runaway under tool failure or prompt injection).
+          Fixed &amp; merged with a regression test:
+          <a href="https://github.com/wanxingai/LightAgent/pull/71">PR #71</a>.</li>
+        <!-- Add each new confirmed fix as one <li> here: framework — finding — merged PR link. -->
+      </ul>
     </section>
 
     <div class="cta">
