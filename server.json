@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
-  "name": "io.github.vamsisudhakaran1/release-gate",
+  "name": "io.github.VamsiSudhakaran1/release-gate",
   "description": "Pre-deploy security auditor for AI agent code — the risks generic SAST misses.",
   "version": "0.8.3",
   "repository": {
