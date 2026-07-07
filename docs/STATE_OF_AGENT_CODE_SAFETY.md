@@ -109,9 +109,21 @@ feeds a calibration corpus. What this report *is*: a methodology and a set of
 hand-checked findings across the real ecosystem, plus a public account of the
 false-positive classes we eliminated. Honesty about the second is the point.
 
-One finding closed the loop the way it should: we reported an unbounded
-tool-call loop / missing output ceiling to the **LightAgent** maintainers, and
-they **shipped a fix.** A credible finding, acted on — that's the bar.
+---
+
+## Confirmed in the wild
+
+Credible means acted-on. Every entry here is a release-gate finding that a
+maintainer of a real, shipping framework fixed and merged — verifiable, not
+asserted. The list grows as findings land.
+
+- **LightAgent** — unbounded streaming tool-call loop (the inner `while True`
+  wasn't bounded by `max_retry`; a runaway under tool failure or prompt
+  injection). Fixed & merged, with a regression test:
+  [PR #71](https://github.com/wanxingai/LightAgent/pull/71).
+<!-- Add each new confirmed fix as one bullet: framework — finding — merged PR link. -->
+
+That's the bar — a click, not a claim.
 
 ---
 
