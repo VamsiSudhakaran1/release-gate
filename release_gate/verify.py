@@ -621,9 +621,27 @@ def _looks_dummy_token(tok: str) -> bool:
                           tok, re.IGNORECASE))
 
 
+# Public, client-side telemetry / analytics keys — meant to be embedded in
+# client code, not credentials. Matches by the well-known variable-name pattern
+# or a known public value prefix (PostHog `phc_`, GA `G-`/`UA-`).
+_PUBLIC_TELEMETRY_RE = re.compile(
+    r"(mixpanel|posthog|segment|amplitude|heap|fullstory|sentry[_-]?dsn|"
+    r"google[_-]?analytics|\bga\b|gtag)[_-]?(project[_-]?)?"
+    r"(token|key|id|api[_-]?key|write[_-]?key|dsn)"
+    r"|\bphc_[A-Za-z0-9]{20,}"
+    r"|[\"'](?:G-[A-Z0-9]{6,}|UA-\d{4,}-\d+)[\"']",
+    re.IGNORECASE)
+
+
 def _is_real_secret(line: str) -> bool:
     """True only if the line plausibly contains an actual credential value."""
     if _looks_placeholder(line):
+        return False
+    # Public client-side telemetry keys are DESIGNED to ship in client code —
+    # they're write-only ingestion ids, not secrets (Mixpanel project token,
+    # PostHog project API key `phc_…`, Segment write key, Amplitude/GA ids).
+    # Flagging these as a "leaked secret" (as we did on aider) is a false alarm.
+    if _PUBLIC_TELEMETRY_RE.search(line):
         return False
     # Strong, unambiguous: a provider key prefix — unless it's a dummy/test token.
     m = re.search(r"\b(sk-[A-Za-z0-9]{16,}|rg_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}"

@@ -184,6 +184,10 @@ class _Analyzer(ast.NodeVisitor):
         # internal transport, NOT external input. `pickle.loads` on one of these
         # is the stdlib logging/worker pattern, not an RCE surface.
         self.local_ipc_vars: Set[str] = set()
+        # yaml Loader classes defined in this file that SUBCLASS a safe loader —
+        # `class YamlLoader(yaml.SafeLoader)` is safe even though its name isn't
+        # in the known-safe list.
+        self.safe_yaml_loaders: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -316,6 +320,14 @@ class _Analyzer(ast.NodeVisitor):
         self._record_param_update(node)
         self.generic_visit(node)
 
+    def visit_ClassDef(self, node: ast.ClassDef):
+        # A yaml Loader that subclasses SafeLoader/BaseLoader/CSafeLoader is safe.
+        for base in node.bases:
+            bn = (_dotted(base) or getattr(base, "id", "") or "").lower()
+            if any(safe in bn for safe in _SAFE_YAML_LOADERS):
+                self.safe_yaml_loaders.add(node.name.lower())
+        self.generic_visit(node)
+
     def visit_For(self, node: ast.For):
         # `for _ in range(...)` / `for x in [literal]` statically bounds re-entry.
         bounded = self._is_bounded_for(node)
@@ -442,7 +454,10 @@ class _Analyzer(ast.NodeVisitor):
             for k in node.keywords:
                 if k.arg and k.arg.lower() == "loader":
                     ld = (_dotted(k.value) or getattr(k.value, "attr", "") or "").lower()
-                    if any(safe in ld for safe in _SAFE_YAML_LOADERS):
+                    # Known-safe loader name, OR a custom loader defined in this
+                    # file that subclasses one (class YamlLoader(yaml.SafeLoader)).
+                    if any(safe in ld for safe in _SAFE_YAML_LOADERS) \
+                       or ld in self.safe_yaml_loaders:
                         return None
             return "yaml.load()"
         return None
