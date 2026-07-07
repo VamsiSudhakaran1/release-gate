@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.vamsisudhakaran1/release-gate",
+  "description": "Pre-deploy security auditor for AI agent code. Finds the agent-layer risks generic SAST misses (model output reaching eval/exec/pickle, prompt-injection surfaces, uncapped LLM calls, hardcoded secrets), with confidence + confirmed/inferred basis. Read-only, local-only, never executes scanned code.",
+  "version": "0.8.3",
+  "repository": {
+    "url": "https://github.com/VamsiSudhakaran1/release-gate",
+    "source": "github"
+  },
+  "websiteUrl": "https://release-gate.com",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "release-gate",
+      "version": "0.8.3",
+      "runtimeHint": "release-gate-mcp",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "RG_MCP_ALLOWED_ROOTS",
+          "description": "Colon/semicolon-separated directories the server may read under. Defaults to the working directory. The server refuses any path outside these roots (blocks ../, absolute, and symlink escapes).",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
