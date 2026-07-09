@@ -158,6 +158,22 @@ _CODE_NOUN_TOKENS = {"code", "script", "command", "cmd", "program", "programme",
                      "snippet", "python", "blender", "sql", "expression", "expr"}
 
 
+def _restricts_builtins(node: ast.Call) -> bool:
+    """True if exec/eval is given a globals dict that strips builtins:
+    exec(code, {"__builtins__": {}}, ...) or {"__builtins__": None}. A weak,
+    bypassable sandbox — but a deliberate restriction we shouldn't call a
+    confirmed public RCE over."""
+    if len(node.args) < 2 or not isinstance(node.args[1], ast.Dict):
+        return False
+    for k, v in zip(node.args[1].keys, node.args[1].values):
+        if isinstance(k, ast.Constant) and k.value == "__builtins__":
+            if isinstance(v, ast.Dict) and not v.keys:
+                return True
+            if isinstance(v, ast.Constant) and v.value is None:
+                return True
+    return False
+
+
 def _looks_like_llm_codegen_helper(fn_name: Optional[str]) -> bool:
     if not fn_name:
         return False
@@ -269,6 +285,11 @@ class _Analyzer(ast.NodeVisitor):
         # confirmed. It only matters when it flows into an exec/eval sink: the
         # "run the code the model wrote" agentic-RCE pattern.
         self.llm_helper_output: Set[str] = set()
+        # `eval`/`exec`/`compile` names shadowed in this file by a local def, an
+        # assignment, or an import — a call to them is NOT the dangerous builtin.
+        # RWKV-Runner defines `def eval(model, request, body, ...)` ("evaluate the
+        # model") and calls it 5×; without this every call looks like RCE.
+        self.shadowed_builtins: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -285,11 +306,20 @@ class _Analyzer(ast.NodeVisitor):
             self.llm_imported = True
             for a in node.names:
                 self.llm_aliases.add(a.asname or a.name)
+        # `from .generation import eval` — the local name `eval` is now that
+        # import, not the builtin.
+        for a in node.names:
+            if (a.asname or a.name) in ("eval", "exec", "compile"):
+                self.shadowed_builtins.add(a.asname or a.name)
         self.generic_visit(node)
 
     # -- assignments: track LLM clients + tainted (model output) vars ------
     def visit_Assign(self, node: ast.Assign):
         targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        # `eval = something` rebinds the name away from the builtin.
+        for t in targets:
+            if t in ("eval", "exec", "compile"):
+                self.shadowed_builtins.add(t)
         ctor = _ctor_name(node.value)
         if ctor and (ctor in LLM_CONSTRUCTORS or ctor in self.llm_aliases):
             self.llm_signal = True
@@ -387,6 +417,8 @@ class _Analyzer(ast.NodeVisitor):
 
     # -- function params count as externally-controlled input --------------
     def visit_FunctionDef(self, node: ast.FunctionDef):
+        if node.name in ("eval", "exec", "compile"):
+            self.shadowed_builtins.add(node.name)
         for a in node.args.args + node.args.kwonlyargs:
             if _hint_match(a.arg, INPUT_HINTS):
                 self.tainted.add(a.arg)
@@ -589,7 +621,15 @@ class _Analyzer(ast.NodeVisitor):
         sink, else None. Adding a new sink is a one-line registry edit."""
         func = node.func
         if isinstance(func, ast.Name):
-            return _BUILTIN_SINKS.get(func.id)
+            label = _BUILTIN_SINKS.get(func.id)
+            if label and func.id in ("eval", "exec", "compile"):
+                # Not the dangerous builtin if it's shadowed in this file, or
+                # called with more positional args than the builtin accepts
+                # (eval/exec/compile take ≤3): `eval(model, request, body,
+                # stream, ...)` is a project's own generation fn, not RCE.
+                if func.id in self.shadowed_builtins or len(node.args) > 3:
+                    return None
+            return label
         if not isinstance(func, ast.Attribute):
             return None
         dotted = (_dotted(func) or "").lower()
@@ -669,6 +709,14 @@ class _Analyzer(ast.NodeVisitor):
         reaching = self._reaching_taint(arg_names)
         if reaching:
             value, source, confirmed = reaching
+            # Intentional (if weak) sandbox: exec(code, {"__builtins__": {}}, …).
+            # The maintainer stripped builtins — a deliberate restriction (lollms'
+            # custom-node editor). Empty-builtins is bypassable, so it's still a
+            # surface, but we must NOT assert a confirmed public RCE over a guard
+            # they clearly put there. Demote confirmed→inferred.
+            if confirmed and kind == "exec()" and _restricts_builtins(node):
+                confirmed = False
+                source = source + " (into an empty-__builtins__ sandbox — a weak, bypassable restriction)"
             # Deserialization (pickle/marshal/dill) is ubiquitous for a
             # framework's OWN internal transport — IPC, caching, state persistence.
             # So when the source is only INFERRED from a name, we do NOT assert a

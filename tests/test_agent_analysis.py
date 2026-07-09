@@ -252,6 +252,49 @@ def test_exec_of_non_llm_helper_not_flagged_by_helper_rule():
                    for f in _findings(src))
 
 
+def test_shadowed_eval_function_not_flagged():
+    # RWKV-Runner: `def eval(model, request, body, ...)` ("evaluate the model"),
+    # called with 8 positional args. Not the builtin — must not be flagged.
+    src = (
+        "def eval(model, request, body, completion_text, stream, stop, ids, flag):\n"
+        "    return generate(model, body)\n"
+        "async def route(request, body):\n"
+        "    return eval(model, request, body, text, body.stream, body.stop, body.ids, True)\n"
+    )
+    assert not any("execution sink" in f["title"].lower() for f in _findings(src))
+
+
+def test_eval_with_four_positional_args_is_not_builtin():
+    # The builtin eval/exec take ≤3 positional args; 4+ means it's shadowed.
+    src = "out = eval(model, request, body, stream)\n"
+    assert not any("execution sink" in f["title"].lower() for f in _findings(src))
+
+
+def test_real_builtin_eval_still_flagged():
+    src = "def h(request):\n    return eval(request.body)\n"
+    assert any(f["title"] == "Dangerous execution sink" for f in _findings(src))
+
+
+def test_exec_with_empty_builtins_sandbox_demoted_to_inferred():
+    # lollms custom-node editor: exec(req.code, {"__builtins__": {}}, scope).
+    # A deliberate (if weak) sandbox — surface stays, but not a confirmed high.
+    src = (
+        "def run(req):\n"
+        "    local_scope = {}\n"
+        "    exec(req.code, {'__builtins__': {}}, local_scope)\n"
+    )
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert hits, "still a surface, should be flagged"
+    assert not any(f.get("basis") == "confirmed" and f.get("severity") in ("high", "critical")
+                   for f in hits)
+
+
+def test_exec_without_sandbox_still_confirmed_high():
+    src = "def run(request):\n    exec(request.body)\n"
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert any(f.get("basis") == "confirmed" for f in hits)
+
+
 def test_cli_args_shell_command_not_confirmed_high():
     # aider's /git handler: `cmd_git(self, args)` runs `subprocess.run("git "+args,
     # shell=True)`. `args` is the OPERATOR's own CLI input, not a remote RCE
