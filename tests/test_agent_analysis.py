@@ -200,12 +200,38 @@ def test_constant_interpolation_in_system_prompt_not_flagged():
     assert "Interpolated system prompt (injection surface)" not in titles(src)
 
 
-def test_js_execsync_bare_var_is_medium_interp_is_high():
+def test_js_exec_calibration_bare_low_config_medium_external_high():
     from release_gate.verify import _scan_js_file
+    # bare variable, no interpolation, no external marker → LOW/inferred
     bare = _scan_js_file("a.js", "const r = execSync(cmd, {shell:true})\n")
+    assert any(f["severity"] == "low" for f in bare)
+    # interpolated with a genuine external-input marker (userInput) → HIGH/confirmed
     interp = _scan_js_file("b.js", "const r = execSync(`run ${userInput}`)\n")
-    assert any(f["severity"] == "medium" for f in bare)
-    assert any(f["severity"] == "high" for f in interp)
+    assert any(f["severity"] == "high" and f["basis"] == "confirmed" for f in interp)
+
+
+def test_js_bounded_retry_loop_not_flagged_unbounded():
+    # VoltAgent pattern: while(true) with a retry ceiling + throw exit is bounded.
+    from release_gate.verify import _scan_js_file
+    src = (
+        "while (true) {\n"
+        "  const res = await generateText(params);\n"
+        "  if (shouldRetryMiddleware(error, retryCount, maxRetries)) {\n"
+        "    retryCount += 1;\n"
+        "    continue;\n"
+        "  }\n"
+        "  throw error;\n"
+        "}\n"
+    )
+    assert not any(f["title"] == "Unbounded loop around an LLM call"
+                   for f in _scan_js_file("agent.ts", src))
+
+
+def test_js_truly_unbounded_loop_still_flagged():
+    from release_gate.verify import _scan_js_file
+    src = "while (true) {\n  const res = await generateText(params);\n  ctx.push(res);\n}\n"
+    assert any(f["title"] == "Unbounded loop around an LLM call"
+               for f in _scan_js_file("agent.ts", src))
 
 
 def test_placeholder_and_slug_secrets_rejected():
@@ -564,3 +590,43 @@ def test_go_agent_detected_but_flagged_not_statically_analyzed():
     assert any("Go" in k for k in r.get("frameworks", {}))    # detected as Go
     assert cs.get("applicable") is False                      # but not a misleading score
     assert cs.get("reason") == "language_not_static"          # honest reason
+
+
+def test_js_new_function_config_transform_is_medium_inferred():
+    # promptfoo pattern: new Function(config transform) — dynamic, but the source
+    # isn't external here, so MEDIUM/inferred, not a confident HIGH.
+    import tempfile, os
+    from pathlib import Path
+    from release_gate.verify import scan_code_findings
+    d = tempfile.mkdtemp(); os.makedirs(Path(d) / "src")
+    (Path(d) / "src" / "provider.ts").write_text(
+        "function make(parser: string) {\n"
+        "  return new Function('data', `return (${parser});`);\n}\n")
+    fs = scan_code_findings(Path(d))
+    hits = [f for f in fs if "execution sink" in f["title"]]
+    assert hits and all(f["severity"] == "medium" and f["basis"] == "inferred" for f in hits)
+
+
+def test_js_new_function_on_request_input_is_high():
+    # A real one: request body reaching new Function → HIGH/confirmed.
+    import tempfile, os
+    from pathlib import Path
+    from release_gate.verify import scan_code_findings
+    d = tempfile.mkdtemp(); os.makedirs(Path(d) / "src")
+    (Path(d) / "src" / "route.ts").write_text(
+        "app.post('/x', (req) => {\n"
+        "  const fn = new Function(`return ${req.body.code}`);\n})\n")
+    fs = scan_code_findings(Path(d))
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
+
+
+def test_js_shell_escaped_exec_not_flagged():
+    # promptfoo pattern: execSync(`grep ${args.map(shellEscape)}`) is mitigated.
+    import tempfile, os
+    from pathlib import Path
+    from release_gate.verify import scan_code_findings
+    d = tempfile.mkdtemp(); os.makedirs(Path(d) / "src")
+    (Path(d) / "src" / "fs.ts").write_text(
+        "const out = execSync(`grep ${args.map(shellEscape).join(' ')}`);\n")
+    fs = scan_code_findings(Path(d))
+    assert not any("execution sink" in f["title"] for f in fs)
