@@ -136,6 +136,28 @@ def _hint_match(name: str, hints) -> bool:
     return any(_tokens(h) <= toks for h in hints)
 
 
+# A locally-defined helper whose *name* says it returns model-generated code:
+# an unambiguous LLM token (llm/gpt/claude…), OR a generation verb paired with a
+# code/text noun (generate_blender_CODE, ask_gpt_for_SCRIPT). We only ever act on
+# this when its result reaches an exec()/eval() sink, so the pairing keeps the
+# false-positive surface near zero (nobody exec()s a generate_uuid()).
+_LLM_STRONG_FN_TOKENS = {"llm", "gpt", "chatgpt", "claude", "gemini", "openai",
+                         "anthropic", "completion", "codegen"}
+_GEN_VERB_TOKENS = {"generate", "gen", "complete", "ask", "chat", "predict",
+                    "write", "compose", "produce", "create"}
+_CODE_NOUN_TOKENS = {"code", "script", "command", "cmd", "program", "programme",
+                     "snippet", "python", "blender", "sql", "expression", "expr"}
+
+
+def _looks_like_llm_codegen_helper(fn_name: Optional[str]) -> bool:
+    if not fn_name:
+        return False
+    toks = _tokens(fn_name)
+    if toks & _LLM_STRONG_FN_TOKENS:
+        return True
+    return bool(toks & _GEN_VERB_TOKENS) and bool(toks & _CODE_NOUN_TOKENS)
+
+
 def _dotted(node: ast.AST) -> Optional[str]:
     """Return the dotted attribute path of a call's func, e.g. a.b.c.create."""
     parts: List[str] = []
@@ -232,6 +254,12 @@ class _Analyzer(ast.NodeVisitor):
         # `class YamlLoader(yaml.SafeLoader)` is safe even though its name isn't
         # in the known-safe list.
         self.safe_yaml_loaders: Set[str] = set()
+        # vars assigned from a locally-named LLM codegen helper —
+        # `blender_code = generate_blender_code(...)`. We can't see the SDK call
+        # (it's inside the helper), so this is INFERRED model output, not
+        # confirmed. It only matters when it flows into an exec/eval sink: the
+        # "run the code the model wrote" agentic-RCE pattern.
+        self.llm_helper_output: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -280,6 +308,16 @@ class _Analyzer(ast.NodeVisitor):
             for t in targets:
                 self.tainted.add(t)
                 self.tainted_model.add(t)
+        # x = generate_blender_code(...) — assigned from a locally-named LLM
+        # codegen helper. The SDK call is hidden inside the helper, so this is
+        # inferred (not confirmed) model output; it only bites at an exec/eval
+        # sink. Catches the "exec the code the model wrote" RCE that a bare var
+        # name ('blender_code', 'code') would otherwise make invisible.
+        elif isinstance(node.value, ast.Call) and \
+                _looks_like_llm_codegen_helper(_ctor_name(node.value)):
+            for t in targets:
+                self.tainted.add(t)
+                self.llm_helper_output.add(t)
         # x = self._duplex.recv_bytes()  → x came off a LOCAL IPC pipe, which the
         # process controls — trusted transport, not external input.
         if isinstance(node.value, ast.Call) and self._is_local_ipc_recv(node.value):
@@ -595,6 +633,11 @@ class _Analyzer(ast.NodeVisitor):
                 return n, "external user/request input", True
         # Inferred: the name hints at model/user data, but the source isn't
         # visible here (a bare parameter, a generic name). Present, not proven.
+        # Inferred: assigned from an in-scope helper whose name says "codegen"
+        # (generate_blender_code → exec). Source is one hop away, not a bare name.
+        for n in arg_names:
+            if n in self.llm_helper_output:
+                return n, "output of an in-scope code-generation helper", False
         for n in arg_names:
             if _hint_match(n, MODEL_SOURCE_HINTS):
                 return n, "possible model output", False

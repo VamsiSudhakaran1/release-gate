@@ -558,7 +558,9 @@ _RUNTIME_ONLY_TITLES = {
 _TOOLING_PATH_RE = re.compile(
     r"(^|/)(scripts?|build|dist|\.github|examples?|cookbooks?|recipes?|samples?|"
     r"demos?|tutorials?|tests?|__tests__|test|docs?|websites?|sites?|"
-    r"archives?|archived|deprecated|generated|vendor|fixtures?|mocks?|__mocks__|stories|"
+    r"archives?|archived|deprecated|generated|vendor|vendored|_vendor|_vendored|"
+    r"third_party|third-party|site-packages|dist-packages|node_modules|bundled|"
+    r"fixtures?|mocks?|__mocks__|stories|"
     r"benchmarks?|bench|e2e|cypress|electron|webpack|rollup|vite|setup\.py|conftest)(/|\.|$)",
     re.IGNORECASE)
 
