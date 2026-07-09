@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """
 release-gate CLI - AI release decision engine
-Version: 0.8.2 — trustworthy findings: deserialization sinks calibrated
-         (confirmed-source HIGH, name-inferred MEDIUM), example/cookbook code
-         excluded from the score, false-positive classes killed (IPC pickle,
-         header-name secrets, 0x/UUID/placeholder), and an opt-in BYO-model
-         LLM verifier (--verify). Builds on 0.8.1's team-adoption workflow
-         (--mode / --baseline / --pr-comment / suppressions).
+Version: 0.8.4 — security-hardened MCP server (release-gate-mcp): audit from any
+         MCP-capable agent, stdio-only, no network egress, no code execution,
+         path-confined, injection-safe outputs. Builds on 0.8.2's trustworthy
+         findings (deserialization-sink calibration, example/cookbook excluded
+         from score, false-positive classes killed, opt-in --verify) and 0.8.1's
+         team-adoption workflow (--mode / --baseline / --pr-comment).
 """
 import os
 import sys
@@ -572,7 +572,7 @@ def _print_score_report(scoring, project, evals, traces, impact, runtime=None, f
     conf = scoring["confidence"]
 
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.8.2")
+    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.8.4")
     print("=" * 80 + "\n")
 
     print(f"  Project          {project}")
@@ -701,7 +701,7 @@ def run_score_command(config_path, evals_path, traces_path, html_report, evidenc
 def _print_regression_report(result, full=False):
     """Render a regression comparison report to the terminal."""
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Regression Gate  v0.8.2")
+    print("\U0001f6aa release-gate  |  Regression Gate  v0.8.4")
     print("=" * 80 + "\n")
 
     print(f"  Baseline score    {result['previous_score']} / 100   {result['baseline_decision']}")
@@ -776,6 +776,51 @@ def run_compare_command(baseline_path, candidate_path):
              10 if result["decision"] == "HOLD" else 0)
 
 
+def _print_lock_written(lock, path):
+    GREEN, MUTED, BOLD, ACC, RESET = "\033[32m", "\033[90m", "\033[1m", "\033[36m", "\033[0m"
+    print()
+    print(f"  {BOLD}🔒 Context lock written{RESET}  {MUTED}{path}{RESET}")
+    print(f"  {MUTED}digest{RESET}  {lock['digest']}")
+    print(f"  {MUTED}model {RESET}  {lock.get('model') or '(none detected)'}")
+    kinds = {}
+    for c in lock['components']:
+        kinds[c['kind']] = kinds.get(c['kind'], 0) + 1
+    summ = ", ".join(f"{v} {k}" for k, v in sorted(kinds.items())) or "nothing pinned yet"
+    print(f"  {MUTED}pins  {RESET}  {summ}")
+    print(f"  {MUTED}valid until{RESET}  {lock['valid_until']}  ({lock['ttl_days']}d)")
+    print()
+    print(f"  {ACC}Gate on drift in CI:{RESET}  release-gate audit . --lock")
+    print(f"  {MUTED}Fails when the model, prompts, governance, or tool config change.{RESET}")
+    print()
+
+
+def _print_lock_result(cmp, saved):
+    GREEN, RED, YELLOW, MUTED, BOLD, RESET = (
+        "\033[32m", "\033[31m", "\033[33m", "\033[90m", "\033[1m", "\033[0m")
+    print()
+    if cmp['gate_ok']:
+        print(f"  {GREEN}{BOLD}🔒 Context lock valid{RESET}  "
+              f"{MUTED}nothing drifted; valid until {cmp['valid_until']}{RESET}")
+        print()
+        return
+    print(f"  {RED}{BOLD}🔓 Context lock INVALIDATED{RESET}  "
+          f"{MUTED}the agent's behavior surface changed since it was pinned{RESET}")
+    if cmp['model_changed']:
+        print(f"  {RED}• model changed{RESET}  "
+              f"{cmp.get('saved_model') or '(none)'} → {cmp.get('current_model') or '(none)'}"
+              f" — re-verify before shipping")
+    for k in cmp['changed'][:10]:
+        print(f"  {YELLOW}• changed{RESET}  {k}")
+    for k in cmp['added'][:10]:
+        print(f"  {YELLOW}• added  {RESET}  {k}")
+    for k in cmp['removed'][:10]:
+        print(f"  {YELLOW}• removed{RESET}  {k}")
+    if cmp['expired']:
+        print(f"  {YELLOW}• lock expired{RESET}  (valid until {cmp['valid_until']})")
+    print(f"\n  {MUTED}Re-audit, then re-pin with `release-gate lock` once you trust the change.{RESET}")
+    print()
+
+
 def _print_baseline_diff(diff):
     """Render a baseline comparison as a concise 'don't make it worse' verdict."""
     GREEN, YELLOW, RED, MUTED, BOLD, RESET = (
@@ -822,7 +867,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 
     paths = generate_evidence_pack(data, output_dir)
 
-    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.8.2\n")
+    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.8.4\n")
     print(f"  Decision: {scoring['decision']}  (score {scoring['readiness_score']}/100)\n")
     print(f"  ✓  {paths['json']}")
     print(f"  ✓  {paths['markdown']}")
@@ -839,7 +884,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print("\U0001f6aa release-gate v0.8.2  — AI release decision engine")
+    print("\U0001f6aa release-gate v0.8.4  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
     print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
@@ -851,6 +896,8 @@ def print_help():
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
     print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
     print("  release-gate audit [path|url] --write-baseline FILE  # Save current audit as a baseline")
+    print("  release-gate lock [path]                     # Pin the agent's context (AIBOM): model, prompts, governance, tools")
+    print("  release-gate audit [path] --lock             # Fail if the context drifted from the pinned release-gate.lock")
     print("  release-gate audit [path] --verify          # LLM second-opinion on findings (opt-in, BYO model)")
     print("      Set RG_VERIFY_MODEL (+ RG_VERIFY_API_KEY), or RG_VERIFY_BASE_URL for a local model.")
     print("      Advisory only — sends findings to YOUR model, never to release-gate; static decision still gates.")
@@ -1102,8 +1149,50 @@ def main():
             verdict = baseline_comparison.get('verdict', 'PASS')
             sys.exit({'BLOCK': 1, 'HOLD': 10}.get(verdict, 0))
 
+        # Context-lock drift gate: re-gate when the model / prompts / governance /
+        # tools drift from the pinned release-gate.lock. Deterministic, offline.
+        if '--lock' in sys.argv:
+            if _is_github_url(target):
+                print("Note: --lock needs a local checkout — clone the repo, then "
+                      "`release-gate audit . --lock`.")
+            else:
+                from release_gate.lockfile import (
+                    build_lock, load_lock, compare_lock, LOCK_FILENAMES)
+                lock_arg = _flag(sys.argv, '--lock')
+                base = _Path(target)
+                lock_path = lock_arg if (lock_arg and not lock_arg.startswith('-')) else \
+                    next((str(base / n) for n in LOCK_FILENAMES if (base / n).is_file()), None)
+                saved = load_lock(lock_path) if lock_path else None
+                if not saved:
+                    print("\n  --lock: no release-gate.lock found. Create one with "
+                          "`release-gate lock`.")
+                    sys.exit(1)
+                cmp = compare_lock(build_lock(base), saved)
+                _print_lock_result(cmp, saved)
+                if not cmp['gate_ok']:
+                    sys.exit(1)   # certificate invalidated by drift/expiry
+
         decision = report['decision']
         sys.exit(1 if decision == 'BLOCK' else 10 if decision == 'HOLD' else 0)
+
+    elif command == 'lock':
+        from pathlib import Path as _Path
+        from release_gate.lockfile import build_lock, write_lock, LOCK_FILENAMES
+        target = sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith('-') else '.'
+        out = _flag(sys.argv, '--output') or _flag(sys.argv, '-o') or \
+            str(_Path(target) / LOCK_FILENAMES[0])
+        ttl = _flag(sys.argv, '--ttl-days')
+        try:
+            ttl_days = int(ttl) if ttl else 30
+        except ValueError:
+            ttl_days = 30
+        lock = build_lock(_Path(target), ttl_days=ttl_days)
+        if '--json' in sys.argv:
+            print(json.dumps(lock, indent=2))
+            sys.exit(0)
+        write_lock(lock, out)
+        _print_lock_written(lock, out)
+        sys.exit(0)
 
     elif command == 'demo':
         fast = '--fast' in sys.argv

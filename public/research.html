@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The State of Agent Code Safety — release-gate Research</title>
+<meta name="description" content="We scanned 30+ of the most-starred open-source AI-agent frameworks for the risk SAST can't see — model output reaching eval/exec/pickle — then hand-verified every finding and threw most of them out. Here's what's real, and what we refused to flag.">
+<link rel="canonical" href="https://release-gate.com/research.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="The State of Agent Code Safety">
+<meta property="og:description" content="We scanned 30+ open-source AI-agent frameworks for the risk SAST can't see — then hand-verified every finding and threw most of them out.">
+<meta property="og:url" content="https://release-gate.com/research.html">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The State of Agent Code Safety">
+<meta name="twitter:description" content="Model output reaching eval/exec/pickle is the risk your SAST tool can't see. We scanned 30+ agent frameworks — and here's what we refused to flag.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7.6' fill='%230B0B0F'/%3E%3Crect x='9.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='19.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='8' y='8.4' width='16' height='2.9' rx='1.45' fill='%23C8A24B'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg:#FAF8F3; --surface:#FFFFFF; --ink:#17150E; --muted:#6E6656; --faint:#8B8474;
+    --hair:#E6E0D1; --accent:#9A731F; --accent-dec:#C8A24B; --high:#A83521;
+    --high-bg:#F6E7E2; --good:#3F6E44; --good-bg:#E8F0E6; --med:#8A5E12; --med-bg:#F3EAD6;
+    --code-bg:#F3F0E8; --band:#141317; --band-ink:#F3EFE4; --band-muted:#A49C89;
+    --measure:40rem;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --serif: Georgia,"Iowan Old Style","Times New Roman",serif;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){:root{
+    --bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;--faint:#7C7566;
+    --hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;--high-bg:#2A1512;
+    --good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}}
+  :root[data-theme="light"]{--bg:#FAF8F3;--surface:#FFFFFF;--ink:#17150E;--muted:#6E6656;
+    --faint:#8B8474;--hair:#E6E0D1;--accent:#9A731F;--accent-dec:#C8A24B;--high:#A83521;
+    --high-bg:#F6E7E2;--good:#3F6E44;--good-bg:#E8F0E6;--med:#8A5E12;--med-bg:#F3EAD6;--code-bg:#F3F0E8;}
+  :root[data-theme="dark"]{--bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;
+    --faint:#7C7566;--hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;
+    --high-bg:#2A1512;--good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:18px; line-height:1.65; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+  .wrap { max-width:var(--measure); margin:0 auto; padding:0 1.5rem; }
+  a { color:var(--accent); text-decoration:none; border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent); }
+  a:hover { border-bottom-color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent-dec); outline-offset:3px; border-radius:2px; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--code-bg); padding:.12em .38em; border-radius:4px; }
+
+  /* top bar — native release-gate chrome */
+  .topbar { position:sticky; top:0; z-index:10; background:color-mix(in srgb,var(--band) 96%,transparent);
+    backdrop-filter:blur(8px); border-bottom:1px solid #26242B; }
+  .topbar .row { max-width:64rem; margin:0 auto; padding:.7rem 1.5rem; display:flex; align-items:center; gap:1rem; }
+  .brand { display:flex; align-items:center; gap:.55rem; border:none; }
+  .brand svg { width:26px; height:26px; }
+  .brand .wm { font-family:var(--mono); font-size:.9rem; font-weight:600; color:#F3EFE4; letter-spacing:.01em; }
+  .brand .wm .g { color:var(--accent-dec); }
+  .topbar .spacer { flex:1; }
+  .topbar .nl { color:var(--band-muted); font-size:.85rem; border:none; }
+  .topbar .nl:hover { color:#F3EFE4; }
+  .topbar .scan { background:var(--accent-dec); color:#17150E; font-weight:650; font-size:.85rem;
+    padding:.42rem .9rem; border-radius:7px; border:none; }
+  .topbar .scan:hover { background:#D8B25C; color:#17150E; }
+  @media (max-width:640px){ .topbar .nl { display:none; } }
+
+  /* hero band */
+  .band { background:var(--band); color:var(--band-ink); border-bottom:1px solid #26242B; }
+  .band .wrap { padding-top:3rem; padding-bottom:2.8rem; }
+  .eyebrow { font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--accent-dec); margin:0 0 1rem; }
+  h1 { font-family:var(--serif); font-weight:600; font-size:clamp(2.3rem,6vw,3.4rem); line-height:1.06;
+    letter-spacing:-.015em; margin:0 0 1.1rem; text-wrap:balance; color:#FBF8EF; }
+  .deck { font-size:1.16rem; line-height:1.55; color:var(--band-muted); max-width:34rem; margin:0 0 2.2rem; }
+  .deck b { color:var(--band-ink); font-weight:600; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#26242B;
+    border:1px solid #26242B; border-radius:10px; overflow:hidden; }
+  .stat { background:var(--band); padding:1rem .9rem; }
+  .stat .n { font-family:var(--serif); font-size:1.7rem; line-height:1; color:var(--accent-dec); font-variant-numeric:tabular-nums; }
+  .stat .l { font-size:.74rem; line-height:1.3; color:var(--band-muted); margin-top:.4rem; }
+  @media (max-width:560px){ .stats { grid-template-columns:repeat(2,1fr); } }
+
+  article .wrap { padding-top:3rem; padding-bottom:3rem; }
+  .thesis { font-family:var(--serif); font-size:clamp(1.35rem,3.4vw,1.72rem); line-height:1.4;
+    letter-spacing:-.01em; margin:0 0 3rem; text-wrap:balance; }
+  .thesis .hl { color:var(--accent); font-style:italic; }
+  section { margin:0 0 2.6rem; }
+  .kicker { font-family:var(--mono); font-size:.72rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--accent); display:flex; align-items:center; gap:.7rem; margin:0 0 1rem; }
+  .kicker::after { content:""; height:1px; flex:1; background:var(--hair); }
+  h2 { font-family:var(--serif); font-weight:600; font-size:1.7rem; line-height:1.15; letter-spacing:-.01em;
+    margin:0 0 .8rem; text-wrap:balance; }
+  p { margin:0 0 1.05rem; }
+  .muted { color:var(--muted); }
+  strong { font-weight:650; }
+
+  .finds { display:flex; flex-direction:column; gap:1px; background:var(--hair); border:1px solid var(--hair);
+    border-radius:12px; overflow:hidden; margin:1.2rem 0 0; }
+  .find { background:var(--surface); padding:1.15rem 1.25rem; display:grid; grid-template-columns:auto 1fr;
+    gap:.1rem 1rem; align-items:baseline; }
+  .find .fig { font-family:var(--serif); font-size:1.5rem; color:var(--accent); font-variant-numeric:tabular-nums;
+    grid-row:span 2; align-self:center; min-width:3.6rem; }
+  .find .ft { font-weight:650; }
+  .find .fd { color:var(--muted); font-size:.95rem; line-height:1.5; }
+
+  .chip { font-family:var(--mono); font-size:.68rem; letter-spacing:.02em; padding:.16em .5em; border-radius:5px;
+    white-space:nowrap; font-weight:600; display:inline-block; }
+  .chip.high { background:var(--high-bg); color:var(--high); }
+  .chip.med  { background:var(--med-bg); color:var(--med); }
+  .chip.fp   { background:var(--good-bg); color:var(--good); }
+
+  .ledger-wrap { overflow-x:auto; margin:1.4rem 0 .4rem; border:1px solid var(--hair); border-radius:12px; }
+  table.ledger { border-collapse:collapse; width:100%; min-width:34rem; font-size:.93rem; }
+  .ledger th { text-align:left; font-family:var(--mono); font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--faint); font-weight:600; padding:.8rem 1rem; border-bottom:1px solid var(--hair); background:var(--surface); }
+  .ledger td { padding:.85rem 1rem; border-bottom:1px solid var(--hair); vertical-align:top; line-height:1.45; }
+  .ledger tr:last-child td { border-bottom:none; }
+  .ledger tr:hover td { background:color-mix(in srgb,var(--accent-dec) 6%,transparent); }
+  .ledger .claim { color:var(--high); }
+  .ledger .claim code { background:color-mix(in srgb,var(--high) 12%,transparent); }
+  .ledger .real b { color:var(--good); font-weight:650; }
+  .ledger .where { color:var(--muted); font-size:.85rem; }
+  .arrowcol { color:var(--faint); text-align:center; width:1.5rem; padding-left:0; padding-right:0; }
+
+  .rule { border-left:3px solid var(--accent-dec); background:var(--surface); padding:1.1rem 1.3rem;
+    border-radius:0 10px 10px 0; margin:1.6rem 0; }
+  .rule .rl { font-family:var(--mono); font-size:.7rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:.5rem; }
+  .rule p { margin:0; }
+
+  .wins { list-style:none; margin:1.2rem 0 0; padding:0; display:flex; flex-direction:column;
+    gap:1px; background:var(--hair); border:1px solid var(--hair); border-radius:12px; overflow:hidden; }
+  .wins li { background:var(--surface); padding:1rem 1.2rem; font-size:.95rem; line-height:1.5; }
+  .wins li b { color:var(--heading); }
+  .wins li .mark { color:var(--good); font-weight:700; margin-right:.55rem; }
+
+  .cta { background:var(--band); color:var(--band-ink); border-radius:14px; padding:2rem 1.75rem; margin:3rem 0 1rem; }
+  .cta h2 { color:#FBF8EF; margin-bottom:.5rem; }
+  .cta p { color:var(--band-muted); margin-bottom:1.3rem; }
+  .cta pre { font-family:var(--mono); font-size:.84rem; background:#0C0B0E; border:1px solid #26242B; color:#E8E3D6;
+    padding:.9rem 1.1rem; border-radius:9px; overflow-x:auto; margin:0 0 1.1rem; line-height:1.6; }
+  .cta pre .c { color:var(--accent-dec); }
+  .btnrow { display:flex; flex-wrap:wrap; gap:.7rem; align-items:center; }
+  .btn { display:inline-block; background:var(--accent-dec); color:#17150E; font-weight:650; font-size:.95rem;
+    padding:.6rem 1.1rem; border-radius:8px; border:none; }
+  .btn:hover { background:#D8B25C; }
+  .cta a.ghost { color:var(--band-muted); border:none; font-size:.9rem; }
+  .cta a.ghost:hover { color:var(--band-ink); }
+
+  footer.pg { border-top:1px solid var(--hair); }
+  footer.pg .wrap { padding:1.6rem 1.5rem; display:flex; flex-wrap:wrap; gap:.6rem 1.4rem; align-items:center;
+    color:var(--faint); font-size:.82rem; max-width:64rem; }
+  footer.pg a { color:var(--muted); border:none; }
+  footer.pg a:hover { color:var(--accent); }
+  footer.pg .spacer { flex:1; }
+  .disclosure { color:var(--faint); font-size:.82rem; line-height:1.6; border-top:1px solid var(--hair);
+    margin-top:2.5rem; padding-top:1.4rem; }
+
+  @media (prefers-reduced-motion:no-preference){
+    .band .wrap>* { animation:rise .6s cubic-bezier(.2,.6,.2,1) both; }
+    .band .wrap>*:nth-child(2){animation-delay:.05s} .band .wrap>*:nth-child(3){animation-delay:.1s}
+    .band .wrap>*:nth-child(4){animation-delay:.15s}
+    @keyframes rise { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a class="brand" href="/index.html" aria-label="release-gate home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg>
+      <span class="wm">release<span class="g">-</span>gate</span>
+    </a>
+    <div class="spacer"></div>
+    <a class="nl" href="/index.html#agent-scan">Agent Scan</a>
+    <a class="nl" href="/index.html#faq">FAQ</a>
+    <a class="scan" href="/index.html#agent-scan">Scan a repo</a>
+  </div>
+</div>
+
+<header class="band">
+  <div class="wrap">
+    <p class="eyebrow">Security Research</p>
+    <h1>The State of Agent Code Safety</h1>
+    <p class="deck">We scanned <b>30+ of the most-starred open-source AI-agent
+      frameworks</b> for the risk your SAST tool can't see — then hand-verified
+      every finding, and threw most of them out.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">30+</div><div class="l">frameworks scanned</div></div>
+      <div class="stat"><div class="n">73%</div><div class="l">ship no output ceiling</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">published CVE surfaced</div></div>
+      <div class="stat"><div class="n">6</div><div class="l">false-positive classes removed</div></div>
+    </div>
+  </div>
+</header>
+
+<article>
+  <div class="wrap">
+    <p class="thesis">A static analyzer sees <code>eval(x)</code> and asks
+      <span class="hl">"is x tainted by SQL or an HTTP parameter?"</span> It has no
+      concept of <span class="hl">"x is the model's reply."</span> That blind spot
+      — model output reaching a code, shell, or deserialization sink — is the
+      entire agent layer, and it's invisible to the tools most teams already run.</p>
+
+    <section>
+      <p class="kicker">What's actually out there</p>
+      <div class="finds">
+        <div class="find">
+          <div class="fig">1 in 5</div>
+          <div class="ft">Model output reaches <code>eval</code> / <code>exec</code></div>
+          <div class="fd">Mostly code-writing agents by design — the model writes
+            code, the framework runs it. The only thing between a prompt injection
+            and RCE is a sandbox the scanner can't verify. One case is unambiguous
+            and already public: <a href="https://www.gecko.security/blog/cve-2025-51472">SuperAGI's
+            <code>eval()</code> on the assistant's own reply (CVE-2025-51472)</a>.</div>
+        </div>
+        <div class="find">
+          <div class="fig">73%</div>
+          <div class="ft">No output-token ceiling, anywhere</div>
+          <div class="fd">11 of 15 frameworks assemble request params in a dict and
+            spread them (<code>create(**params)</code>) with no <code>max_tokens</code> —
+            27 call sites. Cost hygiene, not a vuln, on its own; but near-universal,
+            and passed through <code>**kwargs</code> where most scanners can't see it.</div>
+        </div>
+        <div class="find">
+          <div class="fig">&asymp;0</div>
+          <div class="ft">Deserialization "vulnerabilities" that are real</div>
+          <div class="fd">Frameworks pickle constantly — over local pipes, in caches,
+            to persist state. A naive scanner flags every <code>pickle.loads()</code>
+            as RCE. Almost none of them are. Which brings us to the part that matters
+            more than the findings.</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <p class="kicker">The part nobody publishes</p>
+      <h2>What we refused to flag</h2>
+      <p>A scanner that cries wolf gets demoted to advisory and ignored. The hardest
+        &mdash; and most valuable &mdash; engineering here is <strong>not flagging the
+        things that look scary but aren't.</strong> Every row below is a real pattern
+        in a real, well-engineered framework that a lazy scanner reports as critical:</p>
+      <div class="ledger-wrap">
+        <table class="ledger">
+          <thead>
+            <tr><th>Looks like <span class="chip high">HIGH</span></th><th class="arrowcol"></th><th>Is actually <span class="chip fp">FALSE POSITIVE</span></th><th>Where</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="claim"><code>pickle.loads(data)</code> "RCE from user input"</td><td class="arrowcol">&rarr;</td><td class="real">a <b>LogRecord off a local multiprocessing pipe</b> &mdash; trusted internal transport</td><td class="where">top-tier voice-agent framework</td></tr>
+            <tr><td class="claim"><code>pickle.loads(message_ser)</code> "RCE"</td><td class="arrowcol">&rarr;</td><td class="real">the framework round-tripping <b>its own serialized objects</b></td><td class="where">leading multi-agent framework</td></tr>
+            <tr><td class="claim"><code>HEADER_TOKEN = "X-…-Token"</code> "hardcoded secret"</td><td class="arrowcol">&rarr;</td><td class="real">an <b>HTTP header name</b>, not a value</td><td class="where">top-tier voice-agent framework</td></tr>
+            <tr><td class="claim"><code>gas_token = "0x0000…0000"</code> "secret"</td><td class="arrowcol">&rarr;</td><td class="real">the <b>Ethereum zero address</b> &mdash; a constant</td><td class="where">on-chain agent framework</td></tr>
+            <tr><td class="claim"><code>KEY = "YOUR-AZURE-…-KEY"</code> "leaked key"</td><td class="arrowcol">&rarr;</td><td class="real">a <b>placeholder</b> / example value</td><td class="where">major data framework</td></tr>
+            <tr><td class="claim">57 findings, <code>HOLD</code></td><td class="arrowcol">&rarr;</td><td class="real">all in a <b>cookbook of 256 tutorial files</b>; the core is clean</td><td class="where">minimalist agent framework</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">That last row is the pattern that quietly wrecks trust: grading
+        a framework on its <em>tutorials</em> instead of its <em>code</em>. We exclude
+        <code>cookbook/</code>, <code>examples/</code>, and <code>tests/</code> from the
+        score entirely &mdash; and surface them separately, labelled unscored.</p>
+
+      <div class="rule">
+        <div class="rl">The discipline in one rule</div>
+        <p>We assert <span class="chip high">HIGH · confirmed</span> only when we can
+          <em>see</em> the dangerous input's source &mdash; a value assigned from an LLM
+          call in scope, or an unambiguous name like <code>request.body</code>. When the
+          danger is only inferred from a variable's name, we say so:
+          <span class="chip med">MEDIUM · inferred</span> &mdash; "confirm the source." A
+          judge rules on the evidence in front of it, not on what a name suggests.</p>
+      </div>
+    </section>
+
+    <section>
+      <p class="kicker">How we verified · what we don't claim</p>
+      <p>Every high-severity finding was traced to the exact line and read in context
+        before we trusted it &mdash; that process <em>is</em> what produced the table
+        above. Several findings that looked confirmed collapsed under a two-minute read;
+        the local-IPC pickle and the header-name "secret" both came from a marquee
+        framework, and both were wrong.</p>
+      <p>We're <strong>not</strong> publishing a precision/recall number yet &mdash; that
+        needs a labeled benchmark with true negatives, and we're building it: every
+        verified verdict now feeds a calibration corpus. What this is: a methodology and
+        a set of hand-checked findings across the real ecosystem, plus a public account
+        of the false positives we eliminated. Honesty about the second is the point.</p>
+      <p>Credible means acted-on. One finding closed the loop the way it should &mdash; we
+        surfaced an unbounded tool-call loop in <strong>LightAgent</strong>, and the fix
+        was <strong style="color:var(--good)">merged by the maintainer</strong>. That's the
+        bar, and it's a click, not a claim &mdash; see below.</p>
+    </section>
+
+    <section>
+      <p class="kicker">Confirmed in the wild</p>
+      <h2>Findings maintainers merged</h2>
+      <p>Every entry here is a release-gate finding that a maintainer of a real,
+        shipping framework fixed and merged &mdash; verifiable, not asserted. The list
+        grows as findings land.</p>
+      <ul class="wins">
+        <li><span class="mark">✓</span><b>LightAgent</b> &mdash; unbounded streaming
+          tool-call loop (the inner <code>while True</code> wasn't bounded by
+          <code>max_retry</code>; a runaway under tool failure or prompt injection).
+          Fixed &amp; merged with a regression test:
+          <a href="https://github.com/wanxingai/LightAgent/pull/71">PR #71</a>.</li>
+        <!-- Add each new confirmed fix as one <li> here: framework — finding — merged PR link. -->
+      </ul>
+    </section>
+
+    <div class="cta">
+      <h2>Scan your own agent</h2>
+      <p>Two honest scores and one verdict &mdash; PROMOTE / HOLD / BLOCK. Every finding
+        cites its evidence and its confidence.</p>
+      <pre><span class="c"># free, no config</span>
+pip install release-gate
+release-gate audit .</pre>
+      <div class="btnrow">
+        <a class="btn" href="/index.html#agent-scan">Scan a repo &rarr;</a>
+        <a class="ghost" href="https://github.com/VamsiSudhakaran1/release-gate">View on GitHub</a>
+      </div>
+    </div>
+
+    <p class="disclosure">Methodology, the analyzer, and the full false-positive test
+      suite are <a href="https://github.com/VamsiSudhakaran1/release-gate">open source</a>.
+      Findings were hand-verified; only a publicly-disclosed vulnerability (the SuperAGI
+      CVE) and a maintainer-confirmed fix (LightAgent) are named &mdash; every other
+      pattern is reported in aggregate, by design.</p>
+  </div>
+</article>
+
+<footer class="pg">
+  <div class="wrap">
+    <a href="/index.html">&larr; release-gate</a>
+    <div class="spacer"></div>
+    <a href="/index.html#agent-scan">Scan a repo</a>
+    <a href="/research.html">Research</a>
+    <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -200,12 +200,38 @@ def test_constant_interpolation_in_system_prompt_not_flagged():
     assert "Interpolated system prompt (injection surface)" not in titles(src)
 
 
-def test_js_execsync_bare_var_is_medium_interp_is_high():
+def test_js_exec_calibration_bare_low_config_medium_external_high():
     from release_gate.verify import _scan_js_file
+    # bare variable, no interpolation, no external marker → LOW/inferred
     bare = _scan_js_file("a.js", "const r = execSync(cmd, {shell:true})\n")
+    assert any(f["severity"] == "low" for f in bare)
+    # interpolated with a genuine external-input marker (userInput) → HIGH/confirmed
     interp = _scan_js_file("b.js", "const r = execSync(`run ${userInput}`)\n")
-    assert any(f["severity"] == "medium" for f in bare)
-    assert any(f["severity"] == "high" for f in interp)
+    assert any(f["severity"] == "high" and f["basis"] == "confirmed" for f in interp)
+
+
+def test_js_bounded_retry_loop_not_flagged_unbounded():
+    # VoltAgent pattern: while(true) with a retry ceiling + throw exit is bounded.
+    from release_gate.verify import _scan_js_file
+    src = (
+        "while (true) {\n"
+        "  const res = await generateText(params);\n"
+        "  if (shouldRetryMiddleware(error, retryCount, maxRetries)) {\n"
+        "    retryCount += 1;\n"
+        "    continue;\n"
+        "  }\n"
+        "  throw error;\n"
+        "}\n"
+    )
+    assert not any(f["title"] == "Unbounded loop around an LLM call"
+                   for f in _scan_js_file("agent.ts", src))
+
+
+def test_js_truly_unbounded_loop_still_flagged():
+    from release_gate.verify import _scan_js_file
+    src = "while (true) {\n  const res = await generateText(params);\n  ctx.push(res);\n}\n"
+    assert any(f["title"] == "Unbounded loop around an LLM call"
+               for f in _scan_js_file("agent.ts", src))
 
 
 def test_placeholder_and_slug_secrets_rejected():
@@ -263,6 +289,35 @@ def test_pickle_from_network_still_flagged():
         "import pickle\n"
         "def handle(request):\n"
         "    return pickle.loads(request.body)\n"
+    )
+    assert "Dangerous execution sink" in titles(src)
+
+
+def test_public_telemetry_keys_not_secrets():
+    # Caught auditing aider: analytics keys ship in client code, not secrets.
+    from release_gate.verify import _is_real_secret
+    assert _is_real_secret('mixpanel_project_token = "6da9a43058a5d1b9f3353153921fb04d"') is False
+    assert _is_real_secret('posthog_project_api_key = "phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv"') is False
+    assert _is_real_secret('GA_MEASUREMENT_ID = "G-ABC123DEF4"') is False
+    # a genuine provider key is still caught
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5"') is True
+
+
+def test_yaml_load_with_safeloader_subclass_not_flagged():
+    # Caught auditing haystack: class YamlLoader(yaml.SafeLoader) is safe.
+    src = (
+        "import yaml\n"
+        "class YamlLoader(yaml.SafeLoader):\n    pass\n"
+        "def load(data):\n    return yaml.load(data, Loader=YamlLoader)\n"
+    )
+    assert "Dangerous execution sink" not in titles(src)
+
+
+def test_yaml_load_with_unsafe_loader_still_flagged():
+    # Regression: a genuinely unsafe loader on external input stays flagged.
+    src = (
+        "import yaml\n"
+        "def load(payload):\n    return yaml.load(payload, Loader=yaml.FullLoader)\n"
     )
     assert "Dangerous execution sink" in titles(src)
 
