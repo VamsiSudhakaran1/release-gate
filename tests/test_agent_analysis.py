@@ -252,6 +252,34 @@ def test_exec_of_non_llm_helper_not_flagged_by_helper_rule():
                    for f in _findings(src))
 
 
+def test_cli_args_shell_command_not_confirmed_high():
+    # aider's /git handler: `cmd_git(self, args)` runs `subprocess.run("git "+args,
+    # shell=True)`. `args` is the OPERATOR's own CLI input, not a remote RCE
+    # surface — must never be asserted as a CONFIRMED high (that FP is what makes
+    # a maintainer dismiss the whole report).
+    src = (
+        "import subprocess\n"
+        "def cmd_git(self, args):\n"
+        "    args = 'git ' + args\n"
+        "    subprocess.run(args, shell=True)\n"
+    )
+    hits = [f for f in _findings(src) if f["title"] in
+            ("Dangerous execution sink", "Dynamic execution sink (agent code)")]
+    assert not any(f.get("basis") == "confirmed" and f.get("severity") in ("high", "critical")
+                   for f in hits), "operator CLI args must not be a confirmed high"
+
+
+def test_request_body_shell_still_confirmed_high():
+    # The genuinely-external counterpart stays confirmed HIGH.
+    src = (
+        "import os\n"
+        "def handler(request):\n"
+        "    os.system('run ' + request.body)\n"
+    )
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert any(f.get("basis") == "confirmed" for f in hits)
+
+
 def test_js_bounded_retry_loop_not_flagged_unbounded():
     # VoltAgent pattern: while(true) with a retry ceiling + throw exit is bounded.
     from release_gate.verify import _scan_js_file

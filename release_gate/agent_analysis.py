@@ -118,6 +118,15 @@ PROMPT_MATERIAL_HINTS = ("prompt", "prompts", "instruction", "instructions",
 # developer's own material there, so they don't count as external-input proof.
 SYSTEM_PROMPT_STRONG_HINTS = tuple(h for h in STRONG_INPUT_HINTS
                                    if h not in ("prompt", "params", "args"))
+# For a shell/exec/deserialization sink: a bare `args`/`params`/`prompt` is the
+# OPERATOR's or developer's own input in a CLI tool — aider's `/git <args>`, a
+# `cmd_foo(self, args)` handler — not network-external like request/body/webhook.
+# Asserting a CONFIRMED public RCE on those is the credibility-killing overclaim
+# a maintainer instantly dismisses; demote them to the inferred tier (they still
+# match USER_SOURCE_HINTS → medium, "confirm the source"). Genuinely external
+# names (request/body/payload/webhook/event) stay confirmed.
+SINK_STRONG_INPUT_HINTS = tuple(h for h in STRONG_INPUT_HINTS
+                                if h not in ("prompt", "params", "args"))
 
 # Identifier-token matching. Substring matching turned `context` into a hit for
 # "text" and `database` into a hit for "data" — a whole false-positive class.
@@ -628,8 +637,10 @@ class _Analyzer(ast.NodeVisitor):
             if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):
                 return n, "the model's own output", True
         # Confirmed: an unambiguous external-input name (request/body/payload/…).
+        # NB: uses SINK_STRONG_INPUT_HINTS — a bare args/params/prompt is the
+        # local operator's own CLI input, not a confirmed remote RCE surface.
         for n in arg_names:
-            if _hint_match(n, STRONG_INPUT_HINTS):
+            if _hint_match(n, SINK_STRONG_INPUT_HINTS):
                 return n, "external user/request input", True
         # Inferred: the name hints at model/user data, but the source isn't
         # visible here (a bare parameter, a generic name). Present, not proven.
