@@ -594,7 +594,84 @@ def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
 # Missing any of these is what a regulated/internal team treats as a hard stop.
 CRITICAL_SAFEGUARDS = {"governance_file", "kill_switch", "budget_ceiling"}
 
-VALID_MODES = ("audit", "ci", "strict")
+VALID_MODES = ("audit", "ci", "strict", "public-advisory")
+
+
+def _public_advisory(report: Dict[str, Any]) -> Dict[str, Any]:
+    """The FP-safe outreach lens: only the things that actually matter to ship.
+
+    This is the discipline behind filing a finding on a stranger's repo. It is
+    deliberately the narrowest mode we have — it answers exactly one question,
+    "is there a real, reachable, high-severity problem in this agent's
+    PRODUCTION code that I would stake a public issue on?" — and refuses to
+    editorialize about anything else.
+
+    Rules:
+      • Production only. Findings in test/example/docs/website/archive zones
+        already live in `example_findings`, not `code_findings`, so they never
+        reach a verdict here — but we also drop any that slipped through.
+      • Confirmed only. A HIGH counts toward BLOCK only when its dangerous input
+        source is *visible* (basis == "confirmed"). Name-inferred highs and all
+        mediums are advisory context, never a block — we don't cry wolf on a
+        repo we don't own.
+      • Governance NEVER blocks. Missing safeguards on someone else's repo are
+        their business, not a finding. Governance is reported, never gated.
+
+    Populates report['advisory'] with the issue-ready shortlist and sets the
+    decision from confirmed-high production findings alone.
+    """
+    cs = report.get("code_safety") or {}
+    findings = report.get("code_findings") or []
+
+    def _is_prod(f):
+        # Defensive: example/tooling paths shouldn't be here, but never let one
+        # drive a public BLOCK if it is.
+        return not f.get("non_production") and not f.get("example")
+
+    prod = [f for f in findings if _is_prod(f)]
+    confirmed_high = [f for f in prod
+                      if f.get("severity") in ("high", "critical")
+                      and f.get("basis") == "confirmed"]
+    inferred_high = [f for f in prod
+                     if f.get("severity") in ("high", "critical")
+                     and f.get("basis") != "confirmed"]
+    medium = [f for f in prod if f.get("severity") == "medium"]
+
+    if not cs.get("applicable"):
+        decision, reason = "REVIEW", (
+            "Agent detected but not statically analyzable here — nothing to "
+            "assert publicly. Run the behavioral scan.")
+    elif confirmed_high:
+        n = len(confirmed_high)
+        decision, reason = "BLOCK", (
+            f"{n} confirmed high-severity issue(s) in production code — real, "
+            f"reachable, and worth raising. These are the {n} thing(s) that "
+            "actually matter for this release.")
+    elif inferred_high or medium:
+        parts = []
+        if inferred_high:
+            parts.append(f"{len(inferred_high)} unconfirmed high finding(s)")
+        if medium:
+            parts.append(f"{len(medium)} medium finding(s)")
+        decision, reason = "HOLD", (
+            "No confirmed high-severity risk; " + " and ".join(parts) +
+            " worth a look but not something to assert publicly without "
+            "confirming the input source.")
+    else:
+        decision, reason = "PROMOTE", (
+            "No confirmed high-severity risk in production code. Nothing to "
+            "raise.")
+
+    report["decision"] = decision
+    report["decision_reason"] = reason
+    report["advisory"] = {
+        "confirmed_high":  confirmed_high,
+        "inferred_high":   inferred_high,
+        "medium":          medium,
+        "production_only": True,
+        "governance_gated": False,
+    }
+    return report
 
 
 def apply_decision_mode(report: Dict[str, Any], mode: str = "ci") -> Dict[str, Any]:
@@ -603,13 +680,16 @@ def apply_decision_mode(report: Dict[str, Any], mode: str = "ci") -> Dict[str, A
     Not every repo should be judged the same way. The same findings mean
     different things depending on who's asking:
 
-      audit   → advisory. For scanning someone else's / a public repo. Missing
-                governance is REVIEW ("not enough policy to judge"), never a
-                brutal BLOCK. Only genuine code-safety risk can BLOCK.
-      ci      → enforce the declared policy (the historical default). Governance
-                gaps and code findings both gate the release.
-      strict  → regulated. BLOCK on any missing CRITICAL safeguard or any high
-                code finding — no benefit of the doubt.
+      audit           → advisory. For scanning someone else's / a public repo.
+                        Missing governance is REVIEW ("not enough policy to
+                        judge"), never a brutal BLOCK. Only genuine code-safety
+                        risk can BLOCK.
+      ci              → enforce the declared policy (the historical default).
+                        Governance gaps and code findings both gate the release.
+      strict          → regulated. BLOCK on any missing CRITICAL safeguard or
+                        any high code finding — no benefit of the doubt.
+      public-advisory → the outreach lens. Production + confirmed-highs only;
+                        governance never blocks; emits an issue-ready shortlist.
 
     Sets report['mode'], report['decision'], report['decision_reason'] and
     returns the report. The underlying scores are never mutated — only the
@@ -617,6 +697,9 @@ def apply_decision_mode(report: Dict[str, Any], mode: str = "ci") -> Dict[str, A
     """
     mode = mode if mode in VALID_MODES else "ci"
     report["mode"] = mode
+
+    if mode == "public-advisory":
+        return _public_advisory(report)
 
     cs = report.get("code_safety") or {}
     high = cs.get("high", 0) if cs.get("applicable") else 0
@@ -1849,6 +1932,34 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
                 f"{_col(str(c.get('uncertain', 0)) + ' uncertain', _YELLOW)}")
         print(f"  {_col('Verifier', _BOLD)} ({vrf.get('model')}):  {bits}"
               f"   {_col('advisory — static decision above is the gate', _MUTED)}")
+
+    # public-advisory: the issue-ready shortlist. Only what you'd stake a public
+    # issue on — confirmed highs in production — with inferred/medium as context.
+    adv = report.get("advisory")
+    if adv is not None:
+        print()
+        ch = adv.get("confirmed_high") or []
+        if ch:
+            print(f"  {_col('Worth raising', _BOLD)}  "
+                  f"{_col('confirmed · production · high-severity', _MUTED)}")
+            for f in ch:
+                loc = f.get("file", "")
+                ln = f.get("line")
+                where = f"{loc}:{ln}" if ln else loc
+                print(f"  {_col('  ✗ ' + (f.get('title') or 'finding'), _RED, _BOLD)}"
+                      f"   {_col(where, _MUTED)}")
+                detail = f.get("detail") or f.get("message") or ""
+                if detail:
+                    print(f"      {_col(detail, _MUTED)}")
+        else:
+            print(f"  {_col('Nothing to raise', _GREEN, _BOLD)}   "
+                  f"{_col('no confirmed high-severity risk in production code', _MUTED)}")
+        ctx = (adv.get("inferred_high") or []) + (adv.get("medium") or [])
+        if ctx:
+            ctx_line = (f"  + {len(ctx)} unconfirmed/medium finding(s) as "
+                        "context (not asserted publicly)")
+            print(f"  {_col(ctx_line, _MUTED)}")
+        print(f"  {_col('  Governance is reported, never gated in this mode.', _MUTED)}")
     print()
     print(f"  {div}")
 

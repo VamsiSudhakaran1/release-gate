@@ -198,6 +198,37 @@ def test_strict_mode_blocks_on_missing_critical_safeguard(tmp_path):
     assert "critical safeguard" in report["decision_reason"]
 
 
+def test_public_advisory_governance_never_gates(tmp_path):
+    # Clean code but zero declared governance → PROMOTE, because governance
+    # gaps on a stranger's repo are never something we'd file publicly.
+    _clean_agent_repo(tmp_path)
+    report = build_report(tmp_path, mode="public-advisory")
+    assert report["decision"] == "PROMOTE"
+    assert report["advisory"]["governance_gated"] is False
+
+
+def test_public_advisory_confirmed_high_blocks_inferred_holds():
+    base = {"code_safety": {"applicable": True}, "missing": [{"id": "kill_switch"}]}
+
+    confirmed = {**base, "code_findings": [
+        {"severity": "high", "basis": "confirmed", "title": "os.system",
+         "file": "a.py", "line": 3}]}
+    apply_decision_mode(confirmed, "public-advisory")
+    assert confirmed["decision"] == "BLOCK"
+    assert len(confirmed["advisory"]["confirmed_high"]) == 1
+
+    inferred = {**base, "code_findings": [
+        {"severity": "high", "basis": "inferred", "title": "eval", "file": "b.py"}]}
+    apply_decision_mode(inferred, "public-advisory")
+    assert inferred["decision"] == "HOLD"  # unconfirmed → context, not a public block
+    assert inferred["advisory"]["confirmed_high"] == []
+
+
+def test_public_advisory_is_a_valid_mode():
+    from release_gate.audit import VALID_MODES
+    assert "public-advisory" in VALID_MODES
+
+
 def test_apply_decision_mode_does_not_mutate_scores(tmp_path):
     _risky_agent_repo(tmp_path)
     report = build_report(tmp_path, mode="ci")

@@ -211,7 +211,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 
 | Flag | Description |
 |------|-------------|
-| `--mode audit\|ci\|strict` | **Policy lens.** `audit` = advisory (public repos): missing governance → REVIEW, never a harsh BLOCK. `ci` = enforce declared policy (default). `strict` = regulated: BLOCK on any missing critical safeguard or high finding. |
+| `--mode audit\|ci\|strict\|public-advisory` | **Policy lens.** `audit` = advisory (public repos): missing governance → REVIEW, never a harsh BLOCK. `ci` = enforce declared policy (default). `strict` = regulated: BLOCK on any missing critical safeguard or high finding. `public-advisory` = outreach lens: production + **confirmed**-highs only, governance never gates, emits an issue-ready shortlist (what you'd actually file on a stranger's repo). |
 | `--baseline <file.json>` | **Don't-make-it-worse gate.** Blocks only on *net-new* highs, newly-missing critical safeguards, or a code-safety score regression — pre-existing debt never punishes you. |
 | `--write-baseline <file.json>` | Snapshot the current audit as a baseline for future diff runs. |
 | `--pr-comment` | **Concise delta comment** for a PR (pair with `--baseline`). Leads with the net-new verdict + score delta, not a 200-line report. Auto-written to `$GITHUB_STEP_SUMMARY`. |
