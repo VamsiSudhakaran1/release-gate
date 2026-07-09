@@ -2,6 +2,49 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [Unreleased]
+
+### 🎯 Precision — false-positive calibration against an 8-repo real-world corpus
+
+Hand-triaged every finding the scanner produced on crewAI, smolagents,
+pydantic-ai, openai-agents-python, gpt-researcher, MetaGPT, microsoft/autogen,
+and vercel/ai, then fixed each false-positive class at the root. Corpus effect:
+**gpt-researcher 4 high + 3 medium → 0; vercel/ai 114 findings → 1; crewAI
+4 medium → 0** — while every true positive (MetaGPT's Voyager-style `eval` of
+model code, all pickle-deserialization findings) still fires. 11 new
+regression tests lock the calibration in.
+
+- **Token-based hint matching (Python).** Identifier hints now match whole
+  snake_case/camelCase tokens, not substrings — `context` no longer hits
+  "text", `database` no longer hits "data". Kills a whole class of phantom
+  "Dangerous execution sink" findings.
+- **System prompts composed from the developer's own material are not an
+  injection surface.** ALL_CAPS constants, vars only ever assigned literal
+  strings (if/elif chains), and prompt-material names (`agent_role_prompt`,
+  `auto_agent_instructions`, personas, templates) no longer flag; a generic
+  config identifier rates LOW; clearly external input (`user_query`, `request`)
+  is still HIGH.
+- **Non-text endpoints exempt from token-ceiling checks.** `images.generate`,
+  `embeddings.create`, `audio.*`, `moderations.*` have no token-ceiling concept.
+- **Constructor-declared ceilings count.** `ChatOpenAI(max_tokens=512)` caps
+  every call through that client.
+- **Opaque provider config objects stay quiet.** google-genai's
+  `config=GenerateContentConfig(…)` can carry the ceiling where static analysis
+  can't see it — absence unprovable, so no finding (a literal dict config is
+  still checked).
+- **Counter-bounded `while True` is not a runaway.** An exit guarded by a
+  counter/budget comparison (`if attempts >= max_retries: break`) bounds the
+  loop; a model-controlled break still flags.
+- **Inferred execution sinks are MEDIUM, not HIGH.** Severity now follows
+  proof: a flow the analyzer can see is HIGH; a flow inferred from a name alone
+  is MEDIUM — the same calibration deserialization sinks already used.
+- **JS/TS scanner overhaul.** Recognizes AI SDK v5 `maxOutputTokens` (and
+  `max_completion_tokens` spellings); checks the call's full balanced-paren
+  argument span instead of a 5-line window; masks comments, strings, and
+  template literals so JSDoc `@example` blocks and docs snippets never register
+  as calls; skips definition sites (`function generateText(` is the SDK
+  defining itself); excludes TypeScript type-test files (`*.test-d.ts`).
+
 ## [0.7.4] — 2026-06-24
 
 ### ✨ Added — loop verification, second pass (external review)

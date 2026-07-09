@@ -592,41 +592,169 @@ def test_go_agent_detected_but_flagged_not_statically_analyzed():
     assert cs.get("reason") == "language_not_static"          # honest reason
 
 
-def test_js_new_function_config_transform_is_medium_inferred():
-    # promptfoo pattern: new Function(config transform) — dynamic, but the source
-    # isn't external here, so MEDIUM/inferred, not a confident HIGH.
-    import tempfile, os
-    from pathlib import Path
-    from release_gate.verify import scan_code_findings
-    d = tempfile.mkdtemp(); os.makedirs(Path(d) / "src")
-    (Path(d) / "src" / "provider.ts").write_text(
-        "function make(parser: string) {\n"
-        "  return new Function('data', `return (${parser});`);\n}\n")
-    fs = scan_code_findings(Path(d))
-    hits = [f for f in fs if "execution sink" in f["title"]]
-    assert hits and all(f["severity"] == "medium" and f["basis"] == "inferred" for f in hits)
+# ── FP-calibration fixes (corpus: crewAI, gpt-researcher, vercel/ai, gemini) ─
+
+def test_non_text_endpoints_not_token_ceiling():
+    # DALL-E / embeddings calls on an LLM client have no token-ceiling concept.
+    src = (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "client.images.generate(model='dall-e-3', prompt=desc)\n"
+        "client.embeddings.create(input=texts, model='text-embedding-3-small')\n"
+        "client.audio.transcriptions.create(file=f, model='whisper-1')\n"
+    )
+    assert titles(src) == []
 
 
-def test_js_new_function_on_request_input_is_high():
-    # A real one: request body reaching new Function → HIGH/confirmed.
-    import tempfile, os
-    from pathlib import Path
-    from release_gate.verify import scan_code_findings
-    d = tempfile.mkdtemp(); os.makedirs(Path(d) / "src")
-    (Path(d) / "src" / "route.ts").write_text(
-        "app.post('/x', (req) => {\n"
-        "  const fn = new Function(`return ${req.body.code}`);\n})\n")
-    fs = scan_code_findings(Path(d))
-    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
+def test_ctor_declared_ceiling_caps_calls():
+    # LangChain-style clients take the ceiling at construction time.
+    src = (
+        "from langchain_openai import ChatOpenAI\n"
+        "llm = ChatOpenAI(model='gpt-4o', max_tokens=512)\n"
+        "llm.invoke(messages)\n"
+    )
+    assert "LLM call with no token ceiling" not in titles(src)
+    # …but a ceiling-less constructor still flags the call.
+    src2 = (
+        "from langchain_openai import ChatOpenAI\n"
+        "llm = ChatOpenAI(model='gpt-4o')\n"
+        "llm.invoke(messages)\n"
+    )
+    assert "LLM call with no token ceiling" in titles(src2)
 
 
-def test_js_shell_escaped_exec_not_flagged():
-    # promptfoo pattern: execSync(`grep ${args.map(shellEscape)}`) is mitigated.
-    import tempfile, os
-    from pathlib import Path
-    from release_gate.verify import scan_code_findings
-    d = tempfile.mkdtemp(); os.makedirs(Path(d) / "src")
-    (Path(d) / "src" / "fs.ts").write_text(
-        "const out = execSync(`grep ${args.map(shellEscape).join(' ')}`);\n")
-    fs = scan_code_findings(Path(d))
-    assert not any("execution sink" in f["title"] for f in fs)
+def test_opaque_config_object_stays_quiet():
+    # google-genai carries the ceiling inside config=GenerateContentConfig(…):
+    # absence is unprovable through an opaque object, so no finding.
+    src = (
+        "from google import genai\n"
+        "client = genai.Client()\n"
+        "client.models.generate_content(model=m, contents=c, config=cfg)\n"
+    )
+    assert "LLM call with no token ceiling" not in titles(src)
+    # A LITERAL dict config without a ceiling is provable → still flagged.
+    src2 = (
+        "from google import genai\n"
+        "client = genai.Client()\n"
+        "client.models.generate_content(model=m, contents=c, config={'temperature': 1})\n"
+    )
+    assert "LLM call with no token ceiling" in titles(src2)
+
+
+def test_counter_bounded_while_true_not_runaway():
+    src = (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "while True:\n"
+        "    r = client.chat.completions.create(messages=m, max_tokens=50)\n"
+        "    attempts += 1\n"
+        "    if attempts >= max_retries:\n"
+        "        break\n"
+    )
+    assert "Unbounded loop around an LLM call" not in titles(src)
+    # A model-controlled break is NOT a cap — still a runaway.
+    src2 = (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "while True:\n"
+        "    r = client.chat.completions.create(messages=m, max_tokens=50)\n"
+        "    if 'DONE' in r:\n"
+        "        break\n"
+    )
+    assert "Unbounded loop around an LLM call" in titles(src2)
+
+
+def test_hint_matching_is_token_based_not_substring():
+    # `context` must not hit "text", `database` must not hit "data".
+    src = "import openai\ndef f(context, database):\n    eval(context)\n    os.system(database)\n"
+    fs = analyze_python(src, "x.py")
+    assert not any(f["title"] == "Dangerous execution sink" for f in fs)
+    # Real hints still match through snake_case: user_input → eval is high.
+    src2 = "def f(user_input):\n    eval(user_input)\n"
+    fs2 = analyze_python(src2, "x.py")
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs2)
+
+
+def test_inferred_exec_sink_is_medium_not_high():
+    # A name-inferred (unproven) flow must not assert HIGH — same calibration
+    # as deserialization sinks. `reply` hints model output but isn't assigned
+    # from an LLM call in scope.
+    src = "import openai\ndef f(reply):\n    eval(reply)\n"
+    fs = [f for f in analyze_python(src, "x.py") if f["title"] == "Dangerous execution sink"]
+    assert fs and fs[0]["severity"] == "medium" and fs[0]["basis"] == "inferred"
+
+
+def test_system_prompt_composition_not_injection():
+    # Constant-assigned vars (if/elif chains of literals) are the developer's text.
+    src = (
+        'if mode == "brief":\n'
+        '    guidance = "Be brief."\n'
+        "else:\n"
+        '    guidance = "Be thorough."\n'
+        'msg = {"role": "system", "content": f"You are an evaluator. {guidance}"}\n'
+    )
+    assert titles(src) == []
+    # Prompt-material names (agent_role_prompt, auto_agent_instructions) are
+    # prompt composition, not an injection surface (the gpt-researcher FP class).
+    src2 = 'msg = {"role": "system", "content": f"{agent_role_prompt}"}\n'
+    assert titles(src2) == []
+    src3 = 'msg = {"role": "system", "content": f"{prompt_family.auto_agent_instructions()}"}\n'
+    assert titles(src3) == []
+
+
+def test_system_prompt_severity_calibration():
+    # Clearly external input into a system prompt is still HIGH.
+    fs = analyze_python(
+        'msg = {"role": "system", "content": f"Answer about {user_query}"}\n', "x.py")
+    assert any(f["severity"] == "high" for f in fs)
+    # A generic developer-config identifier rates only LOW.
+    fs2 = analyze_python(
+        'msg = {"role": "system", "content": f"Extract the {field_name} field."}\n', "x.py")
+    inj = [f for f in fs2 if "system prompt" in f["title"]]
+    assert inj and inj[0]["severity"] == "low"
+
+
+def test_js_type_test_files_are_excluded():
+    from release_gate.verify import _finalize_findings
+    f = {"file": "packages/ai/src/generate-text/stream-text.test-d.ts",
+         "line": 1, "title": "LLM call with no token ceiling", "severity": "low"}
+    assert _finalize_findings([f]) == []
+
+
+def test_js_ceiling_recognizes_v5_spelling_and_full_arg_span():
+    from release_gate.verify import _scan_js_file
+    # maxOutputTokens (AI SDK v5) deeper than 5 lines into the call still counts.
+    src = (
+        "const r = await generateText({\n"
+        "  model: openai('gpt-4o'),\n"
+        "  system: sys,\n"
+        "  prompt: p,\n"
+        "  temperature: 0.2,\n"
+        "  topP: 0.9,\n"
+        "  maxRetries: 2,\n"
+        "  maxOutputTokens: 800,\n"
+        "});\n"
+    )
+    assert not any(f["title"] == "LLM call with no token ceiling"
+                   for f in _scan_js_file("a.ts", src))
+    # A genuinely uncapped call is still flagged.
+    src2 = "const r = await generateText({ model: m, prompt: p });\n"
+    assert any(f["title"] == "LLM call with no token ceiling"
+               for f in _scan_js_file("b.ts", src2))
+
+
+def test_js_defsites_comments_and_strings_not_calls():
+    from release_gate.verify import _scan_js_file
+    src = (
+        "export async function generateText(options) {\n"   # definition, not a call
+        "  return doGenerate(options);\n"
+        "}\n"
+        "/** @example\n"
+        " * generateText({ model, prompt })\n"                # JSDoc example
+        " */\n"
+        "const doc = `\n"
+        "  generateText({ model, prompt })\n"                 # docs template string
+        "`;\n"
+    )
+    assert not any(f["title"] == "LLM call with no token ceiling"
+                   for f in _scan_js_file("a.ts", src))
