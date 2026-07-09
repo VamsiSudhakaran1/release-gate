@@ -567,9 +567,10 @@ def _is_tooling_path(rel: str) -> bool:
     return bool(_TOOLING_PATH_RE.search(rel) or _is_test_path(rel))
 
 
-# Test/spec FILES (not just tests/ dirs): config_test.py, test_foo.py, x.spec.ts…
+# Test/spec FILES (not just tests/ dirs): config_test.py, test_foo.py, x.spec.ts,
+# and TypeScript type-tests (x.test-d.ts / x.spec-d.ts — vitest/tsd convention).
 _TEST_FILE_RE = re.compile(
-    r"(^|/)(?:test_[^/]+|[^/]+_test|[^/]+\.test|[^/]+\.spec|[^/]+_spec)\.[A-Za-z]+$",
+    r"(^|/)(?:test_[^/]+|[^/]+_test|[^/]+\.test(?:-d)?|[^/]+\.spec(?:-d)?|[^/]+_spec)\.[A-Za-z]+$",
     re.IGNORECASE)
 
 
@@ -721,7 +722,14 @@ _JS_LLM_SINK_RE = re.compile(
 _JS_GENERATE_CALL_RE = re.compile(
     r"(?:generateText|streamText|chat\.completions\.create|messages\.create)\s*\("
 )
-_JS_MAX_TOKENS_NEARBY_RE = re.compile(r"(?:maxTokens|max_tokens)")
+# All ceiling spellings across SDK versions: AI SDK v4 maxTokens, v5
+# maxOutputTokens, OpenAI max_completion_tokens, Anthropic/generic max_tokens.
+_JS_MAX_TOKENS_NEARBY_RE = re.compile(
+    r"(?:maxTokens|max_tokens|maxOutputTokens|max_output_tokens|"
+    r"maxCompletionTokens|max_completion_tokens)")
+# A match that is the function's own DEFINITION (`export async function
+# generateText(` / class method `async generateText(`), not a call into an LLM.
+_JS_DEF_SITE_RE = re.compile(r"\b(?:function|async|get|set)\s+$|\*\s*$")
 _JS_TEMPLATE_INJECTION_RE = re.compile(
     r"`[^`]*\$\{(?:req|params|body)\.[^}]+\}[^`]*`"
 )
@@ -768,6 +776,61 @@ def _strip_js_strings(line: str) -> str:
     line = re.sub(r"'(?:[^'\\]|\\.)*'", "''", line)
     line = re.sub(r"`(?:[^`\\]|\\.)*`", "``", line)
     return line
+
+
+def _mask_js_noncode(text: str) -> str:
+    """Blank the contents of block comments, line comments, and string/template
+    literals across the WHOLE file, preserving every newline (so line numbers
+    computed on the masked text match the original). This keeps a generateText(
+    inside a JSDoc @example or a docs template string from registering as a call.
+    """
+    out = []
+    i, n = 0, len(text)
+    state = None  # None | "line" | "block" | "'" | '"' | "`"
+    while i < n:
+        c = text[i]
+        if state is None:
+            two = text[i:i + 2]
+            if two == "//":
+                state = "line"; out.append("  "); i += 2; continue
+            if two == "/*":
+                state = "block"; out.append("  "); i += 2; continue
+            if c in "'\"`":
+                state = c; out.append(c); i += 1; continue
+            out.append(c); i += 1; continue
+        if state == "line":
+            if c == "\n":
+                state = None; out.append(c)
+            else:
+                out.append(" ")
+            i += 1; continue
+        if state == "block":
+            if text[i:i + 2] == "*/":
+                state = None; out.append("  "); i += 2; continue
+            out.append(c if c == "\n" else " "); i += 1; continue
+        # inside a string/template literal
+        if c == "\\":
+            out.append("  " if text[i + 1:i + 2] != "\n" else " \n"); i += 2; continue
+        if c == state:
+            state = None; out.append(c); i += 1; continue
+        out.append(c if c == "\n" else " "); i += 1
+    return "".join(out)
+
+
+def _js_call_arg_span(masked: str, open_paren: int, cap: int = 4000) -> int:
+    """Return the index just past the call's balanced closing paren (scanning the
+    masked text so parens in strings/comments don't count), bounded by `cap`."""
+    depth = 0
+    end = min(len(masked), open_paren + cap)
+    for j in range(open_paren, end):
+        ch = masked[j]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return end
 
 
 def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
@@ -827,25 +890,30 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                     impact="Runaway cost / no termination guarantee.",
                 ))
 
-    # Missing max tokens: generateText/streamText/etc. without maxTokens nearby
-    for m in _JS_GENERATE_CALL_RE.finditer(text):
+    # Missing max tokens: generateText/streamText/etc. without a ceiling in the
+    # call's own arguments. Scans a comment/string-masked copy of the file so a
+    # JSDoc @example or a code snippet inside a docs template string never
+    # registers as a call, skips definition sites (`function generateText(` is
+    # the SDK defining itself, not calling an LLM), and checks the call's full
+    # balanced-paren argument span instead of an arbitrary 5-line window.
+    masked = _mask_js_noncode(text)
+    for m in _JS_GENERATE_CALL_RE.finditer(masked):
         start = m.start()
-        line_no = text.count("\n", 0, start) + 1
-        # Check 5 lines after the call
-        line_end = start
-        newlines_found = 0
-        while line_end < len(text) and newlines_found < 5:
-            if text[line_end] == "\n":
-                newlines_found += 1
-            line_end += 1
-        window = text[start:line_end]
+        if _JS_DEF_SITE_RE.search(masked, 0, start):
+            continue
+        line_no = masked.count("\n", 0, start) + 1
+        open_paren = masked.find("(", m.end() - 1)
+        if open_paren == -1:
+            continue
+        span_end = _js_call_arg_span(masked, open_paren)
+        window = text[start:span_end]
         if not _JS_MAX_TOKENS_NEARBY_RE.search(window):
             snippet = text[start:text.find("\n", start) if text.find("\n", start) != -1 else start + 80].strip()
             findings.append(_finding(
                 "low", "LLM call with no token ceiling", rel, line_no, snippet[:120],
-                "No maxTokens on this call — a single response can run to the model's max "
-                "output. Not a vulnerability by itself; set an explicit maxTokens to bound "
-                "latency and cost.",
+                "No maxTokens / maxOutputTokens on this call — a single response can "
+                "run to the model's max output. Not a vulnerability by itself; set an "
+                "explicit output ceiling to bound latency and cost.",
                 confidence="medium", basis="inferred",
                 impact="Unpredictable latency/cost on a single call. Not a vulnerability "
                        "by itself.",

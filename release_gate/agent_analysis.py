@@ -50,6 +50,18 @@ RECEIVER_QUALIFIED_CALLS = {
 }
 TOKEN_KEYS = {"max_tokens", "max_output_tokens", "max_completion_tokens",
               "maxtokens", "maxoutputtokens"}
+# API surfaces on an LLM client that are NOT text generation — a token ceiling
+# is meaningless for client.embeddings.create() or client.images.generate(),
+# so calls through these segments are never "LLM calls" for our checks.
+# (NB: "models" is NOT here — google-genai's text call is client.models.generate_content.)
+NON_TEXT_SURFACES = {"embeddings", "embedding", "images", "image", "audio",
+                     "speech", "transcriptions", "translations", "moderations",
+                     "files", "batches", "uploads", "fine_tuning", "vector_stores"}
+# Call kwargs that carry the provider's request-config OBJECT (google-genai's
+# config=GenerateContentConfig(max_output_tokens=…), etc.). If one is passed and
+# we can't see inside it, absence of a ceiling is unprovable — stay quiet.
+CONFIG_OBJECT_KWARGS = {"config", "generation_config", "generate_content_config",
+                        "request_options", "inference_config"}
 
 # ── Dangerous-sink registry (data-driven, so extending is a one-line change) ──
 # Bare builtin calls: Name(id) -> label. These are unambiguous (a method named
@@ -97,6 +109,31 @@ MODEL_SOURCE_HINTS = ("response", "reply", "completion", "assistant", "answer",
                       "llm_output", "generation", "output", "result", "content", "text")
 USER_SOURCE_HINTS = ("request", "req", "body", "payload", "params", "query",
                      "user_input", "prompt", "message", "msg", "input", "args", "data")
+# Names that denote the developer's OWN prompt material (prompt text, personas,
+# instructions being composed). Interpolating these into a system prompt is how
+# system prompts are BUILT — it is not an injection surface by itself.
+PROMPT_MATERIAL_HINTS = ("prompt", "prompts", "instruction", "instructions",
+                         "persona", "template", "system", "preamble", "guidance")
+# For the system-prompt check specifically: "prompt"/"params"/"args" name the
+# developer's own material there, so they don't count as external-input proof.
+SYSTEM_PROMPT_STRONG_HINTS = tuple(h for h in STRONG_INPUT_HINTS
+                                   if h not in ("prompt", "params", "args"))
+
+# Identifier-token matching. Substring matching turned `context` into a hit for
+# "text" and `database` into a hit for "data" — a whole false-positive class.
+# A hint matches only when all its words appear as tokens of the identifier
+# (snake_case and camelCase are split): user_input → {user, input}.
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_TOKEN_SPLIT_RE = re.compile(r"[^a-zA-Z0-9]+")
+
+
+def _tokens(name: str) -> Set[str]:
+    return {t for t in _TOKEN_SPLIT_RE.split(_CAMEL_RE.sub("_", name).lower()) if t}
+
+
+def _hint_match(name: str, hints) -> bool:
+    toks = _tokens(name)
+    return any(_tokens(h) <= toks for h in hints)
 
 
 def _dotted(node: ast.AST) -> Optional[str]:
@@ -173,6 +210,13 @@ class _Analyzer(ast.NodeVisitor):
         self.llm_imported = False
         self.llm_aliases: Set[str] = set()    # names bound to LLM modules/ctors
         self.llm_vars: Set[str] = set()        # vars holding an LLM client
+        # LLM clients whose CONSTRUCTOR already declared a token ceiling
+        # (ChatOpenAI(max_tokens=512)) — calls through them are capped.
+        self.llm_vars_capped: Set[str] = set()
+        # Vars only ever assigned constant strings (incl. if/elif chains of
+        # literals) — developer-controlled text, safe to interpolate anywhere.
+        self.assigned_const: Set[str] = set()
+        self.assigned_dynamic: Set[str] = set()
         self.tainted: Set[str] = set()         # vars holding model output / input
         self.tainted_model: Set[str] = set()   # vars ASSIGNED from an LLM call in-scope
         self.llm_signal = False                # repo actually invokes/constructs an LLM
@@ -208,8 +252,23 @@ class _Analyzer(ast.NodeVisitor):
         ctor = _ctor_name(node.value)
         if ctor and (ctor in LLM_CONSTRUCTORS or ctor in self.llm_aliases):
             self.llm_signal = True
+            ctor_kwargs = {k.arg.lower() for k in node.value.keywords if k.arg}
             for t in targets:
                 self.llm_vars.add(t)
+                # LangChain-style clients take the ceiling at construction time
+                # (ChatOpenAI(max_tokens=512)); flagging every .invoke() on such
+                # a client for "no token ceiling" is a false positive.
+                if ctor_kwargs & TOKEN_KEYS or "model_kwargs" in ctor_kwargs:
+                    self.llm_vars_capped.add(t)
+        # Constant-string tracking: a var only ever assigned literal strings
+        # (strategy_guidance = "…" in an if/elif chain) is the developer's own
+        # text. One dynamic assignment anywhere disqualifies it.
+        if targets:
+            if _is_all_constant([node.value]) or (
+                    isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+                self.assigned_const.update(targets)
+            else:
+                self.assigned_dynamic.update(targets)
         # x = <llm call>  → x is model output (tainted). Track it as CONFIRMED
         # model output — we can see the source in scope, unlike a bare param whose
         # name merely hints at input.
@@ -278,7 +337,7 @@ class _Analyzer(ast.NodeVisitor):
     # -- function params count as externally-controlled input --------------
     def visit_FunctionDef(self, node: ast.FunctionDef):
         for a in node.args.args + node.args.kwonlyargs:
-            if any(h in a.arg.lower() for h in INPUT_HINTS):
+            if _hint_match(a.arg, INPUT_HINTS):
                 self.tainted.add(a.arg)
         self.generic_visit(node)
 
@@ -292,6 +351,11 @@ class _Analyzer(ast.NodeVisitor):
         attr = func.attr
         dotted = _dotted(func) or ""
         root = _root_name(func)
+        # client.embeddings.create() / client.images.generate() / audio, files…
+        # are API calls on an LLM client but NOT text generation — a token
+        # ceiling (and a runaway text loop) doesn't apply to them.
+        if any(seg in NON_TEXT_SURFACES for seg in dotted.lower().split(".")[:-1]):
+            return False
         if attr in STRONG_LLM_CALLS:
             # create/messages.create/generate_content — require an LLM-ish path
             # or an LLM import in the file, to avoid e.g. db.create().
@@ -338,6 +402,32 @@ class _Analyzer(ast.NodeVisitor):
     def _loop_has_exit(node: ast.While) -> bool:
         return any(isinstance(n, (ast.Return, ast.Break)) for n in ast.walk(node))
 
+    # Loop-counter / budget names: a break guarded by one of these bounds the loop.
+    _BOUND_HINTS = ("max", "limit", "attempt", "attempts", "retry", "retries",
+                    "tries", "iteration", "iterations", "count", "counter",
+                    "budget", "deadline", "timeout", "remaining", "steps", "turns")
+
+    @classmethod
+    def _has_bounded_break(cls, node: ast.While) -> bool:
+        """True if the loop body contains an exit guarded by a comparison against
+        a counter/budget-style bound: `if attempts >= max_retries: break` (or
+        return/raise). That's the ubiquitous bounded-retry pattern — flagging it
+        as an unbounded runaway is a false positive. A model-controlled break
+        (`if "DONE" in reply: break`) does NOT qualify: the model is not a cap.
+        """
+        for n in ast.walk(node):
+            if not isinstance(n, ast.If):
+                continue
+            has_compare = any(isinstance(c, ast.Compare) for c in ast.walk(n.test))
+            if not has_compare:
+                continue
+            if not any(_hint_match(name, cls._BOUND_HINTS) for name in _names_in(n.test)):
+                continue
+            if any(isinstance(b, (ast.Break, ast.Return, ast.Raise))
+                   for stmt in n.body for b in ast.walk(stmt)):
+                return True
+        return False
+
     def visit_While(self, node: ast.While):
         # An infinite loop (`while True:` / `while 1:`) wrapping an LLM call is
         # the AutoGPT-style runaway: completion criteria may never be met, so it
@@ -356,6 +446,8 @@ class _Analyzer(ast.NodeVisitor):
                 if isinstance(n, ast.Call) and self._is_llm_call(n):
                     if self._bounded_depth > 0 and self._loop_has_exit(node):
                         break  # bounded by an enclosing for-loop → not a runaway
+                    if self._has_bounded_break(node):
+                        break  # counter/budget-guarded exit → bounded retry, not a runaway
                     self.findings.append(self._f(
                         "high", "Unbounded loop around an LLM call", node,
                         "An infinite loop wraps an LLM call with no iteration cap. "
@@ -374,6 +466,22 @@ class _Analyzer(ast.NodeVisitor):
         kwargs = {k.arg.lower() for k in node.keywords if k.arg}
         if kwargs & TOKEN_KEYS:
             return
+        # The client itself was constructed with a ceiling (ChatOpenAI(max_tokens=…))
+        # — every call through it is capped, whatever the call site passes.
+        if _root_name(node.func) in self.llm_vars_capped:
+            return
+        # A provider config OBJECT (google-genai `config=GenerateContentConfig(…)`)
+        # can carry the ceiling where we can't see it. Absence unprovable → quiet.
+        # (A literal dict config is still checked for its keys.)
+        for k in node.keywords:
+            if k.arg and k.arg.lower() in CONFIG_OBJECT_KWARGS:
+                if isinstance(k.value, ast.Dict):
+                    ck = {c.value.lower() for c in k.value.keys
+                          if isinstance(c, ast.Constant) and isinstance(c.value, str)}
+                    if ck & TOKEN_KEYS:
+                        return
+                    continue  # literal dict with no ceiling → keep checking
+                return  # opaque config object → can't prove absence, stay quiet
         # Spread params (`create(**self.chat_params)`) — the common framework
         # pattern. Try to RESOLVE the dict to the literal it was built from: if
         # we can see its keys and none is a token ceiling, that's a real (LOW)
@@ -464,21 +572,18 @@ class _Analyzer(ast.NodeVisitor):
         arg_names = [n for n in arg_names if n not in self.local_ipc_vars]
         # Confirmed: assigned from an LLM call we can see in this file.
         for n in arg_names:
-            low = n.lower()
-            if n in self.tainted_model and any(h in low for h in MODEL_SOURCE_HINTS):
+            if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):
                 return n, "the model's own output", True
         # Confirmed: an unambiguous external-input name (request/body/payload/…).
         for n in arg_names:
-            low = n.lower()
-            if any(h in low for h in STRONG_INPUT_HINTS):
+            if _hint_match(n, STRONG_INPUT_HINTS):
                 return n, "external user/request input", True
         # Inferred: the name hints at model/user data, but the source isn't
         # visible here (a bare parameter, a generic name). Present, not proven.
         for n in arg_names:
-            low = n.lower()
-            if any(h in low for h in MODEL_SOURCE_HINTS):
+            if _hint_match(n, MODEL_SOURCE_HINTS):
                 return n, "possible model output", False
-            if any(h in low for h in USER_SOURCE_HINTS) or n in self.tainted:
+            if _hint_match(n, USER_SOURCE_HINTS) or n in self.tainted:
                 return n, "data of unverified origin", False
         return None
 
@@ -519,8 +624,12 @@ class _Analyzer(ast.NodeVisitor):
                 return
             # The agent-specific, undismissable case: name the exact value and its
             # source so the finding reads like evidence, not a pattern hit.
+            # Severity follows proof: a flow we can SEE is high; a flow inferred
+            # from a name alone is medium — same calibration as deserialization.
+            # Asserting HIGH on a name-guess is how a report loses its maintainer.
             self.findings.append(self._f(
-                "high", "Dangerous execution sink", node,
+                "high" if confirmed else "medium",
+                "Dangerous execution sink", node,
                 f"{kind} executes `{value}` — {source}. A prompt injection your "
                 "input guardrail can't catch (it succeeds inside the model) or a "
                 "bad tool result becomes remote code execution here, after your "
@@ -529,7 +638,10 @@ class _Analyzer(ast.NodeVisitor):
                 evidence=f"{source} `{value}` -> {kind}",
                 confidence="high" if confirmed else "medium",
                 basis="confirmed" if confirmed else "inferred",
-                impact="Remote code execution if model/user output reaches this sink.",
+                impact="Remote code execution if model/user output reaches this sink."
+                       if confirmed else
+                       "Remote code execution if the inferred source is real — "
+                       "flow not proven here.",
             ))
         elif self.file_has_llm:
             # A dynamic sink in agent code we can't prove is reachable → a quiet
@@ -559,22 +671,37 @@ class _Analyzer(ast.NodeVisitor):
                 content_val = v
         if role_is_system and isinstance(content_val, ast.JoinedStr):
             interp = [v for v in content_val.values if isinstance(v, ast.FormattedValue)]
-            # Only the interpolations that could be DYNAMIC matter. An ALL_CAPS
-            # name (BROWSER_SYSTEM_MESSAGE) is a module constant, not user input,
-            # so interpolating it is not an injection surface.
-            def _is_constanty(fv):
+            # Only the interpolations that could be UNTRUSTED matter. Three kinds
+            # of names are the developer's own material, not an injection surface:
+            #   * ALL_CAPS module constants (BROWSER_SYSTEM_MESSAGE)
+            #   * vars only ever assigned literal strings in this file
+            #     (strategy_guidance = "…" in an if/elif chain)
+            #   * prompt-material names (agent_role_prompt, auto_agent_instructions,
+            #     persona, template…) — composing a system prompt out of prompt
+            #     parts IS how system prompts are built.
+            const_vars = self.assigned_const - self.assigned_dynamic
+            def _is_trusted(fv):
                 ns = _names_in(fv.value)
-                return ns and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", n) for n in ns)
-            dynamic = [fv for fv in interp if not _is_constanty(fv)]
+                return ns and all(
+                    re.fullmatch(r"[A-Z][A-Z0-9_]*", n)
+                    or n in const_vars
+                    or _hint_match(n, PROMPT_MATERIAL_HINTS)
+                    for n in ns)
+            dynamic = [fv for fv in interp if not _is_trusted(fv)]
             if dynamic:
                 names = set()
                 for fv in dynamic:
                     names |= _names_in(fv.value)
-                # High only when a clearly external user/request value flows in.
-                # Generic/app/model-generated names (summary_text, content) → medium.
-                strong = any(any(h in n.lower() for h in STRONG_INPUT_HINTS) for n in names)
+                # High only when a clearly external user/request value flows in
+                # ("prompt" itself doesn't count here — that's prompt material).
+                # Model-output / tainted names → medium. A generic identifier
+                # (field_name, language_name) is usually developer config → low.
+                strong = any(_hint_match(n, SYSTEM_PROMPT_STRONG_HINTS) for n in names)
+                modelish = any(_hint_match(n, MODEL_SOURCE_HINTS) or n in self.tainted
+                               for n in names)
+                sev = "high" if strong else ("medium" if modelish else "low")
                 self.findings.append(self._f(
-                    "high" if strong else "medium",
+                    sev,
                     "Interpolated system prompt (injection surface)", content_val,
                     "User/model-influenced text is interpolated into a system "
                     "prompt. Move untrusted input into a clearly-delimited user "
@@ -582,7 +709,9 @@ class _Analyzer(ast.NodeVisitor):
                     confidence="high" if strong else "low",
                     basis="confirmed" if strong else "inferred",
                     impact="Prompt-injection surface: untrusted text can override "
-                           "system instructions.",
+                           "system instructions." if strong or modelish else
+                           "Injection surface only if this value can carry "
+                           "untrusted text — it reads as developer config.",
                 ))
         self.generic_visit(node)
 
