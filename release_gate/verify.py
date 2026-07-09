@@ -557,13 +557,18 @@ _RUNTIME_ONLY_TITLES = {
 }
 _TOOLING_PATH_RE = re.compile(
     r"(^|/)(scripts?|build|dist|\.github|examples?|cookbooks?|recipes?|samples?|"
-    r"demos?|tutorials?|tests?|__tests__|test|docs?|"
+    r"demos?|tutorials?|tests?|__tests__|test|docs?|websites?|sites?|"
+    r"archives?|archived|deprecated|generated|vendor|fixtures?|mocks?|__mocks__|stories|"
     r"benchmarks?|bench|e2e|cypress|electron|webpack|rollup|vite|setup\.py|conftest)(/|\.|$)",
     re.IGNORECASE)
 
 
 def _is_tooling_path(rel: str) -> bool:
     rel = rel.replace("\\", "/")
+    # TypeScript type-declaration files have NO runtime — a `.d.ts` (or a
+    # `.spec-d.ts` type test) can't be a live sink. Exclude from scoring.
+    if rel.endswith(".d.ts") or ".spec-d." in rel or ".test-d." in rel:
+        return True
     return bool(_TOOLING_PATH_RE.search(rel) or _is_test_path(rel))
 
 
@@ -733,6 +738,15 @@ _JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs"}
 _JS_UNBOUNDED_LOOP_RE = re.compile(
     r"while\s*\(\s*true\s*\)|for\s*\(\s*;\s*;\s*\)", re.IGNORECASE
 )
+# A `while(true)` is only a runaway if nothing bounds it. A reachable exit
+# (break/return/throw) or a retry/step ceiling means it terminates — the common
+# middleware-retry pattern, not an agent runaway. (VoltAgent false positive.)
+_JS_LOOP_BOUNDED_RE = re.compile(
+    r"\b(?:break|return|throw)\b"
+    r"|retr(?:y|ies)"                # retry / retries / retryCount / middlewareRetryCount / maxRetries
+    r"|max(?:Steps|Iterations|OutputTokens)"
+    r"|stepCount|\bstopWhen\b|\bstepCountIs\b|Abort(?:Controller|Signal)",
+    re.IGNORECASE)
 _JS_LLM_SINK_RE = re.compile(
     r"(?:streamText|generateText|chat\.completions|messages\.create|\.invoke\s*\(|\.stream\s*\()"
 )
@@ -758,6 +772,22 @@ _JS_EXEC_SINK_RE = re.compile(
     r"|\bexecSync\s*\("
     r"|\bexec\s*\([^)]*\$\{"        # exec(`...${x}`) — interpolated command
 )
+
+# JS has no dataflow pass, so — like the Python side — we only assert HIGH/
+# confirmed when a genuinely-external source is visibly reaching the sink. A
+# value from request/model input carries one of these markers; a config-driven
+# transform expression (promptfoo-style `new Function(config.parser)`) does not.
+_JS_STRONG_INPUT_RE = re.compile(
+    r"\breq(uest)?\.(body|params|query|url|headers|cookies)\b"
+    r"|\breq(uest)?\[|\bctx\.request\b|\bevent\.body\b|\bsearchParams\b"
+    r"|\bwebhook\b|\buserInput\b|\.choices\[|\bmessage\.content\b"
+    r"|\bcompletion\b|\bllm(Output|Response)\b",
+    re.IGNORECASE)
+# Shell-escaping / quoting applied to interpolated args → mitigated (promptfoo's
+# `execSync(`grep ${args.map(shellEscape)}`)` is not an injection sink).
+_JS_SHELL_ESCAPE_RE = re.compile(
+    r"shell[_-]?escape|shell[_-]?quote|shlex|escape[_-]?shell|\bquote\(",
+    re.IGNORECASE)
 
 
 def _js_exec_is_dynamic(line: str) -> bool:
@@ -815,28 +845,53 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
         # exec/eval sink — only when the command is DYNAMIC. A constant string
         # literal (execSync('git ls-files ...')) is not an injection sink.
         if code and _JS_EXEC_SINK_RE.search(code) and _js_exec_is_dynamic(line):
-            # Interpolation/concatenation = clearly dynamic command → high.
-            # A bare variable argument → medium (can't prove the source without
-            # JS dataflow; many are internal install/CLI commands).
+            # No JS dataflow, so calibrate like the Python side: HIGH/confirmed
+            # ONLY when external (request/model) input is visibly reaching the
+            # sink. A dynamically-built value with no such marker — a config
+            # transform expression, an agent's own generated code — is
+            # MEDIUM/inferred ("confirm the source"), not a confident RCE. This
+            # is what keeps a tool like promptfoo (which evals user-authored
+            # config transforms by design) from getting a wall of phantom highs.
             interpolated = "${" in line or bool(re.search(r"['\"`]\s*\+|\+\s*['\"`]", line))
-            findings.append(_finding(
-                "high" if interpolated else "medium",
-                "Dangerous execution sink" if interpolated else "Dynamic execution sink",
-                rel, i, stripped[:120],
-                "eval/new Function/child_process.exec on a dynamic command is a "
-                "remote-code-execution risk if model or user input reaches it. "
-                "Use a fixed argument list or strictly validate/sandbox the input.",
-                confidence="high" if interpolated else "low",
-                basis="confirmed" if interpolated else "inferred",
-                impact="Remote code execution if model/user output reaches this sink.",
-            ))
+            ctx = "\n".join(lines[max(0, i - 3):i + 1])
+            strong = bool(_JS_STRONG_INPUT_RE.search(ctx))
+            escaped = bool(_JS_SHELL_ESCAPE_RE.search(line))
+            if escaped and not strong:
+                pass  # shell-escaped / quoted args are mitigated — not an injection
+            elif interpolated and strong:
+                findings.append(_finding(
+                    "high", "Dangerous execution sink", rel, i, stripped[:120],
+                    "eval/new Function/child_process.exec executes a value that reaches "
+                    "it from request/model input — remote code execution. Use a fixed "
+                    "argument list, or strictly validate/sandbox the input.",
+                    confidence="high", basis="confirmed",
+                    impact="Remote code execution: external input reaches this sink."))
+            elif interpolated:
+                findings.append(_finding(
+                    "medium", "Dynamic execution sink", rel, i, stripped[:120],
+                    "eval/new Function/child_process.exec runs a dynamically-built "
+                    "value. If it can come from model or request input this is remote "
+                    "code execution; if it's a trusted config/transform expression it "
+                    "may be by design. Confirm the source, or sandbox it.",
+                    confidence="medium", basis="inferred",
+                    impact="RCE only if model/request input can reach this sink — "
+                           "provenance not proven here."))
+            else:
+                findings.append(_finding(
+                    "low", "Dynamic execution sink", rel, i, stripped[:120],
+                    "eval/new Function/child_process.exec runs a non-constant value. "
+                    "Confirm it can't be reached by model or request input.",
+                    confidence="low", basis="inferred",
+                    impact="Potential code execution — reachability not proven."))
 
         # Unbounded LLM loop — ONLY a truly unbounded loop (while(true) / for(;;)).
         # A bounded `while (i < max)` or a `for await (... of stream)` (just
         # consuming a response stream) is not a runaway and must not be flagged.
         if _JS_UNBOUNDED_LOOP_RE.match(stripped):
-            window = "\n".join(lines[i - 1:i + 8])
-            if _JS_LLM_SINK_RE.search(window):
+            # Look a few lines BEFORE the loop too — the retry ceiling is often
+            # declared just above it — and well into the body.
+            window = "\n".join(lines[max(0, i - 6):i + 20])
+            if _JS_LLM_SINK_RE.search(window) and not _JS_LOOP_BOUNDED_RE.search(window):
                 findings.append(_finding(
                     "high", "Unbounded loop around an LLM call", rel, i, stripped[:120],
                     "A loop wrapping an LLM call with no iteration cap can spin forever, "
