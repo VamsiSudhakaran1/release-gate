@@ -210,6 +210,48 @@ def test_js_exec_calibration_bare_low_config_medium_external_high():
     assert any(f["severity"] == "high" and f["basis"] == "confirmed" for f in interp)
 
 
+def _findings(src):
+    return analyze_python(src, "x.py")
+
+
+def test_exec_of_llm_codegen_helper_output_is_flagged():
+    # BlenderGPT pattern: exec() runs code returned by a locally-named LLM
+    # codegen helper. The SDK call is hidden inside the helper, so a bare var
+    # ('blender_code') used to make this RCE completely invisible.
+    src = (
+        "def generate_blender_code(prompt):\n"
+        "    return call_model(prompt)\n"
+        "blender_code = generate_blender_code(user_prompt)\n"
+        "exec(blender_code, globals())\n"
+    )
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert hits, "exec of codegen-helper output should be flagged"
+    # Inferred (we can't see the SDK call inside the helper), not confirmed.
+    assert hits[0]["severity"] == "medium" and hits[0]["basis"] == "inferred"
+
+
+def test_exec_of_ask_gpt_helper_is_flagged():
+    src = (
+        "code = ask_gpt_for_script(task)\n"
+        "exec(code)\n"
+    )
+    assert any(f["title"] == "Dangerous execution sink" for f in _findings(src))
+
+
+def test_exec_of_non_llm_helper_not_flagged_by_helper_rule():
+    # generate_uuid() is a generation verb but not a code/text noun — and nobody
+    # exec()s a uuid. Must not be treated as codegen-helper output.
+    src = (
+        "token = generate_uuid()\n"
+        "print(token)\n"
+        "exec(compile(open(path).read(), path, 'exec'))\n"
+    )
+    # Nothing here may be attributed to a code-generation helper: generate_uuid
+    # isn't codegen, and the compile(open(...)) exec is a bare dynamic sink.
+    assert not any("code-generation helper" in (f.get("recommendation") or "")
+                   for f in _findings(src))
+
+
 def test_js_bounded_retry_loop_not_flagged_unbounded():
     # VoltAgent pattern: while(true) with a retry ceiling + throw exit is bounded.
     from release_gate.verify import _scan_js_file
