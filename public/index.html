@@ -2729,6 +2729,17 @@
       '<div style="margin-top:4px"><span class="pg-decision-badge ' + decClass + '">' + escHtml(decision) + '</span>' +
       ' <span style="font-size:.8rem;opacity:.7;margin-left:8px">' + escHtml(dateStr) + '</span></div></div></div>';
 
+    // Downloads — surfaced at the TOP so the report is one click from export.
+    var rid = data.id || '';
+    var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
+    h += '<div class="rpt-export" style="margin-top:14px">' +
+      (rid ? '<button onclick="downloadRunPdf(\'' + escHtml(rid) + '\', this)" style="background:var(--accent);color:#fff;border:none">&#x2B07;&nbsp; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' : '') +
+      '<button onclick="exportReportJson()">&#x2B07;&nbsp; Download JSON</button>' +
+      '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
+      (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
+      '</div>' +
+      (rid && !paid ? '<div style="font-size:.78rem;color:#6b7280;margin-top:8px">The PDF summary shows score, decision &amp; counts. <a href="#enterprise" style="color:var(--accent);font-weight:600">Upgrade to Pro</a> for a PDF with every finding (file:line + fixes) &amp; compliance mapping.</div>' : '');
+
     // Two-axis scorecard
     if ((cs && cs.applicable) || gov) {
       var ax = '<div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">';
@@ -2805,17 +2816,6 @@
         (!passed && !issues.length && evidence ? '<div class="ev">' + escHtml(evidence) + '</div>' : '') +
         '</div></div>';
     });
-
-    // Export
-    var rid = data.id || '';
-    var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
-    h += '<div class="rpt-export">' +
-      (rid ? '<button onclick="downloadRunPdf(\'' + escHtml(rid) + '\', this)" style="background:var(--accent);color:#fff;border:none">&#x2B07;&nbsp; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' : '') +
-      '<button onclick="exportReportJson()">&#x2B07;&nbsp; Download JSON</button>' +
-      '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
-      (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
-      '</div>' +
-      (rid && !paid ? '<div style="font-size:.78rem;color:#6b7280;margin-top:8px">The PDF summary shows score, decision &amp; counts. <a href="#enterprise" style="color:var(--accent);font-weight:600">Upgrade to Pro</a> for a PDF with every finding (file:line + fixes) &amp; compliance mapping.</div>' : '');
 
     document.getElementById('report-modal-body').innerHTML = h;
   }
