@@ -921,3 +921,25 @@ def test_js_injection_precision_guards_hold():
     assert not has_inj("throw new Error(`API error: ${response.status}`);\n")
     # Developer's own material composed into a system prompt — not flagged.
     assert not has_inj("const messages=[{role:'system', content:`Be helpful. ${persona}`}];\n")
+
+
+def test_js_system_prompt_classifies_interpolation_not_prose():
+    """A system prompt that mentions 'input'/'content' in its PROSE while
+    interpolating a benign ${new Date()} must not be flagged (the mem0 FP).
+    Classification looks only at the code inside ${...}, never the prose."""
+    from release_gate.verify import _scan_js_file
+    mem0 = (
+        'export function f(parsedMessages) {\n'
+        '  const systemPrompt = `You are an Organizer. Extract facts from the input data.\n'
+        '  - Today is ${new Date().toISOString().split("T")[0]}.`;\n'
+        '  const userPrompt = `Input:\\n${parsedMessages}`;\n'
+        '  return [systemPrompt, userPrompt];\n'
+        '}'
+    )
+    assert not any("system prompt" in f["title"].lower() for f in _scan_js_file("index.ts", mem0))
+    # External input into a system prompt is still HIGH…
+    hi = _scan_js_file("a.ts", 'const systemPrompt = `Hi ${req.body.text}`;')
+    assert any(f["severity"] == "high" and "system prompt" in f["title"].lower() for f in hi)
+    # …and model/tool output stays MEDIUM.
+    md = _scan_js_file("b.ts", 'const system = `Ctx: ${completion.choices[0].message.content}`;')
+    assert any(f["severity"] == "medium" and "system prompt" in f["title"].lower() for f in md)

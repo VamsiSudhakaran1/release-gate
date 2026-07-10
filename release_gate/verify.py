@@ -768,6 +768,11 @@ _JS_DEF_SITE_RE = re.compile(r"\b(?:function|async|get|set)\s+$|\*\s*$")
 # the fact so we grade external input (HIGH) vs model/tool output (MEDIUM) vs the
 # developer's own material (not flagged) — instead of only catching req/params/body.
 _JS_TEMPLATE_INTERP_RE = re.compile(r"`[^`]*\$\{[^}]+\}[^`]*`")
+# The interpolation EXPRESSIONS inside a template — classification must look only
+# at the code inside ${...}, never the surrounding prose. A system prompt whose
+# instructions mention "input"/"content" while interpolating a benign
+# `${new Date()}` must not be graded by those prose words (the mem0 FP).
+_JS_INTERP_INNER_RE = re.compile(r"\$\{([^}]+)\}")
 # LLM-specific system-prompt fields: unambiguous enough that an interpolated
 # template assigned to them is a system prompt (Vercel AI SDK's `system:` param,
 # a `systemPrompt`/`systemMessage` var). Anchored right before the backtick.
@@ -1048,13 +1053,16 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
             pass
         else:
             continue
-        expr = m.group(0)
-        if _JS_INJ_EXTERNAL_RE.search(expr):
+        # Classify by the interpolation EXPRESSIONS only (the code inside ${...}),
+        # not the whole template — prose like "extract facts from the input"
+        # otherwise matched `input` and false-flagged a benign `${new Date()}`.
+        inners = " ".join(_JS_INTERP_INNER_RE.findall(m.group(0)))
+        if _JS_INJ_EXTERNAL_RE.search(inners):
             sev, src_conf, basis, who = "high", "high", "confirmed", "request/user input"
-        elif _JS_INJ_MODEL_RE.search(expr):
+        elif _JS_INJ_MODEL_RE.search(inners):
             sev, src_conf, basis, who = "medium", "low", "inferred", "model or tool output"
         else:
-            continue  # developer's own prompt material — not an injection surface
+            continue  # developer's own code (dates, config) — not an injection surface
         seen_inj.add(line_no)
         line_text = lines[line_no - 1].strip() if line_no - 1 < len(lines) else ""
         findings.append(_finding(
