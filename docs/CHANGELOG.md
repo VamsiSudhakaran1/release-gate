@@ -4,6 +4,40 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🔒 Security hardening — browser surface & access control
+
+- **Security response headers on every response.** A document-scoped CSP
+  (`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`, no remote
+  script origins), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`. HSTS is
+  opt-in via `RG_ENABLE_HSTS`; CSP overridable via `RG_CSP`. A security product
+  now passes its own header audit.
+- **Fixed anonymous rate limiting behind a proxy.** The anonymous scan limiter
+  keyed on `request.client.host` — which behind Vercel is the *proxy's* IP, so
+  every anonymous visitor shared one counter and the whole world was throttled
+  after 3 total scans. It now reads the forwarded client IP.
+- **`/api/debug/github-app` is now admin-only** (was unauthenticated — it
+  exposed GitHub-App identifiers and installation state to any caller).
+- **SPA static-file path-traversal hardening** (`is_relative_to`) plus
+  `Cache-Control` on served static assets.
+
+### 🚀 JS/TS analyzer — Node `vm.*` sinks + model-source prompt injection
+
+Building on the exec-sink calibration in #154:
+
+- **Node `vm.*` escape sinks** now covered for JS/TS (`runInNewContext`,
+  `runInContext`, `runInThisContext`, `compileFunction`) — flowing through the
+  same confirmed/inferred severity ladder as the other exec sinks.
+- **Prompt-injection detection now sees model/tool output**, not just
+  `req/params/body`, and is graded (external request/user input → HIGH; model or
+  tool output → MEDIUM). It replaces the loose 300-char "messages array nearby"
+  window with anchoring to the actual message shape — an LLM-specific field
+  (`system:` / `systemPrompt`) qualifies alone, a generic `content:` only inside
+  a `role:'system'` object — so a var named `content`, a UI renderer, a user-role
+  message, or an HTTP-error string interpolating `response.status` never
+  false-positives.
+
+
 ### 🎯 Precision — false-positive calibration against an 8-repo real-world corpus
 
 Hand-triaged every finding the scanner produced on crewAI, smolagents,

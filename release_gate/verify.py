@@ -764,12 +764,34 @@ _JS_MAX_TOKENS_NEARBY_RE = re.compile(
 # A match that is the function's own DEFINITION (`export async function
 # generateText(` / class method `async generateText(`), not a call into an LLM.
 _JS_DEF_SITE_RE = re.compile(r"\b(?:function|async|get|set)\s+$|\*\s*$")
-_JS_TEMPLATE_INJECTION_RE = re.compile(
-    r"`[^`]*\$\{(?:req|params|body)\.[^}]+\}[^`]*`"
-)
-_JS_MESSAGES_CONTEXT_RE = re.compile(
-    r"(?:messages\s*[=:]\s*\[|systemPrompt\s*[=:])"
-)
+# Any template literal that interpolates a value. The source is classified after
+# the fact so we grade external input (HIGH) vs model/tool output (MEDIUM) vs the
+# developer's own material (not flagged) — instead of only catching req/params/body.
+_JS_TEMPLATE_INTERP_RE = re.compile(r"`[^`]*\$\{[^}]+\}[^`]*`")
+# LLM-specific system-prompt fields: unambiguous enough that an interpolated
+# template assigned to them is a system prompt (Vercel AI SDK's `system:` param,
+# a `systemPrompt`/`systemMessage` var). Anchored right before the backtick.
+_JS_SYSPROMPT_FIELD_RE = re.compile(
+    r"(?:system|systemPrompt|system_prompt|systemMessage|systemInstruction)\s*[:=]\s*$",
+    re.IGNORECASE)
+# A bare `content:` is far too common (file content, UI content, a var literally
+# named content) to flag alone. It's only a chat message when its object also
+# sets role:'system'|'developer' — the shape the Python analyzer keys on.
+_JS_CONTENT_FIELD_RE = re.compile(r"content\s*[:=]\s*$", re.IGNORECASE)
+_JS_SYSTEM_ROLE_RE = re.compile(
+    r"role\s*:\s*['\"](?:system|developer)['\"]", re.IGNORECASE)
+# Source classification for an interpolated ${...} expression, mirroring the
+# Python analyzer: EXTERNAL request/user input is the worst case (HIGH); model /
+# tool output is a real but lower-confidence surface (MEDIUM); an unrecognized
+# identifier is the developer's own material and is not flagged.
+_JS_INJ_EXTERNAL_RE = re.compile(
+    r"\b(?:req|request|params|body|query|searchParams|userInput|user_input|"
+    r"userMessage|user_message|input|payload|formData|args|url|headers|cookies)\b",
+    re.IGNORECASE)
+_JS_INJ_MODEL_RE = re.compile(
+    r"\b(?:completion|completions|response|result|reply|answer|generation|"
+    r"toolResult|tool_result|assistant|choices|delta|content|message|msg|text|"
+    r"output|llmOutput|llmResponse)\b", re.IGNORECASE)
 _JS_SECRET_RE = re.compile(
     r"sk-[A-Za-z0-9]{20,}"
     r"|ANTHROPIC_API_KEY\s*=\s*[\"'][a-zA-Z0-9]{20,}[\"']"
@@ -780,6 +802,7 @@ _JS_EXEC_SINK_RE = re.compile(
     r"|new\s+Function\s*\("
     r"|child_process\.(?:exec|execSync|spawn|spawnSync)\s*\("
     r"|\bexecSync\s*\("
+    r"|\bvm\.(?:runInNewContext|runInContext|runInThisContext|compileFunction)\s*\("  # Node vm escape
     r"|\bexec\s*\([^)]*\$\{"        # exec(`...${x}`) — interpolated command
 )
 
@@ -806,7 +829,10 @@ def _js_exec_is_dynamic(line: str) -> bool:
     `execSync('git ls-files')` → constant → not a sink. `exec(`...${x}`)` or
     `execSync(userCmd)` → dynamic → real risk.
     """
-    m = re.search(r"(?:eval|new\s+Function|execSync|spawnSync|spawn|exec)\s*\(", line)
+    m = re.search(
+        r"(?:eval|new\s+Function|execSync|spawnSync|spawn|exec|"
+        r"runInNewContext|runInContext|runInThisContext|compileFunction)\s*\(",
+        line)
     if not m:
         return True  # be conservative if we can't locate the call
     rest = line[m.end():].lstrip()
@@ -994,21 +1020,52 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                        "by itself.",
             ))
 
-    # Prompt injection risk: template literal with req./params./body. near messages array or systemPrompt
-    for m in _JS_TEMPLATE_INJECTION_RE.finditer(text):
+    # Prompt injection: a template literal interpolating an UNTRUSTED value into a
+    # system prompt. Graded by source (external request/user input → HIGH; model
+    # or tool output → MEDIUM; the developer's own material → not flagged), and
+    # precision-gated to the actual message shape so common words never
+    # false-positive. This replaces the old req/params/body-only check that used
+    # a loose 300-char "messages array is nearby" window — which flagged a var
+    # named `content`, a UI renderer, and `Error(`${response.status}`)` strings.
+    seen_inj: set = set()
+    for m in _JS_TEMPLATE_INTERP_RE.finditer(text):
         start = m.start()
         line_no = text.count("\n", 0, start) + 1
-        context_window = text[max(0, start - 300):start + 300]
-        if _JS_MESSAGES_CONTEXT_RE.search(context_window):
-            line_text = lines[line_no - 1].strip() if line_no - 1 < len(lines) else ""
-            findings.append(_finding(
-                "high", "Prompt injection risk (template literal with user input)", rel, line_no, line_text[:120],
-                "Template literal interpolating request parameters (req., params., body.) inside a messages "
-                "array or systemPrompt is a prompt-injection vector. Sanitize or keep untrusted input "
-                "in user-role messages only.",
-                confidence="high", basis="confirmed",
-                impact="Prompt-injection surface: untrusted request data reaches the prompt.",
-            ))
+        if line_no in seen_inj:
+            continue
+        # Skip an interpolation inside a comment (masked blanks comment bodies to
+        # spaces, so a real backtick there means it's live code).
+        if start < len(masked) and masked[start] != "`":
+            continue
+        # The literal must be the DIRECT value of a system-prompt field. An
+        # LLM-specific field (system:/systemPrompt=) qualifies alone; a generic
+        # content: only inside a role:'system' object.
+        prefix = text[max(0, start - 48):start]
+        if _JS_SYSPROMPT_FIELD_RE.search(prefix):
+            pass
+        elif _JS_CONTENT_FIELD_RE.search(prefix) and \
+                _JS_SYSTEM_ROLE_RE.search(text[max(0, start - 160):start]):
+            pass
+        else:
+            continue
+        expr = m.group(0)
+        if _JS_INJ_EXTERNAL_RE.search(expr):
+            sev, src_conf, basis, who = "high", "high", "confirmed", "request/user input"
+        elif _JS_INJ_MODEL_RE.search(expr):
+            sev, src_conf, basis, who = "medium", "low", "inferred", "model or tool output"
+        else:
+            continue  # developer's own prompt material — not an injection surface
+        seen_inj.add(line_no)
+        line_text = lines[line_no - 1].strip() if line_no - 1 < len(lines) else ""
+        findings.append(_finding(
+            sev, "Interpolated system prompt (injection surface)", rel, line_no, line_text[:120],
+            f"A template literal interpolates {who} into a system-prompt / messages "
+            "context. Untrusted text there can override system instructions. Keep "
+            "untrusted input in a clearly-delimited user-role message only.",
+            confidence=src_conf, basis=basis,
+            impact="Prompt-injection surface: untrusted text can override system "
+                   "instructions.",
+        ))
 
     return findings
 

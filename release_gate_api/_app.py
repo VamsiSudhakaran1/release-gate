@@ -119,6 +119,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Security headers ─────────────────────────────────────────────────────────
+# A security product that ships without security headers fails its own audit.
+# These defend the browser surface: clickjacking (frame-ancestors/X-Frame),
+# MIME sniffing, referrer leakage, and — via CSP — the blast radius of any
+# injected markup. The page is self-contained (all CSS/JS inline, no external
+# origins, data: images only), so a tight CSP costs nothing here. 'unsafe-inline'
+# is required because styles/handlers are inline; we still forbid remote script
+# origins, framing, objects, and base-tag hijacking, which is what actually
+# contains an XSS. Overridable via RG_CSP for teams that self-host behind a CDN.
+_DEFAULT_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'; "
+    "object-src 'none'"
+)
+_CSP = os.environ.get("RG_CSP", _DEFAULT_CSP)
+# HSTS only when we're confident we're behind TLS (prod). Opt in via RG_ENABLE_HSTS
+# so local http dev isn't pinned to https.
+_HSTS_ENABLED = os.environ.get("RG_ENABLE_HSTS", "").lower() in ("1", "true", "yes")
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    h.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()")
+    h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    # A JSON/PDF API response shouldn't carry a document CSP; only guard HTML.
+    ctype = h.get("content-type", "")
+    if ctype.startswith("text/html"):
+        h.setdefault("Content-Security-Policy", _CSP)
+    if _HSTS_ENABLED:
+        h.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+    return response
+
+
 # GitHub App webhook router
 from release_gate_api.github_app import router as github_router
 app.include_router(github_router)
@@ -350,8 +396,11 @@ async def audit_public(body: AuditRequest, request: Request, authorization: Opti
                     },
                 )
     else:
-        # Anonymous: IP-based rate limiting
-        ip = request.client.host if request.client else "unknown"
+        # Anonymous: IP-based rate limiting. Must use the forwarded client IP —
+        # behind Vercel/any proxy, request.client.host is the PROXY's IP, so
+        # every anonymous visitor would share one counter and the whole world
+        # gets throttled after 3 total scans. _client_ip() reads X-Forwarded-For.
+        ip = _client_ip(request)
         now = _time.time()
         entry = _anon_counters.get(ip)
         if entry and (now - entry["window_start"]) < _ANON_WINDOW:
@@ -1106,8 +1155,15 @@ async def health():
 
 
 @app.get("/api/debug/github-app")
-async def debug_github_app_endpoint(owner: str, repo: str):
-    """Diagnostic: test GitHub App configuration and installation for owner/repo."""
+async def debug_github_app_endpoint(owner: str, repo: str,
+                                    authorization: Optional[str] = Header(default=None)):
+    """Diagnostic: test GitHub App configuration and installation for owner/repo.
+
+    Admin-only — the diagnostic reveals GitHub App identifiers, installation
+    state, and configuration presence, which is reconnaissance an anonymous
+    caller should never get. (Previously this was unauthenticated.)
+    """
+    _require_admin(authorization)
     from release_gate_api.github_app import debug_github_app
     return debug_github_app(owner, repo)
 
@@ -1226,9 +1282,19 @@ async def _serve_spa(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found")
     candidate = (_PUBLIC_DIR / full_path).resolve()
-    # Serve an existing static asset if it's safely inside public/ (local dev)
-    if candidate.is_file() and str(candidate).startswith(str(_PUBLIC_DIR)):
-        return FileResponse(str(candidate))
+    public_root = _PUBLIC_DIR.resolve()
+    # Serve an existing static asset if it's safely inside public/ (local dev).
+    # Use is_relative_to (not string startswith) so a sibling like `public-x/`
+    # can't satisfy the prefix check — a path-traversal hardening.
+    try:
+        inside = candidate.is_relative_to(public_root)
+    except AttributeError:  # Python < 3.9
+        inside = str(candidate).startswith(str(public_root) + os.sep)
+    if inside and candidate.is_file():
+        # Static assets are immutable per deploy → safe to cache hard. The HTML
+        # itself is served fresh below, never from this path.
+        return FileResponse(str(candidate),
+                            headers={"Cache-Control": "public, max-age=86400"})
     return HTMLResponse(_index_html())
 
 

@@ -871,3 +871,53 @@ def test_js_defsites_comments_and_strings_not_calls():
     )
     assert not any(f["title"] == "LLM call with no token ceiling"
                    for f in _scan_js_file("a.ts", src))
+
+
+# ── New coverage: Node vm.* sinks + model-source system-prompt injection ────
+
+def test_js_vm_escape_sinks_flagged():
+    from release_gate.verify import _scan_js_file
+    # vm.runInNewContext on external input is an RCE sink (Node sandbox escape).
+    hi = _scan_js_file("a.ts", "vm.runInNewContext(`${userInput}`, ctx);\n")
+    assert any(f["severity"] == "high" and "execution sink" in f["title"].lower() for f in hi)
+    # A constant argument to vm.compileFunction is not a sink.
+    const = _scan_js_file("b.ts", "vm.compileFunction('return 1');\n")
+    assert not any("execution sink" in f["title"].lower() for f in const)
+
+
+def test_js_injection_covers_model_output_not_just_request():
+    from release_gate.verify import _scan_js_file
+
+    def inj(src):
+        return [f for f in _scan_js_file("x.ts", src)
+                if "system prompt" in f["title"].lower()]
+
+    # External request input into a system-prompt content → HIGH.
+    hi = inj("const messages=[{role:'system', content:`Answer ${req.body.q}`}];\n")
+    assert hi and hi[0]["severity"] == "high"
+    # Model/tool output into a system prompt → MEDIUM (new coverage; the old
+    # check only saw req/params/body).
+    md = inj("const messages=[{role:'system', content:`Prior: ${toolResult}`}];\n")
+    assert md and md[0]["severity"] == "medium"
+    # Vercel AI SDK top-level `system:` param with external input → HIGH.
+    sysp = inj("await generateText({ system:`You are ${req.body.persona}`, prompt:p });\n")
+    assert sysp and sysp[0]["severity"] == "high"
+
+
+def test_js_injection_precision_guards_hold():
+    from release_gate.verify import _scan_js_file
+
+    def has_inj(src):
+        return any("system prompt" in f["title"].lower()
+                   for f in _scan_js_file("x.ts", src))
+
+    # A var literally named `content` building a file/skill body — not a message.
+    assert not has_inj("const content = `name: ${skill.name}\n${skill.content}`;\n")
+    # A UI renderer's content: field with no role:'system' — not a message.
+    assert not has_inj("return { content: `${inputText}\n${formatValue(part.output)}` };\n")
+    # content: in a USER-role message — not a system-prompt surface.
+    assert not has_inj("const messages=[{role:'user', content:`${req.body.q}`}];\n")
+    # An HTTP error string interpolating response.status — not a prompt at all.
+    assert not has_inj("throw new Error(`API error: ${response.status}`);\n")
+    # Developer's own material composed into a system prompt — not flagged.
+    assert not has_inj("const messages=[{role:'system', content:`Be helpful. ${persona}`}];\n")
