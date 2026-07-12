@@ -1119,6 +1119,167 @@ def build_report(root: Path, mode: str = "ci",
 
 # ─────────────────────────── Baseline / diff-aware mode ─────────────────────
 
+# ── AI-change review gate (`release-gate pr`) ───────────────────────────────
+# Composition helpers that fold the existing baseline-regression gate and the
+# lockfile drift gate into ONE merge verdict for a pull request, and add one new
+# FACTUAL trust signal (did the change touch code without touching a test). No
+# heuristics, no predictions — every line the gate emits is derived from the diff
+# so a reviewer can trust the verdict instead of re-deriving it by hand.
+
+_TEST_PATH_RE = re.compile(
+    r"(^|/)(?:tests?|__tests__|e2e|spec|specs)(/|$)"
+    r"|(^|/)(?:test_[^/]+|[^/]+_test|[^/]+\.test(?:-d)?|[^/]+\.spec(?:-d)?|[^/]+_spec)\.[A-Za-z]+$",
+    re.IGNORECASE)
+# Files that are product source we'd expect tests to cover (exclude docs, config,
+# lockfiles, CI yaml — changing those doesn't demand a new test).
+_SOURCE_EXT_RE = re.compile(r"\.(py|js|jsx|ts|tsx|mjs|cjs|go|rs|java|rb|php)$", re.IGNORECASE)
+
+
+def changed_tests_ratio(changed_files: List[str]) -> Dict[str, Any]:
+    """FACTUAL coverage-of-change signal (advisory, never blocks).
+
+    Given the files a PR touched, report whether it modified product source
+    without touching a single test file. This is the single most-requested trust
+    signal for AI-generated PRs, and it's a plain fact about the diff — not a
+    prediction about how hard the code will be to debug.
+    """
+    src = [f for f in changed_files if _SOURCE_EXT_RE.search(f) and not _TEST_PATH_RE.search(f)]
+    tests = [f for f in changed_files if _TEST_PATH_RE.search(f)]
+    return {
+        "source_files_changed": len(src),
+        "test_files_changed": len(tests),
+        # Only "untested" when real product code moved and no test moved with it.
+        "source_without_tests": bool(src) and not tests,
+    }
+
+
+def unify_verdict(baseline_comparison: Optional[Dict[str, Any]],
+                  lock_comparison: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fold the net-new-regression gate and the lockfile-drift gate into ONE
+    PROMOTE / HOLD / BLOCK for a PR. A reviewer should read one verdict, not two.
+
+    Rules (conservative, "don't make it worse"):
+      * BLOCK if the baseline gate blocks (net-new high / lost critical
+        safeguard / material score regression).
+      * HOLD if the baseline gate holds, OR behavior drifted from the lock
+        without the lock being updated (prompt/model/tool changed silently),
+        OR the pinned certificate expired.
+      * PROMOTE otherwise.
+    Drift is HOLD, not BLOCK: a silent behavior change is a must-review, not
+    necessarily a must-reject — the human decides, but they can't miss it.
+    """
+    reasons: List[str] = []
+    base_verdict = (baseline_comparison or {}).get("verdict", "PASS")
+    # Normalize the baseline gate's PASS/HOLD/BLOCK into the merge vocabulary.
+    decision = {"BLOCK": "BLOCK", "HOLD": "HOLD", "PASS": "PROMOTE"}.get(base_verdict, "PROMOTE")
+    reasons.extend((baseline_comparison or {}).get("reasons", []))
+
+    drift = None
+    if lock_comparison is not None:
+        if lock_comparison.get("drift") and not lock_comparison.get("_lock_updated_in_pr"):
+            drift = "drift"
+            if decision == "PROMOTE":
+                decision = "HOLD"
+            for r in lock_comparison.get("reasons", []):
+                reasons.append("behavior drift — " + r)
+        if lock_comparison.get("expired"):
+            if decision == "PROMOTE":
+                decision = "HOLD"
+            reasons.append("pinned certificate expired — re-lock and re-verify")
+
+    return {"decision": decision, "reasons": reasons, "baseline_verdict": base_verdict,
+            "drift": drift}
+
+
+def render_ai_pr_comment(head_report: Dict[str, Any],
+                         baseline_comparison: Dict[str, Any],
+                         unified: Dict[str, Any],
+                         coverage: Dict[str, Any],
+                         lock_comparison: Optional[Dict[str, Any]] = None) -> str:
+    """The AI-change review comment: what THIS change introduced, what to ignore.
+
+    Structured so a reviewer sees, in one glance: the merge decision, the
+    net-new items worth their attention, the silent behavior drift no diff shows,
+    advisory context, and the inherited debt the gate is deliberately ignoring.
+    """
+    dec = unified.get("decision", "PROMOTE")
+    demoji = {"PROMOTE": "🟢", "HOLD": "🟡", "BLOCK": "🔴"}.get(dec, "⚪")
+    tagline = {
+        "PROMOTE": "safe to merge — this change introduced no net-new risk",
+        "HOLD": "mergeable after a human looks at the flagged items below",
+        "BLOCK": "this change made things net-worse — see reasons",
+    }.get(dec, "")
+    out: List[str] = [f"### {demoji} release-gate — AI-change review: **{dec}**",
+                      f"_{tagline}_", ""]
+
+    delta = baseline_comparison.get("code_safety_delta")
+    if delta is not None:
+        arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "—")
+        out.append(f"**Agent Code Safety:** {baseline_comparison.get('baseline_code_safety')} "
+                   f"→ {baseline_comparison.get('current_code_safety')} ({arrow} {delta:+d})")
+        out.append("")
+
+    new_findings = baseline_comparison.get("new_code_findings") or []
+    new_sg = baseline_comparison.get("new_safeguard_failures") or []
+    drift_lines = []
+    if lock_comparison is not None and lock_comparison.get("drift") \
+            and not lock_comparison.get("_lock_updated_in_pr"):
+        if lock_comparison.get("model_changed"):
+            drift_lines.append(f"model changed `{lock_comparison.get('saved_model')}` → "
+                               f"`{lock_comparison.get('current_model')}` — release-gate.lock not updated")
+        for p in lock_comparison.get("changed", []):
+            drift_lines.append(f"behavior file changed `{p}` — release-gate.lock not updated")
+        for p in lock_comparison.get("added", []):
+            drift_lines.append(f"new behavior file `{p}` — not in release-gate.lock")
+
+    if new_findings or new_sg or drift_lines:
+        out.append("**Introduced by this change** _(not pre-existing)_:")
+        order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        for f in sorted(new_findings, key=lambda x: order.get(x.get("severity"), 9)):
+            sev = (f.get("severity") or "").upper()
+            out.append(f"- ⚠ **{sev}** ({f.get('confidence','?')} · {f.get('basis','?')}): "
+                       f"{f.get('title')}  `{f.get('file')}:{f.get('line')}`")
+            rec = f.get("recommendation")
+            if rec:
+                out.append(f"  ↳ {rec.split('.')[0]}.")
+        for s in new_sg:
+            out.append(f"- ⚠ newly missing safeguard: **{s.get('label', s.get('id',''))}**")
+        for d in drift_lines:
+            out.append(f"- ⚠ {d}")
+        out.append("")
+    else:
+        out.append("**Introduced by this change:** nothing net-new. ✅")
+        out.append("")
+
+    # Advisory context — labeled as such, never drives the decision.
+    ctx: List[str] = []
+    if coverage.get("source_without_tests"):
+        ctx.append(f"{coverage['source_files_changed']} source file(s) changed, "
+                   f"0 test files touched")
+    elif coverage.get("test_files_changed"):
+        ctx.append(f"{coverage['source_files_changed']} source · "
+                   f"{coverage['test_files_changed']} test file(s) changed")
+    if delta is not None and -10 < delta < 0:
+        ctx.append(f"code-safety {delta:+d} (within tolerance)")
+    if ctx:
+        out.append("**Context** _(advisory, not blocking):_")
+        out.extend(f"- {c}" for c in ctx)
+        out.append("")
+
+    resolved = baseline_comparison.get("resolved_code_findings") or []
+    if resolved:
+        out.append(f"_✅ {len(resolved)} pre-existing finding(s) fixed in this change._")
+    # Make the "ignored debt" explicit — it's WHY the reviewer can trust the verdict.
+    inherited = len(head_report.get("code_findings") or []) - len(new_findings)
+    if inherited > 0:
+        out.append(f"_Inherited debt ignored (not this change's fault): {inherited} finding(s)._")
+
+    out.append("")
+    out.append("<sub>🚪 [release-gate](https://release-gate.com) — every line above is a fact "
+               "derived from this diff, not a prediction. Blocks only on net-new regressions.</sub>")
+    return "\n".join(out)
+
+
 def compare_to_baseline(current: Dict[str, Any],
                         baseline: Dict[str, Any]) -> Dict[str, Any]:
     """Compare current audit report to a baseline; return a diff summary.

@@ -836,3 +836,75 @@ def test_loop_boundary_fails_on_identical_maker_checker(tmp_path):
     })
     present, _ = detect_safeguards(tmp_path)
     assert present.get("loop_boundary") is False
+
+
+# ── AI-change review gate (`release-gate pr`) ───────────────────────────────
+
+def test_changed_tests_ratio_flags_untested_source():
+    from release_gate.audit import changed_tests_ratio
+    # product code changed, no test touched → untested
+    r = changed_tests_ratio(["src/agent/tools.py", "src/agent/loop.py"])
+    assert r["source_without_tests"] is True and r["source_files_changed"] == 2
+    # a test moved alongside → not untested
+    r2 = changed_tests_ratio(["src/agent/tools.py", "tests/test_tools.py"])
+    assert r2["source_without_tests"] is False and r2["test_files_changed"] == 1
+    # docs/config only → no source demand at all
+    r3 = changed_tests_ratio(["README.md", "docs/guide.md", "release-gate.lock"])
+    assert r3["source_without_tests"] is False and r3["source_files_changed"] == 0
+    # TS spec conventions recognized as tests
+    r4 = changed_tests_ratio(["app/agent.ts", "app/agent.test-d.ts"])
+    assert r4["test_files_changed"] == 1 and r4["source_without_tests"] is False
+
+
+def test_unify_verdict_blocks_on_baseline_block():
+    from release_gate.audit import unify_verdict
+    u = unify_verdict({"verdict": "BLOCK", "reasons": ["1 new high"]}, None)
+    assert u["decision"] == "BLOCK"
+
+
+def test_unify_verdict_drift_is_hold_not_block():
+    from release_gate.audit import unify_verdict
+    # clean baseline, but the model changed and the lock wasn't updated → HOLD
+    lock = {"drift": True, "model_changed": True, "reasons": ["model changed"],
+            "changed": [], "added": [], "removed": []}
+    u = unify_verdict({"verdict": "PASS", "reasons": []}, lock)
+    assert u["decision"] == "HOLD" and u["drift"] == "drift"
+
+
+def test_unify_verdict_lock_updated_in_pr_is_promote():
+    from release_gate.audit import unify_verdict
+    # drift is expected when the PR itself re-locked → not held against it
+    lock = {"drift": True, "model_changed": True, "reasons": ["model changed"],
+            "changed": [], "added": [], "removed": [], "_lock_updated_in_pr": True}
+    u = unify_verdict({"verdict": "PASS", "reasons": []}, lock)
+    assert u["decision"] == "PROMOTE"
+
+
+def test_unify_verdict_expired_certificate_holds():
+    from release_gate.audit import unify_verdict
+    lock = {"drift": False, "expired": True, "reasons": [], "changed": [],
+            "added": [], "removed": []}
+    u = unify_verdict({"verdict": "PASS", "reasons": []}, lock)
+    assert u["decision"] == "HOLD"
+
+
+def test_render_ai_pr_comment_leads_with_net_new_and_ignores_debt():
+    from release_gate.audit import render_ai_pr_comment
+    baseline_cmp = {
+        "verdict": "BLOCK",
+        "code_safety_delta": -12, "baseline_code_safety": 100, "current_code_safety": 88,
+        "new_code_findings": [{"severity": "high", "title": "Dangerous execution sink",
+                               "file": "a.py", "line": 10, "confidence": "high",
+                               "basis": "confirmed", "recommendation": "Use ast.literal_eval. More."}],
+        "new_safeguard_failures": [], "resolved_code_findings": [],
+    }
+    unified = {"decision": "BLOCK", "reasons": ["1 new high"], "drift": None}
+    head = {"code_findings": [{"x": 1}] * 5}  # 1 new + 4 inherited
+    md = render_ai_pr_comment(head, baseline_cmp, unified,
+                              {"source_files_changed": 1, "test_files_changed": 0,
+                               "source_without_tests": True})
+    assert "AI-change review: **BLOCK**" in md
+    assert "Introduced by this change" in md
+    assert "Dangerous execution sink" in md and "a.py:10" in md
+    assert "Inherited debt ignored" in md and "4 finding" in md
+    assert "0 test files touched" in md

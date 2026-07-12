@@ -93,6 +93,83 @@ $ release-gate score governance.yaml --evals evals.yaml
 
 ---
 
+## Stop debugging AI-generated code you can't trust — `release-gate pr`
+
+AI writes the diff in seconds. Then a human burns an hour deciding whether to
+trust it — reading every changed file, hunting for the one dangerous line,
+wondering if a prompt or model changed under the hood. That **verification tax**
+is where the productivity goes. Token usage is at an all-time high; shipping
+velocity isn't keeping up, because *reviewing and trusting* generated code is now
+the bottleneck, not writing it.
+
+`release-gate pr` pays that tax down. It runs in CI on the pull request and
+answers one question, **from evidence, not vibes**: *what did this change
+introduce that a reviewer would otherwise have to find by hand?*
+
+```bash
+release-gate pr --base origin/main            # in CI, on the PR branch
+release-gate pr --base origin/main --comment  # GitHub-ready markdown comment
+release-gate pr --base origin/main --json     # machine output for a bot
+```
+
+```
+🔴 release-gate — AI-change review: BLOCK
+this change made things net-worse — see reasons
+
+Agent Code Safety: 100 → 88 (▼ -12)
+
+Introduced by this change (not pre-existing):
+- ⚠ HIGH (high · confirmed): Dangerous execution sink   src/agent/tools.py:88
+  ↳ eval() executes `reply` — the model's own output.
+- ⚠ prompt changed `prompts/system.txt` — release-gate.lock not updated
+
+Context (advisory, not blocking):
+- 11 source file(s) changed, 0 test files touched
+- agent code-safety -12
+
+Inherited debt ignored (not this change's fault): 4 finding(s).
+
+exit 1   (0 PROMOTE · 10 HOLD · 1 BLOCK)
+```
+
+### Why you can trust this gate — and not have to debug *it*
+
+This is a security tool; it's held to the standard it audits. Four properties
+make the verdict trustworthy on its own:
+
+1. **Every line is a fact derived from your diff — never a prediction.** There is
+   no "debug-debt score" guessing from file counts. It reports what *is*:
+   this file now reaches `eval()` with model output; this prompt changed without
+   a lockfile update. Facts don't cry wolf.
+2. **It blocks only on net-new regressions, never inherited debt.** Pre-existing
+   findings from the base branch are shown as *ignored* — a PR is judged on what
+   *it* changed. A gate that nags about old debt gets muted, and a muted gate
+   helps no one.
+3. **It's precision-calibrated.** The static engine is AST + taint (not grep): it
+   flags a sink only when model/user input can actually reach it, and grades
+   severity by proof (`confirmed` vs `inferred`). We validated it against 18
+   popular agent frameworks and spent as much effort killing false positives as
+   finding bugs — because one bad flag is how a scanner loses your trust.
+4. **It sees what a human diff-review structurally can't.** A model or prompt
+   change has *no code fingerprint*. The lockfile (AIBOM) drift check surfaces
+   "the behavior changed but nothing in the diff shows it" — the exact class of
+   silent change that causes 2am incidents.
+
+**What it does NOT do:** it is not an AI reviewer, debugger, or fixer, and it
+does not add 40 inline comments. It gives one decision and the short list of
+things worth your attention. It's release discipline, not more noise.
+
+Drop it into GitHub Actions:
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }        # full history so the diff can be scoped
+- run: pip install release-gate
+- run: release-gate pr --base origin/${{ github.base_ref }} --comment >> $GITHUB_STEP_SUMMARY
+```
+
+---
+
 ## Quick Start
 
 ```bash
@@ -191,6 +268,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 
 | Command | What it does |
 |---------|-------------|
+| `release-gate pr --base <ref>` | **AI-change review gate** — one PROMOTE/HOLD/BLOCK on what *this* diff introduced (net-new agent-risk + lockfile drift, folded into one verdict). Blocks only on net-new regressions. `--comment` for GitHub markdown, `--json` for CI. |
 | `release-gate lock [path]` | **Pin the agent context (AIBOM)** — model, prompts, governance, evals, MCP/tool config → `release-gate.lock` |
 | `release-gate audit [path\|url]` | **Scan any repo** — detects agent frameworks, scores **Agent Code Safety** (from real code findings) + **Governance** (declared safeguards), returns PROMOTE / HOLD / BLOCK. No config needed. Add `--full` for the per-finding breakdown. |
 | `release-gate audit . --emit-config` | **Scaffold governance.yaml** — generates a pre-filled config from what the scan found |

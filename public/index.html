@@ -583,9 +583,13 @@
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: .78rem; line-height: 1.75;
       padding: 18px 20px; overflow-x: auto;
+      white-space: pre; max-width: 100%;
       color: var(--term-bright);
       box-shadow: 0 4px 20px rgba(0,0,0,.12);
     }
+    /* Let grid/flex tracks shrink below content width so a pre terminal block
+       scrolls inside its own box instead of pushing the page sideways. */
+    .cli-col, .cli-grid > * { min-width: 0; }
     .t-muted  { color: var(--term-muted); }
     .t-green  { color: var(--term-green); }
     .t-red    { color: var(--term-red); }
@@ -1075,6 +1079,7 @@
       <li><a href="#agent-scan">Agent Scan</a></li>
       <li><a href="#who-its-for">Who it's for</a></li>
       <li><a href="#cli-section">CLI docs</a></li>
+      <li><a href="#pr-gate">Review Gate</a></li>
       <li><a href="#loop-section">Loop Verify</a></li>
       <li><a href="research.html">Research</a></li>
       <li><a href="#enterprise">Pricing</a></li>
@@ -1298,6 +1303,123 @@
 
       <div id="as-error" style="display:none;color:var(--red);font-size:.88rem;margin-top:10px"></div>
       <div id="as-results" style="display:none;margin-top:22px"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ AI-CHANGE REVIEW GATE ═══════════════════════ -->
+<section id="pr-gate" style="padding:80px 0;background:var(--surface-2);border-top:1px solid var(--border);scroll-margin-top:72px">
+  <div class="container">
+    <div class="section-header" style="text-align:center;max-width:760px;margin:0 auto 40px">
+      <p class="section-eyebrow" style="color:var(--accent)">AI-change review gate &middot; <code style="font-size:.9em">release-gate pr</code></p>
+      <h2 class="section-title">Stop debugging AI-generated code you can&rsquo;t trust</h2>
+      <p class="section-subtitle" style="margin:0 auto">
+        AI writes the diff in seconds. Then a human burns an hour deciding whether to trust it &mdash;
+        reading every changed file, hunting for the one dangerous line. That <strong>verification tax</strong>
+        is where the productivity goes. <code>release-gate pr</code> runs in CI and answers one question,
+        <strong>from evidence, not vibes</strong>: what did this change introduce that a reviewer would
+        otherwise have to find by hand?
+      </p>
+    </div>
+
+    <!-- Sample output: PROMOTE / BLOCK toggle -->
+    <div style="max-width:760px;margin:0 auto 44px">
+      <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px">
+        <button class="prg-tab" data-prg="block" onclick="showPrGate('block')"
+          style="padding:8px 18px;border:1.5px solid var(--border);border-radius:9px;background:var(--accent);color:#fff;font-size:.88rem;font-weight:700;cursor:pointer">A risky AI change</button>
+        <button class="prg-tab" data-prg="promote" onclick="showPrGate('promote')"
+          style="padding:8px 18px;border:1.5px solid var(--border);border-radius:9px;background:var(--surface);color:var(--heading);font-size:.88rem;font-weight:700;cursor:pointer">A clean AI change</button>
+      </div>
+
+      <!-- terminal card -->
+      <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.2);overflow:hidden;font-family:ui-monospace,'SF Mono',monospace">
+        <div style="display:flex;align-items:center;gap:7px;padding:11px 16px;border-bottom:1px solid var(--term-border)">
+          <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
+          <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
+          <span style="width:11px;height:11px;border-radius:50%;background:#22c55e;display:inline-block"></span>
+          <span style="color:var(--term-muted);font-size:.76rem;margin-left:8px">release-gate pr --base origin/main</span>
+        </div>
+
+        <!-- BLOCK sample -->
+        <div id="prg-block" style="padding:20px 22px;font-size:.83rem;line-height:1.85">
+          <div style="color:var(--term-red);font-weight:700">&#x1F534; release-gate &mdash; AI-change review: BLOCK</div>
+          <div style="color:var(--term-muted);margin-bottom:10px">this change made things net-worse &mdash; see reasons</div>
+          <div style="color:var(--term-bright)">Agent Code Safety: <span style="color:var(--term-yellow)">100 &rarr; 88</span> <span style="color:var(--term-red)">(&#x25BC; -12)</span></div>
+          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Introduced by this change <span style="color:var(--term-muted);font-weight:400">(not pre-existing):</span></div>
+          <div style="color:var(--term-red);padding-left:2px">&nbsp;&#x26A0; HIGH (confirmed): model output <span style="color:var(--term-yellow)">reply</span> &rarr; <span style="color:var(--term-red)">eval()</span> &nbsp;<span style="color:var(--term-muted)">src/agent/tools.py:88</span></div>
+          <div style="color:var(--term-red);padding-left:2px">&nbsp;&#x26A0; prompt changed <span style="color:var(--term-blue)">prompts/system.txt</span> &mdash; release-gate.lock not updated</div>
+          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Context <span style="color:var(--term-muted);font-weight:400">(advisory, not blocking):</span></div>
+          <div style="color:var(--term-muted);padding-left:2px">&nbsp;&bull; 11 source files changed, 0 test files touched</div>
+          <div style="margin-top:10px;color:var(--term-muted);font-style:italic">Inherited debt ignored (not this change&rsquo;s fault): 4 findings.</div>
+          <div style="margin-top:10px;color:var(--term-red)">exit 1 &nbsp;<span style="color:var(--term-muted)">(0 PROMOTE &middot; 10 HOLD &middot; 1 BLOCK)</span></div>
+        </div>
+
+        <!-- PROMOTE sample -->
+        <div id="prg-promote" style="display:none;padding:20px 22px;font-size:.83rem;line-height:1.85">
+          <div style="color:var(--term-green);font-weight:700">&#x1F7E2; release-gate &mdash; AI-change review: PROMOTE</div>
+          <div style="color:var(--term-muted);margin-bottom:10px">safe to merge &mdash; this change introduced no net-new risk</div>
+          <div style="color:var(--term-bright)">Agent Code Safety: <span style="color:var(--term-green)">100 &rarr; 100</span> (&mdash; +0)</div>
+          <div style="margin-top:12px;color:var(--term-green);font-weight:700">Introduced by this change: nothing net-new. &#x2705;</div>
+          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Context <span style="color:var(--term-muted);font-weight:400">(advisory):</span></div>
+          <div style="color:var(--term-muted);padding-left:2px">&nbsp;&bull; 4 source &middot; 2 test files changed</div>
+          <div style="margin-top:10px;color:var(--term-green);font-style:italic">&#x2705; 1 pre-existing finding fixed in this change.</div>
+          <div style="margin-top:10px;color:var(--term-green)">exit 0</div>
+        </div>
+      </div>
+      <p style="text-align:center;font-size:.8rem;color:var(--muted);margin-top:12px">
+        Every line is a fact derived from your diff &mdash; not a prediction. It blocks <strong>only</strong> on net-new regressions.
+      </p>
+    </div>
+
+    <!-- Why trust it -->
+    <div style="max-width:960px;margin:0 auto">
+      <h3 style="text-align:center;font-size:1.3rem;font-weight:800;color:var(--heading);margin-bottom:8px">Why you can trust the gate &mdash; and not have to debug <em>it</em></h3>
+      <p style="text-align:center;font-size:.95rem;color:var(--muted);margin:0 auto 28px;max-width:600px">
+        It&rsquo;s a security tool, held to the standard it audits. Four properties make the verdict trustworthy on its own.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 24px;box-shadow:var(--card-shadow)">
+          <div style="font-size:1.5rem;margin-bottom:8px">&#x1F9FE;</div>
+          <h4 style="color:var(--heading);font-size:1rem;font-weight:700;margin-bottom:6px">Facts, never predictions</h4>
+          <p style="color:var(--text);font-size:.9rem;line-height:1.6">No &ldquo;debug-debt score&rdquo; guessing from file counts. It reports what <em>is</em>: this file now reaches <code>eval()</code> with model output; this prompt changed without a lockfile update. Facts don&rsquo;t cry wolf.</p>
+        </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 24px;box-shadow:var(--card-shadow)">
+          <div style="font-size:1.5rem;margin-bottom:8px">&#x2696;&#xFE0F;</div>
+          <h4 style="color:var(--heading);font-size:1rem;font-weight:700;margin-bottom:6px">Blocks net-new only, never old debt</h4>
+          <p style="color:var(--text);font-size:.9rem;line-height:1.6">Pre-existing findings from the base branch are shown as <em>ignored</em> &mdash; a PR is judged on what <em>it</em> changed. A gate that nags about inherited debt gets muted, and a muted gate helps no one.</p>
+        </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 24px;box-shadow:var(--card-shadow)">
+          <div style="font-size:1.5rem;margin-bottom:8px">&#x1F3AF;</div>
+          <h4 style="color:var(--heading);font-size:1rem;font-weight:700;margin-bottom:6px">Precision-calibrated</h4>
+          <p style="color:var(--text);font-size:.9rem;line-height:1.6">AST + taint, not grep: it flags a sink only when model/user input can actually reach it, and grades severity by proof (<code>confirmed</code> vs <code>inferred</code>). Validated across 18 agent frameworks &mdash; as much effort spent killing false positives as finding bugs.</p>
+        </div>
+
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 24px;box-shadow:var(--card-shadow)">
+          <div style="font-size:1.5rem;margin-bottom:8px">&#x1F441;&#xFE0F;</div>
+          <h4 style="color:var(--heading);font-size:1rem;font-weight:700;margin-bottom:6px">Sees what a diff can&rsquo;t</h4>
+          <p style="color:var(--text);font-size:.9rem;line-height:1.6">A model or prompt change has <em>no code fingerprint</em>. The lockfile (AIBOM) drift check surfaces &ldquo;the behavior changed but nothing in the diff shows it&rdquo; &mdash; the exact class of silent change that causes 2am incidents.</p>
+        </div>
+
+      </div>
+
+      <!-- Not-a-reviewer clarifier -->
+      <div style="margin-top:24px;background:var(--accent-tint);border:1px solid var(--border);border-radius:12px;padding:16px 22px;text-align:center">
+        <span style="color:var(--heading);font-weight:600;font-size:.92rem">It is not an AI reviewer, debugger, or fixer.</span>
+        <span style="color:var(--text);font-size:.92rem"> It doesn&rsquo;t add 40 inline comments &mdash; it gives one decision and the short list worth your attention. Release discipline, not more noise.</span>
+      </div>
+
+      <!-- CI snippet -->
+      <div style="margin-top:28px">
+        <p style="text-align:center;font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;margin-bottom:12px">Drop it into GitHub Actions</p>
+        <div class="term-block" style="max-width:660px;margin:0 auto">
+<span class="yaml-key">- uses</span>: <span class="yaml-str">actions/checkout@v4</span>
+  <span class="yaml-key">with</span>: { <span class="yaml-key">fetch-depth</span>: <span class="t-yellow">0</span> } <span class="yaml-cmt"># full history so the diff can be scoped</span>
+<span class="yaml-key">- run</span>: <span class="yaml-str">pip install release-gate</span>
+<span class="yaml-key">- run</span>: <span class="yaml-str">release-gate pr --base origin/${{ github.base_ref }} --comment &gt;&gt; $GITHUB_STEP_SUMMARY</span></div>
+      </div>
     </div>
   </div>
 </section>
@@ -3622,6 +3744,19 @@
     Array.prototype.forEach.call(document.querySelectorAll('.loop-tab'), function(b){
       if (b.getAttribute('data-tab') === name) b.classList.add('active');
       else b.classList.remove('active');
+    });
+  }
+
+  // AI-change review gate: toggle the BLOCK / PROMOTE sample output.
+  function showPrGate(which) {
+    var block = document.getElementById('prg-block');
+    var promote = document.getElementById('prg-promote');
+    if (block) block.style.display = which === 'block' ? 'block' : 'none';
+    if (promote) promote.style.display = which === 'promote' ? 'block' : 'none';
+    Array.prototype.forEach.call(document.querySelectorAll('.prg-tab'), function(b){
+      var on = b.getAttribute('data-prg') === which;
+      b.style.background = on ? 'var(--accent)' : 'var(--surface)';
+      b.style.color = on ? '#fff' : 'var(--heading)';
     });
   }
 

@@ -896,6 +896,9 @@ def print_help():
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
     print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
     print("  release-gate audit [path|url] --write-baseline FILE  # Save current audit as a baseline")
+    print("  release-gate pr --base origin/main           # AI-change review gate: one PROMOTE/HOLD/BLOCK on what THIS diff introduced")
+    print("      Folds net-new agent-risk + lockfile drift into one verdict; blocks only on net-new regressions, never inherited debt.")
+    print("      Exit 0 PROMOTE · 10 HOLD · 1 BLOCK. Add --comment for GitHub-ready markdown, --json for CI.")
     print("  release-gate lock [path]                     # Pin the agent's context (AIBOM): model, prompts, governance, tools")
     print("  release-gate audit [path] --lock             # Fail if the context drifted from the pinned release-gate.lock")
     print("  release-gate audit [path] --verify          # LLM second-opinion on findings (opt-in, BYO model)")
@@ -949,6 +952,108 @@ def print_help():
     print("  release-gate validate-and-lock --governance governance.yaml --sign --private-key key.pem")
     print("\nMore info: https://github.com/VamsiSudhakaran1/release-gate")
     print("="*80 + "\n")
+
+
+def _git(args, cwd='.'):
+    """Run a git command, return stdout (stripped) or None on failure."""
+    import subprocess
+    try:
+        r = subprocess.run(['git', *args], cwd=cwd, capture_output=True,
+                           text=True, timeout=60)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _run_pr_command():
+    """`release-gate pr --base <ref>` — the AI-change review gate.
+
+    Compares the working tree (HEAD) against a base ref, folds the net-new
+    agent-risk regression gate and the lockfile behavior-drift gate into ONE
+    PROMOTE / HOLD / BLOCK, and prints a review comment scoped to what THIS
+    change introduced. Blocks only on net-new regressions — never inherited debt.
+    Exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK (drops straight into CI).
+    """
+    import tempfile, shutil, json as _json
+    from pathlib import Path as _Path
+    from release_gate.audit import (
+        build_report, compare_to_baseline, unify_verdict,
+        render_ai_pr_comment, changed_tests_ratio,
+    )
+    base = _flag(sys.argv, '--base') or 'origin/main'
+    as_json = '--json' in sys.argv
+    as_comment = '--comment' in sys.argv or '--pr-comment' in sys.argv
+    repo = '.'
+
+    if _git(['rev-parse', '--git-dir'], repo) is None:
+        print("Error: `release-gate pr` must run inside a git repository.")
+        sys.exit(1)
+
+    # Resolve the merge-base so we compare against the fork point, not the tip —
+    # this scopes the diff to exactly what this branch introduced.
+    merge_base = _git(['merge-base', base, 'HEAD'], repo) or base
+    changed = _git(['diff', '--name-only', f'{merge_base}...HEAD'], repo)
+    changed_files = [f for f in (changed.splitlines() if changed else []) if f]
+
+    # Build the HEAD report (current working tree).
+    head_report = build_report(_Path(repo), mode='ci')
+
+    # Materialize the base tree in a throwaway worktree and audit it there, so we
+    # never disturb the working copy. Falls back gracefully if git worktree is
+    # unavailable (shallow clones etc.) — then we simply skip the baseline diff.
+    base_report = None
+    worktree = tempfile.mkdtemp(prefix='rg-base-')
+    try:
+        added = _git(['worktree', 'add', '--detach', worktree, merge_base], repo)
+        if added is not None:
+            base_report = build_report(_Path(worktree), mode='ci')
+    finally:
+        _git(['worktree', 'remove', '--force', worktree], repo)
+        shutil.rmtree(worktree, ignore_errors=True)
+
+    if base_report is None:
+        print("Note: couldn't build the base tree (shallow clone?). "
+              "Run `git fetch --unshallow` or deepen the checkout for a diff-scoped gate.")
+        sys.exit(0)
+
+    baseline_cmp = compare_to_baseline(head_report, base_report)
+
+    # Lockfile drift, folded into the same verdict. If the PR itself updated the
+    # lock, drift is expected and NOT held against it (_lock_updated_in_pr).
+    lock_cmp = None
+    try:
+        from release_gate.lockfile import (
+            build_lock, load_lock, compare_lock, LOCK_FILENAMES)
+        lock_path = next((str(_Path(repo) / n) for n in LOCK_FILENAMES
+                          if (_Path(repo) / n).is_file()), None)
+        saved = load_lock(lock_path) if lock_path else None
+        if saved:
+            lock_cmp = compare_lock(build_lock(_Path(repo)), saved)
+            lock_cmp['_lock_updated_in_pr'] = any(
+                _Path(f).name in LOCK_FILENAMES for f in changed_files)
+    except Exception:
+        lock_cmp = None
+
+    coverage = changed_tests_ratio(changed_files)
+    unified = unify_verdict(baseline_cmp, lock_cmp)
+
+    if as_json:
+        print(_json.dumps({
+            'decision': unified['decision'], 'base': base, 'merge_base': merge_base,
+            'changed_files': len(changed_files), 'reasons': unified['reasons'],
+            'new_code_findings': baseline_cmp.get('new_code_findings'),
+            'new_safeguard_failures': baseline_cmp.get('new_safeguard_failures'),
+            'resolved_code_findings': baseline_cmp.get('resolved_code_findings'),
+            'code_safety_delta': baseline_cmp.get('code_safety_delta'),
+            'coverage': coverage, 'lock_drift': lock_cmp,
+        }, indent=2, default=str))
+    else:
+        comment = render_ai_pr_comment(head_report, baseline_cmp, unified, coverage, lock_cmp)
+        print(comment)
+        if not as_comment:
+            print()  # human-friendly spacing when run at a terminal
+
+    sys.exit({'BLOCK': 1, 'HOLD': 10}.get(unified['decision'], 0))
 
 
 def main():
@@ -1176,6 +1281,9 @@ def main():
 
         decision = report['decision']
         sys.exit(1 if decision == 'BLOCK' else 10 if decision == 'HOLD' else 0)
+
+    elif command == 'pr':
+        _run_pr_command()
 
     elif command == 'lock':
         from pathlib import Path as _Path
