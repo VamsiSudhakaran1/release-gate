@@ -462,7 +462,7 @@ _EXEC_SINK_RE = re.compile(
     r"|vm\.runInNewContext\s*\("                 # Node vm escape
 )
 _SECRET_RE = re.compile(
-    r"sk-[A-Za-z0-9]{16,}"
+    r"sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{16,}"
     r"|(?:api[_\-]?key|secret|token)\s*[:=]\s*['\"][A-Za-z0-9_\-]{12,}['\"]"
     r"|OPENAI_API_KEY\s*=\s*['\"][^'\"]{12,}['\"]"
     r"|anthropic[_\-]api[_\-]key\s*[:=]\s*['\"][^'\"]{12,}['\"]",
@@ -652,7 +652,7 @@ def _is_real_secret(line: str) -> bool:
     if _PUBLIC_TELEMETRY_RE.search(line):
         return False
     # Strong, unambiguous: a provider key prefix — unless it's a dummy/test token.
-    m = re.search(r"\b(sk-[A-Za-z0-9]{16,}|rg_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}"
+    m = re.search(r"\b(sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{16,}|rg_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}"
                   r"|AKIA[A-Z0-9]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})", line)
     if m:
         return not _looks_dummy_token(m.group(1))
@@ -798,7 +798,7 @@ _JS_INJ_MODEL_RE = re.compile(
     r"toolResult|tool_result|assistant|choices|delta|content|message|msg|text|"
     r"output|llmOutput|llmResponse)\b", re.IGNORECASE)
 _JS_SECRET_RE = re.compile(
-    r"sk-[A-Za-z0-9]{20,}"
+    r"sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{20,}"
     r"|ANTHROPIC_API_KEY\s*=\s*[\"'][a-zA-Z0-9]{20,}[\"']"
 )
 # Require an actual call, not a bare `child_process` import/identifier.

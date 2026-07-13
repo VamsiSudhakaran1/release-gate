@@ -1,0 +1,269 @@
+# release-gate accuracy benchmark — labeled ground truth.
+#
+# Two kinds of case:
+#   label: vulnerable  → the engine MUST emit every rule id in `expect`.
+#   label: clean       → the engine MUST stay silent (expect: []). These are the
+#                        look-alikes that break naive scanners; most are drawn
+#                        from real frameworks where we killed a false positive.
+#
+# `source` cites where the pattern is real. Run: python benchmark/run.py
+# Every clean case is also a permanent regression guard: if a future change
+# re-introduces the false positive, the benchmark fails.
+
+cases:
+  # ── RG-EXEC-001 — model/user output reaching eval/exec/shell ──────────────
+  - id: exec-eval-user-input
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "SuperAGI output_handler.py eval(assistant_reply) pattern"
+    code: |
+      def handle(request):
+          return eval(request)
+
+  - id: exec-model-output-to-eval
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "canonical CVE-2025-51472 class"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      reply = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50).choices[0].message.content
+      eval(reply)
+
+  - id: exec-os-system-clear-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "constant arg — not a sink"
+    code: |
+      import os
+      os.system('clear' if os.name != 'nt' else 'cls')
+
+  - id: exec-subprocess-list-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "no shell=True, list arg"
+    code: |
+      import subprocess
+      subprocess.run(['git', 'clone', url])
+
+  - id: exec-context-not-text-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "token-based hints: 'context' must not match 'text', 'database' not 'data'"
+    code: |
+      import openai
+      def f(context, database):
+          eval(context)
+          os.system(database)
+
+  # Honest limitations — kept in the corpus on purpose (precision-first design).
+  - id: exec-cross-function-taint-KNOWN-MISS
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "KNOWN LIMITATION: taint is intra-procedural; it does not follow a value across function boundaries"
+    code: |
+      def get_cmd(request):
+          return request.data
+      def run(request):
+          c = get_cmd(request)
+          eval(c)
+
+  # ── RG-EXEC-002 — deserialization of unverified data ─────────────────────
+  - id: exec-pickle-inferred
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-002]
+    source: "MetaGPT serialize.py pickle.loads(message_ser)"
+    code: |
+      import pickle
+      def load(message_ser):
+          return pickle.loads(message_ser)
+
+  - id: exec-pickle-local-ipc-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "livekit/agents FP class — pickle over a local multiprocessing pipe is trusted transport"
+    code: |
+      import pickle
+      def recv(self):
+          x = self._duplex.recv_bytes()
+          return pickle.loads(x)
+
+  # ── RG-PROMPT-001 — untrusted input into a system prompt ─────────────────
+  - id: prompt-user-into-system
+    lang: py
+    label: vulnerable
+    expect: [RG-PROMPT-001]
+    source: "gpt-researcher report_generation.py (external user input)"
+    code: |
+      msg = {"role": "system", "content": f"Answer about {user_query}"}
+
+  - id: prompt-const-material-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "developer's own constant text — not an injection surface"
+    code: |
+      guidance = "Be brief."
+      msg = {"role": "system", "content": f"You are helpful. {guidance}"}
+
+  - id: prompt-material-name-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "gpt-researcher agent_creator.py — prompt composition, not injection"
+    code: |
+      msg = {"role": "system", "content": f"{agent_role_prompt}"}
+
+  - id: prompt-js-date-and-input-prose-clean
+    lang: ts
+    label: clean
+    expect: []
+    source: "mem0 prompts/index.ts — ${new Date()} + the word 'input' in prose"
+    code: |
+      export function f(parsedMessages) {
+        const systemPrompt = `You are an Organizer. Extract facts from the input data.
+        - Today is ${new Date().toISOString().split("T")[0]}.`;
+        const userPrompt = `Input:\n${parsedMessages}`;
+        return [systemPrompt, userPrompt];
+      }
+
+  - id: prompt-js-req-body-vulnerable
+    lang: ts
+    label: vulnerable
+    expect: [RG-PROMPT-001]
+    source: "external request input into a system prompt"
+    code: |
+      const systemPrompt = `You are a bot. User said: ${req.body.text}`;
+
+  # ── RG-COST-001 — LLM call with no token ceiling ─────────────────────────
+  - id: cost-uncapped-create
+    lang: py
+    label: vulnerable
+    expect: [RG-COST-001]
+    source: "canonical uncapped completion"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      resp = c.chat.completions.create(model="gpt-4", messages=m)
+
+  - id: cost-embeddings-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "crewAI lancedb_adapter — embeddings have no token-ceiling concept"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      c.embeddings.create(input=texts, model="text-embedding-3-small")
+
+  - id: cost-ctor-ceiling-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "LangChain ChatOpenAI(max_tokens=...) declares the ceiling at construction"
+    code: |
+      from langchain_openai import ChatOpenAI
+      llm = ChatOpenAI(model="gpt-4o", max_tokens=512)
+      llm.invoke(messages)
+
+  - id: cost-max-tokens-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "explicit ceiling on the call"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      c.chat.completions.create(model="gpt-4", messages=m, max_tokens=500)
+
+  - id: cost-js-maxoutputtokens-clean
+    lang: ts
+    label: clean
+    expect: []
+    source: "vercel/ai v5 maxOutputTokens deep in the call"
+    code: |
+      const r = await generateText({
+        model: openai('gpt-4o'),
+        system: sys, prompt: p, temperature: 0.2, maxRetries: 2,
+        maxOutputTokens: 800,
+      });
+
+  # ── RG-LOOP-001 — unbounded loop around an LLM call ──────────────────────
+  - id: loop-while-true-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-LOOP-001, RG-COST-001]
+    source: "AutoGPT-style runaway; uncapped call inside elevates to medium"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      while True:
+          r = c.chat.completions.create(messages=m)
+          if 'DONE' in r:
+              break
+
+  - id: loop-counter-bounded-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "counter-guarded break is a bounded retry, not a runaway"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      while True:
+          r = c.chat.completions.create(messages=m, max_tokens=50)
+          attempts += 1
+          if attempts >= max_retries:
+              break
+
+  # ── RG-SECRET-001 — hardcoded secret ─────────────────────────────────────
+  - id: secret-real-key-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-SECRET-001]
+    source: "canonical provider key literal"
+    code: |
+      OPENAI_API_KEY = "sk-proj-Ab3xR9kLmN2pQ7sT1vW4yZ6cE8hJ0dF5gH2jK4lM6nP8qR"
+
+  - id: secret-env-read-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "env read is correct, not a hardcoded secret"
+    code: |
+      import os
+      OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+
+  - id: secret-key-name-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "taOS FP: a lookup-key NAME, not a live credential"
+    code: |
+      SECRET = "REDDIT_TOKEN"
+
+  # ── TypeScript coverage (shallower than Python — documented honestly) ─────
+  - id: ts-exec-interpolated-vulnerable
+    lang: ts
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "interpolated command into child_process.exec"
+    code: |
+      child_process.exec(`ls ${req.body.dir}`);
+
+  - id: ts-model-output-to-eval
+    lang: ts
+    label: vulnerable
+    expect: [RG-EXEC-003]
+    source: "TS grades model->sink as dynamic/low: no JS taint to prove the model source (documented limit)"
+    code: |
+      const reply = await generateText({model: m, prompt: p, maxOutputTokens: 50});
+      eval(reply.text);
