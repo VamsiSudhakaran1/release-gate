@@ -452,6 +452,23 @@
     }
     .hero-scan-hint a { color: var(--accent); font-weight: 600; text-decoration: none; }
     .hero-scan-hint a:hover { text-decoration: underline; }
+    /* "New: release-gate pr" ribbon under the hero scan row */
+    .hero-pr-ribbon {
+      display: inline-flex; align-items: center; gap: 12px;
+      margin: 18px auto 0; max-width: 660px;
+      padding: 11px 18px; border-radius: 999px;
+      background: var(--accent-tint); border: 1px solid var(--border);
+      color: var(--heading); font-size: .9rem; line-height: 1.35;
+      transition: border-color .15s, box-shadow .15s, transform .15s;
+    }
+    .hero-pr-ribbon:hover { text-decoration: none; border-color: var(--accent); box-shadow: 0 6px 20px var(--accent-glow); transform: translateY(-1px); }
+    .hero-pr-ribbon strong { color: var(--accent-strong); font-family: ui-monospace, monospace; font-size: .92em; }
+    .hpr-badge {
+      flex: none; font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+      background: var(--accent); color: #fff; padding: 3px 9px; border-radius: 999px;
+    }
+    .hpr-arrow { flex: none; color: var(--accent); font-weight: 800; }
+    .hero-inner.has-results .hero-pr-ribbon { margin-left: 0; }
 
     .pg-score-circle {
       width: 80px; height: 80px; border-radius: 50%;
@@ -1185,6 +1202,11 @@
       <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
       to grant read access — public repos work without it.
     </p>
+    <a href="#pr-gate" class="hero-pr-ribbon">
+      <span class="hpr-badge">New</span>
+      <span><strong>release-gate&nbsp;pr</strong> — AI-change review for pull requests: gate a diff on what it introduced, one merge decision</span>
+      <span class="hpr-arrow">&rarr;</span>
+    </a>
    </div>
 
     <div class="pg-wrap">
@@ -1583,7 +1605,7 @@
       <div class="cli-col">
         <h3>&#x2699;&#xFE0F; GitHub Actions</h3>
         <div class="term-block">
-<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.8.2</span>
+<span class="yaml-key">- uses</span>: <span class="yaml-str">VamsiSudhakaran1/release-gate@v0.8.4</span>
   <span class="yaml-key">with</span>:
     <span class="yaml-key">command</span>: <span class="yaml-str">audit</span>
     <span class="yaml-key">path</span>: <span class="yaml-str">.</span>
@@ -2056,7 +2078,7 @@
 
       <details class="faq-item">
         <summary>Is the CLI free? Do you store my code?</summary>
-        <div class="faq-a">The CLI is 100% free and unlimited — no scan caps, no account, works in any CI pipeline, stdlib-only core. The audit clones your repo, scans it, and doesn't retain the code. The platform (optional) adds persistent history, team visibility, and an audit trail.</div>
+        <div class="faq-a">The CLI is 100% free and unlimited — no scan caps, no account, works in any CI pipeline. It runs locally and makes <strong>no model calls</strong> for the static audit. The audit clones your repo, scans it, and doesn't retain the code. The platform (optional) adds persistent history, team visibility, and an audit trail.</div>
       </details>
     </div>
 

@@ -16,8 +16,12 @@
 ```bash
 pip install release-gate
 
-# Scan any AI agent repo — no config needed
-release-gate audit https://github.com/your-org/your-ai-agent
+# Your own repo / CI — enforce your declared policy
+release-gate audit . --mode ci
+
+# A public repo you don't own — advisory lens (governance never gates;
+# only production, confirmed-high findings surface — no false-positive noise)
+release-gate audit https://github.com/org/repo --mode public-advisory
 ```
 
 Output:
@@ -159,13 +163,25 @@ make the verdict trustworthy on its own:
 does not add 40 inline comments. It gives one decision and the short list of
 things worth your attention. It's release discipline, not more noise.
 
-Drop it into GitHub Actions:
+Drop it into GitHub Actions — either the raw CLI:
 
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }        # full history so the diff can be scoped
 - run: pip install release-gate
 - run: release-gate pr --base origin/${{ github.base_ref }} --comment >> $GITHUB_STEP_SUMMARY
+```
+
+…or the published Action, which also posts a sticky PR comment:
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- uses: VamsiSudhakaran1/release-gate@v0.8.4
+  with:
+    command: pr
+    base: origin/${{ github.base_ref }}
+    pr-comment: true            # create/update one sticky comment on the PR
 ```
 
 ---

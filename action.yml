@@ -12,9 +12,13 @@ inputs:
     required: false
     default: "governance.yaml"
   command:
-    description: "Command: 'audit', 'score', 'evidence-pack', 'impact', 'run', or 'loop-sim'"
+    description: "Command: 'pr' (AI-change review gate), 'audit', 'score', 'evidence-pack', 'impact', 'run', or 'loop-sim'"
     required: false
     default: "score"
+  base:
+    description: "Base ref for 'command: pr' — the branch this PR is merging into (e.g. origin/main). Requires fetch-depth: 0 on checkout."
+    required: false
+    default: "origin/main"
   scenarios:
     description: "Path to a loop-sim scenarios.yaml (command: loop-sim)"
     required: false
@@ -155,8 +159,45 @@ runs:
         fi
         exit $EXIT_CODE
 
+    - name: Run release-gate pr (AI-change review gate)
+      if: inputs.command == 'pr'
+      id: pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set +e
+        # One PROMOTE/HOLD/BLOCK on what THIS diff introduced. --comment emits
+        # GitHub-flavored markdown; we show it in the job summary and (optionally)
+        # post it as a sticky PR comment.
+        release-gate pr --base "${{ inputs.base }}" --comment > /tmp/rg-pr.md
+        EXIT_CODE=$?
+        set -e
+        cat /tmp/rg-pr.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        cat /tmp/rg-pr.md
+
+        # Sticky PR comment (create or update) when requested on a pull_request event.
+        if [ "${{ inputs.pr-comment }}" = "true" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+          BODY="<!-- release-gate-pr -->"$'\n'"$(cat /tmp/rg-pr.md)"
+          CID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.body | startswith("<!-- release-gate-pr -->")) | .id' 2>/dev/null | head -1)
+          if [ -n "$CID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${CID}" -X PATCH -f "body=${BODY}" --silent || true
+          else
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f "body=${BODY}" --silent || true
+          fi
+        fi
+
+        # Exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK. HOLD is "mergeable after a
+        # human looks" — only fail the check on it when fail-on-warn is set.
+        if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then
+          echo "release-gate pr: HOLD (allowed — set fail-on-warn: true to block on HOLD)"
+          exit 0
+        fi
+        exit $EXIT_CODE
+
     - name: Run release-gate ${{ inputs.command }}
-      if: inputs.command != 'audit' && inputs.command != 'loop-sim'
+      if: inputs.command != 'audit' && inputs.command != 'loop-sim' && inputs.command != 'pr'
       id: gate
       shell: bash
       run: |
