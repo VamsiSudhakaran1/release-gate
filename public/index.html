@@ -252,6 +252,55 @@
     .nav-links a, .logo, .nav-cta, .nav-btn { white-space: nowrap; }
     .nav-links a { font-size: .875rem; color: var(--text); transition: color .15s; }
     .nav-links a:hover { color: var(--heading); text-decoration: none; }
+
+    /* ── Nav dropdown (Product menu + user avatar menu) ── */
+    .nav-dropdown { position: relative; }
+    .nav-dd-trigger {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: none; border: none; cursor: pointer;
+      font-size: .875rem; font-family: inherit; color: var(--text);
+      padding: 0; transition: color .15s;
+    }
+    .nav-dd-trigger:hover, .nav-dropdown.open .nav-dd-trigger { color: var(--heading); }
+    .nav-caret { font-size: .7rem; transition: transform .2s; opacity: .8; }
+    .nav-dropdown.open .nav-caret { transform: rotate(180deg); }
+    .nav-dropdown-panel {
+      position: absolute; top: calc(100% + 14px); left: -14px;
+      min-width: 320px; padding: 8px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; box-shadow: var(--shadow-lg);
+      opacity: 0; visibility: hidden; transform: translateY(-6px);
+      transition: opacity .16s ease, transform .16s ease, visibility .16s;
+      z-index: 200;
+    }
+    /* Click-driven (accessible, no hover/click conflict): open toggles .open. */
+    .nav-dropdown.open .nav-dropdown-panel {
+      opacity: 1; visibility: visible; transform: translateY(0);
+    }
+    .nav-dropdown-panel a {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 9px 12px; border-radius: 10px;
+    }
+    .nav-dropdown-panel a:hover { background: var(--accent-tint); text-decoration: none; }
+    .nav-dropdown-panel .ndp-t { font-size: .9rem; font-weight: 650; color: var(--heading); }
+    .nav-dropdown-panel .ndp-d { font-size: .78rem; color: var(--muted); line-height: 1.4; }
+
+    /* User avatar menu (logged-in) */
+    .nav-avatar {
+      width: 34px; height: 34px; border-radius: 50%; flex: none; cursor: pointer;
+      background: var(--accent); color: #fff; border: none;
+      font-size: .9rem; font-weight: 700; text-transform: uppercase;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: box-shadow .15s, transform .15s;
+    }
+    .nav-avatar:hover { box-shadow: 0 0 0 4px var(--accent-glow); }
+    .nav-user-panel { min-width: 220px; right: -8px; left: auto; }
+    .nav-user-panel .nav-user-head {
+      padding: 8px 12px 10px; margin-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+      font-size: .82rem; color: var(--muted); word-break: break-all;
+    }
+    .nav-user-panel a { flex-direction: row; font-size: .88rem; font-weight: 600; color: var(--heading); }
     .nav-cta {
       background: var(--accent); color: #fff !important;
       padding: 7px 18px; border-radius: 8px; font-weight: 600;
@@ -973,6 +1022,21 @@
       }
       .nav-links.open { display: flex; }
       .nav-links a { display: block; padding: 13px 24px; font-size: .95rem; }
+      /* Flatten the Product dropdown inline in the mobile menu — no hover/click needed. */
+      .nav-links .nav-dropdown { width: 100%; }
+      .nav-links .nav-dd-trigger {
+        width: 100%; justify-content: space-between; padding: 13px 24px;
+        font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+        color: var(--muted); font-weight: 700; cursor: default;
+      }
+      .nav-links .nav-dd-trigger .nav-caret { display: none; }
+      .nav-links .nav-dropdown-panel {
+        position: static; opacity: 1; visibility: visible; transform: none;
+        min-width: 0; padding: 0 0 6px; margin: 0; border: none;
+        box-shadow: none; background: transparent;
+      }
+      .nav-links .nav-dropdown-panel a { padding: 10px 24px 10px 34px; border-radius: 0; }
+      .nav-links .nav-dropdown-panel .ndp-d { display: none; }
       .hero { padding: 56px 0 40px; min-height: auto; }
       .theme-toggle { margin-left: 8px; }
       section { padding: 56px 0; }
@@ -1076,14 +1140,19 @@
   <nav>
     <a class="logo rg-logo" onclick="goHome();return false;" href="#"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></a>
     <ul class="nav-links" id="nav-links">
-      <li><a href="#agent-scan">Agent Scan</a></li>
-      <li><a href="#who-its-for">Who it's for</a></li>
-      <li><a href="#cli-section">CLI docs</a></li>
-      <li><a href="#pr-gate">Review Gate</a></li>
-      <li><a href="#loop-section">Loop Verify</a></li>
-      <li><a href="research.html">Research</a></li>
+      <li class="nav-dropdown">
+        <button type="button" class="nav-dd-trigger" aria-haspopup="true" aria-expanded="false" onclick="toggleNavDropdown(this, event)">Product <span class="nav-caret" aria-hidden="true">▾</span></button>
+        <div class="nav-dropdown-panel" role="menu">
+          <a href="#agent-scan" role="menuitem"><span class="ndp-t">Agent Scan</span><span class="ndp-d">Find the agent-layer risks SAST misses</span></a>
+          <a href="#pr-gate" role="menuitem"><span class="ndp-t">Review Gate</span><span class="ndp-d">Gate AI-generated PRs on what they introduced</span></a>
+          <a href="#loop-section" role="menuitem"><span class="ndp-t">Loop Verify</span><span class="ndp-d">The verify step for agent loops</span></a>
+          <a href="#cli-section" role="menuitem"><span class="ndp-t">CLI &amp; CI</span><span class="ndp-d">One pip install — terminal, CI, or API</span></a>
+          <a href="#security" role="menuitem"><span class="ndp-t">Security</span><span class="ndp-d">How repo access &amp; privacy work</span></a>
+          <a href="#who-its-for" role="menuitem"><span class="ndp-t">Who it's for</span><span class="ndp-d">Teams shipping AI into production</span></a>
+        </div>
+      </li>
       <li><a href="#enterprise">Pricing</a></li>
-      <li><a href="#security">Security</a></li>
+      <li><a href="research.html">Research</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="https://github.com/VamsiSudhakaran1/release-gate" target="_blank" rel="noopener">GitHub &rarr;</a></li>
     </ul>
@@ -2187,7 +2256,30 @@
 
   // Picking a destination closes the menu so it never covers the section you asked for.
   document.getElementById('nav-links').addEventListener('click', function(e) {
-    if (e.target.tagName === 'A') toggleMobileNav(false);
+    var a = e.target.closest ? e.target.closest('a') : null;
+    if (a) { closeNavDropdowns(); toggleMobileNav(false); }
+  });
+
+  // ── Nav dropdowns (Product menu + user avatar menu) ──
+  function closeNavDropdowns(except) {
+    Array.prototype.forEach.call(document.querySelectorAll('.nav-dropdown.open'), function(d){
+      if (d === except) return;
+      d.classList.remove('open');
+      var t = d.querySelector('.nav-dd-trigger, .nav-avatar');
+      if (t) { t.setAttribute('aria-expanded', 'false'); if (t.blur) t.blur(); }
+    });
+  }
+  function toggleNavDropdown(trigger, e) {
+    if (e) e.stopPropagation();
+    var d = trigger.closest('.nav-dropdown');
+    var willOpen = !d.classList.contains('open');
+    closeNavDropdowns(d);
+    d.classList.toggle('open', willOpen);
+    trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  }
+  // Click outside closes any open dropdown.
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest || !e.target.closest('.nav-dropdown')) closeNavDropdowns();
   });
 
   // ── API base ──
@@ -2366,10 +2458,17 @@
   function updateNav(user) {
     var area = document.getElementById('nav-auth-area');
     if (user) {
+      var initial = (user.email || '?').trim().charAt(0).toUpperCase() || '?';
       area.innerHTML =
-        '<span class="nav-user-email" title="' + escHtml(user.email) + '">' + escHtml(user.email) + '</span>' +
-        '<button class="nav-btn" onclick="showDashboard()">Dashboard</button>' +
-        '<button class="nav-btn" onclick="logOut()">Log out</button>';
+        '<div class="nav-dropdown nav-user">' +
+          '<button class="nav-avatar" aria-haspopup="true" aria-expanded="false" ' +
+          'title="' + escHtml(user.email) + '" onclick="toggleNavDropdown(this, event)">' + escHtml(initial) + '</button>' +
+          '<div class="nav-dropdown-panel nav-user-panel" role="menu">' +
+            '<div class="nav-user-head">' + escHtml(user.email) + '</div>' +
+            '<a href="#" role="menuitem" onclick="closeNavDropdowns();showDashboard();return false">Dashboard</a>' +
+            '<a href="#" role="menuitem" onclick="closeNavDropdowns();logOut();return false">Log out</a>' +
+          '</div>' +
+        '</div>';
     } else {
       area.innerHTML = '<button class="nav-btn primary" onclick="openAuthModal(\'signup\')">Sign up free</button>';
     }
@@ -2971,6 +3070,7 @@
     if (e.key === 'Escape') {
       closeSafeguardDoc();
       closeRunReport();
+      closeNavDropdowns();
       toggleMobileNav(false);
       // Auth modal too — unless it's the forced change-password view (close hidden).
       var authModal = document.getElementById('auth-modal');
