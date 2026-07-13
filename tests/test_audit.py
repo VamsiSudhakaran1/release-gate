@@ -550,8 +550,19 @@ def test_render_terminal_does_not_crash(tmp_path, capsys):
 # ──────────────────── strict verification (the gate) ─────────────────────────
 
 def test_untouched_scaffold_does_not_score_100(tmp_path):
-    """The core bug: committing an unfilled emit_config() scaffold must NOT pass."""
-    make_repo(tmp_path, {"agent.py": "from openai import OpenAI"})
+    """The core bug: committing an unfilled emit_config() scaffold must NOT pass.
+
+    Uses a genuinely *deployed* agent (a real LLM call, not a bare import) so the
+    Governance axis applies — a repo whose only agent references live in
+    tests/tooling is correctly N/A and out of scope for this scaffold-integrity
+    check.
+    """
+    make_repo(tmp_path, {"agent.py": (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "def run(msgs):\n"
+        "    return client.chat.completions.create(model='gpt-4', messages=msgs, max_tokens=50)\n"
+    )})
     report = build_report(tmp_path)
     scaffold = emit_config(report)
     make_repo(tmp_path, {"governance.yaml": scaffold})
@@ -561,6 +572,42 @@ def test_untouched_scaffold_does_not_score_100(tmp_path):
     assert report2["decision"] != "PROMOTE"
     assert report2["safeguards"]["team_owner"]["present"] is False
     assert report2["safeguards"]["trace_policy"]["present"] is False
+
+
+def test_non_deployed_agent_governance_is_na(tmp_path):
+    """A repo that references an LLM framework only in tests/examples/tooling is
+    NOT a deployed agent — Governance must read N/A and never gate it to HOLD."""
+    make_repo(tmp_path, {
+        "examples/demo.py": (
+            "from openai import OpenAI\n"
+            "c = OpenAI()\n"
+            "c.chat.completions.create(model='gpt-4', messages=[])\n"
+        ),
+        "README.md": "A library, not a deployed agent.",
+    })
+    for mode in ("ci", "strict", "audit"):
+        report = build_report(tmp_path, mode=mode)
+        assert report["governance_applicable"] is False, mode
+        assert report["governance"]["level"] == "N/A", mode
+        assert report["governance"]["score"] is None, mode
+        # Governance can't drag a clean, non-deployed repo below PROMOTE.
+        assert report["decision"] == "PROMOTE", mode
+
+
+def test_deployed_agent_still_governed(tmp_path):
+    """The guard must not over-suppress: a repo whose PRODUCTION code actually
+    calls an LLM IS a deployed agent — Governance applies and still gates."""
+    make_repo(tmp_path, {"bot.py": (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "def run(msgs):\n"
+        "    return client.chat.completions.create(model='gpt-4', messages=msgs, max_tokens=50)\n"
+    )})
+    report = build_report(tmp_path, mode="ci")
+    assert report["governance_applicable"] is True
+    assert report["governance"]["score"] is not None
+    # No governance.yaml declared → not PROMOTE (governance still gates a real agent).
+    assert report["decision"] != "PROMOTE"
 
 
 def test_placeholder_team_owner_rejected(tmp_path):
@@ -773,7 +820,14 @@ def test_badge_markdown_links_to_repo(tmp_path):
 
 def test_render_markdown_has_score_and_table(tmp_path):
     from release_gate.audit import render_markdown
-    make_repo(tmp_path, {"agent.py": 'from openai import OpenAI\nmodel="gpt-4-turbo"'})
+    # A genuinely deployed agent (real LLM call) so the Governance axis applies
+    # and the safeguard table renders — a bare import is not a deployed agent.
+    make_repo(tmp_path, {"agent.py": (
+        'from openai import OpenAI\n'
+        'client = OpenAI()\n'
+        'def run(msgs):\n'
+        '    return client.chat.completions.create(model="gpt-4-turbo", messages=msgs)\n'
+    )})
     report = build_report(tmp_path)
     md = render_markdown(report)
     assert "AI Release Readiness Audit" in md

@@ -244,6 +244,41 @@ _OTHER_LANG_EXTS = {".go": "Go", ".rs": "Rust", ".java": "Java", ".kt": "Kotlin"
                     ".cpp": "C++", ".ex": "Elixir"}
 
 
+def _has_production_agent(root: Path, max_files: int = 1500) -> bool:
+    """True if a *production* file makes a real LLM call — not just references an
+    SDK name in a test fixture, an example, or (for a tool like this one) its own
+    detection patterns.
+
+    This is what separates a deployed agent from a library/CLI that merely *talks
+    about* agents. It reuses the AST call-detector (`has_llm_usage`) for Python
+    and the JS/TS LLM-call signals, and skips every non-production path
+    (tests/examples/fixtures/scripts/docs) via the same predicate the finding
+    scanner uses — so a substring like ``"openai"`` sitting in a regex or a
+    sample never counts as deploying an agent. Governance (runtime safeguards)
+    only applies when this is True.
+    """
+    from release_gate.agent_analysis import has_llm_usage
+    from release_gate.verify import _is_tooling_path, _JS_LLM_SINK_RE, _JS_MODEL_RHS_RE
+    count = 0
+    for fpath in _iter_all_source_files(root):
+        rel = str(fpath.relative_to(root))
+        if _is_tooling_path(rel):
+            continue
+        count += 1
+        if count > max_files:
+            break
+        content = _read_snippet(fpath)
+        if fpath.suffix in PYTHON_EXTENSIONS:
+            try:
+                if has_llm_usage(content):
+                    return True
+            except Exception:
+                continue
+        elif _JS_LLM_SINK_RE.search(content) or _JS_MODEL_RHS_RE.search(content):
+            return True
+    return False
+
+
 def detect_other_language_agent(root: Path, max_files: int = 2000) -> set:
     """Return the set of non-Python/JS languages in which this repo shows LLM
     usage — so we can honestly say 'this IS an agent, in a language we don't
@@ -569,13 +604,25 @@ def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
             "factors": factors}
 
 
-def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
+def compute_governance(present: Dict[str, bool],
+                       applicable: bool = True) -> Dict[str, Any]:
     """Governance-maturity score from declared/detected safeguards.
 
     This is the half that release-gate exists to drive: have you DECLARED the
     safeguards (budget ceiling, kill switch, owner, evals, trace policy …) so
     they can be enforced. Low here means 'undeclared', not 'unsafe'.
+
+    ``applicable`` is False when the repo is not a *deployed* agent (its LLM
+    references live only in tests/examples/tooling — a library's samples, a
+    scanner's own detection fixtures). Runtime safeguards like a kill switch or
+    a loop boundary are meaningless there, so we return N/A rather than a low
+    score and a spurious HOLD. This is the difference between a first run that
+    respects a maintainer's repo and one that demands a kill switch for a CLI.
     """
+    if not applicable:
+        return {"score": None, "level": "N/A", "present": 0,
+                "total": len(SAFEGUARDS), "applicable": False,
+                "reason": "not_a_deployed_agent"}
     total_weight = sum(s["weight"] for s in SAFEGUARDS)
     earned = sum(s["weight"] for s in SAFEGUARDS if present.get(s["id"], False))
     score = round(earned / total_weight * 100)
@@ -586,7 +633,8 @@ def compute_governance(present: Dict[str, bool]) -> Dict[str, Any]:
         level = "Partial"
     else:
         level = "Undeclared"
-    return {"score": score, "level": level, "present": n_present, "total": len(SAFEGUARDS)}
+    return {"score": score, "level": level, "present": n_present,
+            "total": len(SAFEGUARDS), "applicable": True}
 
 
 # ─────────────────────────── Policy modes ───────────────────────────────────
@@ -700,6 +748,20 @@ def apply_decision_mode(report: Dict[str, Any], mode: str = "ci") -> Dict[str, A
 
     if mode == "public-advisory":
         return _public_advisory(report)
+
+    # Governance can only gate a DEPLOYED agent. When it's N/A (LLM usage lives
+    # only in tests/examples/tooling), no missing safeguard may drive a verdict
+    # in ANY mode — the decision follows the objective code-safety axis. Handle
+    # it once, up front, so every mode is consistent and the reason is preserved.
+    if not (report.get("governance") or {}).get("applicable", True):
+        cs = report.get("code_safety") or {}
+        report["decision"] = (cs["decision"] if cs.get("applicable")
+                              and cs.get("score") is not None else "PROMOTE")
+        report["decision_reason"] = (
+            "Not a deployed agent — LLM usage appears only in tests/examples/"
+            "tooling, so there's no runtime to govern. Governance is N/A; the "
+            "verdict follows agent code safety.")
+        return report
 
     cs = report.get("code_safety") or {}
     high = cs.get("high", 0) if cs.get("applicable") else 0
@@ -1054,7 +1116,24 @@ def build_report(root: Path, mode: str = "ci",
     code_safety = compute_code_safety(code_findings, agent_detected=agent_detected,
                                       static_covered=static_covered,
                                       other_langs=sorted(other_langs))
-    governance = compute_governance(present)
+    # Governance (runtime-safeguard maturity) only applies to a DEPLOYED agent.
+    # The false-signal case we fix: a repo that IS flagged as an agent (framework
+    # names present) but whose PRODUCTION code never actually calls an LLM — the
+    # references live only in tests/examples/tooling (a library's samples, a
+    # scanner's own detection patterns). Demanding a "kill switch / on-call / loop
+    # boundary" of that repo is noise. An other-language agent is still deployed
+    # (we just can't statically analyze it); a repo with NO agent at all keeps its
+    # existing handling (the CLI exits early with a "not an agent" message).
+    not_deployed_agent = (agent_detected and static_covered
+                          and not _has_production_agent(root))
+    governance_applicable = not not_deployed_agent
+    governance = compute_governance(present, applicable=governance_applicable)
+    if not_deployed_agent:
+        # Headline follows the objective code axis; governance can't gate here.
+        if code_safety.get("applicable") and code_safety.get("score") is not None:
+            score, decision = code_safety["score"], code_safety["decision"]
+        else:
+            score, decision = 100, "PROMOTE"
     has_ci = _has_github_actions_integration(root)
 
     # Enrich each safeguard with its evidence/issues for the report + UI.
@@ -1112,8 +1191,14 @@ def build_report(root: Path, mode: str = "ci",
         "decision":           decision,
         "code_safety":        code_safety,
         "governance":         governance,
+        "governance_applicable": governance_applicable,
         "real_checks":        real_check_results,
     }
+    if not governance_applicable:
+        report["decision_reason"] = (
+            "Not a deployed agent — LLM usage appears only in tests/examples/"
+            "tooling, so there's no runtime to govern. Governance is N/A; the "
+            "verdict follows agent code safety.")
     return apply_decision_mode(report, mode)
 
 
@@ -1850,7 +1935,7 @@ def badge_url(report: Dict[str, Any]) -> str:
 def governance_badge_url(report: Dict[str, Any]) -> str:
     """Optional second badge for the governance-maturity axis."""
     gov = report.get("governance") or {}
-    if not gov:
+    if not gov or not gov.get("applicable", True):
         return ""
     color = {"Mature": "brightgreen", "Partial": "yellow", "Undeclared": "red"}.get(
         gov.get("level"), "lightgrey")
@@ -1909,7 +1994,12 @@ def render_markdown(report: Dict[str, Any]) -> str:
             driving = "; ".join(f"{f['title']} ×{f['count']}" for f in factors[:3])
             out.append("")
             out.append(f"_Driving the score: {driving}._")
-    if gov:
+    if gov and not gov.get("applicable", True):
+        out.append("")
+        out.append("### ⚪ Governance: **N/A** — not a deployed agent")
+        out.append("_LLM usage appears only in tests/examples/tooling, so there's "
+                   "no runtime to govern. Nothing to gate on here._")
+    elif gov:
         ge = {"Mature": "🟢", "Partial": "🟡", "Undeclared": "🔴"}.get(gov.get("level"), "⚪")
         out.append("")
         out.append(f"### {ge} Governance: **{gov.get('score',0)} / 100** — {gov.get('level','')}")
@@ -1922,18 +2012,25 @@ def render_markdown(report: Dict[str, Any]) -> str:
     missing = report.get("missing", [])
     passing = report.get("passing", [])
 
-    out.append("| Safeguard | Status | Why | Compliance |")
-    out.append("| --- | :---: | --- | --- |")
-    for s in passing:
-        ctags = s.get("compliance_tags") or COMPLIANCE_TAGS.get(s["id"], [])
-        ctag_str = ", ".join(t.split(":")[0] for t in ctags[:2]) if ctags else "—"
-        out.append(f"| {s['label']} | ✅ | {s.get('evidence') or '—'} | {ctag_str} |")
-    for s in missing:
-        reason = (s.get("issues") or [s.get("risk", "")])[0]
-        ctags = s.get("compliance_tags") or COMPLIANCE_TAGS.get(s["id"], [])
-        ctag_str = ", ".join(t.split(":")[0] for t in ctags[:2]) if ctags else "—"
-        out.append(f"| {s['label']} | ❌ | {reason} | {ctag_str} |")
-    out.append("")
+    # The safeguard checklist only applies to a deployed agent — skip it entirely
+    # when Governance is N/A so the table doesn't contradict the N/A verdict.
+    if not gov.get("applicable", True):
+        out.append("_No deployed agent — the governance safeguard checklist does "
+                   "not apply here._")
+        out.append("")
+    else:
+        out.append("| Safeguard | Status | Why | Compliance |")
+        out.append("| --- | :---: | --- | --- |")
+        for s in passing:
+            ctags = s.get("compliance_tags") or COMPLIANCE_TAGS.get(s["id"], [])
+            ctag_str = ", ".join(t.split(":")[0] for t in ctags[:2]) if ctags else "—"
+            out.append(f"| {s['label']} | ✅ | {s.get('evidence') or '—'} | {ctag_str} |")
+        for s in missing:
+            reason = (s.get("issues") or [s.get("risk", "")])[0]
+            ctags = s.get("compliance_tags") or COMPLIANCE_TAGS.get(s["id"], [])
+            ctag_str = ", ".join(t.split(":")[0] for t in ctags[:2]) if ctags else "—"
+            out.append(f"| {s['label']} | ❌ | {reason} | {ctag_str} |")
+        out.append("")
 
     # Tier 3: AI-specific code findings
     findings = report.get("code_findings", []) or []
@@ -1951,7 +2048,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
                        f"{f['title']} | `{f['file']}:{f['line']}` | {f['recommendation']} |")
         out.append("")
 
-    if missing:
+    if missing and gov.get("applicable", True):
         out.append("### Next step")
         out.append("")
         out.append("Scaffold a ready-to-commit governance config from this audit:")
@@ -2056,6 +2153,8 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     if _code_na:
         _lang = cs.get("language", "this language")
         print("  " + _col(f"(governance only — agent code not statically analyzed for {_lang})", _MUTED))
+    elif not (report.get("governance") or {}).get("applicable", True):
+        print("  " + _col("(agent code safety only — not a deployed agent, governance N/A)", _MUTED))
     print()
 
     # Two-axis split: Agent Code Safety (objective) + Governance (declared).
@@ -2079,7 +2178,11 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
               f"{_col(f'LLM agent in {lang} — not statically analyzed yet', _MUTED)}")
         print(f"     {_col('Static analysis covers Python (deep) & JS/TS. For ' + lang + ', run the', _MUTED)}")
         print(f"     {_col('language-agnostic behavioral scan:  release-gate agent-score <endpoint>', _BLUE)}")
-    if gov:
+    if gov and not gov.get("applicable", True):
+        print(f"  {_col('Governance       ', _BOLD)}  {_col('N/A', _YELLOW, _BOLD)}   "
+              f"{_col('not a deployed agent — no runtime to govern', _MUTED)}")
+        print(f"     {_col('LLM usage appears only in tests/examples; nothing to gate on here.', _MUTED)}")
+    elif gov:
         gov_col = _GREEN if gov["level"] == "Mature" else (_YELLOW if gov["level"] == "Partial" else _RED)
         gov_score = f"{gov['score']}/100"
         gov_counts = f"{gov['present']}/{gov['total']} safeguards declared"
@@ -2136,6 +2239,7 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
 
     missing = report["missing"]
     passing = report["passing"]
+    gov_na = not (report.get("governance") or {}).get("applicable", True)
     findings = report.get("code_findings", []) or []
     suppressed = report.get("suppressed", []) or []
     expired = report.get("expired_suppressions", []) or []
@@ -2174,19 +2278,28 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
             if len(_highs) > 3:
                 print(f"  {_col('  +' + str(len(_highs) - 3) + ' more high', _RED)}")
         # Concise default — a one-line tally; the full breakdown lives behind
-        # --full and on the website.
-        print(f"\n  {_col('✓ ' + str(len(passing)) + ' safeguard(s) present', _GREEN)}"
-              f"    {_col('✗ ' + str(len(missing)) + ' missing', _RED if missing else _MUTED)}"
-              f"    {_col(str(len(findings)) + ' code finding(s)', _RED if findings else _MUTED)}")
-        if missing:
-            top = ", ".join(s["label"] for s in missing[:3])
-            more = f" +{len(missing) - 3} more" if len(missing) > 3 else ""
-            print(f"  {_col('Missing:', _MUTED)} {top}{more}")
+        # --full and on the website. When governance is N/A (not a deployed
+        # agent) the safeguard checklist doesn't apply — don't list it.
+        if gov_na:
+            print(f"\n  {_col(str(len(findings)) + ' code finding(s)', _RED if findings else _MUTED)}"
+                  f"    {_col('governance N/A — not a deployed agent', _MUTED)}")
+        else:
+            print(f"\n  {_col('✓ ' + str(len(passing)) + ' safeguard(s) present', _GREEN)}"
+                  f"    {_col('✗ ' + str(len(missing)) + ' missing', _RED if missing else _MUTED)}"
+                  f"    {_col(str(len(findings)) + ' code finding(s)', _RED if findings else _MUTED)}")
+            if missing:
+                top = ", ".join(s["label"] for s in missing[:3])
+                more = f" +{len(missing) - 3} more" if len(missing) > 3 else ""
+                print(f"  {_col('Missing:', _MUTED)} {top}{more}")
         print(f"\n  {_col('Run with --full for the breakdown, or open the full report online.', _MUTED)}")
         print()
     else:
-        # Missing safeguards
-        if missing:
+        # Missing safeguards — skipped entirely when governance is N/A (the repo
+        # deploys no agent, so runtime safeguards don't apply).
+        if gov_na:
+            _na = "Governance N/A — not a deployed agent (LLM usage only in tests/examples/tooling)."
+            print(f"\n  {_col(_na, _MUTED)}")
+        if missing and not gov_na:
             print(f"\n  {_col('Missing safeguards  (' + str(len(missing)) + ')', _RED, _BOLD)}\n")
             for s in missing:
                 print(f"  {_col('✗', _RED)}  {_col(s['label'], _BOLD)}")
@@ -2194,7 +2307,7 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
             print()
 
         # Passing safeguards
-        if passing:
+        if passing and not gov_na:
             print(f"  {_col('Safeguards found  (' + str(len(passing)) + ')', _GREEN, _BOLD)}\n")
             for s in passing:
                 print(f"  {_col('✓', _GREEN)}  {s['label']}")
@@ -2245,38 +2358,44 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
         print(f"\n  {_col('Next steps', _BOLD)}\n")
         step = 1
 
-        if not report["governance_file"]:
-            print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
-            print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
-            print(f"     Fill in the TODO lines, then score before every deploy.")
-            step += 1
-
-        if missing:
-            unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
-            if unresolved_safeguards:
-                print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
-                for s in missing:
-                    if s["id"] != "governance_file":
-                        print(f"     • {s['label']}")
+        if gov_na:
+            # Nothing to govern — the governance-scaffolding steps don't apply.
+            print(f"  {_col('This repo deploys no agent, so there are no runtime safeguards to add.', _MUTED)}")
+            print(f"  {_col('Agent code safety is clean. Point `release-gate audit` at a repo', _MUTED)}")
+            print(f"  {_col('that actually deploys an agent to exercise the governance axis.', _MUTED)}")
+        else:
+            if not report["governance_file"]:
+                print(f"  {_col(str(step), _BLUE, _BOLD)}.  Scaffold a governance config from this scan")
+                print(f"     {_col('release-gate audit . --emit-config -o governance.yaml', _BLUE)}")
+                print(f"     Fill in the TODO lines, then score before every deploy.")
                 step += 1
 
-        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
-        print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
-        step += 1
+            if missing:
+                unresolved_safeguards = [s["id"] for s in missing if s["id"] != "governance_file"]
+                if unresolved_safeguards:
+                    print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add missing safeguards to governance.yaml")
+                    for s in missing:
+                        if s["id"] != "governance_file":
+                            print(f"     • {s['label']}")
+                    step += 1
 
-        if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
-            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
-            print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Score before every deploy")
+            print(f"     {_col('release-gate score governance.yaml', _BLUE)}")
             step += 1
 
-        if not report["has_ci_integration"]:
-            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
-            print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.8.5', _BLUE)}")
-            step += 1
+            if not report["governance_file"] or not _sg_present(report["safeguards"].get("eval_evidence")):
+                print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add behavior evals")
+                print(f"     {_col('release-gate score governance.yaml --evals evals.yaml', _BLUE)}")
+                step += 1
 
-        print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
-        print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
-        step += 1
+            if not report["has_ci_integration"]:
+                print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Add to GitHub Actions")
+                print(f"     {_col('uses: VamsiSudhakaran1/release-gate@v0.8.5', _BLUE)}")
+                step += 1
+
+            print(f"\n  {_col(str(step), _BLUE, _BOLD)}.  Generate an evidence pack")
+            print(f"     {_col('release-gate evidence-pack governance.yaml', _BLUE)}")
+            step += 1
 
     # Web report link — show deep link if run was saved via authenticated API,
     # otherwise show the homepage so CLI users know where to scan via the web.

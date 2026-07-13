@@ -28,6 +28,21 @@ false HIGH (found on mem0). Now only the code inside each `${…}` is classified
 
 ## [Unreleased]
 
+### 🎯 Precision — Governance is N/A for a non-deployed agent
+
+A repo that is flagged as an agent because it *references* an LLM framework —
+but whose **production** code never actually calls an LLM (the references live
+only in tests, examples, or tooling: a library's samples, a scanner's own
+detection patterns) — is not a deployed agent. Demanding a "kill switch /
+on-call / loop boundary" of it, and dragging it to `HOLD`, is a false signal on
+the exact first run a prospect makes. Governance now reads **N/A** for that case
+(reported, never gated, in every mode); the verdict follows the objective
+agent-code-safety axis. A repo whose production code genuinely calls an LLM is
+still fully governed, and a repo with no agent at all keeps its existing
+handling. Detection reuses the AST call-detector + the finding scanner's own
+production/tooling path split, so a framework name in a regex or a sample never
+counts as deploying an agent. Found by dogfooding release-gate on itself.
+
 ### 🧭 TS/JS parity — model-output taint into exec sinks
 
 The Python analyzer follows a value from an LLM call into `eval`/`exec`; the JS/TS
