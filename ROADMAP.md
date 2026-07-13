@@ -100,3 +100,36 @@ but wrong* and triggered something **irreversible** — every line of code fine.
 
 Distribution, not capability, is the current bottleneck. More building — however
 visionary — is the wing when the engine that isn't returning home is *users*.
+
+## Near-term engineering backlog (deferred — subordinate to distribution)
+
+Captured so nothing is lost, but explicitly *not* prioritized over getting real
+users. Each is pulled forward only when a user's need (or a merge blocker) makes
+it the shortest path — not on its own.
+
+- **Packaging split — lean core, optional extras.** The base install pulls in
+  more than the local static gate needs (the tool that preaches lean shipping a
+  heavy tree). Split into a minimal CLI + `[api]`/`[pdf]`/`[mcp]` extras.
+  *Risk gate:* Vercel builds from `pyproject.toml` and does not install extras —
+  must be prepped and verified on a branch before it can touch `main`, or the
+  site breaks. Highest-risk item here; do last.
+- **Deeper TS/JS parity.** First increment (model-output taint into exec sinks)
+  shipped. Remaining: model output into a *system prompt* (extend the taint pass
+  to the injection surface), and LangChain.js `.invoke()`/`.stream()` chains —
+  each only if it can hold 100% precision. Validate against a real TS-first repo
+  before investing; don't chase Python-depth on spec.
+- **Split `audit.py`.** It carries scoring + decision modes + baseline compare +
+  the `pr` verdict + SARIF + PR-comment rendering. Extract cohesive modules to
+  shrink the change-surface and make contribution easier (bus-factor).
+- **Third-party security audit.** The benchmark is self-run evidence; an external
+  review is the credibility step for enterprise adoption. Cost/timing decision,
+  not an engineering one — trigger when a real prospect asks for it.
+- **`publish.yml` via PyPI Trusted Publishing.** Remove the manual release step
+  so a bad/manual publish can't happen; ties into the SUPPORT.md release-cadence
+  promise.
+- **"Non-agent repo → governance N/A" precision fix.** A repo with no agent code
+  should read *not applicable*, not a low governance score — avoids penalizing
+  the wrong thing on a first scan.
+- **Live scratch-PR Action test.** End-to-end dogfood of the published Action's
+  `command: pr` on a throwaway PR (unblocked now that 0.8.5 + the `v0.8.5` tag
+  are on PyPI).
