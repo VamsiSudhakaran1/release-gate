@@ -1040,7 +1040,7 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
-166 tests · all passing.
+594 tests · all passing.
 
 ---
 

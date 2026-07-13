@@ -839,11 +839,14 @@ class _Analyzer(ast.NodeVisitor):
         # basis: "confirmed" = we can point at the exact tainted flow / structure;
         #        "inferred"  = the pattern is present but reachability isn't proven.
         # These let a developer triage instantly and let CI gate on confirmed-only.
+        from release_gate.rules import rule_id_for_title
         return {
             "severity": severity, "title": title, "file": self.rel,
             "line": getattr(node, "lineno", 0), "snippet": "",
             "recommendation": rec, "evidence": evidence,
             "confidence": confidence, "basis": basis, "impact": impact,
+            # Stable, citable rule id (RG-EXEC-001) — never changes when a title is reworded.
+            "rule_id": rule_id_for_title(title),
         }
 
 

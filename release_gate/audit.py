@@ -1601,10 +1601,11 @@ def emit_sarif(report: Dict[str, Any], path: str) -> None:
 
     def _get_or_add_rule(rule_id: str, name: str, short_desc: str,
                          help_text: str, tags: List[str],
-                         severity_score: str = "5.0") -> None:
+                         severity_score: str = "5.0",
+                         help_uri: Optional[str] = None) -> None:
         if rule_id not in rule_ids_seen:
             rule_ids_seen[rule_id] = len(rules)
-            rules.append({
+            descriptor = {
                 "id": rule_id,
                 "name": _to_pascal(name),
                 "shortDescription": {"text": short_desc},
@@ -1613,7 +1614,10 @@ def emit_sarif(report: Dict[str, Any], path: str) -> None:
                     "tags": tags,
                     "security-severity": severity_score,
                 },
-            })
+            }
+            if help_uri:
+                descriptor["helpUri"] = help_uri   # links Code Scanning to the rule page
+            rules.append(descriptor)
 
     def _to_pascal(s: str) -> str:
         return "".join(w.capitalize() for w in re.split(r"[\s\-_/]+", s))
@@ -1624,14 +1628,20 @@ def emit_sarif(report: Dict[str, Any], path: str) -> None:
     sev_map = {"high": "error", "medium": "warning", "low": "note"}
     sev_score = {"high": "8.0", "medium": "5.0", "low": "2.0"}
 
+    from release_gate.rules import rule_for_title
     for f in report.get("code_findings", []) or []:
-        rule_id = _slugify(f["title"])
-        compliance = COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), ["OWASP-LLM:LLM10"])
+        # Prefer the STABLE rule id (RG-EXEC-001) so GitHub Code Scanning groups
+        # findings by a permanent identity and can link to a rationale page.
+        _rule = rule_for_title(f["title"])
+        rule_id = f.get("rule_id") or (_rule.id if _rule else _slugify(f["title"]))
+        compliance = (_rule.compliance if _rule else
+                      COMPLIANCE_TAGS.get(_finding_type_key(f["title"]), ["OWASP-LLM:LLM10"]))
         tags = ["ai-safety"] + compliance
         _get_or_add_rule(
             rule_id, f["title"], f["title"],
             f["recommendation"], tags,
             sev_score.get(f.get("severity", "medium"), "5.0"),
+            help_uri=(_rule.url if _rule else None),
         )
         level = sev_map.get(f.get("severity", "medium"), "warning")
         results.append({

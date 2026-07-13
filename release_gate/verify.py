@@ -1081,6 +1081,7 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
 def _finding(severity: str, title: str, file: str, line: int, snippet: str,
              recommendation: str, confidence: str = "medium",
              basis: str = "inferred", impact: str = "") -> Dict[str, Any]:
+    from release_gate.rules import rule_id_for_title
     return {
         "severity": severity,
         "title": title,
@@ -1091,4 +1092,6 @@ def _finding(severity: str, title: str, file: str, line: int, snippet: str,
         "confidence": confidence,
         "basis": basis,
         "impact": impact,
+        # Stable, citable rule id (RG-EXEC-001) — the bridge from scanner to authority.
+        "rule_id": rule_id_for_title(title),
     }
