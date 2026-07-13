@@ -2,12 +2,18 @@
 
 ## Supported Versions
 
-Only the latest release series receives security fixes.
+Only the latest minor release series receives security fixes. When a new minor
+series ships, the previous one is supported for **30 days** so consumers pinning
+a blocking gate have a window to upgrade.
 
 | Version | Supported |
 | ------- | :-------: |
-| v0.7.x  | ✅        |
-| < v0.7  | ❌        |
+| v0.8.x  | ✅        |
+| < v0.8  | ❌        |
+
+See [`docs/SUPPORT.md`](docs/SUPPORT.md) for the full versioning and support
+policy (SemVer commitment, release cadence, pinning guidance, and deprecation
+notice period).
 
 ## Reporting a Vulnerability
 

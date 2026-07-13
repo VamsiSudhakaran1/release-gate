@@ -28,6 +28,29 @@ false HIGH (found on mem0). Now only the code inside each `${…}` is classified
 
 ## [Unreleased]
 
+### 📊 Reproducible accuracy benchmark — "demonstrated, not asserted"
+
+- **`benchmark/`** — a labeled corpus (`cases.yaml`, 25 cases) plus a
+  precision/recall harness (`run.py`) that runs the *production* scanners over
+  ground truth. Clean cases are real framework look-alikes (mem0, crewAI,
+  gpt-researcher, livekit, LangChain, vercel/ai) where a naive scanner
+  false-positives; each is a permanent regression guard. One vulnerable case is
+  kept and labeled as a **known miss** (intra-procedural taint limit) rather than
+  hidden. Current: **100% precision · 91.7% recall · 100% clean-quiet** — re-run
+  it yourself with `python benchmark/run.py`. `tests/test_benchmark.py` fails CI
+  if precision or the clean-quiet rate ever regresses.
+- Fixed a real gap the benchmark caught: the secret regex `sk-[A-Za-z0-9]{16,}`
+  stopped at the hyphen in modern OpenAI key prefixes (`sk-proj-`, `sk-svcacct-`,
+  `sk-admin-`), so those keys were missed. Now matched in all three secret paths.
+
+### 📄 Versioning & support policy
+
+- **`docs/SUPPORT.md`** — an explicit SemVer contract for a blocking gate: what
+  each bump can do to your build, what counts as a breaking change, pinning
+  guidance, release cadence, deprecation window, and an honest maturity /
+  maintainership statement. `SECURITY.md`'s supported-versions table corrected
+  from the stale v0.7.x to v0.8.x, with a 30-day previous-series window.
+
 ### 🔒 Security hardening — browser surface & access control
 
 - **Security response headers on every response.** A document-scoped CSP
