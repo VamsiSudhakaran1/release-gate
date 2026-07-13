@@ -827,6 +827,55 @@ _JS_SHELL_ESCAPE_RE = re.compile(
     r"shell[_-]?escape|shell[_-]?quote|shlex|escape[_-]?shell|\bquote\(",
     re.IGNORECASE)
 
+# ── Intra-file model-output taint (TS/JS) ────────────────────────────────────
+# The Python analyzer follows a value from an LLM call into a sink; the JS path
+# historically could not, so model output reaching eval/exec graded only as a
+# generic low "dynamic sink" (RG-EXEC-003). This lightweight pass closes that gap
+# without a full dataflow engine: it records the variables assigned *directly*
+# from a model call in the same file, so `const r = await generateText(...);
+# eval(r.text)` is recognized as the CVE-2025-51472 model→sink RCE class
+# (RG-EXEC-001), while a value from a config/template source stays a low dynamic
+# sink. Precision-first: only an unambiguous SDK generate/complete call taints.
+_JS_MODEL_RHS_RE = re.compile(
+    r"(?:[\w$]+\.)*"
+    r"(?:generateText|streamText|generateObject|streamObject|"
+    r"chat\.completions\.create|messages\.create)\s*\(")
+_JS_ASSIGN_LHS_RE = re.compile(
+    r"^\s*(?:const|let|var)\s+(\{[^}]+\}|[A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?(.*)$")
+
+
+def _js_destructure_names(lhs: str) -> List[str]:
+    """Local names bound by a `{ a, b: c }` destructuring pattern (the renamed
+    local `c`, not the source key `b`)."""
+    names: List[str] = []
+    for part in lhs.strip()[1:-1].split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            part = part.split(":", 1)[1].strip()
+        part = part.split("=")[0].strip().lstrip(".")
+        m = re.match(r"[A-Za-z_$][\w$]*", part)
+        if m:
+            names.append(m.group(0))
+    return names
+
+
+def _js_model_taint(lines: List[str]) -> Dict[str, int]:
+    """Map each variable assigned directly from a model call to the line it was
+    assigned on, so a later sink referencing it can be graded as model output."""
+    taint: Dict[str, int] = {}
+    for idx, ln in enumerate(lines, start=1):
+        ma = _JS_ASSIGN_LHS_RE.match(ln)
+        if not ma:
+            continue
+        lhs, rhs = ma.group(1), ma.group(2)
+        if not _JS_MODEL_RHS_RE.match(rhs.strip()):
+            continue
+        for nm in (_js_destructure_names(lhs) if lhs.startswith("{") else [lhs]):
+            taint.setdefault(nm, idx)
+    return taint
+
 
 def _js_exec_is_dynamic(line: str) -> bool:
     """True if a JS exec/eval call takes a dynamic command (not a constant string).
@@ -918,6 +967,10 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
     """Detect AI-specific risks in JS/TS source files."""
     findings: List[Dict[str, Any]] = []
     lines = text.splitlines()
+    # Variables assigned from a model call in this file — lets an exec sink that
+    # consumes model output grade as the real model→sink RCE class, not a low
+    # unclassified dynamic sink (mirrors the Python analyzer's intra-proc taint).
+    model_taint = _js_model_taint(lines)
 
     for i, line in enumerate(lines, start=1):
         stripped = line.strip()
@@ -952,8 +1005,26 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
             ctx = "\n".join(lines[max(0, i - 3):i + 1])
             strong = bool(_JS_STRONG_INPUT_RE.search(ctx))
             escaped = bool(_JS_SHELL_ESCAPE_RE.search(line))
+            # Does the sink's own argument reference a model-tainted variable
+            # assigned earlier in this file? Scope to the text from the sink call
+            # onward so an unrelated earlier mention on the line doesn't count.
+            sm = _JS_EXEC_SINK_RE.search(code)
+            arg_region = line[sm.start():] if sm else line
+            model_src = any(
+                aline < i and re.search(rf"\b{re.escape(var)}\b", arg_region)
+                for var, aline in model_taint.items())
             if escaped and not strong:
                 pass  # shell-escaped / quoted args are mitigated — not an injection
+            elif model_src:
+                findings.append(_finding(
+                    "high", "Dangerous execution sink", rel, i, stripped[:120],
+                    "eval/new Function/child_process.exec executes model output — a "
+                    "value assigned from an LLM call in this file. This is the "
+                    "CVE-2025-51472 remote-code-execution class: never eval text a "
+                    "model produced; parse it (JSON/a strict grammar), or sandbox "
+                    "execution.",
+                    confidence="high", basis="confirmed",
+                    impact="Remote code execution: model output reaches this sink."))
             elif interpolated and strong:
                 findings.append(_finding(
                     "high", "Dangerous execution sink", rel, i, stripped[:120],

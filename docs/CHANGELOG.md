@@ -28,6 +28,21 @@ false HIGH (found on mem0). Now only the code inside each `${…}` is classified
 
 ## [Unreleased]
 
+### 🧭 TS/JS parity — model-output taint into exec sinks
+
+The Python analyzer follows a value from an LLM call into `eval`/`exec`; the JS/TS
+path could not, so the same pattern in TypeScript graded only as a generic low
+"dynamic sink" (`RG-EXEC-003`). A new **intra-file model-taint pass** closes that
+gap without a full dataflow engine: variables assigned directly from a model call
+(`generateText` / `streamText` / `generateObject` / `chat.completions.create` /
+`messages.create`, including destructured `const { text } = await …` and receiver
+forms like `client.chat.completions.create`) are tracked, so
+`const r = await generateText(...); eval(r.text)` is now recognized as the
+**CVE-2025-51472 model→sink RCE class** (`RG-EXEC-001`, high/confirmed). A value
+from a non-model source (a config/template transform) stays a low dynamic sink —
+precision-first, verified by a benchmark guard. Benchmark grows to 27 cases;
+precision stays **100%**, recall **92.9%**.
+
 ### 📊 Reproducible accuracy benchmark — "demonstrated, not asserted"
 
 - **`benchmark/`** — a labeled corpus (`cases.yaml`, 25 cases) plus a

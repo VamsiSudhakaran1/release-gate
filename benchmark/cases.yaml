@@ -262,8 +262,26 @@ cases:
   - id: ts-model-output-to-eval
     lang: ts
     label: vulnerable
-    expect: [RG-EXEC-003]
-    source: "TS grades model->sink as dynamic/low: no JS taint to prove the model source (documented limit)"
+    expect: [RG-EXEC-001]
+    source: "intra-file model taint: value assigned from generateText() reaches eval → CVE-2025-51472 class"
     code: |
       const reply = await generateText({model: m, prompt: p, maxOutputTokens: 50});
       eval(reply.text);
+
+  - id: ts-model-output-destructured-to-eval
+    lang: ts
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "destructured model output ({ text } = await generateText) reaching eval"
+    code: |
+      const { text } = await generateText({model: m, prompt: p, maxOutputTokens: 40});
+      eval(text);
+
+  - id: ts-nonmodel-dynamic-eval-stays-low
+    lang: ts
+    label: vulnerable
+    expect: [RG-EXEC-003]
+    source: "precision guard: a value from a NON-model source must stay low (RG-EXEC-003), not be promoted to model->sink"
+    code: |
+      const reply = buildTemplate(name);
+      eval(reply);
