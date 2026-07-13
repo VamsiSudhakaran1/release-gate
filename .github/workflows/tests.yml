@@ -20,6 +20,9 @@ jobs:
       - name: Install release-gate with dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Check version consistency (site/docs/package vs pyproject)
+        run: python scripts/check_version_sync.py
+
       - name: Run tests
         run: pytest tests/ --ignore=tests/test_crypto.py -v --tb=short
 

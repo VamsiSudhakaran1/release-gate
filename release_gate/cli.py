@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 release-gate CLI - AI release decision engine
-Version: 0.8.4 — security-hardened MCP server (release-gate-mcp): audit from any
+Version: 0.8.5 — security-hardened MCP server (release-gate-mcp): audit from any
          MCP-capable agent, stdio-only, no network egress, no code execution,
          path-confined, injection-safe outputs. Builds on 0.8.2's trustworthy
          findings (deserialization-sink calibration, example/cookbook excluded

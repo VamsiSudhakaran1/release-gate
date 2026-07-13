@@ -2,6 +2,30 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.8.5]
+
+### ✨ Added — `release-gate pr`, the AI-change review gate
+
+- **`release-gate pr --base <ref>`** — a single PROMOTE / HOLD / BLOCK on what a
+  pull request *introduced*, for the AI-generated-code era where the bottleneck
+  is reviewing/trusting a diff, not writing it. Builds the base tree in a
+  throwaway git worktree, audits base vs HEAD, and folds two gates into one
+  verdict: **net-new agent-layer risk** (blocks only on net-new regressions,
+  never inherited debt) and **lockfile/AIBOM behaviour drift** (a prompt/model/
+  tool change with no matching lock update → HOLD, not held against a PR that
+  re-locked). Adds one factual signal — did the diff touch source without a
+  test. `--comment` emits GitHub markdown, `--json` for bots. Exit 0/10/1.
+- **GitHub Action** gains `command: pr` with a `base` input and sticky
+  PR-comment posting.
+- Deliberately **not** a heuristic "debug-debt score" — every line is a fact
+  from the diff, not a prediction.
+
+### 🎯 Precision — JS/TS system-prompt injection classified by the interpolation
+
+A template literal was graded by scanning the whole template's prose, so a
+benign `${new Date()}` plus the word "input" in the instructions produced a
+false HIGH (found on mem0). Now only the code inside each `${…}` is classified.
+
 ## [Unreleased]
 
 ### 🔒 Security hardening — browser surface & access control

@@ -1,0 +1,51 @@
+# Dogfooding: run the AI-change review gate on every PR to this repo, using the
+# repo's OWN current code (pip install -e .), so `release-gate pr` is exercised
+# end-to-end on a real pull_request event without waiting on a PyPI release.
+name: release-gate pr (self)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # post the sticky review comment
+
+jobs:
+  review-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so the diff can be scoped to the merge-base
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install release-gate from source
+        run: pip install -e .
+
+      - name: Review this PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          release-gate pr --base "origin/${{ github.base_ref }}" --comment > /tmp/rg-pr.md
+          CODE=$?
+          set -e
+          cat /tmp/rg-pr.md >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/rg-pr.md
+
+          # Sticky comment: one per PR, updated in place.
+          BODY="<!-- release-gate-pr -->"$'\n'"$(cat /tmp/rg-pr.md)"
+          CID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.body | startswith("<!-- release-gate-pr -->")) | .id' 2>/dev/null | head -1)
+          if [ -n "$CID" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${CID}" -X PATCH -f "body=${BODY}" --silent || true
+          else
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f "body=${BODY}" --silent || true
+          fi
+
+          # 1 BLOCK fails the check; 10 HOLD is advisory (mergeable after review).
+          if [ "$CODE" -eq "1" ]; then exit 1; fi
+          exit 0
