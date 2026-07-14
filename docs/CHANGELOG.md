@@ -28,6 +28,27 @@ false HIGH (found on mem0). Now only the code inside each `${…}` is classified
 
 ## [Unreleased]
 
+### 🔎 Coverage matrix — an audit now states what it did NOT assess
+
+Every verdict carries an explicit coverage matrix (`report["coverage"]`): agent
+code (Python deep, JS/TS lighter), declared vs. runtime-verified safeguards,
+live behavior/red-team, tool/MCP blast radius, and deployment binding
+(commit/IAM/remote-MCP trust). A static pre-deploy scan sees code and declared
+config — it doesn't execute the agent or bind to the deployment — and now says
+so. Shown as a one-line caveat by default, a full matrix under `--full`, a
+collapsible table in the Markdown/PR comment, and always in `--json`. The honest
+counterweight to a one-line PROMOTE/HOLD/BLOCK, so no one reads a pass as "safe."
+
+### 🚚 Release automation — one drift-proof publish pipeline
+
+`.github/workflows/publish.yml`: pushing a `vX.Y.Z` tag runs a guard (tag must
+equal the package version, `check_version_sync` passes, full suite + accuracy
+benchmark green), builds and `twine check`s the dist, publishes to PyPI via
+**Trusted Publishing** (OIDC, no stored token), creates the GitHub Release,
+smoke-tests the install from PyPI, and moves the floating `vMAJOR.MINOR` tag. A
+drifted or untested release becomes structurally impossible — closing the gap
+between package, tag, Release, and site version pins.
+
 ### 🎯 Precision — Governance is N/A for a non-deployed agent
 
 A repo that is flagged as an agent because it *references* an LLM framework —

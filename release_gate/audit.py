@@ -637,6 +637,79 @@ def compute_governance(present: Dict[str, bool],
             "total": len(SAFEGUARDS), "applicable": True}
 
 
+def _languages_present(root: Path, cap: int = 1500) -> Tuple[bool, bool]:
+    """(has_python, has_js_ts) — cheap presence check for the coverage matrix."""
+    has_py = has_js = False
+    n = 0
+    for f in _iter_all_source_files(root):
+        n += 1
+        if n > cap:
+            break
+        suf = f.suffix.lower()
+        if suf in PYTHON_EXTENSIONS:
+            has_py = True
+        elif suf in JS_EXTENSIONS:
+            has_js = True
+        if has_py and has_js:
+            break
+    return has_py, has_js
+
+
+# What a static pre-deploy scan structurally CAN and CANNOT see. Making this
+# explicit is the honest counterweight to a single PROMOTE/HOLD/BLOCK line: a
+# trustworthy judge states what it did not assess, so nobody reads "PROMOTE" as
+# "safe". Statuses: assessed | partial | not_assessed | not_supplied | n/a.
+def compute_coverage(report: Dict[str, Any], has_py: bool, has_js: bool,
+                     other_langs: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    other_langs = other_langs or []
+    gov_applicable = report.get("governance_applicable", True)
+    safeguards = report.get("safeguards") or {}
+    has_evals = _sg_present(safeguards.get("eval_evidence"))
+    rows: List[Tuple[str, str, str]] = []
+
+    # 1) Static code analysis — depth depends on language.
+    if has_py and has_js:
+        rows.append(("Agent code (static analysis)", "partial",
+                     "Python assessed in depth (AST + taint); JS/TS with lighter heuristics."))
+    elif has_py:
+        rows.append(("Agent code (static analysis)", "assessed",
+                     "Python assessed in depth (AST + taint)."))
+    elif has_js:
+        rows.append(("Agent code (static analysis)", "partial",
+                     "JS/TS assessed with lighter heuristics than Python."))
+    for lang in other_langs:
+        rows.append((f"Agent code — {lang}", "not_assessed",
+                     "Not statically analyzed; run the behavioral scan against its endpoint."))
+
+    # 2) Governance — declared vs. verified-at-runtime.
+    if not gov_applicable:
+        rows.append(("Governance safeguards", "n/a", "No deployed agent to govern."))
+    else:
+        rows.append(("Declared governance safeguards", "assessed",
+                     "Presence/validity of declarations checked — not whether they fire."))
+        rows.append(("Runtime safeguard behavior", "not_assessed",
+                     "A static scan doesn't run the agent: kill-switch/budget/fallback are "
+                     "read as declared, not tested."))
+
+    # 3) Behavior / red-team.
+    if has_evals:
+        rows.append(("Live agent behavior / red-team", "partial",
+                     "Eval evidence present (representativeness & freshness not verified here)."))
+    else:
+        rows.append(("Live agent behavior / red-team", "not_assessed",
+                     "Not exercised here — run agent-score, or supply eval evidence."))
+
+    # 4) Tool blast radius (roadmap frontier).
+    rows.append(("Tool / MCP permissions & blast radius", "not_assessed",
+                 "No tool-impact inventory yet (which tools can pay / delete / deploy)."))
+
+    # 5) Deployment binding — outside a code scan entirely.
+    rows.append(("Deployment binding (commit · IAM · remote MCP trust)", "not_supplied",
+                 "Whether prod runs this commit, runtime IAM, and remote MCP trust are not supplied."))
+
+    return [{"dimension": d, "status": s, "note": n} for d, s, n in rows]
+
+
 # ─────────────────────────── Policy modes ───────────────────────────────────
 
 # Missing any of these is what a regulated/internal team treats as a hard stop.
@@ -1194,6 +1267,10 @@ def build_report(root: Path, mode: str = "ci",
         "governance_applicable": governance_applicable,
         "real_checks":        real_check_results,
     }
+    # Explicit coverage matrix — what this audit did and did NOT assess. The
+    # honest counterweight to a one-line verdict (see compute_coverage).
+    has_py, has_js = _languages_present(root)
+    report["coverage"] = compute_coverage(report, has_py, has_js, sorted(other_langs))
     if not governance_applicable:
         report["decision_reason"] = (
             "Not a deployed agent — LLM usage appears only in tests/examples/"
@@ -2061,6 +2138,23 @@ def render_markdown(report: Dict[str, Any]) -> str:
                    "`release-gate score governance.yaml`.")
         out.append("")
 
+    # Coverage — collapsed by default so it doesn't crowd the verdict, but always
+    # present: a reader can see exactly what this audit did and did not assess.
+    coverage = report.get("coverage") or []
+    if coverage:
+        _mk = {"assessed": "✅ assessed", "partial": "🟡 partial",
+               "not_assessed": "⚪ not assessed", "not_supplied": "⚪ not supplied",
+               "n/a": "— n/a"}
+        out.append("<details><summary><b>Coverage</b> — what this audit did &amp; did not assess</summary>")
+        out.append("")
+        out.append("| Dimension | Status | Note |")
+        out.append("| --- | :---: | --- |")
+        for row in coverage:
+            out.append(f"| {row['dimension']} | {_mk.get(row['status'], row['status'])} | {row.get('note','')} |")
+        out.append("")
+        out.append("</details>")
+        out.append("")
+
     return "\n".join(out)
 
 
@@ -2197,6 +2291,35 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     reason = report.get("decision_reason")
     if reason:
         print(f"  {_col(reason, _MUTED)}")
+
+    # Coverage matrix — say what was and wasn't assessed, so no one reads a
+    # verdict as more than it is. Full matrix in --full; a one-line caveat by
+    # default so the boundary is never hidden.
+    coverage = report.get("coverage") or []
+    if coverage and not full:
+        _unseen = [r["dimension"] for r in coverage
+                   if r["status"] in ("not_assessed", "not_supplied")]
+        if _unseen:
+            _lead = ", ".join(_unseen[:3]).lower()
+            _more = f" +{len(_unseen) - 3} more" if len(_unseen) > 3 else ""
+            print(f"  {_col('Not assessed: ' + _lead + _more + '  (--full for the coverage matrix)', _MUTED)}")
+    if full and coverage:
+        _cov_mark = {
+            "assessed":     (_col("assessed",     _GREEN)),
+            "partial":      (_col("partial",      _YELLOW)),
+            "not_assessed": (_col("not assessed", _MUTED)),
+            "not_supplied": (_col("not supplied", _MUTED)),
+            "n/a":          (_col("n/a",          _MUTED)),
+        }
+        print()
+        print(f"  {_col('Coverage', _BOLD)}  {_col('— what this audit did & did not assess', _MUTED)}")
+        for row in coverage:
+            label = _col(row["dimension"], _BOLD) if row["status"] in ("assessed", "partial") \
+                else _col(row["dimension"], _MUTED)
+            print(f"    {_cov_mark.get(row['status'], row['status'])}  {label}")
+            if row.get("note"):
+                print(f"       {_col(row['note'], _MUTED)}")
+
     # Verifier summary (advisory — a model's second opinion on the findings).
     vrf = report.get("verify")
     if vrf and vrf.get("verified"):

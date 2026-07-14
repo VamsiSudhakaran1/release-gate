@@ -594,6 +594,36 @@ def test_non_deployed_agent_governance_is_na(tmp_path):
         assert report["decision"] == "PROMOTE", mode
 
 
+def test_coverage_matrix_states_what_it_did_not_assess(tmp_path):
+    """Every audit must carry an explicit coverage matrix — a trustworthy gate
+    says what it did NOT assess so a verdict is never over-read."""
+    make_repo(tmp_path, {"bot.py": (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "def run(msgs):\n"
+        "    return client.chat.completions.create(model='gpt-4', messages=msgs, max_tokens=50)\n"
+    )})
+    report = build_report(tmp_path)
+    cov = report.get("coverage")
+    assert cov, "report must include a coverage matrix"
+    by_dim = {r["dimension"]: r["status"] for r in cov}
+    # Static code was assessed…
+    assert by_dim.get("Agent code (static analysis)") == "assessed"
+    # …but runtime behavior and deployment binding are honestly NOT assessed.
+    assert by_dim.get("Runtime safeguard behavior") == "not_assessed"
+    assert any(s == "not_supplied" for s in by_dim.values())
+
+
+def test_coverage_governance_row_na_for_non_deployed(tmp_path):
+    make_repo(tmp_path, {"examples/demo.py": (
+        "from openai import OpenAI\n"
+        "OpenAI().chat.completions.create(model='gpt-4', messages=[])\n"
+    )})
+    report = build_report(tmp_path)
+    by_dim = {r["dimension"]: r["status"] for r in report["coverage"]}
+    assert by_dim.get("Governance safeguards") == "n/a"
+
+
 def test_deployed_agent_still_governed(tmp_path):
     """The guard must not over-suppress: a repo whose PRODUCTION code actually
     calls an LLM IS a deployed agent — Governance applies and still gates."""
