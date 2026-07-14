@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _pyproject_version() -> str:
-    m = re.search(r'^version\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M)
+    m = re.search(r'^version\s*=\s*"([^"]+)"',
+                  (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M)
     if not m:
         print("FATAL: no version in pyproject.toml", file=sys.stderr)
         sys.exit(2)
@@ -52,12 +53,12 @@ def main() -> int:
         print("Version drift detected (source of truth: pyproject.toml = "
               f"{version}):", file=sys.stderr)
         for e in errors:
-            print("  ✗ " + e, file=sys.stderr)
+            print("  [X] " + e, file=sys.stderr)
         print("\nBump every reference to match, or run this after a release bump.",
               file=sys.stderr)
         return 1
 
-    print(f"✓ version {version} consistent across pyproject, package, API, and "
+    print(f"[OK] version {version} consistent across pyproject, package, API, and "
           "all Action pins (site + README).")
     return 0
 

@@ -66,7 +66,7 @@ def main() -> int:
         return rc
 
     print(
-        f"\n✓ Bumped to {new}. Reminder: move docs/CHANGELOG.md '[Unreleased]' "
+        f"\n[OK] Bumped to {new}. Reminder: move docs/CHANGELOG.md '[Unreleased]' "
         f"to '[{new}]'.\n\nFinish the release:\n"
         f"  git commit -am \"Release v{new}\"\n"
         f"  git push origin main\n"

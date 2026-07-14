@@ -34,5 +34,7 @@ def test_recall_floor():
 
 def test_results_md_in_sync():
     doc = Path(__file__).resolve().parent.parent / "benchmark" / "RESULTS.md"
-    assert doc.read_text().strip() == _bench.render_md(_res()).strip(), \
+    # encoding pinned to utf-8: the file has em-dashes; Path.read_text() would
+    # otherwise use the platform default (cp1252 on Windows) and mis-decode them.
+    assert doc.read_text(encoding="utf-8").strip() == _bench.render_md(_res()).strip(), \
         "benchmark/RESULTS.md is stale — run: python benchmark/run.py --md"

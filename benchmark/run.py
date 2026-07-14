@@ -81,7 +81,7 @@ def evaluate(cases) -> dict:
 
 
 def load_cases():
-    return yaml.safe_load((ROOT / "cases.yaml").read_text())["cases"]
+    return yaml.safe_load((ROOT / "cases.yaml").read_text(encoding="utf-8"))["cases"]
 
 
 def render_md(res: dict) -> str:
@@ -125,7 +125,7 @@ def main() -> int:
     if "--json" in sys.argv:
         print(json.dumps(res, indent=2)); return 0
     if "--md" in sys.argv:
-        (ROOT / "RESULTS.md").write_text(render_md(res) + "\n")
+        (ROOT / "RESULTS.md").write_text(render_md(res) + "\n", encoding="utf-8")
         print(f"wrote {ROOT / 'RESULTS.md'}"); return 0
     print(f"cases={res['cases']}  precision={res['precision']:.1%}  "
           f"recall={res['recall']:.1%}  clean-quiet={res['clean_quiet_rate']:.1%}  "
