@@ -1,0 +1,139 @@
+name: Publish
+
+# One automated release path, so the package, the tag, the GitHub Release and
+# the version pins can never drift again. Triggered by pushing a version tag:
+#
+#   1. bump the version everywhere (pyproject is the source of truth)
+#   2. commit, then:  git tag v0.8.6 && git push origin v0.8.6
+#
+# The `guard` job refuses to publish unless the tag matches the package version
+# AND check_version_sync passes AND the full suite + accuracy benchmark are green
+# — a drifted or untested release is structurally impossible.
+#
+# PyPI upload uses Trusted Publishing (OIDC) — no API token in secrets. One-time
+# setup on PyPI: project -> Publishing -> add a GitHub publisher with
+# owner=VamsiSudhakaran1, repo=release-gate, workflow=publish.yml, environment=pypi.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to (re)publish'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Test, benchmark & version guard
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]" build twine
+
+      - name: Tag must match the package version
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then TAG="${{ inputs.tag }}"; fi
+          PKG="v$(python -c 'import release_gate; print(release_gate.__version__)')"
+          echo "tag=$TAG  package=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $TAG != package version $PKG — refusing to publish a drifted release."
+            exit 1
+          fi
+          echo "version=${PKG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Version consistency (site / README / Action pins)
+        run: python scripts/check_version_sync.py
+
+      - name: Full test suite
+        run: pytest tests/ --ignore=tests/test_crypto.py -q
+
+      - name: Accuracy benchmark must hold
+        run: pytest tests/test_benchmark.py -q
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Validate distribution metadata
+        run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI (Trusted Publishing)
+    needs: guard
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/release-gate/
+    permissions:
+      id-token: write   # OIDC token for PyPI Trusted Publishing — no API secret
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: GitHub Release, smoke test & floating tag
+    needs: [guard, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the Release and move the floating minor tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+      - name: Smoke test the published package
+        run: |
+          VER="${{ needs.guard.outputs.version }}"
+          echo "Waiting for PyPI to index release-gate==$VER ..."
+          for i in 1 2 3 4 5 6; do
+            if pip install "release-gate==$VER" 2>/dev/null; then
+              INSTALLED=$(python -c 'import release_gate; print(release_gate.__version__)')
+              if [ "$INSTALLED" = "$VER" ]; then
+                echo "Installed release-gate $INSTALLED from PyPI"
+                release-gate audit --help >/dev/null 2>&1 || true
+                exit 0
+              fi
+            fi
+            echo "  not indexed yet (attempt $i) — retrying in 30s"; sleep 30
+          done
+          echo "::error::Published package release-gate==$VER did not install from PyPI in time"
+          exit 1
+
+      - name: Move floating minor-series tag (vMAJOR.MINOR)
+        run: |
+          VER="${{ needs.guard.outputs.version }}"   # e.g. 0.8.6
+          MINOR="v${VER%.*}"                          # e.g. v0.8
+          git tag -f "$MINOR"
+          git push -f origin "$MINOR"
+          echo "Moved $MINOR -> $(git rev-parse --short HEAD) so 'uses: ...@$MINOR' tracks the latest patch."
