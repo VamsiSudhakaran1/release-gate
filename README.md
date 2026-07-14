@@ -17,12 +17,16 @@
 ```bash
 pip install release-gate
 
-# Your own repo / CI — enforce your declared policy
-release-gate audit . --mode ci
+# ── The wedge: gate a pull request on what IT introduced ──
+# One PROMOTE / HOLD / BLOCK on net-new agent risk only (inherited debt is
+# shown, never gated) + prompt/model drift. Runs in CI on the PR branch.
+git checkout my-feature-branch
+release-gate pr --base origin/main
+release-gate pr --base origin/main --comment   # GitHub-ready PR comment
 
-# A public repo you don't own — advisory lens (governance never gates;
-# only production, confirmed-high findings surface — no false-positive noise)
-release-gate audit https://github.com/org/repo --mode public-advisory
+# ── Or audit a whole repo (the broader lens) ──
+release-gate audit . --mode ci                                    # your repo, in CI
+release-gate audit https://github.com/org/repo --mode public-advisory  # any public repo, advisory
 ```
 
 Output:
@@ -66,8 +70,8 @@ the failure modes that only exist once an LLM is in the loop, runs evals, valida
 execution traces, checks cost budgets — then gives you two honest scores and one
 decision: **PROMOTE / HOLD / BLOCK**.
 
-**SonarQube tells you your _code_ is safe. release-gate tells you your _agent_ is safe to
-ship.** They're complementary — keep your SAST suite; release-gate covers the agent layer
+**SonarQube checks your _code_. release-gate checks whether your _agent_ change meets its
+release policy.** They're complementary — keep your SAST suite; release-gate covers the agent layer
 it was never built to see (prompt-injection surfaces, cost-runaway loops, missing kill
 switches).
 

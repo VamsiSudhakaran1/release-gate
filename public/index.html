@@ -46,7 +46,7 @@
       {
         "@type": "Question",
         "name": "How is release-gate different from guardrails like Lakera or NeMo?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Guardrails block a bad request at runtime — they live in the request path of a deployed agent. Release-gate answers a different question before you deploy: is this agent safe to ship at all? It returns one PROMOTE / HOLD / BLOCK verdict across safety, correctness, loop behavior, and cost." }
+        "acceptedAnswer": { "@type": "Answer", "text": "Guardrails block a bad request at runtime — they live in the request path of a deployed agent. Release-gate answers a different question before you deploy: does this agent change meet its release policy? It returns one PROMOTE / HOLD / BLOCK verdict across safety, correctness, loop behavior, and cost." }
       },
       {
         "@type": "Question",
@@ -1519,8 +1519,8 @@
 <section id="who-its-for">
   <div class="container">
     <p class="section-eyebrow">Who it's for</p>
-    <h2 class="section-title">Built for every team shipping AI into production</h2>
-    <p class="section-subtitle">Whether you're a solo engineer or a platform team governing dozens of agents — release-gate fits into how you already work.</p>
+    <h2 class="section-title">For whoever has to trust an AI-generated agent change</h2>
+    <p class="section-subtitle">The person reviewing the PR, and the team that has to live with what merges. release-gate gives them one evidence-backed decision instead of a diff to eyeball.</p>
 
     <div class="personas-grid">
 
@@ -1903,7 +1903,7 @@
     <div class="section-header">
       <p class="section-eyebrow">Fits your stack</p>
       <h2 class="section-title">Add the agent layer to the security tooling you already run</h2>
-      <p class="section-subtitle">SonarQube, Snyk and your SAST suite keep your <em>code</em> healthy. release-gate keeps your <em>agent</em> safe to ship. They&rsquo;re complementary &mdash; release-gate doesn&rsquo;t replace anything you already trust, it covers the layer those tools were never built to see.</p>
+      <p class="section-subtitle">SonarQube, Snyk and your SAST suite keep your <em>code</em> healthy. release-gate checks whether your <em>agent</em> change meets its release policy. They&rsquo;re complementary &mdash; release-gate doesn&rsquo;t replace anything you already trust, it covers the layer those tools were never built to see.</p>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;max-width:960px;margin:0 auto 32px">
@@ -2002,7 +2002,7 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>How is this different from guardrails like Lakera or NeMo?</summary>
-        <div class="faq-a">Guardrails block a bad request <em>at runtime</em> — they live in the request path of a deployed agent. Release-gate answers a different question <em>before</em> you deploy: is this agent safe to ship at all? It runs a battery against the agent and returns one <strong>PROMOTE / HOLD / BLOCK</strong> verdict across safety, correctness, loop behavior, and cost. It's the release-decision layer <em>above</em> guardrails, not a replacement for them.</div>
+        <div class="faq-a">Guardrails block a bad request <em>at runtime</em> — they live in the request path of a deployed agent. Release-gate answers a different question <em>before</em> you deploy: does this agent change meet its release policy? It runs a battery against the agent and returns one <strong>PROMOTE / HOLD / BLOCK</strong> verdict across safety, correctness, loop behavior, and cost. It's the release-decision layer <em>above</em> guardrails, not a replacement for them.</div>
       </details>
 
       <details class="faq-item">

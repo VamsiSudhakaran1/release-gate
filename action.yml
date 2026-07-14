@@ -88,7 +88,11 @@ runs:
 
     - name: Install release-gate
       shell: bash
-      run: pip install release-gate --quiet
+      # Install the code that ships WITH this Action tag ($GITHUB_ACTION_PATH is
+      # the checked-out action source at the pinned ref) — never whatever happens
+      # to be latest on PyPI. This guarantees `uses: …@vX.Y.Z` runs the vX.Y.Z CLI,
+      # so the Action can't advertise a command the installed package lacks.
+      run: pip install "$GITHUB_ACTION_PATH" --quiet
 
     - name: Run release-gate audit
       if: inputs.command == 'audit'
