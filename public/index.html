@@ -2764,7 +2764,17 @@
         setTimeout(function() {
           closeAuthModal();
           // If the user landed on a /r/<id> report link, open it now that they're authed.
-          if (_pendingReportId) { var rid = _pendingReportId; _pendingReportId = ''; openRunReport(rid); }
+          if (_pendingReportId) { var rid = _pendingReportId; _pendingReportId = ''; openRunReport(rid); return; }
+          // If a scan is already on screen, it was run PRE-login and shows the
+          // locked (anonymous) view. Re-run it now with the auth token so the
+          // full result replaces it — otherwise a logged-in user keeps seeing
+          // "Sign up to unlock" on their own scan.
+          var pgRes = document.getElementById('playground-results');
+          if (_lastScannedUrl && pgRes && pgRes.style.display === 'block') {
+            var pgInput = document.getElementById('pg-url-input');
+            if (pgInput) pgInput.value = _lastScannedUrl;
+            runPlaygroundAudit();
+          }
         }, 800);
       } else {
         msgEl.textContent = (data && data.detail) ? data.detail : 'Something went wrong. Please try again.';
