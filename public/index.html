@@ -1230,7 +1230,7 @@
         <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
         <div id="pg-stack-tags" style="display:none;margin-bottom:14px;flex-wrap:wrap;gap:6px;align-items:center;"></div>
         <div id="pg-findings" style="margin-top:14px;"></div>
-        <ul class="pg-checklist" id="pg-checklist" style="margin-top:14px;"></ul>
+        <div class="pg-checklist" id="pg-checklist" style="margin-top:14px;"></div>
         <div id="pg-run-link" style="display:none;margin-top:14px;"></div>
         <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
           <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
@@ -4182,7 +4182,33 @@
       }
     });
 
-    checklist.innerHTML = html || '<li class="dash-empty">No safeguard data returned.</li>';
+    if (html) {
+      // Collapse the safeguard checklist behind a "click to expand" summary — same
+      // pattern as the code-findings groups — so it doesn't sprawl down the page.
+      // Use the governance axis counts so the summary matches the card exactly
+      // (the backend counts every safeguard; one zero-weight row is hidden here).
+      var _sgVals = Object.keys(SAFEGUARD_LABELS).map(function(k){ return safeguards[k]; });
+      var _declaredVisible = _sgVals.filter(function(v){ return v === true || (v && typeof v === 'object' && v.present === true); }).length;
+      var _declared = (gov && gov.present != null) ? gov.present : _declaredVisible;
+      var _totalSg = (gov && gov.total != null) ? gov.total : Object.keys(SAFEGUARD_LABELS).length;
+      var _missingSg = _totalSg - _declared;
+      checklist.innerHTML =
+        '<details class="finding-group" style="margin-bottom:8px">' +
+          '<summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;' +
+          'padding:9px 12px;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px">' +
+          '<span style="font-size:.95rem">&#x1F6E1;&#xFE0F;</span>' +
+          '<span style="font-weight:700;color:var(--heading);font-size:.86rem">Governance safeguards</span>' +
+          '<span style="font-size:.78rem;color:var(--muted)">' + _declared + '/' + _totalSg + ' declared' +
+            (_missingSg > 0 ? ' &middot; ' + _missingSg + ' missing' : '') + '</span>' +
+          '<span style="margin-left:auto;font-size:.74rem;color:var(--muted)">&#x25B8; click to expand</span>' +
+          '</summary>' +
+          '<ul class="pg-checklist-inner" style="list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px">' +
+          html +
+          '</ul>' +
+        '</details>';
+    } else {
+      checklist.innerHTML = '<div class="dash-empty">No safeguard data returned.</div>';
+    }
 
     // ── Code findings (Tier 3: AI-specific static analysis) ──
     var findingsEl = document.getElementById('pg-findings');
