@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "release-gate"
-version = "0.8.5"
+version = "0.8.6"
 description = "AI agent release decision engine - readiness scoring, regression gate, eval runner, trace validation, and evidence packs for CI/CD."
 readme = "README.md"
 license = {text = "MIT"}
