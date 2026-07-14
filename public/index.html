@@ -1189,8 +1189,8 @@
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
     <h1>Know before you ship.</h1>
-    <p class="hero-sub">AI writes your agent in seconds — then debugging it eats the rest of the day. release-gate catches the agent-layer risks <strong>SAST and guardrails miss</strong> — model output reaching <code>eval</code>, prompt injection, uncapped LLM loops — <strong>before you ship</strong>. Evidence for every finding, in 10 seconds.</p>
-    <p style="font-size:1.02rem;color:var(--accent);font-weight:650;margin-bottom:26px;line-height:1.5">Spend less time debugging what the AI wrote — and more time shipping it.</p>
+    <p class="hero-sub">AI writes your agent in seconds — trusting the diff is what eats the day. release-gate catches the agent-layer risks <strong>SAST and guardrails miss</strong> — model output reaching <code>eval</code>, prompt injection, uncapped LLM loops — and returns one explainable <strong>PROMOTE&nbsp;·&nbsp;HOLD&nbsp;·&nbsp;BLOCK</strong>, with evidence for every finding. In CI, on every pull request.</p>
+    <p style="font-size:1.02rem;color:var(--accent);font-weight:650;margin-bottom:26px;line-height:1.5">Block the risky change before it merges — not after it ships.</p>
 
     <!-- Hero playground input -->
     <div class="hero-scan-row">
@@ -1838,79 +1838,57 @@
 <section id="enterprise">
   <div class="container">
     <div class="section-header">
-      <h2 class="section-title">Built for teams, not just individuals</h2>
-      <p class="section-subtitle">The CLI is always 100% free and unlimited — no scan caps, no account required, works in any CI pipeline. The platform adds what CLI can&rsquo;t: persistent history, team visibility, and compliance audit trail.</p>
-      <p style="font-size:.85rem;color:var(--text);opacity:.7;max-width:600px;margin:10px 0 0;line-height:1.6">Scan limits below apply only to <strong>hosted web scans</strong>. Local CLI and CI usage is always unlimited.</p>
+      <h2 class="section-title">Free CLI forever. Hosted platform in beta.</h2>
+      <p class="section-subtitle">The CLI and GitHub Action are 100% free and unlimited — local, in CI, no account, no data leaving your network. The hosted platform is in beta and free for design partners while we build it with them.</p>
     </div>
 
     <div class="tier-grid">
 
-      <!-- Visitor (no account) -->
-      <div class="tier-card" style="opacity:.7">
-        <div class="tier-name" style="color:var(--muted,#888)">Visitor</div>
-        <div class="tier-price">$0</div>
-        <div class="tier-price-sub">no account needed</div>
-        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">3 playground scans/day</div>
-        <ul class="tier-features">
-          <li>Score &amp; decision</li>
-          <li>2 safeguards visible</li>
-          <li>No history</li>
-          <li>Partial results only</li>
-        </ul>
-        <span class="tier-btn secondary" style="opacity:.5;cursor:default;pointer-events:none">No sign-up needed</span>
-      </div>
-
-      <!-- Starter -->
-      <div class="tier-card">
-        <div class="tier-name">Starter</div>
-        <div class="tier-price">$0</div>
-        <div class="tier-price-sub">free account</div>
-        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">10 scans/month</div>
-        <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> History &amp; full results in the browser.</p>
-        <ul class="tier-features">
-          <li>Full safeguard detail</li>
-          <li>Last 5 runs history</li>
-          <li>1 repo tracked</li>
-          <li>Dashboard access</li>
-        </ul>
-        <a href="#" onclick="openAuthModal('signup');return false;" class="tier-btn secondary">Sign up free &rarr;</a>
-      </div>
-
-      <!-- Pro -->
+      <!-- Open-source CLI -->
       <div class="tier-card featured">
-        <div class="tier-name">Pro</div>
-        <div class="tier-price">$29</div>
-        <div class="tier-price-sub">per month</div>
-        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Unlimited scans</div>
-        <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> Score trends, team API tokens, email alerts when score drops.</p>
+        <div class="tier-name">Open-source CLI</div>
+        <div class="tier-price">Free</div>
+        <div class="tier-price-sub">unlimited, forever</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Local &amp; CI — no account, no data leaves your network</div>
         <ul class="tier-features">
-          <li>Everything in Starter</li>
-          <li>50 runs history</li>
-          <li>5 repos tracked</li>
-          <li>API tokens for CI</li>
-          <li>Badge embed</li>
-          <li>Score trend charts</li>
-          <li>Email alerts</li>
+          <li>Full <code>audit</code> + <code>pr</code> gate</li>
+          <li>Every rule, evidence &amp; decision</li>
+          <li>SARIF, JSON &amp; Markdown output</li>
+          <li>GitHub Action</li>
+          <li>MCP server for coding agents</li>
+          <li>Runs entirely in your pipeline</li>
         </ul>
-        <a href="#" onclick="openAuthModal('signup');return false;" class="tier-btn secondary">Join waitlist &rarr;</a>
+        <a href="https://github.com/VamsiSudhakaran1/release-gate" class="tier-btn secondary">Get the CLI &rarr;</a>
+      </div>
+
+      <!-- Hosted beta -->
+      <div class="tier-card">
+        <div class="tier-name">Hosted beta</div>
+        <div class="tier-price">Free</div>
+        <div class="tier-price-sub">for design partners</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">While we build it with early teams</div>
+        <ul class="tier-features">
+          <li>Everything in the CLI</li>
+          <li>Persistent scan history</li>
+          <li>Dashboard &amp; score trends</li>
+          <li>Team visibility</li>
+          <li>Direct line to the maintainer</li>
+        </ul>
+        <a href="mailto:vamsi.sudhakaran@gmail.com?subject=release-gate%20design%20partner" class="tier-btn secondary">Become a design partner &rarr;</a>
       </div>
 
       <!-- Enterprise -->
       <div class="tier-card">
         <div class="tier-name">Enterprise</div>
-        <div class="tier-price" style="font-size:1.4rem;letter-spacing:-.5px">Custom pricing</div>
-        <div class="tier-price-sub">talk to us about your team size</div>
-        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Unlimited scans &amp; repos</div>
-        <p style="font-size:.8rem;margin:0 0 10px;opacity:.8"><em>Why pay if CLI is free?</em> Org-wide governance policy, compliance audit trail, SSO.</p>
+        <div class="tier-price" style="font-size:1.4rem;letter-spacing:-.5px">Contact us</div>
+        <div class="tier-price-sub">private deployment</div>
+        <div style="font-size:.8rem;margin:8px 0 12px;opacity:.7;font-style:italic">Self-hosted, on your infrastructure</div>
         <ul class="tier-features">
-          <li>Everything in Pro</li>
-          <li>Unlimited repos &amp; members</li>
-          <li>Org policy (min score)</li>
-          <li>PDF compliance reports</li>
+          <li>Self-host the dashboard</li>
+          <li>Org-wide release policy</li>
+          <li>Compliance / PDF reports</li>
           <li>SSO / SAML</li>
-          <li>Slack alerts</li>
           <li>Audit trail</li>
-          <li>GitHub App org-wide</li>
         </ul>
         <a href="mailto:vamsi.sudhakaran@gmail.com?subject=release-gate%20Enterprise%20inquiry" class="tier-btn secondary">Contact us &rarr;</a>
       </div>
