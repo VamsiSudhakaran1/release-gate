@@ -200,7 +200,7 @@ def demo_safe():
         print("    Budget cap: $500.00/day  →  headroom: $368.00/day")
         print("    No governance gaps detected.")
 
-    verdict("✓  FINAL VERDICT:  APPROVED  — safe to deploy", "green")
+    verdict("✓  FINAL VERDICT:  APPROVED  — meets the configured release policy", "green")
 
     say(
         "The agent costs ~$132/day under normal load. Even if it runs "

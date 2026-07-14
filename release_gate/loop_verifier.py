@@ -3,7 +3,7 @@ Loop Verifier — the Verify phase for agent loops.
 
 Sits inside an agent loop's iterate cycle and answers:
   CONTINUE  — output not yet acceptable; keep iterating
-  SHIP      — output passes all checks; safe to deploy/return
+  SHIP      — output passes all configured checks; ready to return/ship
   ROLLBACK  — a hard violation means the loop should abort
 
 The three checks run in sequence:

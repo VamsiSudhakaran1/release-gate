@@ -91,9 +91,9 @@ def write_markdown_summary(data: Dict[str, Any], path: str) -> str:
         ]
 
     recommendation = {
-        "PROMOTE": "All checks passed. Safe to deploy.",
+        "PROMOTE": "All required checks passed — meets the configured release policy.",
         "HOLD":    "Governance passed but score below threshold — manual approval required.",
-        "BLOCK":   "One or more critical failures. Do NOT deploy until issues are resolved.",
+        "BLOCK":   "One or more critical failures. Do NOT ship until issues are resolved.",
     }.get(decision, "")
 
     lines += [

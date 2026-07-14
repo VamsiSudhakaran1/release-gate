@@ -433,9 +433,9 @@ release-gate run governance.yaml
 
 ### Exit Codes
 
-- **0** - PASS: All checks passed, safe to deploy
+- **0** - PASS: All required checks passed — meets the configured release policy
 - **10** - WARN: Non-critical checks failed, needs review
-- **1** - FAIL: Critical checks failed, blocks deployment
+- **1** - FAIL: Critical checks failed, blocks the release
 
 ## Customizing Governance
 

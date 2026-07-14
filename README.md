@@ -6,7 +6,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
-[![Accuracy: 100% precision](https://img.shields.io/badge/benchmark-100%25_precision_%C2%B7_0_false_positives-brightgreen.svg)](benchmark/RESULTS.md)
+[![Benchmark: 27-case corpus](https://img.shields.io/badge/benchmark-27--case_corpus_%C2%B7_13_TP_%C2%B7_0_FP_%C2%B7_1_FN-blue.svg)](benchmark/RESULTS.md)
 
 > **v0.8.5** — **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), blocking only on net-new regressions — plus a GitHub Action `command: pr`. Builds on **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`): audit from any MCP-capable agent (Claude Code, Cursor, Cline) before it opens a PR — stdio-only, no network egress, no code execution, path-confined, and it won't relay a prompt injection embedded in scanned code back to your agent. Builds on **0.8.2**'s trustworthy-findings work: deserialization sinks **calibrated** (confirmed-source → HIGH, name-inferred → MEDIUM), **example/cookbook code excluded from the score**, whole false-positive classes killed (local-IPC pickle, header-name "secrets", `0x`/UUID/placeholder), and an opt-in **BYO-model LLM verifier** (`--verify`). All on **0.8.0–0.8.1**'s AST-based evidence-citing analysis + team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
@@ -404,9 +404,9 @@ Commit `release-gate-baseline.json` once (`release-gate audit . --write-baseline
 
 | Code | Decision | Meaning |
 |------|----------|--------|
-| `0` | PROMOTE / PASS / SHIP | Safe to deploy |
+| `0` | PROMOTE / PASS / SHIP | Meets the configured release policy |
 | `10` | HOLD / WARN / CONTINUE | Review needed / keep iterating |
-| `1` | BLOCK / FAIL / ROLLBACK | Do not deploy / abort loop |
+| `1` | BLOCK / FAIL / ROLLBACK | A policy check failed — do not ship / abort loop |
 
 ---
 
