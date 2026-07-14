@@ -28,6 +28,25 @@ false HIGH (found on mem0). Now only the code inside each `${…}` is classified
 
 ## [Unreleased]
 
+### 🛠️ The Action installs its own tag's code (not latest PyPI)
+
+- **Fixed a self-inconsistency in the GitHub Action:** it ran
+  `pip install release-gate`, installing whatever PyPI served *latest* — so
+  `uses: …@vX.Y.Z` could run a different (older) CLI than the tag and lack the
+  very command it advertised (e.g. `pr`). It now installs `$GITHUB_ACTION_PATH`
+  — the action source checked out at the pinned ref — so the Action and its CLI
+  are always the same version.
+
+### 🎯 Honesty — no "safe to ship"; lead with the PR gate
+
+- Removed the remaining **"safe to ship"** overclaims (README tagline + three
+  site spots). A static/behavioural tool reports whether a change *meets the
+  configured release policy* on the evidence assessed — it can't certify an
+  agent universally safe.
+- **README now leads with `release-gate pr`** (the wedge); whole-repo `audit`
+  is the broader lens. "Who it's for" narrowed from "every team" to *whoever
+  has to trust an AI-generated agent change*.
+
 ### 🔎 Coverage matrix — an audit now states what it did NOT assess
 
 Every verdict carries an explicit coverage matrix (`report["coverage"]`): agent
