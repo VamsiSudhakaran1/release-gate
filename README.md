@@ -182,7 +182,7 @@ Drop it into GitHub Actions — either the raw CLI:
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: VamsiSudhakaran1/release-gate@v0.8.6
+- uses: VamsiSudhakaran1/release-gate@v0.8.7
   with:
     command: pr
     base: origin/${{ github.base_ref }}
@@ -596,7 +596,7 @@ coverage.
 Gate it in CI the same way as `audit`:
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.8.6
+- uses: VamsiSudhakaran1/release-gate@v0.8.7
   with:
     command: loop-sim
     scenarios: examples/loop_scenarios.yaml
@@ -927,7 +927,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.8.6
+        uses: VamsiSudhakaran1/release-gate@v0.8.7
         with:
           command: score
           config: governance.yaml
@@ -939,7 +939,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.8.6
+- uses: VamsiSudhakaran1/release-gate@v0.8.7
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run
