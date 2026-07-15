@@ -1,5 +1,5 @@
 name: "release-gate"
-description: "AI release decision engine — score, compare, validate traces, and generate evidence before deployment."
+description: "Gate AI-agent pull requests: one PROMOTE/HOLD/BLOCK on the agent-layer risk a change introduced — model output reaching eval, prompt-injection surfaces, uncapped LLM loops."
 author: "Vamsi Sudhakaran"
 
 branding:
