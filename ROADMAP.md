@@ -149,3 +149,52 @@ it the shortest path — not on its own.
   "not assessed — run the behavioral scan."
   *Gate:* validate with a real user first — build it when a design partner says
   "my RAG agent's token bill is the pain," not on spec.
+
+## Phase-2 candidate — the Efficiency pillar (AI performance / architecture auditor)
+
+A proposed sixth axis beyond correctness / safety / governance / compliance /
+cost: **AI Efficiency** — not latency or GPU util, but *token & context*
+efficiency. release-gate as a deterministic, explainable, **review-only** auditor
+(`release-gate optimize` / `efficiency`) that says *"you could cut inference cost
+~40%, prompts ~37%, retrieval overfetch ~85%."* This **subsumes** the
+retrieval/context-bloat item above and is the bigger vision of it.
+
+Why it's compelling: efficiency is **dollar-denominated** — a far more ROI-legible
+and universal sell than "you missed a fallback," and genuinely differentiating (a
+pre-deploy *architecture reviewer*, not just a gate). Fits the existing
+review-don't-change philosophy. Real opportunity.
+
+**The honesty split — this is THREE tiers, and conflating them is the whole trap:**
+
+- **Tier 1 — statically detectable (deterministic, CI-friendly, build FIRST).**
+  `PROMPT_DUPLICATION` / `SYSTEM_PROMPT_REUSE` (string similarity across files),
+  `PROMPT_ENTROPY` (repetitive low-info instructions), RAG overfetch (`top_k`
+  absent/high), `CACHEABLE_PROMPTS` (static/repeated prefixes), loop bounds
+  (already `RG-LOOP`), coarse `MODEL_SELECTION` heuristics. These hold the
+  precision bar. This is the shippable, credible slice — the token-budget profile
+  (`efficiency:` thresholds that can HOLD a correct-but-wasteful deploy) enforces
+  only these; advisory on the rest.
+- **Tier 2 — needs RUNTIME TRACES (behavioral layer + trace ingestion).** Actual
+  loop iterations / wasted iterations / cost-per-loop, real token usage, live
+  cache-hit potential. Doable, but the input is *traces*, not code — an extension
+  of `loop-sim`/`agent-score`, not the static gate.
+- **Tier 3 — HARD / research-grade / often IMPOSSIBLE with closed APIs. Handle
+  with extreme care or DO NOT claim.** "Context utilization" (which paragraphs the
+  model actually used), the token heatmap (per-token used/ignored), "referenced 3
+  of 20 chunks", precision@k. These need **per-token attribution that hosted model
+  APIs don't expose** — you cannot measure them deterministically. Presenting "18%
+  context utilization" as a *fact* is exactly the false precision the external
+  reviews (rightly) punished ("safe to deploy", "100% precision"). If surfaced at
+  all: label **ESTIMATE**, state the method, never a hard number.
+
+**The dollar-figure landmine.** "$18,240/month saved" requires the team's real
+traffic volume + live pricing. A static pass can produce *per-call token-waste %*,
+**not** a monthly $ — without usage input the dollar figure is fiction, and a
+wrong estimate destroys trust faster than no estimate. Gate all $ claims behind
+real usage data (traces or a supplied volume).
+
+**Gate:** validate with a real user first. Build **Tier 1** (deterministic,
+credible) when a design partner's pain is cost/token bloat; treat Tier 2/3 as
+later, trace-fed, and estimate-labeled. The pillar is real and worth it — the
+discipline is refusing to claim precision on what a static (or even runtime) pass
+genuinely can't see. That refusal is the moat, not a limitation.
