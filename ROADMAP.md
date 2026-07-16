@@ -133,3 +133,19 @@ it the shortest path — not on its own.
 - **Live scratch-PR Action test.** End-to-end dogfood of the published Action's
   `command: pr` on a throwaway PR (unblocked now that 0.8.5 + the `v0.8.5` tag
   are on PyPI).
+- **Retrieval / context-bloat hygiene (a new `RG-COST` rule, not a new product).**
+  A static pass over RAG / external-source usage: retrieval calls with no result
+  cap (`top_k`/`k` absent or very high), retrieved or tool output flowing into a
+  prompt with no truncation, and the compounding case (retrieval **+** no
+  `max_tokens`). Emits an inventory too — N retrieval sites, M external-source
+  calls, K unbounded. It's both a **cost** signal (token bloat → denial-of-wallet)
+  and a **prompt-injection** signal (more untrusted context = wider surface), so
+  it unifies two things the engine already cares about.
+  *Scope line (honesty):* static analysis sees whether a **bound is present**, not
+  whether the value is right, and **never the actual runtime token count/cost** —
+  that stays in the behavioral layer (`loop-sim` / `agent-score`). The static rule
+  **feeds** the runtime eval (it flags the sites worth running); it does not
+  replace or duplicate it. Coverage matrix must mark actual token/cost as
+  "not assessed — run the behavioral scan."
+  *Gate:* validate with a real user first — build it when a design partner says
+  "my RAG agent's token bill is the pain," not on spec.
