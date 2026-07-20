@@ -130,6 +130,27 @@ it the shortest path — not on its own.
 - **"Non-agent repo → governance N/A" precision fix.** A repo with no agent code
   should read *not applicable*, not a low governance score — avoids penalizing
   the wrong thing on a first scan.
+- **Declared trust-boundary / accepted-risk annotation.** *(user-validated —
+  build when a scanned team asks for it.)* A finding the maintainer has reviewed
+  and *intentionally accepted* should read as **acknowledged**, not re-surface as
+  an unreviewed medium on every scan. Mechanism: let a repo declare an exception
+  — in `governance.yaml` (e.g. `accepted_risks: [{rule: RG-EXEC-003, path:
+  ".../hybrid-browser-toolkit.ts", reason: "...", ref: "PR #4157"}]`) or an inline
+  annotation at the sink — that the gate reads and renders as *accepted (declared)*
+  with the reason and reference, still listed for the audit trail but not counted
+  as an open risk. *Motivating evidence (real, not hypothetical):* we raised
+  camel-ai/camel #4155 on the `eval()` in `hybrid-browser-toolkit.ts`; the
+  maintainers resolved it via **PR #4157 (merged into master 2026-07-17)** —
+  documentation only, the `eval()` intact, a source comment + tool-schema wording
+  declaring *"this intentionally executes caller-provided JavaScript ... not a
+  sandbox"*, plus a test asserting the schema says so. The gate today still flags
+  it medium/inferred despite that formal, tested declaration — it reads code, not
+  declared intent. This is the exact gap: the difference between a gate teams keep
+  and a gate teams mute. *Guardrail:* an accepted-risk must be **declared and
+  attributable** (who accepted it, why, ref) — never a silent suppression, never
+  auto-applied by the gate; the finding stays visible, only its *status* changes.
+  Ties into governance (a declared exception is itself a governance signal) and to
+  the "declaration-aware" theme the coverage matrix already gestures at.
 - **Live scratch-PR Action test.** End-to-end dogfood of the published Action's
   `command: pr` on a throwaway PR (unblocked now that 0.8.5 + the `v0.8.5` tag
   are on PyPI).
