@@ -458,6 +458,17 @@ class _Analyzer(ast.NodeVisitor):
         return False
 
     def visit_Call(self, node: ast.Call):
+        # An LLM client constructed in ANY position counts as real LLM usage —
+        # not only `x = ChatOpenAI(...)` (handled in visit_Assign for var/taint
+        # tracking). Factory methods (`return ChatOpenAI(...)`), bare expressions,
+        # and constructors passed as arguments are common; without this a repo
+        # whose only production LLM construction is a `return` reads as "not a
+        # deployed agent" (gpt-engineer, and the langchain factory pattern at
+        # large). Signal only — the var-level capped/taint tracking still needs
+        # the assignment target and stays in visit_Assign.
+        ctor = _ctor_name(node)
+        if ctor and (ctor in LLM_CONSTRUCTORS or ctor in self.llm_aliases):
+            self.llm_signal = True
         self._check_llm_token_ceiling(node)
         self._check_exec_sink(node)
         self._record_param_update(node)

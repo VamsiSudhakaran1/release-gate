@@ -594,6 +594,31 @@ def test_non_deployed_agent_governance_is_na(tmp_path):
         assert report["decision"] == "PROMOTE", mode
 
 
+def test_langchain_factory_agent_is_deployed(tmp_path):
+    """Regression: a production agent whose LLM client is built in a *factory*
+    (`return ChatOpenAI(...)`) and invoked via an attribute must be recognized as
+    a DEPLOYED agent — governance applicable, not N/A. Before the fix, constructor
+    detection only fired on `x = ChatOpenAI(...)` (assignment), so the extremely
+    common langchain factory pattern (gpt-engineer et al.) read as "not an agent"
+    and governance wrongly went N/A."""
+    make_repo(tmp_path, {
+        "app/core/ai.py": (
+            "from langchain_openai import ChatOpenAI\n"
+            "from langchain_anthropic import ChatAnthropic\n"
+            "class AI:\n"
+            "    def _model(self, name):\n"
+            "        if 'claude' in name:\n"
+            "            return ChatAnthropic(model=name)\n"
+            "        return ChatOpenAI(model=name)\n"
+            "    def start(self, msgs):\n"
+            "        return self.llm.invoke(msgs)\n"
+        ),
+    })
+    report = build_report(tmp_path, mode="ci")
+    assert report["governance_applicable"] is True
+    assert report["governance"]["level"] != "N/A"
+
+
 def test_coverage_matrix_states_what_it_did_not_assess(tmp_path):
     """Every audit must carry an explicit coverage matrix — a trustworthy gate
     says what it did NOT assess so a verdict is never over-read."""
