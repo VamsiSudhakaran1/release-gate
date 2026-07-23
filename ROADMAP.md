@@ -170,6 +170,54 @@ it the shortest path — not on its own.
   "not assessed — run the behavioral scan."
   *Gate:* validate with a real user first — build it when a design partner says
   "my RAG agent's token bill is the pain," not on spec.
+- **Consequential-action sink catalog (the static slice of action blast-radius).**
+  The engine already does the hard part — confirmed model-output → confirmed sink
+  taint — but fires on exactly ONE sink family (`eval`/`exec`/`compile`), the one
+  thing careful teams already avoid (muscle memory; SAST/guardrails commoditizing
+  it). Widen the *sink catalog* from "runs code" to "does something consequential,"
+  keeping the identical precision bar. New rules, same taint source (model/tool
+  output): **shell/OS command** (`os.system`, `subprocess(shell=True)`, `os.popen`),
+  **network egress / SSRF** (model-controlled URL or body into `requests`/`httpx`),
+  **filesystem write/delete** (`open(p,'w')`, `os.remove`, `shutil.rmtree`,
+  `Path.unlink`), **SQL execute** (model output interpolated into a query), and
+  **taint-aware deserialization** (`pickle.loads`/`yaml.load` on model/tool output —
+  upgrades today's generic/inferred pickle finding to confirmed when the source is
+  the model). This is the buildable, no-runtime-needed static slice of frontier
+  item #1 (action blast-radius). Two genuine differentiators beyond sink-widening:
+  **secret/PII → prompt → third-party model** (a key/env-var/DB field interpolated
+  into a prompt sent to an external LLM — the reverse of exfiltration; no SAST
+  checks it) and **unvalidated model-output parse** (`json.loads(model_output)` in
+  control flow with no try/except or schema — a *reliability* signal that widens the
+  buyer past security).
+  *Discipline (the moat, not a footnote):* each sink ships only if it holds
+  "confirmed model-taint → confirmed sink." A path with a visible source is a HIGH
+  you can put in front of a maintainer; an unproven source stays medium/inferred
+  (the camel disposition). Static still sees only that the sink is *reachable*,
+  never whether a runtime guard neutralizes it — coverage matrix stays honest.
+  Build order: shell → SSRF/egress → secret→prompt; parse-validation slots in
+  anywhere. *Gate:* precision over breadth — the "we don't cry wolf" reputation the
+  50-repo dogfood earned is the asset; don't spend it on speculative rules.
+- **The agent's-eye checks (design the gate from the deployed agent's POV).** A
+  reframe worth its own line: instead of "what can the operator verify *about* the
+  agent," ask "what does the agent itself need *guaranteed about its environment
+  and its own outputs* before it is safe to act autonomously." The insight is that
+  the gate is not a leash — it is the seatbelt that lets the agent be given more
+  rope. Candidate checks, each tied to a real agent failure mode and at least
+  partly static: **(1) input provenance / instruction-data separation** — untrusted
+  content (tool output, retrieved docs, fetched web, another agent's message) must
+  never be concatenated into the *instruction/system* channel; passed as delimited
+  data, not directive (the anti-prompt-injection sibling of secret→prompt, and the
+  single check an agent most wants to exist); **(2) irreversibility gate** —
+  delete/pay/send/deploy/force-push wrapped in dry-run / confirmation / human-in-loop
+  (protects the agent from its own confident-but-wrong 1%); **(3) idempotency /
+  retry-safety** on mutating actions — the double-charge/double-send failure a single
+  turn cannot see from the inside; **(4) tool-authority declaration** — each tool's
+  blast radius (read / write / irreversible) declared, so the agent can reason about
+  its own authority instead of wielding unknown ambient power; **(5) output→action
+  grounding** — a verification step before a fabricated output triggers a consequential
+  act. (1)-(3) are largely static; (4) ties to governance declaration; (5) is the
+  deepest and mostly behavioral. This POV is a *design lens* over the whole roadmap,
+  not a separate feature — several items above are its instances.
 
 ## Phase-2 candidate — the Efficiency pillar (AI performance / architecture auditor)
 
