@@ -219,6 +219,31 @@ it the shortest path — not on its own.
   deepest and mostly behavioral. This POV is a *design lens* over the whole roadmap,
   not a separate feature — several items above are its instances.
 
+## Build queue & priorities (start next week)
+
+The static-analysis rules above are specced, rule-ID'd, and priority-ranked in
+**[`docs/specs/agent-safety-checks.md`](docs/specs/agent-safety-checks.md)** — the
+ready-to-build queue. Priority reflects agent-protective value × static buildability
+× precision-holdability. Summary:
+
+| Priority | Rule | What it is |
+|---|---|---|
+| **P0 — critical** | `RG-PROMPT-002` | Instruction/data separation — untrusted source → instruction channel (the check an agent most wants; extends `RG-PROMPT-001` from name-hints to real provenance) |
+| **P0 — critical** | `RG-ACTION-001` | Shell / OS command from model output (the most common real agent RCE) |
+| **P1 — high** | `RG-ACTION-002` | Network egress / SSRF from model output |
+| **P1 — high** | `RG-SECRET-002` | Secret/PII → prompt → third-party model (novel — no SAST does it) |
+| **P1 — high** | `RG-ACTION-003/004`, `RG-EXEC-004` | Filesystem write/delete, SQL execute, taint-aware deserialization |
+| **P2 — medium** | `RG-PARSE-001` | Unvalidated model-output parse (reliability; cheap win) |
+| **P2 — medium** | `RG-TOOL-001` → `RG-GATE-001` | Tool blast-radius declaration → irreversibility gate (gate depends on the taxonomy) |
+| **P3 — frontier** | `RG-IDEMP-001`, `RG-GROUND-001` | Idempotency/retry-safety, output→action grounding — mostly **behavioral**, feed `agent-score`/`loop-sim`, not the static gate |
+
+**Next week starts with the two P0s** (`RG-PROMPT-002`, `RG-ACTION-001`). Frontier
+items #1 (action blast-radius) and #6 (grounding) above are the behavioral homes of
+`RG-GATE-001` and `RG-GROUND-001` respectively — the static rules *feed* them, they
+don't replace them. The precision contract in the spec governs all of them: precision
+over breadth, confirmed-vs-inferred is mandatory, static sees reachability not runtime
+neutralization.
+
 ## Phase-2 candidate — the Efficiency pillar (AI performance / architecture auditor)
 
 A proposed sixth axis beyond correctness / safety / governance / compliance /
