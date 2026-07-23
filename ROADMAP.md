@@ -31,6 +31,56 @@ guardrails, and evaluators structurally cannot see.
 | Evaluators (Ragas, DeepEval, Braintrust) | score an output's quality | damage happens *before/regardless of* the score |
 | **release-gate** | **verdict on readiness, from evidence, pre-deploy** | *"can this agent hurt you, and is the hurt gated?"* |
 
+## Lifecycle positioning — the first gate, and the persistent one
+
+release-gate is the agent's release gate across its **whole life**, and this is the
+position no evaluator occupies:
+
+- **Day zero is uncontested.** A brand-new agent — model and agent built for the
+  first time — has *no* runtime evals, rails, or traces, because nothing has run yet.
+  The eval platforms (Braintrust, LangSmith, Ragas, DeepEval) **cannot** compete
+  here: they start at "you have traffic," and there is none. The *only* thing that
+  can render a pre-deploy verdict on a never-run agent is what release-gate does —
+  read the **code** (static agent-risk), the **declared policy** (governance), and
+  the **team's baseline** (the `governance.yaml` + lock/AIBOM + first audit saved as
+  a baseline). Not a head start — an empty field.
+- **Going live doesn't displace us — it feeds us.** Once the agent runs and
+  accumulates eval outputs, version upgrades, and traces, release-gate **ingests**
+  them as inputs to the verdict: compare each new version to the baseline, show
+  *what changed and how* (code risk moved here, the team's own eval scores moved
+  there, governance still holds or doesn't), fold in agent-score + cost, and rule
+  again — PROMOTE/HOLD/BLOCK. We never *produce* the quality evals; we **consume**
+  them. The giants' outputs become our inputs; "works with your Braintrust setup" is
+  a sales advantage, not a weakness. (Scaffolding already exists: `compare`,
+  `--baseline`/`--write-baseline`, the lock **drift** gate, the two-axis score.)
+- **The value is the evidence-backed diff, not the number.** "Score 82→74" is noise;
+  "dropped because the new version added an ungated shell sink and the team's own
+  faithfulness eval fell 6 pts" is the product. The score is the surface; the
+  what-changed-and-why is the substance — and the coverage matrix still states what
+  we did not see. When we ingest a team's evals we rule *on* them; we do not vouch
+  for their quality.
+
+## Anti-goals — what release-gate deliberately is NOT (category discipline)
+
+The moat is the **gate/verdict**, never the eval itself. Drifting off this is the one
+way to turn a defensible position into a rat race with better-funded incumbents.
+
+- **We do not build quality evals.** Scoring whether an output is accurate / relevant
+  / faithful / "good" is the crowded, giant-owned space. The second a feature scores
+  *answer goodness*, it is out of scope. We **ingest** quality evals; we never
+  recompete them.
+- **Dynamic work is safety, never quality.** The behavioral layer (`agent-score`,
+  `loop-sim`) is red-team / injection / exfiltration / cost-and-convergence — "can it
+  hurt you," not "is it good." That axis is thin and differentiated; the quality axis
+  is not. Stay on safety.
+- **We are not a runtime guardrail.** Lakera/NeMo filter one live request. We rule
+  *pre-deploy* (and version-over-version), on evidence — a different job in a
+  different place in the pipeline. We can consume a guardrail's presence as a
+  governance signal; we do not become one.
+- **We do not vouch, we verify.** Every verdict is evidence-backed and honest about
+  coverage. "Safe to deploy" is banned language; "meets the declared release policy,
+  with these gaps not assessed" is the register.
+
 ## What exists today (the standard-conformance layer — necessary, table-stakes)
 
 - **`audit`** — AST + taint static scan (Python-deep). Agent-specific: flags a
