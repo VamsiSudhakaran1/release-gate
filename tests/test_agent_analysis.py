@@ -73,6 +73,39 @@ def test_os_system_dynamic_from_request():
     assert any(f["title"] == "Dangerous execution sink" for f in fs)
 
 
+def test_eval_of_openai_content_extraction_is_confirmed_high():
+    """Regression: the canonical OpenAI text extraction
+    `resp.choices[0].message.content` reaching eval() must grade HIGH/confirmed —
+    the provenance is visible in scope. Previously the subscript chain lost the
+    taint and it decayed to LOW/inferred despite being a textbook model-output RCE."""
+    src = (
+        "from openai import OpenAI\n"
+        "client = OpenAI()\n"
+        "def answer(q):\n"
+        "    resp = client.chat.completions.create(model='gpt-4o', messages=[])\n"
+        "    expr = resp.choices[0].message.content\n"
+        "    return eval(expr)\n"
+    )
+    fs = analyze_python(src, "agent.py")
+    exec_findings = [f for f in fs if f["title"] == "Dangerous execution sink"]
+    assert exec_findings, "expected a confirmed exec sink"
+    f = exec_findings[0]
+    assert f["severity"] == "high" and f.get("basis") == "confirmed"
+
+
+def test_eval_of_non_model_chain_stays_inferred():
+    """Negative control for the extraction-taint fix: a field pulled off a plain
+    config object is NOT model output — eval() on it must stay inferred, not get
+    upgraded to a confirmed model-output RCE."""
+    src = (
+        "def run(cfg):\n"
+        "    v = cfg.settings[0].value\n"
+        "    return eval(v)\n"
+    )
+    fs = analyze_python(src, "x.py")
+    assert not any(f.get("basis") == "confirmed" for f in fs)
+
+
 def test_subprocess_shell_true_dynamic():
     src = "import subprocess\ndef go(payload):\n    subprocess.run(payload, shell=True)\n"
     assert "Dangerous execution sink" in titles(src)

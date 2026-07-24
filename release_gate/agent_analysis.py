@@ -213,6 +213,21 @@ def _root_name(node: ast.AST) -> Optional[str]:
     return None
 
 
+def _chain_root(node: ast.AST) -> Optional[str]:
+    """Root variable of an attribute/subscript access chain, walking through
+    BOTH `.attr` and `[i]` — so `resp.choices[0].message.content` (the canonical
+    OpenAI/Anthropic text extraction) resolves to `resp`. `_root_name` stops at
+    the first subscript, which is exactly why that chain used to lose its taint."""
+    cur = node
+    while isinstance(cur, (ast.Attribute, ast.Subscript)):
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        return cur.id
+    if isinstance(cur, ast.Call):
+        return _chain_root(cur.func)
+    return None
+
+
 def _ctor_name(node: ast.AST) -> Optional[str]:
     """If node is a constructor Call, return the constructor's terminal name."""
     if not isinstance(node, ast.Call):
@@ -266,6 +281,10 @@ class _Analyzer(ast.NodeVisitor):
         self.assigned_dynamic: Set[str] = set()
         self.tainted: Set[str] = set()         # vars holding model output / input
         self.tainted_model: Set[str] = set()   # vars ASSIGNED from an LLM call in-scope
+        self.model_extracted: Set[str] = set() # vars holding text EXTRACTED off a
+                                               # model response (resp.choices[0].
+                                               # message.content) — confirmed model
+                                               # output regardless of the var name
         self.llm_signal = False                # repo actually invokes/constructs an LLM
         self.file_has_llm = False              # this file is agent code (set after pass 1)
         # var/attr key -> set of param keys it holds (for `create(**params)`).
@@ -357,6 +376,29 @@ class _Analyzer(ast.NodeVisitor):
             for t in targets:
                 self.tainted.add(t)
                 self.llm_helper_output.add(t)
+        # y = <confirmed-model-var>.choices[0].message.content — extracting a
+        # field off a var we already saw assigned from an LLM call is still the
+        # model's output. The canonical extraction lives behind a subscript that
+        # `_root_name` won't cross, so without this `expr = resp...content;
+        # eval(expr)` decays to a bare name-hint guess (LOW/inferred) even though
+        # the provenance is fully visible in scope. Confirmed, name notwithstanding.
+        elif isinstance(node.value, (ast.Attribute, ast.Subscript)):
+            # Peel the chain to its base: it's confirmed model output if the base
+            # is an LLM call inline (`create(...).choices[0].message.content`) or
+            # if the chain roots in a var already known to hold an LLM response.
+            base = node.value
+            while isinstance(base, (ast.Attribute, ast.Subscript)):
+                base = base.value
+            croot = _chain_root(node.value)
+            if (isinstance(base, ast.Call) and self._is_llm_call(base)) \
+                    or (croot and croot in self.tainted_model):
+                for t in targets:
+                    self.tainted.add(t)
+                    self.tainted_model.add(t)
+                    self.model_extracted.add(t)
+            elif croot and croot in self.tainted:
+                for t in targets:
+                    self.tainted.add(t)
         # x = self._duplex.recv_bytes()  → x came off a LOCAL IPC pipe, which the
         # process controls — trusted transport, not external input.
         if isinstance(node.value, ast.Call) and self._is_local_ipc_recv(node.value):
@@ -683,6 +725,13 @@ class _Analyzer(ast.NodeVisitor):
         # never external input — don't let a generic name make it look like a
         # user-controlled RCE surface.
         arg_names = [n for n in arg_names if n not in self.local_ipc_vars]
+        # Confirmed: text extracted off a model response in scope
+        # (resp.choices[0].message.content). Provenance is fully visible, so the
+        # var name is irrelevant here — unlike a bare object var, this IS the
+        # model's text reaching the sink.
+        for n in arg_names:
+            if n in self.model_extracted:
+                return n, "the model's own output", True
         # Confirmed: assigned from an LLM call we can see in this file.
         for n in arg_names:
             if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):
