@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watch it block a bad AI change — release-gate demo</title>
+<meta name="description" content="A real, reproducible example: a pull request adds a natural-language feature that runs the model's output through eval(). release-gate scopes the diff, confirms the RCE, and blocks the merge — one command, one exit code.">
+<link rel="canonical" href="https://release-gate.com/demo.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Watch release-gate block a bad AI change">
+<meta property="og:description" content="A PR introduces eval(model_output). release-gate blocks only what the diff introduced, with confirmed evidence — not a prediction.">
+<meta property="og:url" content="https://release-gate.com/demo.html">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Watch release-gate block a bad AI change">
+<meta name="twitter:description" content="Real, reproducible PR-gate demo: net-new eval(model_output) → BLOCK, with the evidence.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7.6' fill='%230B0B0F'/%3E%3Crect x='9.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='19.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='8' y='8.4' width='16' height='2.9' rx='1.45' fill='%23C8A24B'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg:#FAF8F3; --surface:#FFFFFF; --ink:#17150E; --muted:#6E6656; --faint:#8B8474;
+    --hair:#E6E0D1; --accent:#9A731F; --accent-dec:#C8A24B; --high:#A83521;
+    --high-bg:#F6E7E2; --good:#3F6E44; --good-bg:#E8F0E6; --med:#8A5E12; --med-bg:#F3EAD6;
+    --code-bg:#F3F0E8; --band:#141317; --band-ink:#F3EFE4; --band-muted:#A49C89;
+    --measure:44rem;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --serif: Georgia,"Iowan Old Style","Times New Roman",serif;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){:root{
+    --bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;--faint:#7C7566;
+    --hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;--high-bg:#2A1512;
+    --good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}}
+  :root[data-theme="light"]{--bg:#FAF8F3;--surface:#FFFFFF;--ink:#17150E;--muted:#6E6656;
+    --faint:#8B8474;--hair:#E6E0D1;--accent:#9A731F;--accent-dec:#C8A24B;--high:#A83521;
+    --high-bg:#F6E7E2;--good:#3F6E44;--good-bg:#E8F0E6;--med:#8A5E12;--med-bg:#F3EAD6;--code-bg:#F3F0E8;}
+  :root[data-theme="dark"]{--bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;
+    --faint:#7C7566;--hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;
+    --high-bg:#2A1512;--good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:18px; line-height:1.65; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+  .wrap { max-width:var(--measure); margin:0 auto; padding:0 1.5rem; }
+  a { color:var(--accent); text-decoration:none; border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent); }
+  a:hover { border-bottom-color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent-dec); outline-offset:3px; border-radius:2px; }
+  code { font-family:var(--mono); font-size:.86em; background:var(--code-bg); padding:.12em .38em; border-radius:4px; word-break:break-word; }
+
+  .topbar { position:sticky; top:0; z-index:10; background:color-mix(in srgb,var(--band) 96%,transparent);
+    backdrop-filter:blur(8px); border-bottom:1px solid #26242B; }
+  .topbar .row { max-width:64rem; margin:0 auto; padding:.7rem 1.5rem; display:flex; align-items:center; gap:1rem; }
+  .brand { display:flex; align-items:center; gap:.55rem; border:none; }
+  .brand svg { width:26px; height:26px; }
+  .brand .wm { font-family:var(--mono); font-size:.9rem; font-weight:600; color:#F3EFE4; letter-spacing:.01em; }
+  .brand .wm .g { color:var(--accent-dec); }
+  .topbar .spacer { flex:1; }
+  .topbar .nl { color:var(--band-muted); font-size:.85rem; border:none; }
+  .topbar .nl:hover { color:#F3EFE4; }
+  .topbar .scan { background:var(--accent-dec); color:#17150E; font-weight:650; font-size:.85rem;
+    padding:.42rem .9rem; border-radius:7px; border:none; }
+  .topbar .scan:hover { background:#D8B25C; color:#17150E; }
+  @media (max-width:640px){ .topbar .nl { display:none; } }
+
+  .band { background:var(--band); color:var(--band-ink); border-bottom:1px solid #26242B; }
+  .band .wrap { padding-top:3rem; padding-bottom:2.8rem; }
+  .backlink { font-family:var(--mono); font-size:.72rem; letter-spacing:.06em; color:var(--band-muted);
+    border:none; display:inline-block; margin:0 0 1.4rem; }
+  .backlink:hover { color:var(--accent-dec); }
+  .eyebrow { font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase;
+    color:var(--accent-dec); margin:0 0 1rem; }
+  h1 { font-family:var(--serif); font-weight:600; font-size:clamp(2.2rem,5.5vw,3.2rem); line-height:1.07;
+    letter-spacing:-.015em; margin:0 0 1.1rem; text-wrap:balance; color:#FBF8EF; }
+  .deck { font-size:1.14rem; line-height:1.55; color:var(--band-muted); max-width:36rem; margin:0 0 2.2rem; }
+  .deck b { color:var(--band-ink); font-weight:600; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#26242B;
+    border:1px solid #26242B; border-radius:10px; overflow:hidden; }
+  .stat { background:var(--band); padding:1rem .9rem; }
+  .stat .n { font-family:var(--serif); font-size:1.55rem; line-height:1; color:var(--accent-dec); font-variant-numeric:tabular-nums; }
+  .stat .l { font-size:.72rem; line-height:1.3; color:var(--band-muted); margin-top:.4rem; }
+  @media (max-width:560px){ .stats { grid-template-columns:repeat(2,1fr); } }
+
+  article .wrap { padding-top:3rem; padding-bottom:2rem; }
+  section { margin:0 0 2.8rem; }
+  .kicker { font-family:var(--mono); font-size:.72rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--accent); display:flex; align-items:center; gap:.7rem; margin:0 0 1rem; }
+  .kicker .no { color:var(--faint); }
+  .kicker::after { content:""; height:1px; flex:1; background:var(--hair); }
+  h2 { font-family:var(--serif); font-weight:600; font-size:1.6rem; line-height:1.15; letter-spacing:-.01em;
+    margin:0 0 .8rem; text-wrap:balance; }
+  p { margin:0 0 1.05rem; }
+  .muted { color:var(--muted); }
+  strong { font-weight:650; }
+
+  /* code / diff */
+  .code { background:var(--code-bg); border:1px solid var(--hair); border-radius:11px; overflow-x:auto;
+    font-family:var(--mono); font-size:.83rem; line-height:1.62; margin:1.2rem 0; }
+  .code .hd { display:flex; align-items:center; gap:.6rem; padding:.55rem .9rem; border-bottom:1px solid var(--hair);
+    color:var(--faint); font-size:.72rem; letter-spacing:.04em; }
+  .code .hd .dot { width:9px; height:9px; border-radius:50%; background:var(--hair); }
+  .code .hd .fn { color:var(--muted); }
+  .code pre { margin:0; padding:.9rem 1.1rem; white-space:pre; }
+  .code .ln { display:block; padding:0 .3rem; border-radius:3px; }
+  .code .add { background:color-mix(in srgb,var(--high) 13%,transparent); color:var(--ink); }
+  .code .add::before { content:"+ "; color:var(--high); }
+  .code .del { color:var(--faint); }
+  .code .del::before { content:"- "; color:var(--faint); }
+  .code .ctx::before { content:"\00a0\00a0"; }
+  .code .cmt { color:var(--high); }
+
+  .cmd { font-family:var(--mono); font-size:.9rem; background:var(--band); color:#E8E3D6;
+    border-radius:10px; padding:.95rem 1.15rem; margin:1.2rem 0; overflow-x:auto; white-space:pre; }
+  .cmd .p { color:var(--accent-dec); }
+  .cmd .f { color:var(--band-muted); }
+
+  /* verdict review card */
+  .flip { display:grid; grid-template-columns:1fr; gap:1.1rem; margin:1.4rem 0 .4rem; }
+  .card { background:var(--surface); border:1px solid var(--hair); border-radius:13px; overflow:hidden;
+    border-left-width:4px; }
+  .card.block { border-left-color:var(--high); }
+  .card.promote { border-left-color:var(--good); }
+  .card .top { display:flex; align-items:center; flex-wrap:wrap; gap:.55rem .8rem; padding:.95rem 1.15rem;
+    border-bottom:1px solid var(--hair); }
+  .pill { font-family:var(--mono); font-size:.74rem; font-weight:700; letter-spacing:.05em;
+    padding:.24rem .6rem; border-radius:999px; }
+  .pill.block { background:var(--high-bg); color:var(--high); }
+  .pill.promote { background:var(--good-bg); color:var(--good); }
+  .card .sub { font-size:.86rem; color:var(--muted); }
+  .card .score { margin-left:auto; font-family:var(--mono); font-size:.82rem; color:var(--muted);
+    font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .card .score b { color:var(--ink); }
+  .card .score .dn { color:var(--high); }
+  .card .body { padding:.9rem 1.15rem 1.05rem; }
+  .card .lbl { font-family:var(--mono); font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--faint); margin:0 0 .7rem; }
+  .find { display:flex; gap:.7rem; padding:.55rem 0; border-top:1px dashed var(--hair); }
+  .find:first-of-type { border-top:none; }
+  .find .sev { flex:none; font-family:var(--mono); font-size:.64rem; font-weight:700; letter-spacing:.04em;
+    padding:.2rem .5rem; border-radius:6px; height:max-content; }
+  .find .sev.h { background:var(--high-bg); color:var(--high); }
+  .find .sev.l { background:var(--med-bg); color:var(--med); }
+  .find .txt { font-size:.9rem; line-height:1.45; }
+  .find .txt .t { font-weight:600; }
+  .find .txt .loc { font-family:var(--mono); font-size:.78rem; color:var(--accent); }
+  .find .txt .ev { color:var(--muted); display:block; margin-top:.15rem; }
+  .find .txt .ev .q { font-family:var(--mono); font-size:.82em; color:var(--ink); }
+  .card .foot { padding:.7rem 1.15rem; border-top:1px solid var(--hair); background:var(--code-bg);
+    font-size:.79rem; color:var(--muted); }
+  .card .foot b { color:var(--ink); font-weight:600; }
+  .clean { padding:.9rem 1.15rem 1.05rem; font-size:.9rem; color:var(--muted); }
+  .clean b { color:var(--good); }
+
+  .plain { list-style:none; margin:1.1rem 0; padding:0; display:flex; flex-direction:column; gap:.85rem; }
+  .plain li { position:relative; padding-left:1.4rem; }
+  .plain li::before { content:"—"; position:absolute; left:0; color:var(--accent); font-family:var(--mono); }
+  .plain li b { color:var(--ink); }
+
+  .cta { background:var(--band); color:var(--band-ink); border-radius:14px; padding:2rem 1.75rem; margin:2.4rem 0 1rem; }
+  .cta h2 { color:#FBF8EF; margin-bottom:.5rem; }
+  .cta p { color:var(--band-muted); margin-bottom:1.3rem; }
+  .cta pre { font-family:var(--mono); font-size:.84rem; background:#0C0B0E; border:1px solid #26242B; color:#E8E3D6;
+    padding:.9rem 1.1rem; border-radius:9px; overflow-x:auto; margin:0 0 1.1rem; line-height:1.6; }
+  .cta pre .c { color:var(--accent-dec); }
+  .btnrow { display:flex; flex-wrap:wrap; gap:.7rem; align-items:center; }
+  .btn { display:inline-block; background:var(--accent-dec); color:#17150E; font-weight:650; font-size:.95rem;
+    padding:.6rem 1.1rem; border-radius:8px; border:none; }
+  .btn:hover { background:#D8B25C; }
+  .cta a.ghost { color:var(--band-muted); border:none; font-size:.9rem; }
+  .cta a.ghost:hover { color:var(--band-ink); }
+
+  footer.pg { border-top:1px solid var(--hair); }
+  footer.pg .wrap { padding:1.6rem 1.5rem; display:flex; flex-wrap:wrap; gap:.6rem 1.4rem; align-items:center;
+    color:var(--faint); font-size:.82rem; max-width:64rem; }
+  footer.pg a { color:var(--muted); border:none; }
+  footer.pg a:hover { color:var(--accent); }
+  footer.pg .spacer { flex:1; }
+
+  @media (prefers-reduced-motion:no-preference){
+    .band .wrap>* { animation:rise .6s cubic-bezier(.2,.6,.2,1) both; }
+    .band .wrap>*:nth-child(2){animation-delay:.05s} .band .wrap>*:nth-child(3){animation-delay:.1s}
+    .band .wrap>*:nth-child(4){animation-delay:.15s} .band .wrap>*:nth-child(5){animation-delay:.2s}
+    @keyframes rise { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a class="brand" href="/index.html" aria-label="release-gate home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg>
+      <span class="wm">release<span class="g">-</span>gate</span>
+    </a>
+    <div class="spacer"></div>
+    <a class="nl" href="/research.html">Research</a>
+    <a class="nl" href="/index.html#faq">FAQ</a>
+    <a class="scan" href="/index.html">Scan a repo</a>
+  </div>
+</div>
+
+<header class="band">
+  <div class="wrap">
+    <a class="backlink" href="/index.html">&larr; release-gate</a>
+    <p class="eyebrow">Live example · PR review gate</p>
+    <h1>Watch it block a bad AI change</h1>
+    <p class="deck">A pull request adds a helpful-looking feature &mdash; and quietly runs the
+      model&rsquo;s output through <code>eval()</code>. Here is exactly what <b>release-gate</b>
+      says about that PR, on real, reproducible output. No mockups.</p>
+    <div class="stats">
+      <div class="stat"><div class="n">100&nbsp;&rarr;&nbsp;76</div><div class="l">agent code-safety, this diff</div></div>
+      <div class="stat"><div class="n">1</div><div class="l">confirmed HIGH introduced</div></div>
+      <div class="stat"><div class="n">exit&nbsp;1</div><div class="l">blocks the merge in CI</div></div>
+      <div class="stat"><div class="n">net-new</div><div class="l">only what the PR added</div></div>
+    </div>
+  </div>
+</header>
+
+<article>
+  <div class="wrap">
+
+    <section>
+      <p class="kicker"><span class="no">01</span> The pull request</p>
+      <h2>A data agent learns to answer free-form questions</h2>
+      <p>On <code>main</code>, <code>analysis-agent</code> answers questions about a CSV by
+        letting the model pick one <strong>named aggregation</strong> from an allowlist. Safe, boring,
+        capped. Then a PR lands: <em>&ldquo;support natural-language queries.&rdquo;</em> It asks the
+        model for a pandas expression and evaluates it against the dataframe. Every line looks
+        reasonable in review &mdash; and a prompt-injected cell in the CSV now reaches
+        <code>eval()</code>.</p>
+      <div class="code" role="img" aria-label="Diff introduced by the pull request">
+        <div class="hd"><span class="dot"></span><span class="fn">agent.py</span><span>&nbsp;&middot;&nbsp;what the PR changed</span></div>
+<pre><span class="ln del">    op = resp.choices[0].message.content.strip()</span>
+<span class="ln del">    if op not in ALLOWED:            # validate against an allowlist</span>
+<span class="ln del">        raise ValueError(op)</span>
+<span class="ln del">    return getattr(df, op)(numeric_only=True)</span>
+<span class="ln add">    expr = resp.choices[0].message.content</span>
+<span class="ln add">    return eval(expr, {"df": df})<span class="cmt">   # model output executed directly</span></span></pre>
+      </div>
+    </section>
+
+    <section>
+      <p class="kicker"><span class="no">02</span> The gate</p>
+      <h2>One command, scoped to the diff</h2>
+      <p>In the PR&rsquo;s CI job &mdash; or locally before you push &mdash; one line. It compares the
+        branch against its merge-base and rules on <strong>what this change introduced</strong>,
+        never inherited debt.</p>
+      <div class="cmd"><span class="p">$</span> release-gate pr <span class="f">--base</span> main <span class="f">--comment</span></div>
+    </section>
+
+    <section>
+      <p class="kicker"><span class="no">03</span> The verdict</p>
+      <h2>Clean on <code>main</code> &rarr; blocked on the PR</h2>
+      <p>Same agent, two states. The baseline promotes. The change that added the
+        <code>eval</code> flips it to a block &mdash; and names the exact line and why.</p>
+
+      <div class="flip">
+        <div class="card promote">
+          <div class="top">
+            <span class="pill promote">&#10003; PROMOTE</span>
+            <span class="sub">base &mdash; <code>main</code> before the PR</span>
+            <span class="score"><b>100</b> / 100</span>
+          </div>
+          <div class="clean">No confirmed high-severity risk in production code. The model may only
+            choose from an allowlist; its output is validated, never executed. <b>Nothing to raise.</b></div>
+        </div>
+
+        <div class="card block">
+          <div class="top">
+            <span class="pill block">&#9679; BLOCK</span>
+            <span class="sub">this change made things net-worse</span>
+            <span class="score">Agent Code Safety <b>100</b> <span class="dn">&rarr; 76&nbsp;&#9660;&minus;24</span></span>
+          </div>
+          <div class="body">
+            <p class="lbl">Introduced by this change &mdash; not pre-existing</p>
+            <div class="find">
+              <span class="sev h">HIGH</span>
+              <span class="txt"><span class="t">Dangerous execution sink</span> &nbsp;<span class="loc">agent.py:25</span>
+                <span class="ev">high &middot; confirmed &mdash; <code>eval()</code> executes <span class="q">expr</span> &mdash; <b>the model&rsquo;s own output.</b></span></span>
+            </div>
+            <div class="find">
+              <span class="sev l">LOW</span>
+              <span class="txt"><span class="t">LLM call with no token ceiling</span> &nbsp;<span class="loc">agent.py:17</span>
+                <span class="ev">medium &middot; inferred &mdash; no <code>max_tokens</code>; a single response can run to the model&rsquo;s max output.</span></span>
+            </div>
+          </div>
+          <div class="foot">1 source file changed, 0 test files touched &middot;
+            <b>every line above is a fact derived from this diff, not a prediction.</b> Exit code <code>1</code>.</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <p class="kicker"><span class="no">04</span> Why you can trust the red</p>
+      <h2>A gate teams keep, not one they mute</h2>
+      <ul class="plain">
+        <li><b>Net-new only.</b> It blocks what <em>this</em> PR introduced and never fails you on
+          debt you inherited &mdash; so the red always means &ldquo;you just added this.&rdquo;</li>
+        <li><b>Confirmed, not guessed.</b> The <span style="color:var(--high)">HIGH</span> is graded
+          <em>confirmed</em> because the source is visible in scope: the value came from
+          <code>client.chat.completions.create(&hellip;)</code> and reaches <code>eval()</code> in the
+          same function. When provenance can&rsquo;t be proven, it says so and stays advisory &mdash; it
+          doesn&rsquo;t cry wolf.</li>
+        <li><b>It&rsquo;s just an exit code.</b> <code>0</code> promote &middot; <code>10</code> hold
+          &middot; <code>1</code> block. Drops into any CI without a dashboard, an account, or your
+          code leaving the runner.</li>
+      </ul>
+    </section>
+
+    <section>
+      <p class="kicker"><span class="no">05</span> Run it yourself</p>
+      <h2>The whole example is in the repo</h2>
+      <p>Nothing here is staged. The two agent versions and a script that builds the git
+        scenario and runs the gate live under
+        <code>examples/demo-code-risk/</code>. Reproduce the output above in about thirty seconds:</p>
+      <div class="cmd"><span class="f"># from a clone of the repo</span>
+<span class="p">$</span> pip install release-gate
+<span class="p">$</span> ./examples/demo-code-risk/build_demo.sh</div>
+    </section>
+
+    <div class="cta">
+      <h2>Point it at your agent</h2>
+      <p>Add the same gate to your PRs. It reads the code, rules on the change, and comments
+        the verdict &mdash; free and open-source.</p>
+      <pre><span class="c"># .github/workflows — on every pull request</span>
+- uses: VamsiSudhakaran1/release-gate@v0.8
+  with:
+    command: pr
+    base: origin/main</pre>
+      <div class="btnrow">
+        <a class="btn" href="/index.html">Scan a repo now</a>
+        <a class="ghost" href="https://github.com/VamsiSudhakaran1/release-gate">View on GitHub &rarr;</a>
+      </div>
+    </div>
+
+  </div>
+</article>
+
+<footer class="pg">
+  <div class="wrap">
+    <a href="/index.html">&larr; release-gate</a>
+    <div class="spacer"></div>
+    <a href="/index.html">Scan a repo</a>
+    <a href="/research.html">Research</a>
+    <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>
