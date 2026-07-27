@@ -59,6 +59,30 @@ RULES: List[Rule] = [
          "Confirm no model or user output can reach it; sandbox any deliberate "
          "code tool.",
          ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"]),
+    Rule("RG-ACTION-002", "Server-side request from model output", "ACTION",
+         "ssrf_egress", "high",
+         "A model/tool/user-controlled URL flows into an HTTP client — SSRF (fetch "
+         "an internal endpoint) or data egress (POST out) steered by generated text, "
+         "the incident that leaves no other code fingerprint.",
+         "Validate the host against an allowlist before the request; never let "
+         "generated text choose the destination.",
+         ["OWASP-LLM:LLM02", "OWASP-LLM:LLM06", "NIST-AI-RMF:MANAGE-2.2"]),
+    Rule("RG-ACTION-003", "Filesystem write/delete from model output", "ACTION",
+         "fs_write_delete", "high",
+         "Model-controlled path reaches a delete/overwrite (os.remove, shutil.rmtree, "
+         "Path.unlink, open(…, 'w')) — an irreversible file operation the model's "
+         "confident-but-wrong 1% can trigger.",
+         "Constrain the path to an explicit sandbox directory and validate it before "
+         "the operation; gate irreversible actions.",
+         ["OWASP-LLM:LLM02", "NIST-AI-RMF:MANAGE-2.2"]),
+    Rule("RG-ACTION-004", "SQL built from model output", "ACTION",
+         "sql_from_model", "high",
+         "Model output is interpolated into a raw SQL query (f-string / concat) and "
+         "executed — agent-driven SQL injection, where the taint source is the LLM, "
+         "not an HTTP parameter.",
+         "Use a parameterized query (execute(sql, params)); never interpolate "
+         "untrusted or model text into SQL.",
+         ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"]),
     Rule("RG-PROMPT-001", "Interpolated system prompt (injection surface)", "PROMPT",
          "prompt_injection_risk", "high",
          "Untrusted (user/model) text is interpolated into a system prompt, where "
@@ -98,6 +122,14 @@ RULES: List[Rule] = [
          "Move secrets to environment variables or a secrets manager; rotate the "
          "exposed key.",
          ["OWASP-LLM:LLM07"]),
+    Rule("RG-SECRET-002", "Secret or PII sent to the model provider", "SECRET",
+         "secret_to_prompt", "high",
+         "A hardcoded secret, an env var, or a PII-shaped value is interpolated into "
+         "a prompt sent to a third-party LLM — data egress to the provider (who logs "
+         "and retains it). The reverse of exfiltration, and no SAST tool checks it.",
+         "Redact secrets/PII before they reach the prompt; a key used as auth "
+         "(api_key=, headers) is fine — only prompt content is the leak.",
+         ["OWASP-LLM:LLM06", "OWASP-LLM:LLM07"]),
 ]
 
 _BY_ID: Dict[str, Rule] = {r.id: r for r in RULES}
@@ -145,7 +177,8 @@ def get_rule(rule_id: str) -> Optional[Rule]:
 
 def render_catalog_md() -> str:
     """Render docs/RULES.md from the registry — the public rationale catalog."""
-    cats = {"EXEC": "Code-execution sinks", "PROMPT": "Prompt-injection surfaces",
+    cats = {"EXEC": "Code-execution sinks", "ACTION": "Consequential actions (model-driven side effects)",
+            "PROMPT": "Prompt-injection surfaces",
             "COST": "Cost / token ceilings", "LOOP": "Loop boundaries",
             "SECRET": "Secrets"}
     out: List[str] = [

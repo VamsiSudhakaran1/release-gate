@@ -157,6 +157,10 @@ COMPLIANCE_TAGS: Dict[str, List[str]] = {
     "unbounded_llm_loop":    ["OWASP-LLM:LLM10", "NIST-AI-RMF:MANAGE-2.2"],
     "exec_sink":             ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"],
     "hardcoded_secret":      ["OWASP-LLM:LLM07"],
+    "secret_to_prompt":      ["OWASP-LLM:LLM06", "OWASP-LLM:LLM07"],
+    "ssrf_egress":           ["OWASP-LLM:LLM02", "OWASP-LLM:LLM06", "NIST-AI-RMF:MANAGE-2.2"],
+    "fs_write_delete":       ["OWASP-LLM:LLM02", "NIST-AI-RMF:MANAGE-2.2"],
+    "sql_from_model":        ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"],
     "missing_max_tokens":    ["OWASP-LLM:LLM10"],
     "prompt_injection_risk": ["OWASP-LLM:LLM01"],
 }
@@ -1876,11 +1880,19 @@ def _finding_type_key(title: str) -> str:
         return "unbounded_llm_loop"
     if "exec" in t or "execution sink" in t or "deserialization" in t:
         return "exec_sink"
+    if "sent to the model provider" in t:
+        return "secret_to_prompt"
     if "secret" in t or "api key" in t:
         return "hardcoded_secret"
+    if "server-side request" in t or "ssrf" in t:
+        return "ssrf_egress"
+    if "filesystem" in t or "write/delete" in t:
+        return "fs_write_delete"
+    if "sql" in t:
+        return "sql_from_model"
     if "token ceiling" in t or "max_tokens" in t or "output ceiling" in t:
         return "missing_max_tokens"
-    if "injection" in t or "interpolated" in t:
+    if "injection" in t or "interpolated" in t or "instruction channel" in t:
         return "prompt_injection_risk"
     return "unbounded_llm_loop"
 

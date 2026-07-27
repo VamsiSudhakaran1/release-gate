@@ -1091,3 +1091,119 @@ def test_prompt_002_supersedes_prompt_001_on_same_node():
            "    return [{'role':'system','content': f'{docs}'}]\n")
     ids = {f["rule_id"] for f in _findings(src)}
     assert "RG-PROMPT-002" in ids and "RG-PROMPT-001" not in ids
+
+
+# ── P1 tier: consequential-action sinks + secret egress + taint-aware deser ───
+
+_LLM = "from openai import OpenAI\nc = OpenAI()\n"
+_MODEL = ("    r = c.chat.completions.create(messages=m)\n"
+          "    v = r.choices[0].message.content\n")
+
+
+def _action(src):
+    return [f for f in _findings(src) if f["rule_id"].startswith(("RG-ACTION", "RG-SECRET", "RG-EXEC"))]
+
+
+# RG-ACTION-002 — SSRF / egress
+def test_ssrf_model_controlled_url_is_confirmed_high():
+    src = _LLM + "import requests\ndef go(m):\n" + _MODEL + "    return requests.get(v)\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-ACTION-002"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+
+
+def test_ssrf_constant_base_tainted_path_is_demoted_medium():
+    # Model output into only the PATH segment of a constant scheme/host → path
+    # injection, not host-controlled SSRF → demoted to medium.
+    src = _LLM + "import requests\ndef go(m):\n" + _MODEL + "    return requests.get(f'https://api.co/{v}')\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-ACTION-002"]
+    assert hits and hits[0]["severity"] == "medium"
+
+
+def test_ssrf_user_input_url_is_out_of_scope():
+    # Generic user-input SSRF (not model output) is Bandit's lane, not ours —
+    # firing on it across an LLM framework's connectors is the FP class we avoid.
+    src = _LLM + "import requests\ndef go(request):\n    return requests.get(request.url)\n"
+    assert not any(f["rule_id"] == "RG-ACTION-002" for f in _findings(src))
+
+
+def test_ssrf_constant_url_stays_quiet():
+    src = _LLM + "import requests\ndef go():\n    return requests.get('https://api.co/health')\n"
+    assert not any(f["rule_id"] == "RG-ACTION-002" for f in _findings(src))
+
+
+def test_ssrf_not_flagged_in_non_agent_code_with_bare_arg():
+    # A plain library file (no LLM, no model/tool taint) — generic egress is
+    # Bandit's job, not ours. A bare, unproven arg must not fire.
+    src = "import requests\ndef fetch(u):\n    return requests.get(u)\n"
+    assert not any(f["rule_id"] == "RG-ACTION-002" for f in _findings(src))
+
+
+# RG-ACTION-003 — filesystem
+def test_fs_delete_model_path_is_confirmed_high():
+    src = _LLM + "import os\ndef go(m):\n" + _MODEL + "    os.remove(v)\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-ACTION-003"]
+    assert hits and hits[0]["severity"] == "high"
+
+
+def test_fs_write_model_content_to_fixed_path_is_medium():
+    src = _LLM + "from pathlib import Path\ndef go(m):\n" + _MODEL + "    Path('/data/o.txt').write_text(v)\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-ACTION-003"]
+    assert hits and hits[0]["severity"] == "medium"
+
+
+def test_fs_constant_path_stays_quiet():
+    src = _LLM + "import os\ndef go():\n    os.remove('/tmp/fixed.lock')\n"
+    assert not any(f["rule_id"] == "RG-ACTION-003" for f in _findings(src))
+
+
+# RG-ACTION-004 — SQL
+def test_sql_model_output_interpolated_is_high():
+    src = _LLM + "def go(cur, m):\n" + _MODEL + "    cur.execute(f'SELECT * FROM t WHERE x={v}')\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-ACTION-004"]
+    assert hits and hits[0]["severity"] == "high"
+
+
+def test_sql_parameterized_query_stays_quiet():
+    src = _LLM + "def go(cur, val):\n    cur.execute('SELECT * FROM t WHERE x=?', (val,))\n"
+    assert not any(f["rule_id"] == "RG-ACTION-004" for f in _findings(src))
+
+
+# RG-SECRET-002 — secret / PII → prompt → provider
+def test_secret_hardcoded_key_into_prompt_is_high():
+    src = ("from openai import OpenAI\nc = OpenAI()\n"
+           "KEY = 'sk-proj-ABCDEFGHIJKLMNOP1234'\n"
+           "def go():\n"
+           "    return c.chat.completions.create(messages=[{'role':'user','content': f'use {KEY}'}])\n")
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-SECRET-002"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+
+
+def test_secret_env_var_into_prompt_is_medium():
+    src = ("import os\nfrom openai import OpenAI\nc = OpenAI()\n"
+           "def go():\n"
+           "    tok = os.environ['DB_PASSWORD']\n"
+           "    return c.chat.completions.create(messages=[{'role':'user','content': f'{tok}'}])\n")
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-SECRET-002"]
+    assert hits and hits[0]["severity"] == "medium"
+
+
+def test_secret_used_as_auth_is_not_flagged():
+    # The FP control: a key passed as auth (api_key=) is not prompt egress.
+    src = ("from openai import OpenAI\n"
+           "KEY = 'sk-proj-ABCDEFGHIJKLMNOP1234'\n"
+           "c = OpenAI(api_key=KEY)\n"
+           "def go():\n"
+           "    return c.chat.completions.create(messages=[{'role':'user','content':'hi'}])\n")
+    assert not any(f["rule_id"] == "RG-SECRET-002" for f in _findings(src))
+
+
+# RG-EXEC-004 — taint-aware deserialization upgrade
+def test_network_body_into_pickle_is_confirmed_high():
+    # HTTP body → pickle.loads: what was an inferred medium is now confirmed high,
+    # because the untrusted network origin is visible in scope.
+    src = ("import requests, pickle\n"
+           "def go(url):\n"
+           "    resp = requests.get(url)\n"
+           "    return pickle.loads(resp.content)\n")
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"

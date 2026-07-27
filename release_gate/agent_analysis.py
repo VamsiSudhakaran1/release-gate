@@ -159,6 +159,52 @@ TOOL_DECORATOR_HINTS = ("tool", "function_tool", "register_tool")
 # Unambiguous system/instruction-channel constructors (LangChain / LangGraph).
 SYSTEM_MSG_CTORS = {"SystemMessage", "SystemMessagePromptTemplate"}
 
+# ── RG-ACTION-003: filesystem write / delete sinks ───────────────────────────
+# Delete / move / overwrite of a MODEL-controlled path is irreversible → HIGH.
+# Dotted-suffix match (like _ATTR_SINKS): dotted-name -> human label.
+_FS_DELETE_SINKS = {
+    "os.remove": "os.remove()", "os.unlink": "os.unlink()", "os.rmdir": "os.rmdir()",
+    "os.removedirs": "os.removedirs()", "os.rename": "os.rename()",
+    "os.replace": "os.replace()", "shutil.rmtree": "shutil.rmtree()",
+    "shutil.move": "shutil.move()",
+}
+# pathlib bound methods (receiver is the path): p.unlink() / p.write_text(...).
+_PATH_DELETE_ATTRS = {"unlink", "rmdir"}
+_PATH_WRITE_ATTRS = {"write_text", "write_bytes"}
+
+# ── RG-ACTION-004: SQL execute sinks ─────────────────────────────────────────
+# A raw query built by INTERPOLATION (f-string / + / %) carrying tainted text is
+# SQL injection; a parameterized execute(sql, params) with constant sql is the
+# correct pattern and never flagged.
+_SQL_EXEC_ATTRS = {"execute", "executescript", "executemany", "executemany_async",
+                   "raw", "text"}
+
+# ── RG-SECRET-002: secret / env / PII flowing into a prompt sent to an LLM ────
+# A literal that LOOKS like a live credential (value-level, unlike verify's
+# line-level _SECRET_RE which also matches `key = "..."` assignments).
+_SECRET_VALUE_RE = re.compile(
+    r"^(?:sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{16,}"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,})$"
+)
+# Names that denote a secret/PII value the developer must NOT ship to a third-
+# party model provider inside a prompt.
+SECRET_NAME_HINTS = ("secret", "password", "passwd", "api_key", "apikey", "token",
+                     "private_key", "privatekey", "credential", "credentials",
+                     "ssn", "credit_card", "creditcard", "card_number", "cvv",
+                     "access_key", "secret_key", "auth_token", "session_token")
+# The content-bearing arguments of an LLM call — where a secret must never land.
+# (api_key / headers / auth are NOT here: a key passed as auth is not prompt egress.)
+PROMPT_ARG_KEYS = {"messages", "prompt", "input", "contents", "content", "query",
+                   "question", "text", "system", "instructions", "user", "inputs"}
+
+# ── RG-ACTION-002: SSRF / egress — the HTTP call is here a SINK, not a source ─
+# The URL-bearing argument (model-controlled host → SSRF) and the body-bearing
+# ones (model-controlled data → exfiltration).
+HTTP_URL_ARG_KEYS = {"url", "uri", "endpoint"}
+HTTP_BODY_ARG_KEYS = {"data", "json", "body", "content", "files", "params"}
+
 # Identifier-token matching. Substring matching turned `context` into a hit for
 # "text" and `database` into a hit for "data" — a whole false-positive class.
 # A hint matches only when all its words appear as tokens of the identifier
@@ -348,6 +394,12 @@ class _Analyzer(ast.NodeVisitor):
         self.untrusted_provenance: Set[str] = set()
         self.http_response_vars: Set[str] = set()
         self.tool_funcs: Set[str] = set()
+        # RG-SECRET-002. `secret_literal_vars` = vars assigned a credential-shaped
+        # literal (confirmed/high tier). `secret_env_vars` = vars from os.environ /
+        # os.getenv or with a secret/PII-shaped NAME (inferred/medium tier). A value
+        # from either flowing into an LLM prompt is data egress to the provider.
+        self.secret_literal_vars: Set[str] = set()
+        self.secret_env_vars: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -477,7 +529,28 @@ class _Analyzer(ast.NodeVisitor):
                 for t in targets:
                     self.untrusted_provenance.add(t)
                     self.tainted.add(t)
+        # RG-SECRET-002 sources. A credential-shaped literal → high tier; an
+        # os.environ read, or a secret/PII-shaped target name → medium tier.
+        if isinstance(val, ast.Constant) and isinstance(val.value, str) \
+                and _SECRET_VALUE_RE.match(val.value):
+            self.secret_literal_vars.update(targets)
+        elif self._is_env_read(val):
+            self.secret_env_vars.update(targets)
+        else:
+            for t in targets:
+                if _hint_match(t, SECRET_NAME_HINTS):
+                    self.secret_env_vars.add(t)
         self.generic_visit(node)
+
+    @staticmethod
+    def _is_env_read(node: ast.AST) -> bool:
+        """os.environ["X"] / os.environ.get("X") / os.getenv("X")."""
+        if isinstance(node, ast.Subscript):
+            return (_dotted(node.value) or "").endswith("os.environ")
+        if isinstance(node, ast.Call):
+            d = (_dotted(node.func) or "")
+            return d.endswith("os.getenv") or d.endswith("os.environ.get")
+        return False
 
     # Receive-calls that pull bytes/objects off a connection, and receiver-name
     # hints that mean it's a LOCAL IPC pipe (multiprocessing), not the network.
@@ -612,6 +685,10 @@ class _Analyzer(ast.NodeVisitor):
         self._check_llm_token_ceiling(node)
         self._check_exec_sink(node)
         self._check_system_message_ctor(node, ctor)
+        self._check_ssrf(node)
+        self._check_fs_sink(node)
+        self._check_sql_sink(node)
+        self._check_secret_to_prompt(node)
         self._record_param_update(node)
         self.generic_visit(node)
 
@@ -642,6 +719,225 @@ class _Analyzer(ast.NodeVisitor):
                        "content can carry attacker-influenced text — it enters the "
                        "instruction channel, not a delimited data turn.",
             ))
+
+    # -- shared helpers for the P1 action sinks ---------------------------------
+    def _model_taint(self, arg: Optional[ast.AST]):
+        """(value, source, confirmed) if a MODEL-OUTPUT value reaches this argument,
+        else None. Deliberately NARROWER than _reaching_taint: the action sinks
+        (SSRF / fs / SQL) fire only on model provenance, because a dynamic URL /
+        path / query is ubiquitous and benign in ordinary I/O (a data connector
+        paginating an API, a temp-file write). Generic user-input SSRF/SQLi is
+        Bandit's job; our lane is "the *model* chose the destination/path/query."
+        This is what keeps us from crying wolf across an LLM framework's own
+        connector code, where `file_has_llm` is true almost everywhere."""
+        if arg is None or _is_all_constant([arg]):
+            return None
+        names = list(_names_in(arg))
+        for n in names:
+            if n in self.model_extracted:
+                return n, "the model's own output", True
+        for n in names:
+            if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):
+                return n, "the model's own output", True
+        for n in names:
+            if n in self.llm_helper_output:
+                return n, "output of an in-scope model-generation helper", False
+        return None
+
+    @staticmethod
+    def _kwarg(node: ast.Call, names) -> Optional[ast.AST]:
+        for k in node.keywords:
+            if k.arg in names:
+                return k.value
+        return None
+
+    def _check_ssrf(self, node: ast.Call):
+        # RG-ACTION-002. A model/tool/user-controlled URL into an HTTP client is
+        # SSRF (fetch an internal endpoint) or exfiltration (POST data out) — the
+        # incident that leaves no other code fingerprint. The HTTP call is the SINK
+        # here (its RETURN being untrusted is the separate RG-PROMPT-002 concern).
+        if not self._is_http_call(node):
+            return
+        url_arg = node.args[0] if node.args else self._kwarg(node, HTTP_URL_ARG_KEYS)
+        reaching = self._model_taint(url_arg)
+        if reaching:
+            value, source, confirmed = reaching
+            # A constant scheme+host prefix with only a tainted path segment is
+            # path injection, not full host-controlled SSRF → demote to medium.
+            demoted = confirmed and self._has_const_url_prefix(url_arg)
+            conf = confirmed and not demoted
+            self.findings.append(self._f(
+                "high" if conf else "medium",
+                "Server-side request from model output", node,
+                f"An HTTP request is sent to a URL built from `{value}` — {source}. "
+                "A model or tool can steer this to an internal endpoint (SSRF) or an "
+                "attacker host. Validate the host against an allowlist before the "
+                "request; never let generated text choose the destination.",
+                evidence=f"{source} `{value}` -> {(_dotted(node.func) or 'http call')}()",
+                confidence="high" if conf else "medium",
+                basis="confirmed" if conf else "inferred",
+                impact="SSRF / data egress if the host can be model- or "
+                       "attacker-influenced — a runtime allowlist could still contain it.",
+            ))
+            return
+        # URL is safe but the request BODY carries tainted data → exfiltration shape.
+        body_arg = self._kwarg(node, HTTP_BODY_ARG_KEYS)
+        reaching = self._model_taint(body_arg)
+        if reaching:
+            value, source, _c = reaching
+            self.findings.append(self._f(
+                "medium", "Server-side request from model output", node,
+                f"Model/tool-derived data (`{value}` — {source}) is sent in the body "
+                "of an outbound request. If the destination is untrusted this is a "
+                "data-exfiltration path. Confirm what leaves the process.",
+                evidence=f"tainted body `{value}` -> {(_dotted(node.func) or 'http call')}()",
+                confidence="medium", basis="inferred",
+                impact="Data egress if the endpoint is untrusted — body is "
+                       "model/tool-influenced.",
+            ))
+
+    @staticmethod
+    def _has_const_url_prefix(node: ast.AST) -> bool:
+        """f'https://host/{x}' or 'https://host/' + x — a constant scheme/host with
+        only a tainted tail. Path injection, not host-controlled SSRF."""
+        if isinstance(node, ast.JoinedStr):
+            first = node.values[0] if node.values else None
+            return isinstance(first, ast.Constant) and isinstance(first.value, str) \
+                and first.value.strip().lower().startswith(("http://", "https://"))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left = node.left
+            return isinstance(left, ast.Constant) and isinstance(left.value, str) \
+                and left.value.strip().lower().startswith(("http://", "https://"))
+        return False
+
+    def _check_fs_sink(self, node: ast.Call):
+        # RG-ACTION-003. Delete / overwrite of a model-controlled PATH is
+        # irreversible (HIGH); writing model CONTENT to a fixed path is MEDIUM.
+        dotted = (_dotted(node.func) or "")
+        f = node.func
+        # Delete / move / rename family: os.remove, shutil.rmtree, os.rename…
+        for suffix, label in _FS_DELETE_SINKS.items():
+            if dotted.endswith(suffix):
+                for arg in node.args[:2]:  # rename/move take (src, dst)
+                    reaching = self._model_taint(arg)
+                    if reaching:
+                        self._emit_fs(node, reaching, label, irreversible=True)
+                        return
+                return
+        # open(path, 'w'/'a'/'x'…) — a write mode with a model-controlled path.
+        if isinstance(f, ast.Name) and f.id == "open" and f.id not in self.shadowed_builtins:
+            mode = node.args[1] if len(node.args) > 1 else self._kwarg(node, {"mode"})
+            if isinstance(mode, ast.Constant) and isinstance(mode.value, str) \
+                    and any(c in mode.value for c in ("w", "a", "x", "+")):
+                reaching = self._model_taint(node.args[0] if node.args else None)
+                if reaching:
+                    self._emit_fs(node, reaching, "open(…, write)", irreversible=True)
+            return
+        # pathlib bound methods: p.unlink() / p.write_text(content).
+        if isinstance(f, ast.Attribute):
+            if f.attr in _PATH_DELETE_ATTRS:
+                reaching = self._model_taint(f.value)  # the path is the receiver
+                if reaching:
+                    self._emit_fs(node, reaching, f"Path.{f.attr}()", irreversible=True)
+            elif f.attr in _PATH_WRITE_ATTRS:
+                path_taint = self._model_taint(f.value)
+                if path_taint:
+                    self._emit_fs(node, path_taint, f"Path.{f.attr}()", irreversible=True)
+                else:  # fixed path, model CONTENT → medium
+                    content_taint = self._model_taint(node.args[0] if node.args else None)
+                    if content_taint:
+                        self._emit_fs(node, content_taint, f"Path.{f.attr}()", irreversible=False)
+
+    def _emit_fs(self, node, reaching, label, irreversible):
+        value, source, confirmed = reaching
+        high = irreversible and confirmed
+        what = ("deletes/overwrites a path" if irreversible
+                else "writes content") + f" derived from `{value}`"
+        self.findings.append(self._f(
+            "high" if high else "medium",
+            "Filesystem write/delete from model output", node,
+            f"{label} {what} — {source}. A model or tool can then remove or clobber "
+            "an arbitrary file; the action can't be undone. Constrain the path to an "
+            "explicit sandbox directory and validate it before the operation.",
+            evidence=f"{source} `{value}` -> {label}",
+            confidence="high" if high else "medium",
+            basis="confirmed" if confirmed else "inferred",
+            impact=("Irreversible file loss/overwrite if the path is "
+                    "model/tool-controlled." if irreversible else
+                    "Model-controlled content written to disk — confirm the sink dir."),
+        ))
+
+    def _check_sql_sink(self, node: ast.Call):
+        # RG-ACTION-004. A raw query built by INTERPOLATION (f-string / + / %)
+        # carrying tainted text is SQL injection. A parameterized execute(sql,
+        # params) with a constant sql is the correct pattern → never flagged.
+        f = node.func
+        if not isinstance(f, ast.Attribute) or f.attr not in _SQL_EXEC_ATTRS:
+            return
+        query = node.args[0] if node.args else None
+        # Only an interpolated query is an injection shape. A bare Name or a
+        # constant string (even with params) is not this rule's concern.
+        if not isinstance(query, (ast.JoinedStr, ast.BinOp)):
+            return
+        reaching = self._model_taint(query)
+        if reaching:
+            value, source, confirmed = reaching
+            self.findings.append(self._f(
+                "high" if confirmed else "medium",
+                "SQL built from model output", node,
+                f"A SQL query is assembled by interpolating `{value}` — {source} — "
+                f"then run via .{f.attr}(). Agent-driven SQL injection: the model, "
+                "not an HTTP param, is the taint source. Use a parameterized query "
+                "(execute(sql, params)); never interpolate untrusted text into SQL.",
+                evidence=f"{source} `{value}` -> .{f.attr}(f\"…\")",
+                confidence="high" if confirmed else "medium",
+                basis="confirmed" if confirmed else "inferred",
+                impact="SQL injection if the interpolated value is untrusted — "
+                       "reachability is proven; runtime escaping could still catch it.",
+            ))
+
+    def _check_secret_to_prompt(self, node: ast.Call):
+        # RG-SECRET-002 (novel — no SAST does this). The REVERSE of exfiltration:
+        # your own secret/PII interpolated into a prompt sent to a third-party model
+        # provider. A key used as AUTH (api_key=…, headers) is fine — we only scan
+        # the content-bearing prompt arguments, never the auth kwargs.
+        if not self._is_llm_call(node):
+            return
+        prompt_args = [a for a in node.args]
+        prompt_args += [k.value for k in node.keywords if k.arg in PROMPT_ARG_KEYS]
+        for arg in prompt_args:
+            names = _names_in(arg)
+            lit = names & self.secret_literal_vars
+            env = names & self.secret_env_vars
+            inline = self._inline_env_read(arg)
+            if lit or env or inline:
+                value = next(iter(lit or env)) if (lit or env) else "os.environ[…]"
+                high = bool(lit)
+                self.findings.append(self._f(
+                    "high" if high else "medium",
+                    "Secret or PII sent to the model provider", node,
+                    f"`{value}` is interpolated into a prompt sent to an external LLM "
+                    "API. Whatever you place in the prompt leaves your process and is "
+                    "logged/retained by the provider — a hardcoded credential or PII "
+                    "here is a data-egress leak (distinct from using a key as auth, "
+                    "which is fine). Redact secrets/PII before they reach the prompt.",
+                    evidence=f"`{value}` -> LLM prompt",
+                    confidence="high" if high else "medium",
+                    basis="confirmed" if high else "inferred",
+                    impact=("A live-looking credential is sent to the model provider "
+                            "in the prompt." if high else
+                            "A secret/PII-shaped value reaches the prompt — confirm "
+                            "it isn't sensitive."),
+                ))
+                return
+
+    @staticmethod
+    def _inline_env_read(node: ast.AST) -> bool:
+        """os.environ[...] / os.getenv(...) used INLINE inside a prompt expression."""
+        for n in ast.walk(node):
+            if _Analyzer._is_env_read(n):
+                return True
+        return False
 
     def visit_ClassDef(self, node: ast.ClassDef):
         # A yaml Loader that subclasses SafeLoader/BaseLoader/CSafeLoader is safe.
@@ -868,6 +1164,14 @@ class _Analyzer(ast.NodeVisitor):
         for n in arg_names:
             if n in self.model_extracted:
                 return n, "the model's own output", True
+        # Confirmed (RG-EXEC-004): traced from an untrusted external source in
+        # scope — a retrieval result, an HTTP response body, or a @tool return.
+        # Reaching pickle/eval/a shell, this is the taint-aware upgrade: what was
+        # an INFERRED "unverified data" medium becomes a CONFIRMED high, because we
+        # can point at the network/tool origin, not just guess from a name.
+        for n in arg_names:
+            if n in self.untrusted_provenance:
+                return n, "an untrusted external source (retrieval / HTTP / tool output)", True
         # Confirmed: assigned from an LLM call we can see in this file.
         for n in arg_names:
             if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):

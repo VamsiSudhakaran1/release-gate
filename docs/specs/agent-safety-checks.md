@@ -98,9 +98,21 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 
 ---
 
-## P1 — high
+## P1 — high — ✅ SHIPPED
 
-### RG-ACTION-002 — Network egress / SSRF from model output
+> All five P1 items are built and tested. **Key precision decision:** the three
+> action sinks (`RG-ACTION-002/003/004`) fire on **model provenance only**
+> (`model_extracted` / `tainted_model` / model-helper output), *not* the broad
+> `_reaching_taint` set. A first cut gated on `file_has_llm OR any-taint` and
+> produced 66 findings on `llama_index` — nearly all false positives, because in an
+> LLM *framework* almost every file imports an LLM, so the gate never closed, and a
+> dynamic URL / path / query is ubiquitous and benign in ordinary connector I/O.
+> Re-scoping to "the *model* chose the destination/path/query" (exactly what each
+> rule title says) dropped `llama_index` to **0** new-rule findings while the
+> synthetic fire-path tests still pass. Generic user-input SSRF/SQLi is deliberately
+> left to Bandit/Semgrep — our lane is the agent-specific model-output flow.
+
+### RG-ACTION-002 — Network egress / SSRF from model output — ✅ SHIPPED
 - **Source → sink:** model-controlled URL or request body → `requests.get/post`,
   `httpx`, `urllib.request`, `aiohttp`. The agent can be steered to fetch internal
   endpoints or exfiltrate to an attacker host — the incident that leaves *no code
@@ -111,7 +123,7 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
   is lower severity; a fully constant URL is not a finding.
 - **Coverage honesty:** static can't see runtime allowlists / egress firewalls.
 
-### RG-SECRET-002 — Secret / PII → prompt → third-party model (data egress)
+### RG-SECRET-002 — Secret / PII → prompt → third-party model (data egress) — ✅ SHIPPED
 - **Novel — no SAST checks this.** The *reverse* of exfiltration: leaking **your**
   secrets to the model provider.
 - **Source → sink:** a hardcoded secret (reuse `RG-SECRET-001` detectors), an env var
@@ -122,8 +134,13 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 - **FP controls:** secrets used as *auth* (an API key passed to the client
   constructor / headers) are NOT prompt egress — only flag flow into prompt *content*.
 - **Differentiator framing:** ship as the "nobody else looks at this" headline check.
+- **As shipped:** tracks `secret_literal_vars` (a value matching `_SECRET_VALUE_RE`:
+  `sk-…`, `AKIA…`, `ghp_…`, `xox…` → HIGH) and `secret_env_vars` (`os.environ`/
+  `os.getenv`, or a `SECRET_NAME_HINTS`-named target → MEDIUM). Fires only when one
+  reaches a **content-bearing** LLM-call argument (`PROMPT_ARG_KEYS` — `messages`/
+  `prompt`/`input`/…), never the auth kwargs, so `OpenAI(api_key=KEY)` stays quiet.
 
-### RG-ACTION-003 — Filesystem write / delete from model output
+### RG-ACTION-003 — Filesystem write / delete from model output — ✅ SHIPPED
 - **Source → sink:** model output → `open(path, 'w'/'a')`, `os.remove`, `os.unlink`,
   `shutil.rmtree`, `Path.write_text`, `Path.unlink`, `os.rename` where the path or
   content is model-controlled.
@@ -132,7 +149,7 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 - **FP controls:** writes under an explicit sandbox/temp dir constant are lower
   severity; reads are out of scope for this rule.
 
-### RG-ACTION-004 — SQL execute from model output
+### RG-ACTION-004 — SQL execute from model output — ✅ SHIPPED
 - **Source → sink:** model output interpolated into a raw query →
   `cursor.execute(f"...")`, string-built SQL, `.executescript`. Agent-driven SQLi;
   the taint source is the LLM, not an HTTP param.
@@ -140,7 +157,7 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
   parameterized queries (`execute(sql, params)`) are the correct pattern → no finding.
 - **FP controls:** ORM calls with bound parameters are safe; constant SQL is safe.
 
-### RG-EXEC-004 — Taint-aware deserialization
+### RG-EXEC-004 — Taint-aware deserialization — ✅ SHIPPED
 - **Upgrade, not net-new:** today `pickle.loads` reads as a generic/**inferred**
   medium (seen on smolagents, MetaGPT). Make it **taint-aware**: when the deserialized
   bytes trace to model/tool/network output, upgrade to **confirmed**.
@@ -148,6 +165,12 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
   loader), `marshal.loads`, `dill.loads`.
 - **FP controls:** `yaml.safe_load` and SafeLoader subclasses are safe (existing
   `_SAFE_YAML_LOADERS` handling); a constant/embedded fixture is inferred, not confirmed.
+- **As shipped:** delivered by adding `untrusted_provenance` (retrieval/HTTP/tool
+  output) to the **confirmed** source list in `_reaching_taint` — so a network/tool
+  body reaching `pickle.loads` flips inferred-MEDIUM → confirmed-HIGH. Because this
+  lives in the shared taint resolver, it strengthens *every* code-execution sink
+  (eval/exec/shell/deserialization) at once, not just deserialization. Re-scan
+  confirmed 0 new false positives across the dogfood corpus.
 
 ---
 

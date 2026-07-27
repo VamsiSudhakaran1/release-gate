@@ -27,6 +27,29 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 - **Fix:** Confirm no model or user output can reach it; sandbox any deliberate code tool.
 - **Compliance:** OWASP-LLM:LLM02, OWASP-LLM:LLM08
 
+## Consequential actions (model-driven side effects)
+
+### RG-ACTION-002 — Server-side request from model output
+
+- **Default severity:** high
+- **What & why:** A model/tool/user-controlled URL flows into an HTTP client — SSRF (fetch an internal endpoint) or data egress (POST out) steered by generated text, the incident that leaves no other code fingerprint.
+- **Fix:** Validate the host against an allowlist before the request; never let generated text choose the destination.
+- **Compliance:** OWASP-LLM:LLM02, OWASP-LLM:LLM06, NIST-AI-RMF:MANAGE-2.2
+
+### RG-ACTION-003 — Filesystem write/delete from model output
+
+- **Default severity:** high
+- **What & why:** Model-controlled path reaches a delete/overwrite (os.remove, shutil.rmtree, Path.unlink, open(…, 'w')) — an irreversible file operation the model's confident-but-wrong 1% can trigger.
+- **Fix:** Constrain the path to an explicit sandbox directory and validate it before the operation; gate irreversible actions.
+- **Compliance:** OWASP-LLM:LLM02, NIST-AI-RMF:MANAGE-2.2
+
+### RG-ACTION-004 — SQL built from model output
+
+- **Default severity:** high
+- **What & why:** Model output is interpolated into a raw SQL query (f-string / concat) and executed — agent-driven SQL injection, where the taint source is the LLM, not an HTTP parameter.
+- **Fix:** Use a parameterized query (execute(sql, params)); never interpolate untrusted or model text into SQL.
+- **Compliance:** OWASP-LLM:LLM02, OWASP-LLM:LLM08
+
 ## Prompt-injection surfaces
 
 ### RG-PROMPT-001 — Interpolated system prompt (injection surface)
@@ -76,4 +99,11 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 - **What & why:** A live-looking credential appears in source — a leaked key and a denial-of-wallet surface.
 - **Fix:** Move secrets to environment variables or a secrets manager; rotate the exposed key.
 - **Compliance:** OWASP-LLM:LLM07
+
+### RG-SECRET-002 — Secret or PII sent to the model provider
+
+- **Default severity:** high
+- **What & why:** A hardcoded secret, an env var, or a PII-shaped value is interpolated into a prompt sent to a third-party LLM — data egress to the provider (who logs and retains it). The reverse of exfiltration, and no SAST tool checks it.
+- **Fix:** Redact secrets/PII before they reach the prompt; a key used as auth (api_key=, headers) is fine — only prompt content is the leak.
+- **Compliance:** OWASP-LLM:LLM06, OWASP-LLM:LLM07
 

@@ -280,15 +280,17 @@ ready-to-build queue. Priority reflects agent-protective value × static buildab
 |---|---|---|
 | ✅ **P0 — shipped** | `RG-PROMPT-002` | Instruction/data separation — untrusted source → instruction channel (the check an agent most wants; extends `RG-PROMPT-001` from name-hints to real provenance). Sources traced: retrieval/RAG reads, HTTP response bodies, `@tool` returns → the `role="system"` dict and `SystemMessage(...)`. |
 | ✅ **P0 — shipped** | `RG-ACTION-001` | Shell / OS command from model output — delivered by **widening the `RG-EXEC-001` catalog** (one coherent "model output → execution" rule) rather than minting a parallel id that would fragment identical findings: added string-command `subprocess` (f-string/concat, no `shell=True`) and the always-shell `getoutput`/`getstatusoutput` family. `os.system`/`os.popen`/`subprocess(shell=True)` were already covered. |
-| **P1 — high** | `RG-ACTION-002` | Network egress / SSRF from model output |
-| **P1 — high** | `RG-SECRET-002` | Secret/PII → prompt → third-party model (novel — no SAST does it) |
-| **P1 — high** | `RG-ACTION-003/004`, `RG-EXEC-004` | Filesystem write/delete, SQL execute, taint-aware deserialization |
+| ✅ **P1 — shipped** | `RG-ACTION-002` | Network egress / SSRF from model output — model-controlled URL → HTTP client (SSRF), or model data in the body (egress). Scoped to **model provenance only** so it never fires on ordinary connector I/O. |
+| ✅ **P1 — shipped** | `RG-SECRET-002` | Secret/PII → prompt → third-party model (novel — no SAST does it). Hardcoded-secret literal / `os.environ` / secret-named var into an LLM prompt arg; a key used as `api_key=` auth is correctly ignored. |
+| ✅ **P1 — shipped** | `RG-ACTION-003/004`, `RG-EXEC-004` | Filesystem write/delete (irreversible = HIGH), SQL built by interpolation (parameterized = safe), and taint-aware deserialization (network/tool body → pickle upgrades inferred→confirmed). |
 | **P2 — medium** | `RG-PARSE-001` | Unvalidated model-output parse (reliability; cheap win) |
 | **P2 — medium** | `RG-TOOL-001` → `RG-GATE-001` | Tool blast-radius declaration → irreversibility gate (gate depends on the taxonomy) |
 | **P3 — frontier** | `RG-IDEMP-001`, `RG-GROUND-001` | Idempotency/retry-safety, output→action grounding — mostly **behavioral**, feed `agent-score`/`loop-sim`, not the static gate |
 
-**The two P0s are shipped** (`RG-PROMPT-002`, `RG-ACTION-001`); next up is the P1
-tier (`RG-ACTION-002` SSRF, `RG-SECRET-002` secret→prompt egress). Frontier
+**The P0 and P1 tiers are shipped** (`RG-PROMPT-002`, `RG-ACTION-001`, `RG-ACTION-002`,
+`RG-SECRET-002`, `RG-ACTION-003/004`, `RG-EXEC-004`) — all holding the precision bar
+(0 false positives across the re-run dogfood corpus incl. llama_index / open-interpreter).
+Next up is the P2 tier (`RG-PARSE-001`, the `RG-TOOL-001`→`RG-GATE-001` taxonomy). Frontier
 items #1 (action blast-radius) and #6 (grounding) above are the behavioral homes of
 `RG-GATE-001` and `RG-GROUND-001` respectively — the static rules *feed* them, they
 don't replace them. The precision contract in the spec governs all of them: precision
