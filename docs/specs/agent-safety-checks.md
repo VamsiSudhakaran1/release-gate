@@ -174,9 +174,20 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 
 ---
 
-## P2 — medium
+## P2 — medium — ✅ SHIPPED
 
-### RG-PARSE-001 — Unvalidated model-output parse (reliability, not security)
+> All three P2 items are built and tested; 0 false positives across the dogfood
+> corpus (llama_index / crewAI / langgraph). Two deliberate calibration choices:
+> **(1)** `RG-PARSE-001` fires on **model provenance only** (not every `json.loads`
+> in a repo) — an unguarded parse of a param is generic, an unguarded parse of the
+> *model's* output is the agent-specific reliability bug. **(2)** `RG-GATE-001` ships
+> **MEDIUM, not the spec's HIGH** — static sees the absence of a *code-level* gate,
+> never an out-of-band approval, so a confirmed-HIGH would overclaim; MEDIUM is the
+> honest grade for "ungated in the code we can see." Both are scoped tightly (parse:
+> model output; tool/gate: declared `@tool` bodies with an unambiguous irreversible
+> call) so they never fire on ordinary framework code.
+
+### RG-PARSE-001 — Unvalidated model-output parse (reliability, not security) — ✅ SHIPPED
 - **Cheap win; widens the buyer past security teams.** The everyday "model returned
   malformed/unexpected JSON → agent crashed or acted on garbage."
 - **Pattern:** `json.loads(model_output)` / `ast.literal_eval(model_output)` whose
@@ -187,7 +198,7 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 - **FP controls:** a guarded parse (try/except or validated) is the correct pattern →
   no finding. Could slot in early — it's low-risk and independently valuable.
 
-### RG-TOOL-001 — Tool-authority / blast-radius declaration
+### RG-TOOL-001 — Tool-authority / blast-radius declaration — ✅ SHIPPED
 - **Blind spot:** an agent wields tools without knowing their impact. Today governance
   only has `trace_policy` = "*a* policy is declared" — no impact taxonomy.
 - **Check:** enumerate the tools/functions the agent exposes (framework-aware:
@@ -198,7 +209,7 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
   first; feeds RG-GATE-001.
 - **Dependency:** this taxonomy is the prerequisite for the irreversibility gate.
 
-### RG-GATE-001 — Irreversibility gate (depends on RG-TOOL-001)
+### RG-GATE-001 — Irreversibility gate (depends on RG-TOOL-001) — ✅ SHIPPED
 - **Blind spot:** the agent's confident-but-wrong 1% triggering something it can't undo.
 - **Check:** an irreversible action (per RG-TOOL-001 impact, or the RG-ACTION-003
   delete class) invoked with **no** confirmation / dry-run / human-in-loop guard in
@@ -207,6 +218,7 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
   taxonomy to know which actions are irreversible → build after RG-TOOL-001.
 - **Coverage honesty:** static sees the *absence of a code-level gate*, not whether an
   out-of-band approval exists.
+- **As shipped:** one finding per irreversible `@tool` — mutually exclusive with RG-TOOL-001: **gated** irreversible tool → RG-TOOL-001 LOW (declare the impact); **ungated** → RG-GATE-001 MEDIUM. Irreversible = a delete-class fs op, HTTP DELETE, or an unambiguous business verb (`send`/`pay`/`deploy`/…) in the body; a generic `requests.post` (often an idempotent query) is NOT classed irreversible. Gate detection is generous on purpose — over-detecting a gate suppresses a finding (a miss), never invents one.
 
 ---
 

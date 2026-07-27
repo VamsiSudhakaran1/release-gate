@@ -161,6 +161,9 @@ COMPLIANCE_TAGS: Dict[str, List[str]] = {
     "ssrf_egress":           ["OWASP-LLM:LLM02", "OWASP-LLM:LLM06", "NIST-AI-RMF:MANAGE-2.2"],
     "fs_write_delete":       ["OWASP-LLM:LLM02", "NIST-AI-RMF:MANAGE-2.2"],
     "sql_from_model":        ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"],
+    "unvalidated_parse":     ["OWASP-LLM:LLM05", "NIST-AI-RMF:MANAGE-2.2"],
+    "tool_blast_radius":     ["OWASP-LLM:LLM08", "NIST-AI-RMF:MANAGE-2.2"],
+    "irreversible_no_gate":  ["OWASP-LLM:LLM08", "NIST-AI-RMF:MANAGE-2.2"],
     "missing_max_tokens":    ["OWASP-LLM:LLM10"],
     "prompt_injection_risk": ["OWASP-LLM:LLM01"],
 }
@@ -1890,6 +1893,12 @@ def _finding_type_key(title: str) -> str:
         return "fs_write_delete"
     if "sql" in t:
         return "sql_from_model"
+    if "parse" in t:
+        return "unvalidated_parse"
+    if "blast radius" in t:
+        return "tool_blast_radius"
+    if "gate" in t or "irreversible" in t:
+        return "irreversible_no_gate"
     if "token ceiling" in t or "max_tokens" in t or "output ceiling" in t:
         return "missing_max_tokens"
     if "injection" in t or "interpolated" in t or "instruction channel" in t:

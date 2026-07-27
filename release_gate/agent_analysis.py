@@ -205,6 +205,35 @@ PROMPT_ARG_KEYS = {"messages", "prompt", "input", "contents", "content", "query"
 HTTP_URL_ARG_KEYS = {"url", "uri", "endpoint"}
 HTTP_BODY_ARG_KEYS = {"data", "json", "body", "content", "files", "params"}
 
+# ── RG-PARSE-001: unvalidated model-output parse (reliability, not security) ──
+# Parsing model output that can be malformed, with no surrounding try/except, is
+# the everyday "the model returned bad JSON → the agent crashed" reliability bug.
+# Dotted-suffix match: json/ujson/orjson/simplejson `.loads`, and ast.literal_eval.
+_PARSE_SINK_SUFFIXES = ("json.loads", "ujson.loads", "orjson.loads",
+                        "simplejson.loads", "ast.literal_eval")
+
+# ── RG-TOOL-001 / RG-GATE-001: tool blast-radius + irreversibility gate ───────
+# A call INSIDE a @tool body that performs an action that cannot be undone. Kept
+# high-precision: delete-class filesystem ops, HTTP DELETE, and calls whose name
+# is an unambiguous irreversible business verb. A generic requests.post (often an
+# idempotent GraphQL query) is deliberately NOT classed irreversible.
+IRREVERSIBLE_VERB_HINTS = (
+    "delete", "remove", "destroy", "drop", "purge", "wipe", "erase",
+    "send", "email", "pay", "charge", "refund", "purchase", "transfer",
+    "deploy", "publish", "terminate", "shutdown", "revoke", "wire",
+    "place_order", "submit_order", "execute_trade", "cancel_order",
+)
+# A signal in the tool body that a human/confirmation/dry-run gate exists.
+# Over-detecting a gate is the SAFE error here — it suppresses a finding
+# (false negative), never invents one, so this list can be generous.
+GATE_HINTS = (
+    "confirm", "confirmed", "confirmation", "dry_run", "dryrun", "approve",
+    "approved", "approval", "require_approval", "force", "interactive",
+    "human", "human_in_loop", "assume_yes", "review", "authorize", "authorized",
+    "consent", "preview", "acknowledge", "verify",
+)
+_GATE_CALL_NAMES = {"input", "confirm", "ask", "prompt", "getpass"}
+
 # Identifier-token matching. Substring matching turned `context` into a hit for
 # "text" and `database` into a hit for "data" — a whole false-positive class.
 # A hint matches only when all its words appear as tokens of the identifier
@@ -400,6 +429,8 @@ class _Analyzer(ast.NodeVisitor):
         # from either flowing into an LLM prompt is data egress to the provider.
         self.secret_literal_vars: Set[str] = set()
         self.secret_env_vars: Set[str] = set()
+        # RG-PARSE-001: nesting inside a `try:` BODY — a parse there is guarded.
+        self._try_depth = 0
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -630,12 +661,92 @@ class _Analyzer(ast.NodeVisitor):
                 self.tainted.add(a.arg)
         # A function decorated as an agent tool (@tool, @function_tool, @agent.tool)
         # returns world-data it fetched — untrusted provenance for RG-PROMPT-002.
+        is_tool = False
         for dec in node.decorator_list:
             name = (_ctor_name(dec) if isinstance(dec, ast.Call)
                     else getattr(dec, "attr", None) or getattr(dec, "id", None))
             if name and _hint_match(name, TOOL_DECORATOR_HINTS):
                 self.tool_funcs.add(node.name)
+                is_tool = True
+        if is_tool:
+            self._check_tool_blast_radius(node)
         self.generic_visit(node)
+
+    def _check_tool_blast_radius(self, node):
+        # RG-TOOL-001 / RG-GATE-001. An agent tool whose body performs an
+        # irreversible action (delete / send / pay / deploy / HTTP DELETE) is the
+        # blast radius the agent can't see. If there's no confirmation / dry-run /
+        # human-in-loop gate in the code, escalate (RG-GATE-001). We report only on
+        # irreversible tools — read/write tools stay silent — and grade the ungated
+        # case MEDIUM, not HIGH: static sees the absence of a CODE gate, never an
+        # out-of-band approval, so overclaiming here would cry wolf.
+        action = self._irreversible_action_in(node)
+        if not action:
+            return
+        if self._has_gate(node):
+            self.findings.append(self._f(
+                "low", "Undeclared tool blast radius", node,
+                f"The tool `{node.name}` performs an irreversible action ({action}) "
+                "and does appear to gate it. Declare its impact explicitly "
+                "(read / write / irreversible) so the agent — and your governance "
+                "policy — can reason about what this tool can do.",
+                evidence=f"tool `{node.name}` -> {action} (gated)",
+                confidence="medium", basis="inferred",
+                impact="Governance: the tool's blast radius isn't declared, only "
+                       "inferred from its body.",
+            ))
+        else:
+            self.findings.append(self._f(
+                "medium", "Irreversible tool action without a gate", node,
+                f"The tool `{node.name}` performs an irreversible action ({action}) "
+                "with no visible confirmation, dry-run, or human-in-loop gate. The "
+                "agent's confident-but-wrong 1% can trigger something it can't undo. "
+                "Add an explicit gate (a confirm/dry_run parameter, an approval "
+                "step) before the irreversible call.",
+                evidence=f"tool `{node.name}` -> {action} (no gate)",
+                confidence="medium", basis="inferred",
+                impact="An irreversible action the agent can invoke with no "
+                       "code-level guard — an out-of-band approval could still exist.",
+            ))
+
+    def _irreversible_action_in(self, node) -> Optional[str]:
+        """A human label for the first irreversible call in a function body, else
+        None. High-precision: delete-class fs, HTTP DELETE, unambiguous verbs."""
+        for n in ast.walk(node):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            dotted = (_dotted(f) or "")
+            if any(dotted.endswith(s) for s in _FS_DELETE_SINKS):
+                return _FS_DELETE_SINKS[next(s for s in _FS_DELETE_SINKS if dotted.endswith(s))]
+            if isinstance(f, ast.Attribute):
+                if f.attr in _PATH_DELETE_ATTRS:
+                    return f"Path.{f.attr}()"
+                if f.attr == "delete" and _root_name(f) in HTTP_CALL_ROOTS:
+                    return "HTTP DELETE"
+                if _hint_match(f.attr, IRREVERSIBLE_VERB_HINTS):
+                    return f"{f.attr}()"
+            elif isinstance(f, ast.Name) and _hint_match(f.id, IRREVERSIBLE_VERB_HINTS):
+                return f"{f.id}()"
+        return None
+
+    def _has_gate(self, node) -> bool:
+        """True if the function shows any confirmation / dry-run / human-in-loop
+        signal — a gate parameter, a gate-named reference, or a confirm/input call."""
+        params = {a.arg for a in node.args.args + node.args.kwonlyargs
+                  + getattr(node.args, "posonlyargs", [])}
+        if any(_hint_match(p, GATE_HINTS) for p in params):
+            return True
+        for n in ast.walk(node):
+            if isinstance(n, ast.Name) and _hint_match(n.id, GATE_HINTS):
+                return True
+            if isinstance(n, ast.keyword) and n.arg and _hint_match(n.arg, GATE_HINTS):
+                return True
+            if isinstance(n, ast.Call):
+                last = (_dotted(n.func) or "").split(".")[-1] or getattr(n.func, "id", "")
+                if last in _GATE_CALL_NAMES or _hint_match(last, GATE_HINTS):
+                    return True
+        return False
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -689,6 +800,7 @@ class _Analyzer(ast.NodeVisitor):
         self._check_fs_sink(node)
         self._check_sql_sink(node)
         self._check_secret_to_prompt(node)
+        self._check_parse_sink(node)
         self._record_param_update(node)
         self.generic_visit(node)
 
@@ -946,6 +1058,46 @@ class _Analyzer(ast.NodeVisitor):
             if any(safe in bn for safe in _SAFE_YAML_LOADERS):
                 self.safe_yaml_loaders.add(node.name.lower())
         self.generic_visit(node)
+
+    def visit_Try(self, node: ast.Try):
+        # A parse inside the try BODY is guarded (RG-PARSE-001). The except/else/
+        # finally blocks are NOT protected by this try, so scope the depth to body.
+        self._try_depth += 1
+        for stmt in node.body:
+            self.visit(stmt)
+        self._try_depth -= 1
+        for h in node.handlers:
+            self.visit(h)
+        for stmt in node.orelse + node.finalbody:
+            self.visit(stmt)
+
+    def _check_parse_sink(self, node: ast.Call):
+        # RG-PARSE-001. json.loads / ast.literal_eval on MODEL output with no
+        # surrounding try/except — the model returns malformed JSON and the agent
+        # crashes (or acts on garbage). Advisory (reliability), model-scoped so we
+        # don't flag every json.loads in a codebase.
+        dotted = (_dotted(node.func) or "")
+        if not any(dotted.endswith(s) for s in _PARSE_SINK_SUFFIXES):
+            return
+        if self._try_depth > 0:  # guarded by try/except → correct pattern
+            return
+        reaching = self._model_taint(node.args[0] if node.args else None)
+        if not reaching:
+            return
+        value, source, _c = reaching
+        label = dotted.split(".")[-2] + "." + dotted.split(".")[-1] if "." in dotted else dotted
+        self.findings.append(self._f(
+            "low", "Unvalidated model-output parse", node,
+            f"{label}() parses `{value}` — {source} — with no surrounding "
+            "try/except. Model output is frequently malformed or unexpectedly "
+            "shaped; an unguarded parse turns that into a crash, and a parse with "
+            "no schema check lets the agent act on garbage. Wrap it in try/except "
+            "and validate the result (pydantic / explicit key checks).",
+            evidence=f"{source} `{value}` -> {label}() (unguarded)",
+            confidence="medium", basis="inferred",
+            impact="Reliability: a malformed model response crashes the agent or "
+                   "feeds unvalidated data into control flow. Not a security issue.",
+        ))
 
     def visit_For(self, node: ast.For):
         # `for _ in range(...)` / `for x in [literal]` statically bounds re-entry.

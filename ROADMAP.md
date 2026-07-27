@@ -283,14 +283,15 @@ ready-to-build queue. Priority reflects agent-protective value × static buildab
 | ✅ **P1 — shipped** | `RG-ACTION-002` | Network egress / SSRF from model output — model-controlled URL → HTTP client (SSRF), or model data in the body (egress). Scoped to **model provenance only** so it never fires on ordinary connector I/O. |
 | ✅ **P1 — shipped** | `RG-SECRET-002` | Secret/PII → prompt → third-party model (novel — no SAST does it). Hardcoded-secret literal / `os.environ` / secret-named var into an LLM prompt arg; a key used as `api_key=` auth is correctly ignored. |
 | ✅ **P1 — shipped** | `RG-ACTION-003/004`, `RG-EXEC-004` | Filesystem write/delete (irreversible = HIGH), SQL built by interpolation (parameterized = safe), and taint-aware deserialization (network/tool body → pickle upgrades inferred→confirmed). |
-| **P2 — medium** | `RG-PARSE-001` | Unvalidated model-output parse (reliability; cheap win) |
-| **P2 — medium** | `RG-TOOL-001` → `RG-GATE-001` | Tool blast-radius declaration → irreversibility gate (gate depends on the taxonomy) |
+| ✅ **P2 — shipped** | `RG-PARSE-001` | Unvalidated model-output parse (reliability) — `json.loads`/`ast.literal_eval` of model output with no `try/except`. Model-scoped, advisory LOW. |
+| ✅ **P2 — shipped** | `RG-TOOL-001` → `RG-GATE-001` | Tool blast-radius → irreversibility gate. A `@tool` doing an irreversible action (delete/send/pay/deploy/HTTP DELETE): gated → RG-TOOL-001 LOW (declare impact); ungated → RG-GATE-001 MEDIUM. Read/write tools stay silent. |
 | **P3 — frontier** | `RG-IDEMP-001`, `RG-GROUND-001` | Idempotency/retry-safety, output→action grounding — mostly **behavioral**, feed `agent-score`/`loop-sim`, not the static gate |
 
-**The P0 and P1 tiers are shipped** (`RG-PROMPT-002`, `RG-ACTION-001`, `RG-ACTION-002`,
-`RG-SECRET-002`, `RG-ACTION-003/004`, `RG-EXEC-004`) — all holding the precision bar
-(0 false positives across the re-run dogfood corpus incl. llama_index / open-interpreter).
-Next up is the P2 tier (`RG-PARSE-001`, the `RG-TOOL-001`→`RG-GATE-001` taxonomy). Frontier
+**The P0, P1, and P2 tiers are shipped** (`RG-PROMPT-002`, `RG-ACTION-001/002/003/004`,
+`RG-SECRET-002`, `RG-EXEC-004`, `RG-PARSE-001`, `RG-TOOL-001`, `RG-GATE-001`) — all
+holding the precision bar (0 false positives across the dogfood corpus:
+llama_index / crewAI / langgraph / open-interpreter). Only the **P3 frontier** remains,
+and it is deliberately behavioral, not static. Frontier
 items #1 (action blast-radius) and #6 (grounding) above are the behavioral homes of
 `RG-GATE-001` and `RG-GROUND-001` respectively — the static rules *feed* them, they
 don't replace them. The precision contract in the spec governs all of them: precision

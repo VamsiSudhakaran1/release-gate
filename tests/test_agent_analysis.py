@@ -1207,3 +1207,59 @@ def test_network_body_into_pickle_is_confirmed_high():
            "    return pickle.loads(resp.content)\n")
     hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
     assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+
+
+# ── P2 tier: RG-PARSE-001 (parse reliability) + RG-TOOL-001 / RG-GATE-001 ─────
+
+def test_parse_unguarded_model_output_is_low_advisory():
+    src = _LLM + "import json\ndef go(m):\n" + _MODEL + "    return json.loads(v)\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-PARSE-001"]
+    assert hits and hits[0]["severity"] == "low"
+
+
+def test_parse_inside_try_is_guarded_no_finding():
+    src = (_LLM + "import json\ndef go(m):\n" + _MODEL +
+           "    try:\n        return json.loads(v)\n    except Exception:\n        return None\n")
+    assert not any(f["rule_id"] == "RG-PARSE-001" for f in _findings(src))
+
+
+def test_parse_of_non_model_input_stays_quiet():
+    # Model-scoped: a plain json.loads of a param is not this rule's concern.
+    assert not any(f["rule_id"] == "RG-PARSE-001"
+                   for f in _findings("import json\ndef go(s):\n    return json.loads(s)\n"))
+
+
+def test_parse_literal_eval_of_model_output_is_flagged():
+    src = _LLM + "import ast\ndef go(m):\n" + _MODEL + "    return ast.literal_eval(v)\n"
+    assert any(f["rule_id"] == "RG-PARSE-001" for f in _findings(src))
+
+
+def test_tool_irreversible_delete_without_gate_is_medium():
+    src = "import os\n@tool\ndef cleanup(path):\n    os.remove(path)\n"
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-GATE-001"]
+    assert hits and hits[0]["severity"] == "medium"
+
+
+def test_tool_irreversible_send_without_gate_is_medium():
+    src = "@tool\ndef notify(addr, body):\n    return mailer.send_email(addr, body)\n"
+    assert any(f["rule_id"] == "RG-GATE-001" for f in _findings(src))
+
+
+def test_tool_irreversible_with_confirm_gate_is_low_tool_not_gate():
+    # Gated → the informational RG-TOOL-001, never the escalated RG-GATE-001.
+    src = ("import os\n@tool\ndef cleanup(path, confirm=False):\n"
+           "    if not confirm:\n        return 'need confirm'\n    os.remove(path)\n")
+    ids = {f["rule_id"] for f in _findings(src)}
+    assert "RG-TOOL-001" in ids and "RG-GATE-001" not in ids
+
+
+def test_read_only_tool_is_not_flagged():
+    src = "@tool\ndef lookup(q):\n    return db.query(q)\n"
+    assert not any(f["rule_id"] in ("RG-TOOL-001", "RG-GATE-001") for f in _findings(src))
+
+
+def test_irreversible_action_in_non_tool_function_is_not_flagged():
+    # RG-TOOL-001/GATE-001 are scoped to declared @tool functions — a plain
+    # delete helper is the RG-ACTION-003 lane, not the tool-authority lane.
+    src = "import os\ndef cleanup(path):\n    os.remove(path)\n"
+    assert not any(f["rule_id"] in ("RG-TOOL-001", "RG-GATE-001") for f in _findings(src))

@@ -50,6 +50,31 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 - **Fix:** Use a parameterized query (execute(sql, params)); never interpolate untrusted or model text into SQL.
 - **Compliance:** OWASP-LLM:LLM02, OWASP-LLM:LLM08
 
+## Output handling (reliability)
+
+### RG-PARSE-001 — Unvalidated model-output parse
+
+- **Default severity:** low
+- **What & why:** json.loads / ast.literal_eval on model output with no surrounding try/except — malformed or unexpectedly-shaped output crashes the agent or feeds unvalidated data into control flow. A reliability check, not a security one.
+- **Fix:** Wrap the parse in try/except and validate the result (pydantic / explicit key checks) before acting on it.
+- **Compliance:** OWASP-LLM:LLM05, NIST-AI-RMF:MANAGE-2.2
+
+## Tool authority & blast radius
+
+### RG-TOOL-001 — Undeclared tool blast radius
+
+- **Default severity:** low
+- **What & why:** An agent tool performs an irreversible action (delete/send/pay/deploy) but its impact is only inferred from its body, not declared — governance has no impact taxonomy to reason about what the tool can do.
+- **Fix:** Declare each tool's impact (read / write / irreversible) so the agent and your policy can reason about its blast radius.
+- **Compliance:** OWASP-LLM:LLM08, NIST-AI-RMF:MANAGE-2.2
+
+### RG-GATE-001 — Irreversible tool action without a gate
+
+- **Default severity:** medium
+- **What & why:** An agent tool performs an irreversible action with no visible confirmation, dry-run, or human-in-loop gate — the confident-but-wrong 1% can trigger something it can't undo. Excessive agency without a guardrail.
+- **Fix:** Add an explicit gate (a confirm/dry_run parameter, an approval step) before the irreversible call.
+- **Compliance:** OWASP-LLM:LLM08, NIST-AI-RMF:MANAGE-2.2
+
 ## Prompt-injection surfaces
 
 ### RG-PROMPT-001 — Interpolated system prompt (injection surface)

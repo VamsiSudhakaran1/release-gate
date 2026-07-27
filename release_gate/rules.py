@@ -83,6 +83,31 @@ RULES: List[Rule] = [
          "Use a parameterized query (execute(sql, params)); never interpolate "
          "untrusted or model text into SQL.",
          ["OWASP-LLM:LLM02", "OWASP-LLM:LLM08"]),
+    Rule("RG-PARSE-001", "Unvalidated model-output parse", "PARSE",
+         "unvalidated_parse", "low",
+         "json.loads / ast.literal_eval on model output with no surrounding "
+         "try/except — malformed or unexpectedly-shaped output crashes the agent or "
+         "feeds unvalidated data into control flow. A reliability check, not a "
+         "security one.",
+         "Wrap the parse in try/except and validate the result (pydantic / explicit "
+         "key checks) before acting on it.",
+         ["OWASP-LLM:LLM05", "NIST-AI-RMF:MANAGE-2.2"]),
+    Rule("RG-TOOL-001", "Undeclared tool blast radius", "TOOL",
+         "tool_blast_radius", "low",
+         "An agent tool performs an irreversible action (delete/send/pay/deploy) but "
+         "its impact is only inferred from its body, not declared — governance has no "
+         "impact taxonomy to reason about what the tool can do.",
+         "Declare each tool's impact (read / write / irreversible) so the agent and "
+         "your policy can reason about its blast radius.",
+         ["OWASP-LLM:LLM08", "NIST-AI-RMF:MANAGE-2.2"]),
+    Rule("RG-GATE-001", "Irreversible tool action without a gate", "TOOL",
+         "irreversible_no_gate", "medium",
+         "An agent tool performs an irreversible action with no visible confirmation, "
+         "dry-run, or human-in-loop gate — the confident-but-wrong 1% can trigger "
+         "something it can't undo. Excessive agency without a guardrail.",
+         "Add an explicit gate (a confirm/dry_run parameter, an approval step) before "
+         "the irreversible call.",
+         ["OWASP-LLM:LLM08", "NIST-AI-RMF:MANAGE-2.2"]),
     Rule("RG-PROMPT-001", "Interpolated system prompt (injection surface)", "PROMPT",
          "prompt_injection_risk", "high",
          "Untrusted (user/model) text is interpolated into a system prompt, where "
@@ -178,6 +203,8 @@ def get_rule(rule_id: str) -> Optional[Rule]:
 def render_catalog_md() -> str:
     """Render docs/RULES.md from the registry — the public rationale catalog."""
     cats = {"EXEC": "Code-execution sinks", "ACTION": "Consequential actions (model-driven side effects)",
+            "PARSE": "Output handling (reliability)",
+            "TOOL": "Tool authority & blast radius",
             "PROMPT": "Prompt-injection surfaces",
             "COST": "Cost / token ceilings", "LOOP": "Loop boundaries",
             "SECRET": "Secrets"}
