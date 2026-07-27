@@ -976,3 +976,118 @@ def test_js_system_prompt_classifies_interpolation_not_prose():
     # …and model/tool output stays MEDIUM.
     md = _scan_js_file("b.ts", 'const system = `Ctx: ${completion.choices[0].message.content}`;')
     assert any(f["severity"] == "medium" and "system prompt" in f["title"].lower() for f in md)
+
+
+# ── RG-ACTION-001: net-new shell-command sinks (widened exec catalog) ─────────
+
+def test_subprocess_string_command_fstring_from_input_is_flagged():
+    # A command STRING built with an f-string (no list argv) from user input is a
+    # shell-shaped sink even without shell=True (cmd on Windows; one edit from
+    # injection). Bare `subprocess.run(cmd_list)` stays quiet (a list is safe).
+    src = "import subprocess\ndef run(user_input):\n    subprocess.run(f'ls {user_input}')\n"
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high"
+
+
+def test_subprocess_string_command_concat_is_flagged():
+    src = "import subprocess\ndef run(request):\n    subprocess.check_output('grep ' + request.q)\n"
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
+               for f in _findings(src))
+
+
+def test_subprocess_constant_string_command_stays_quiet():
+    assert "Dangerous execution sink" not in titles("import subprocess\nsubprocess.run('ls -l')\n")
+
+
+def test_subprocess_getoutput_dynamic_from_input_is_flagged():
+    # getoutput/getstatusoutput ALWAYS run via the shell — flagged unconditionally
+    # once the argument is a proven-tainted value.
+    src = "import subprocess\ndef run(request):\n    return subprocess.getoutput(request.body)\n"
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
+               for f in _findings(src))
+
+
+def test_commands_getoutput_dynamic_from_input_is_flagged():
+    src = "import commands\ndef run(request):\n    return commands.getoutput(request.cmd)\n"
+    assert any(f["title"] == "Dangerous execution sink" for f in _findings(src))
+
+
+def test_subprocess_getoutput_confirms_through_model_extraction():
+    # Composes with the model-response taint: resp.choices[0].message.content into
+    # a shell sink is a confirmed HIGH (the agent-RCE-via-shell path).
+    src = ("from openai import OpenAI\n"
+           "def run(c):\n"
+           "    resp = c.chat.completions.create(messages=m)\n"
+           "    cmd = resp.choices[0].message.content\n"
+           "    return subprocess.getoutput(cmd)\n")
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+
+
+# ── RG-PROMPT-002: instruction/data separation (untrusted → system channel) ──
+
+def test_retrieval_result_in_system_prompt_is_confirmed_high():
+    # The textbook indirect-injection surface: RAG context placed in the SYSTEM
+    # role. Keyed on provenance (get_relevant_documents), so confirmed/HIGH.
+    src = ("def build(q):\n"
+           "    docs = retriever.get_relevant_documents(q)\n"
+           "    return [{'role':'system','content': f'Answer using: {docs}'}]\n")
+    hits = [f for f in _findings(src) if f["rule_id"] == "RG-PROMPT-002"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+
+
+def test_http_body_in_system_prompt_is_flagged():
+    # resp = requests.get(...); body = resp.text  → body inherits untrusted taint.
+    src = ("import requests\n"
+           "def build(url):\n"
+           "    resp = requests.get(url)\n"
+           "    body = resp.text\n"
+           "    return [{'role':'system','content': body}]\n")
+    assert any(f["rule_id"] == "RG-PROMPT-002" for f in _findings(src))
+
+
+def test_tool_return_in_system_message_ctor_is_flagged():
+    # LangChain SystemMessage(...) is the instruction channel; a @tool return in it
+    # is indirect injection.
+    src = ("from langchain.schema import SystemMessage\n"
+           "@tool\n"
+           "def fetch(q):\n    return q\n"
+           "def build():\n"
+           "    data = fetch('a')\n"
+           "    return SystemMessage(content=data)\n")
+    assert any(f["rule_id"] == "RG-PROMPT-002" for f in _findings(src))
+
+
+def test_similarity_search_indexed_into_system_prompt_is_flagged():
+    # Propagation through indexing: hits = store.similarity_search(q); ctx = hits[0]
+    src = ("def build(q, store):\n"
+           "    hits = store.similarity_search(q)\n"
+           "    ctx = hits[0].page_content\n"
+           "    return [{'role':'system','content': f'Context: {ctx}'}]\n")
+    assert any(f["rule_id"] == "RG-PROMPT-002" for f in _findings(src))
+
+
+def test_retrieval_in_user_turn_is_the_correct_pattern_no_finding():
+    # The FIX: retrieved content in a delimited USER turn is correct → no finding.
+    src = ("def build(q):\n"
+           "    docs = retriever.get_relevant_documents(q)\n"
+           "    return [{'role':'user','content': f'{docs}'}]\n")
+    assert not any(f["rule_id"] == "RG-PROMPT-002" for f in _findings(src))
+
+
+def test_developer_constant_system_prompt_stays_quiet_for_prompt_002():
+    # Developer-authored material is not untrusted provenance — RG-PROMPT-002 quiet.
+    src = ("SYSTEM = 'you are a helpful assistant'\n"
+           "def build():\n"
+           "    return [{'role':'system','content': f'{SYSTEM}'}]\n")
+    assert not any(f["rule_id"] == "RG-PROMPT-002" for f in _findings(src))
+
+
+def test_prompt_002_supersedes_prompt_001_on_same_node():
+    # When content is provenance-untrusted, we emit the confirmed 002, not the
+    # name-hint 001 — one finding, the stronger one.
+    src = ("def build(q):\n"
+           "    docs = retriever.get_relevant_documents(q)\n"
+           "    return [{'role':'system','content': f'{docs}'}]\n")
+    ids = {f["rule_id"] for f in _findings(src)}
+    assert "RG-PROMPT-002" in ids and "RG-PROMPT-001" not in ids

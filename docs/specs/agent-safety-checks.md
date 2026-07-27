@@ -27,9 +27,12 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 
 ---
 
-## P0 — critical (start next week)
+## P0 — critical — ✅ SHIPPED
 
-### RG-PROMPT-002 — Instruction/data separation (untrusted source → instruction channel)
+> Both P0 rules are built, tested, and precision-checked (no false positives across
+> the dogfood corpus + our own source). Notes on how each landed are inline below.
+
+### RG-PROMPT-002 — Instruction/data separation (untrusted source → instruction channel) — ✅ SHIPPED
 - **Blind spot:** an agent cannot tell operator *instructions* from world *data* once
   they are concatenated. Blended, a poisoned document becomes a command.
 - **Extends:** `RG-PROMPT-001` today fires only on a **system-prompt f-string** and
@@ -53,8 +56,19 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
 - **Build notes:** new `visit_*` provenance tracking in `agent_analysis.py`
   `_Analyzer`; the sink test lives near the existing system-prompt f-string handler
   (~line 789). This is the single check an agent most wants to exist.
+- **As shipped:** new `untrusted_provenance` / `http_response_vars` / `tool_funcs`
+  tracking in `_Analyzer`. Sources traced (precision-first subset): retrieval/RAG
+  reads (`get_relevant_documents`, `similarity_search*`, `retrieve`, …), HTTP
+  response bodies (`requests`/`httpx`/`aiohttp`/`urllib` → `.text`/`.json()`/…), and
+  `@tool`-decorated function returns; taint propagates through indexing/attribute
+  chains (`hits[0].page_content`). Sinks: the `role="system"/"developer"` dict
+  (supersedes the name-hint RG-PROMPT-001 when provenance is confirmed) and the
+  LangChain/LangGraph `SystemMessage(...)` constructor. Grades **confirmed HIGH**.
+  Correct pattern (same content in a `role="user"` turn) is never flagged.
+  *Deferred to keep precision high:* inter-agent messages and file-read sources, and
+  the "instruction segment of a hand-composed `join()`" sink — noted for a later pass.
 
-### RG-ACTION-001 — Shell / OS command from model output
+### RG-ACTION-001 — Shell / OS command from model output — ✅ SHIPPED
 - **Blind spot:** the most common *real* agent RCE. Careful teams already avoid
   `eval` (muscle memory); piping model output into a shell is the un-memorized reflex.
 - **Source → sink:** model/tool output → `os.system`, `subprocess.*(..., shell=True)`,
@@ -69,6 +83,18 @@ mid-turn, authority it cannot measure, or a fabrication it cannot feel.
   sandbox contains it at runtime.
 - **Build notes:** extend `_check_exec_sink` to a sink *catalog* rather than a fixed
   `eval/exec/compile` set; this is the first member of the widened catalog.
+- **As shipped:** delivered by **widening the existing `RG-EXEC-001` catalog**, not a
+  parallel rule id. `os.system`, `os.popen`, and `subprocess(shell=True)` were already
+  covered as "Dangerous execution sink"; this pass added the missing members — a
+  string-form `subprocess` command built dynamically (`subprocess.run(f"…")` /
+  `"…" + x`, no `shell=True`, where a bare-Name arg stays ambiguous and is not
+  flagged), plus the always-shell `subprocess.getoutput`/`getstatusoutput` and legacy
+  `commands.getoutput`/`getstatusoutput`. **Design decision:** keeping model-output →
+  {eval/exec, os.system, subprocess, getoutput} under *one* citable rule beats
+  fragmenting an identical vulnerability class across two ids — `RG-ACTION-001` in the
+  spec is served by the widened `RG-EXEC-001`. Severity still follows taint proof
+  (confirmed HIGH / inferred MEDIUM), and composes with the model-response extraction
+  taint so `resp.choices[0].message.content` → a shell sink reads confirmed HIGH.
 
 ---
 

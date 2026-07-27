@@ -36,6 +36,13 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 - **Fix:** Move untrusted input into a clearly-delimited user-role message so it can't override system instructions.
 - **Compliance:** OWASP-LLM:LLM01
 
+### RG-PROMPT-002 — Untrusted content in instruction channel
+
+- **Default severity:** high
+- **What & why:** Content traced from an untrusted source — a retrieval/RAG result, an HTTP response body, or a tool return — flows into the system/instruction channel, where a poisoned document reads as an operator command. Indirect prompt injection, keyed on real provenance rather than a name hint.
+- **Fix:** Keep retrieved/fetched/tool content in a clearly-delimited user or tool message; never place it in the system role or a prompt's instruction segment.
+- **Compliance:** OWASP-LLM:LLM01
+
 ## Cost / token ceilings
 
 ### RG-COST-001 — LLM call with no token ceiling

@@ -66,6 +66,15 @@ RULES: List[Rule] = [
          "Move untrusted input into a clearly-delimited user-role message so it "
          "can't override system instructions.",
          ["OWASP-LLM:LLM01"]),
+    Rule("RG-PROMPT-002", "Untrusted content in instruction channel", "PROMPT",
+         "prompt_injection_risk", "high",
+         "Content traced from an untrusted source — a retrieval/RAG result, an HTTP "
+         "response body, or a tool return — flows into the system/instruction "
+         "channel, where a poisoned document reads as an operator command. Indirect "
+         "prompt injection, keyed on real provenance rather than a name hint.",
+         "Keep retrieved/fetched/tool content in a clearly-delimited user or tool "
+         "message; never place it in the system role or a prompt's instruction segment.",
+         ["OWASP-LLM:LLM01"]),
     Rule("RG-COST-001", "LLM call with no token ceiling", "COST", "missing_max_tokens", "low",
          "An LLM call sets no max_tokens — a single response can run to the "
          "model's maximum output; unpredictable latency and cost.",

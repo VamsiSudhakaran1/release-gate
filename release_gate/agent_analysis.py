@@ -78,6 +78,13 @@ _BUILTIN_SINKS = {
 _ATTR_SINKS = {
     "os.system": "os.system()",
     "os.popen": "os.popen()",
+    # getoutput/getstatusoutput ALWAYS run through the shell (no shell= kwarg to
+    # check) — the legacy `commands.*` and their py3 `subprocess.*` equivalents.
+    # A dynamic argument here is a shell command built at runtime, unconditionally.
+    "subprocess.getoutput": "subprocess.getoutput()",
+    "subprocess.getstatusoutput": "subprocess.getstatusoutput()",
+    "commands.getoutput": "commands.getoutput()",
+    "commands.getstatusoutput": "commands.getstatusoutput()",
     "pickle.loads": "pickle.loads()",
     "pickle.load": "pickle.load()",
     "cpickle.loads": "pickle.loads()",
@@ -127,6 +134,30 @@ SYSTEM_PROMPT_STRONG_HINTS = tuple(h for h in STRONG_INPUT_HINTS
 # names (request/body/payload/webhook/event) stay confirmed.
 SINK_STRONG_INPUT_HINTS = tuple(h for h in STRONG_INPUT_HINTS
                                 if h not in ("prompt", "params", "args"))
+
+# ── RG-PROMPT-002: untrusted-provenance sources (instruction/data separation) ─
+# A value TRACED from one of these sources is untrusted world-data, not operator
+# instruction. When it reaches the system/instruction channel a poisoned document
+# becomes a command — indirect prompt injection. Unlike RG-PROMPT-001 (which keys
+# on name hints), this keys on real PROVENANCE, so it grades confirmed/HIGH.
+# Retrieval / RAG reads (vector store, retriever). Kept to unambiguous method
+# names — `.query`/`.search` alone are too generic (a dict/DB query) to trust.
+RETRIEVAL_METHODS = {
+    "get_relevant_documents", "aget_relevant_documents",
+    "similarity_search", "asimilarity_search",
+    "similarity_search_with_score", "similarity_search_with_relevance_scores",
+    "similarity_search_by_vector", "max_marginal_relevance_search",
+    "retrieve", "aretrieve",
+}
+# HTTP fetch: the response object is untrusted, and so is its body (.text/.json()…).
+HTTP_CALL_ROOTS = {"requests", "httpx", "aiohttp"}
+HTTP_VERB_ATTRS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
+HTTP_BODY_ATTRS = {"text", "content", "json", "read", "body"}
+# A locally-defined function decorated as an agent tool: its RETURN is world-data
+# the tool fetched, not developer instruction.
+TOOL_DECORATOR_HINTS = ("tool", "function_tool", "register_tool")
+# Unambiguous system/instruction-channel constructors (LangChain / LangGraph).
+SYSTEM_MSG_CTORS = {"SystemMessage", "SystemMessagePromptTemplate"}
 
 # Identifier-token matching. Substring matching turned `context` into a hit for
 # "text" and `database` into a hit for "data" — a whole false-positive class.
@@ -309,6 +340,14 @@ class _Analyzer(ast.NodeVisitor):
         # RWKV-Runner defines `def eval(model, request, body, ...)` ("evaluate the
         # model") and calls it 5×; without this every call looks like RCE.
         self.shadowed_builtins: Set[str] = set()
+        # RG-PROMPT-002 provenance. `untrusted_provenance` = vars TRACED from an
+        # untrusted external source (retrieval result, HTTP body, tool return) —
+        # world-data, not operator instruction. `http_response_vars` = vars holding
+        # a raw HTTP response, so `body = resp.text` inherits the taint. `tool_funcs`
+        # = locally-defined @tool functions, whose direct-call returns are untrusted.
+        self.untrusted_provenance: Set[str] = set()
+        self.http_response_vars: Set[str] = set()
+        self.tool_funcs: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -421,6 +460,23 @@ class _Analyzer(ast.NodeVisitor):
                 sk = t.slice
                 if base and isinstance(sk, ast.Constant) and isinstance(sk.value, str):
                     self.param_dicts.setdefault(base, set()).add(sk.value.lower())
+        # RG-PROMPT-002 provenance: mark vars traced from an untrusted external
+        # source, and propagate through body extraction / indexing so
+        # `body = resp.text` and `snippet = docs[0].page_content` stay untrusted.
+        val = node.value
+        if isinstance(val, ast.Call) and self._untrusted_source_call(val):
+            is_http = self._is_http_call(val)
+            for t in targets:
+                self.untrusted_provenance.add(t)
+                self.tainted.add(t)
+                if is_http:
+                    self.http_response_vars.add(t)
+        elif isinstance(val, (ast.Attribute, ast.Subscript, ast.Call)):
+            croot = _chain_root(val)
+            if croot and croot in self.untrusted_provenance:
+                for t in targets:
+                    self.untrusted_provenance.add(t)
+                    self.tainted.add(t)
         self.generic_visit(node)
 
     # Receive-calls that pull bytes/objects off a connection, and receiver-name
@@ -435,6 +491,41 @@ class _Analyzer(ast.NodeVisitor):
             return False
         recv = (_dotted(f.value) or "").lower()
         return any(h in recv for h in self._IPC_RECEIVER_HINTS)
+
+    # -- RG-PROMPT-002: is this call an untrusted external source? -----------
+    def _is_retrieval_call(self, node: ast.Call) -> bool:
+        f = node.func
+        return isinstance(f, ast.Attribute) and f.attr in RETRIEVAL_METHODS
+
+    def _is_http_call(self, node: ast.Call) -> bool:
+        f = node.func
+        if not isinstance(f, ast.Attribute):
+            return False
+        # urllib.request.urlopen(...) — the stdlib fetch.
+        if f.attr == "urlopen":
+            return True
+        # requests.get(...) / httpx.post(...) / aiohttp… — module.<verb>.
+        return f.attr in HTTP_VERB_ATTRS and _root_name(f) in HTTP_CALL_ROOTS
+
+    def _is_tool_call(self, node: ast.Call) -> bool:
+        f = node.func
+        return isinstance(f, ast.Name) and f.id in self.tool_funcs
+
+    def _untrusted_source_call(self, node: ast.Call) -> bool:
+        return (self._is_retrieval_call(node) or self._is_http_call(node)
+                or self._is_tool_call(node))
+
+    def _untrusted_name_in(self, node: ast.AST) -> Optional[str]:
+        """First name in an expression that is traced to an untrusted source
+        (a direct var, an interpolated f-string value, or a chain root), else None.
+        Used to decide whether content in the system channel is untrusted world-data."""
+        croot = _chain_root(node)
+        if croot and croot in self.untrusted_provenance:
+            return croot
+        for n in _names_in(node):
+            if n in self.untrusted_provenance:
+                return n
+        return None
 
     @staticmethod
     def _param_key(node: ast.AST) -> Optional[str]:
@@ -464,6 +555,13 @@ class _Analyzer(ast.NodeVisitor):
         for a in node.args.args + node.args.kwonlyargs:
             if _hint_match(a.arg, INPUT_HINTS):
                 self.tainted.add(a.arg)
+        # A function decorated as an agent tool (@tool, @function_tool, @agent.tool)
+        # returns world-data it fetched — untrusted provenance for RG-PROMPT-002.
+        for dec in node.decorator_list:
+            name = (_ctor_name(dec) if isinstance(dec, ast.Call)
+                    else getattr(dec, "attr", None) or getattr(dec, "id", None))
+            if name and _hint_match(name, TOOL_DECORATOR_HINTS):
+                self.tool_funcs.add(node.name)
         self.generic_visit(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -513,8 +611,37 @@ class _Analyzer(ast.NodeVisitor):
             self.llm_signal = True
         self._check_llm_token_ceiling(node)
         self._check_exec_sink(node)
+        self._check_system_message_ctor(node, ctor)
         self._record_param_update(node)
         self.generic_visit(node)
+
+    def _check_system_message_ctor(self, node: ast.Call, ctor: Optional[str]):
+        # RG-PROMPT-002 sink #2: SystemMessage(untrusted) / SystemMessage(content=…)
+        # — the LangChain/LangGraph system-channel constructor. Same rule as the
+        # role="system" dict: untrusted-provenance content here is indirect injection.
+        if ctor not in SYSTEM_MSG_CTORS:
+            return
+        content = node.args[0] if node.args else None
+        for k in node.keywords:
+            if k.arg == "content":
+                content = k.value
+        if content is None:
+            return
+        hit = self._untrusted_name_in(content)
+        if hit:
+            self.findings.append(self._f(
+                "high", "Untrusted content in instruction channel", node,
+                "Content traced from an untrusted source (a retrieval result, an "
+                "HTTP response body, or a tool return) is placed in a SystemMessage "
+                "— the instruction channel. A poisoned document then reads as an "
+                "operator instruction (indirect prompt injection). Keep "
+                "retrieved/fetched content in a human/tool message, not the system role.",
+                evidence=f"untrusted `{hit}` -> SystemMessage",
+                confidence="high", basis="confirmed",
+                impact="Indirect prompt injection if the retrieved/fetched/tool "
+                       "content can carry attacker-influenced text — it enters the "
+                       "instruction channel, not a delimited data turn.",
+            ))
 
     def visit_ClassDef(self, node: ast.ClassDef):
         # A yaml Loader that subclasses SafeLoader/BaseLoader/CSafeLoader is safe.
@@ -689,12 +816,21 @@ class _Analyzer(ast.NodeVisitor):
         for suffix, label in _ATTR_SINKS.items():
             if dotted.endswith(suffix):
                 return label
-        # subprocess.* is a shell-injection sink ONLY with shell=True. A list-arg
-        # call (subprocess.Popen([...])) runs no shell and is not flagged.
+        # subprocess.* is a shell sink with shell=True. A list-arg call
+        # (subprocess.Popen([...])) runs no shell and is not flagged.
         if ".subprocess." in ("." + dotted) or _root_name(func) == "subprocess":
             if any(k.arg == "shell" and isinstance(k.value, ast.Constant) and k.value.value is True
                    for k in node.keywords):
                 return "subprocess(shell=True)"
+            # No shell=True, but the command is a STRING built at runtime
+            # (f-string / concatenation) rather than a list argv — the deliberate
+            # "assemble a command line" anti-pattern. On Windows subprocess runs a
+            # string via cmd; cross-platform it's the shape that becomes injection
+            # the moment shell=True is added. A bare Name stays ambiguous (could be
+            # a list) → not flagged, preserving the subprocess.run(cmd_list) case.
+            first = node.args[0] if node.args else None
+            if isinstance(first, (ast.JoinedStr, ast.BinOp)):
+                return "subprocess (string command)"
             return None
         # yaml.load(...) is unsafe UNLESS given a Safe/Base Loader. yaml.safe_load
         # isn't in the registry, so it's never flagged.
@@ -846,6 +982,33 @@ class _Analyzer(ast.NodeVisitor):
                 role_is_system = True
             if isinstance(k, ast.Constant) and k.value == "content":
                 content_val = v
+        # RG-PROMPT-002 (supersedes 001 for this node): the content is TRACED to
+        # an untrusted external source — retrieval result, HTTP body, tool return.
+        # Provenance, not a name hint, so it grades confirmed/HIGH. Fires whether
+        # the content is interpolated (f"...{docs}") or placed directly
+        # ("content": docs). A role="user"/"tool" turn carrying the same value is
+        # the CORRECT pattern and never reaches here (role_is_system gates it).
+        if role_is_system and content_val is not None:
+            hit = self._untrusted_name_in(content_val)
+            if hit:
+                self.findings.append(self._f(
+                    "high", "Untrusted content in instruction channel", content_val,
+                    "Content traced from an untrusted source (a retrieval result, "
+                    "an HTTP response body, or a tool return) is placed in the "
+                    "system/instruction channel. A poisoned document then reads as "
+                    "an operator instruction — indirect prompt injection your input "
+                    "filter never sees, because the text arrives from your own "
+                    "retrieval/tool layer, not the user turn. Keep retrieved/fetched "
+                    "content in a clearly-delimited user/data turn so it can't "
+                    "override system instructions.",
+                    evidence=f"untrusted `{hit}` -> system/instruction channel",
+                    confidence="high", basis="confirmed",
+                    impact="Indirect prompt injection if the retrieved/fetched/tool "
+                           "content can carry attacker-influenced text — it enters "
+                           "the instruction channel, not a delimited data turn.",
+                ))
+                self.generic_visit(node)
+                return
         if role_is_system and isinstance(content_val, ast.JoinedStr):
             interp = [v for v in content_val.values if isinstance(v, ast.FormattedValue)]
             # Only the interpolations that could be UNTRUSTED matter. Three kinds
