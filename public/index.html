@@ -1162,6 +1162,7 @@
         <div class="nav-dropdown-panel" role="menu">
           <a href="#agent-scan" role="menuitem"><span class="ndp-t">Agent Scan</span><span class="ndp-d">Find the agent-layer risks SAST misses</span></a>
           <a href="#pr-gate" role="menuitem"><span class="ndp-t">Review Gate</span><span class="ndp-d">Gate AI-generated PRs on what they introduced</span></a>
+          <a href="/demo.html" role="menuitem"><span class="ndp-t">Live demo</span><span class="ndp-d">Watch it block a bad AI change — reproducible</span></a>
           <a href="#loop-section" role="menuitem"><span class="ndp-t">Loop Verify</span><span class="ndp-d">The verify step for agent loops</span></a>
           <a href="#cli-section" role="menuitem"><span class="ndp-t">CLI &amp; CI</span><span class="ndp-d">One pip install — terminal, CI, or API</span></a>
           <a href="#security" role="menuitem"><span class="ndp-t">Security</span><span class="ndp-d">How repo access &amp; privacy work</span></a>
@@ -1924,13 +1925,14 @@
         <div style="font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--accent);margin-bottom:12px">release-gate adds</div>
         <div style="font-weight:700;color:var(--heading);margin-bottom:10px">The agent layer</div>
         <ul style="margin:0;padding-left:18px;font-size:.9rem;color:var(--text);line-height:1.9">
-          <li>Prompt-injection surfaces in system prompts</li>
-          <li>Cost-runaway loops &amp; missing token ceilings</li>
-          <li>LLM output reaching <code style="font-size:.82em">eval</code>/<code style="font-size:.82em">exec</code>/shell sinks</li>
-          <li>Declared safeguards: budget ceiling, kill switch, owner, evals, trace policy</li>
-          <li>A single <strong>PROMOTE / HOLD / BLOCK</strong> ship decision</li>
+          <li>Direct <em>and</em> indirect prompt injection &mdash; RAG/tool/HTTP content reaching the system prompt</li>
+          <li>LLM output reaching <code style="font-size:.82em">eval</code>/<code style="font-size:.82em">exec</code>/shell &mdash; and model-driven <strong>SSRF, file delete, and SQL</strong> sinks</li>
+          <li>Secrets/PII leaking <em>into a prompt</em> sent to the model provider</li>
+          <li>Irreversible agent <strong>tools</strong> with no confirmation / human-in-loop gate</li>
+          <li>Cost-runaway loops, missing token ceilings, unvalidated model-output parses</li>
+          <li>Declared safeguards + a single <strong>PROMOTE / HOLD / BLOCK</strong> decision</li>
         </ul>
-        <div style="margin-top:14px;font-size:.82rem;color:var(--text);opacity:.75;line-height:1.6">The failure modes that only exist once an LLM is in the loop.</div>
+        <div style="margin-top:14px;font-size:.82rem;color:var(--text);opacity:.75;line-height:1.6">The failure modes that only exist once an LLM is in the loop &mdash; every finding with a stable rule id, cited to OWASP LLM &amp; NIST AI RMF.</div>
       </div>
 
     </div>
@@ -2024,13 +2026,15 @@
         <summary>What kinds of issues does the scan actually catch?</summary>
         <div class="faq-a">The agent-layer failure modes behind real, documented incidents:
           <ul style="margin:8px 0 0;padding-left:18px;line-height:1.9">
-            <li><strong>Prompt-injection surface</strong> — untrusted input interpolated into a <em>system</em> prompt. The pattern behind the Chevrolet dealership bot being talked into &ldquo;selling&rdquo; a car for $1, and OWASP&rsquo;s #1 LLM risk.</li>
-            <li><strong>Uncapped LLM calls / no cost ceiling</strong> — a single call or loop with no <code>max_tokens</code> or budget. The pattern behind the $4k weekend bills and $6.5k runaway-agent stories.</li>
-            <li><strong>Unbounded loop around an LLM call</strong> — <code>while True:</code> with no iteration cap and a stop condition that may never trigger. The AutoGPT-style runaway that turns a $5 task into $400.</li>
-            <li><strong>Exec/eval sinks reachable from model output</strong> — <code>eval()</code>, <code>exec()</code>, <code>shell=True</code>, <code>new Function()</code> fed by model or user input — a remote-code-execution path.</li>
+            <li><strong>Prompt injection — direct <em>and</em> indirect</strong> — untrusted input in a <em>system</em> prompt (the Chevrolet $1-car pattern, OWASP&rsquo;s #1 LLM risk), and the harder one: a <em>retrieved document, HTTP response, or tool return</em> reaching the instruction channel, where a poisoned document reads as a command.</li>
+            <li><strong>Exec/eval/shell sinks reachable from model output</strong> — <code>eval()</code>, <code>exec()</code>, <code>os.system</code>, <code>subprocess</code>, <code>pickle</code> fed by the model&rsquo;s reply — the <a href="https://www.gecko.security/blog/cve-2025-51472" target="_blank" rel="noopener" style="color:var(--accent)">CVE-2025-51472</a> remote-code-execution class.</li>
+            <li><strong>Model-driven consequential actions</strong> — a model-controlled URL into an HTTP client (<strong>SSRF / egress</strong>), a model-controlled path into a file <strong>delete/overwrite</strong>, or model output interpolated into raw <strong>SQL</strong>.</li>
+            <li><strong>Secrets / PII leaking into a prompt</strong> — a hardcoded key, env var, or PII field interpolated into a prompt sent to a third-party model (data egress to the provider — no SAST tool checks this).</li>
+            <li><strong>Irreversible tools with no gate</strong> — an agent tool that deletes / sends / pays / deploys with no confirmation, dry-run, or human-in-loop guard.</li>
+            <li><strong>Cost &amp; reliability</strong> — uncapped LLM calls, unbounded <code>while True:</code> loops (the $5-task-becomes-$400 runaway), and unvalidated model-output parses that crash the agent.</li>
             <li><strong>Hardcoded secrets</strong> in agent code (a convenience check; use a dedicated scanner for full coverage).</li>
           </ul>
-          <div style="margin-top:8px">Each finding shows the exact file:line and the fix. The analyzer parses the code (AST), not keywords, so it flags <code>client.chat.completions.create(...)</code> without a ceiling but not a harmless <code>wizard.run()</code>.</div>
+          <div style="margin-top:8px">Each finding shows the exact file:line, a stable rule id (<code>RG-EXEC-001</code>) cited to OWASP LLM &amp; NIST AI RMF, and the fix. The analyzer parses the code (AST) with light taint tracking, not keywords — so it flags <code>eval(resp.choices[0].message.content)</code> as a confirmed HIGH but stays silent on a careful, gated tool. Precision-first: <strong>0 false positives</strong> across a 50+ repo dogfood (llama_index, crewAI, langgraph, open-interpreter). <a href="/demo.html" style="color:var(--accent);font-weight:600">Watch a rule fire →</a></div>
         </div>
       </details>
 
@@ -3466,9 +3470,19 @@
 
   var AS_RISK_BLURB = {
     'Interpolated system prompt (injection surface)': 'User input flows into a system prompt — a prompt-injection entry point.',
+    'Untrusted content in instruction channel': 'Retrieved/tool/HTTP content reaches the system role — indirect prompt injection.',
     'Dangerous execution sink': 'Model-influenced data can reach exec/eval/shell — potential code execution.',
+    'Deserialization of unverified data': 'pickle/marshal on unverified data — remote code execution if the source is untrusted.',
+    'Server-side request from model output': 'A model-controlled URL into an HTTP client — SSRF or data egress.',
+    'Filesystem write/delete from model output': 'A model-controlled path into a delete/overwrite — an irreversible file op.',
+    'SQL built from model output': 'Model output interpolated into a raw query — agent-driven SQL injection.',
+    'Secret or PII sent to the model provider': 'A secret/PII value reaches a prompt sent to a third-party model — data egress.',
+    'Unvalidated model-output parse': 'Model output parsed with no try/except — a malformed reply crashes the agent.',
+    'Irreversible tool action without a gate': 'An irreversible tool (delete/send/pay) with no confirmation or human-in-loop gate.',
+    'Undeclared tool blast radius': 'An irreversible tool whose impact is inferred, not declared — declare read/write/irreversible.',
     'LLM call with no token ceiling': 'No max_tokens — a runaway loop can burn unbounded cost.',
     'Hardcoded secret / API key': 'A credential appears in source — rotate it and move to env/secrets.',
+    'Unbounded loop around an LLM call': 'A loop wraps an LLM call with no iteration cap — cost runaway risk.',
     'Unbounded loop around LLM call': 'A loop wraps an LLM call with no iteration cap — cost runaway risk.'
   };
 

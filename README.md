@@ -10,6 +10,8 @@
 
 > **v0.8.5** — **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), blocking only on net-new regressions — plus a GitHub Action `command: pr`. Builds on **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`): audit from any MCP-capable agent (Claude Code, Cursor, Cline) before it opens a PR — stdio-only, no network egress, no code execution, path-confined, and it won't relay a prompt injection embedded in scanned code back to your agent. Builds on **0.8.2**'s trustworthy-findings work: deserialization sinks **calibrated** (confirmed-source → HIGH, name-inferred → MEDIUM), **example/cookbook code excluded from the score**, whole false-positive classes killed (local-IPC pickle, header-name "secrets", `0x`/UUID/placeholder), and an opt-in **BYO-model LLM verifier** (`--verify`). All on **0.8.0–0.8.1**'s AST-based evidence-citing analysis + team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
+> **Latest on `main`** — a substantially **expanded agent-safety rule catalog**: indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, novel — no SAST checks it), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`). Every rule holds the precision bar — **0 false positives** across the llama_index / crewAI / langgraph / open-interpreter dogfood. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog).
+
 **Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
 
 ## Try it in 30 seconds
@@ -99,6 +101,68 @@ $ release-gate score governance.yaml --evals evals.yaml
 
   Decision:  ✓  PROMOTE  (score 94/100)  exit 0
 ```
+
+---
+
+## What it detects — the agent-safety rule catalog
+
+Every finding carries a **stable, citable rule id** (`RG-EXEC-001`) that never changes when we
+reword a title, a one-line rationale, and a mapping to the frameworks you already answer to
+(OWASP LLM Top 10, NIST AI RMF). "Why did this block my release?" resolves to a rule, not a code
+dive. Full catalog with fixes and compliance tags: **[`docs/RULES.md`](docs/RULES.md)**.
+
+Two disciplines run through every rule:
+
+- **Precision over recall — we don't cry wolf.** When the analyzer can't *prove* a real risk it
+  stays quiet. Validated across a 50+ repo dogfood where the engine correctly stayed silent on
+  careful code (llama_index, crewAI, langgraph, open-interpreter → **0 false positives** from the
+  agent-safety rules).
+- **Confirmed vs inferred is explicit.** A finding whose untrusted source is *visible in scope* is
+  a HIGH you can put in front of a maintainer; a source only *inferred from a name* stays
+  MEDIUM. CI can gate on confirmed-only.
+
+| Rule | Detects | Severity |
+|---|---|---|
+| **`RG-EXEC-001`** | Model/user output → `eval`/`exec`/`os.system`/a shell/`subprocess` — the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class | HIGH |
+| **`RG-EXEC-002`** | `pickle`/`marshal`/`dill` deserialization of unverified data | MED |
+| **`RG-EXEC-003`** | A dynamic exec/shell call in agent code, reachability unproven | LOW |
+| **`RG-PROMPT-001`** | Untrusted text interpolated into a **system prompt** (OWASP LLM01) | HIGH |
+| **`RG-PROMPT-002`** | **Indirect prompt injection** — retrieval/RAG, an HTTP body, or a tool return reaching the system/instruction channel, keyed on real *provenance* | HIGH |
+| **`RG-ACTION-002`** | **SSRF / egress** — a model-controlled URL into an HTTP client | HIGH |
+| **`RG-ACTION-003`** | **Filesystem write/delete** from model output (irreversible) | HIGH |
+| **`RG-ACTION-004`** | **SQL** built by interpolating model output (agent-driven SQLi) | HIGH |
+| **`RG-SECRET-001`** | Hardcoded secret / API key in source | HIGH |
+| **`RG-SECRET-002`** | **Secret/PII → prompt → third-party model** — data egress to the provider (novel; no SAST checks it) | HIGH |
+| **`RG-COST-001/002`** | LLM call / param dict with no `max_tokens` ceiling | LOW |
+| **`RG-LOOP-001`** | Unbounded loop around an LLM call — the AutoGPT runaway | HIGH |
+| **`RG-PARSE-001`** | Unvalidated model-output parse (`json.loads` with no `try/except`) — reliability | LOW |
+| **`RG-TOOL-001`** | An agent tool's irreversible blast radius is undeclared | LOW |
+| **`RG-GATE-001`** | An irreversible **tool** action with no confirmation / dry-run / human-in-loop gate | MED |
+
+**Why a SAST tool can't do this:** SonarQube sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"*
+— it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer:
+`eval`/`pickle` of model output, a retrieved document reaching the system role, a model-chosen URL
+or SQL query, a secret leaking into a prompt. Guardrails filter one input; evaluators score one
+output; **neither blocks a release.** release-gate is the gate.
+
+### See a rule fire — the reproducible demo
+
+[**`examples/demo-code-risk/`**](examples/demo-code-risk/) is a runnable before/after: a data-analysis
+agent that does `expr = resp.choices[0].message.content; eval(expr, {"df": df})` vs. an allowlisted-
+aggregation fix. `./build_demo.sh` builds a throwaway git repo and runs the real gate:
+
+```
+🔴 release-gate — AI-change review: BLOCK
+
+Agent Code Safety: 100 → 76 (▼ -24)
+
+Introduced by this change (not pre-existing):
+  HIGH (high · confirmed)  Dangerous execution sink   agent.py:25
+    ↳ eval() executes `expr` — the model's own output.
+```
+
+No mockup — that's the live output, which is exactly how building the demo caught (and let us fix)
+a real taint-tracking under-grade. **Live walkthrough:** [release-gate.com/demo.html](https://release-gate.com/demo.html).
 
 ---
 
