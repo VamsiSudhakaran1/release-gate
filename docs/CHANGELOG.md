@@ -28,6 +28,64 @@ false HIGH (found on mem0). Now only the code inside each `${…}` is classified
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-27
+
+### ✨ Added — the agent-safety rule catalog (P0–P2): 9 new rules + 2 upgrades
+
+A substantial expansion of the static engine, built to the precision contract
+(`docs/specs/agent-safety-checks.md`) and dogfood-verified at **0 false
+positives** across llama_index / crewAI / langgraph / open-interpreter. Every
+rule carries a stable id and OWASP-LLM / NIST-AI-RMF mapping; the full catalog
+regenerates into `docs/RULES.md`.
+
+- **`RG-PROMPT-002` — indirect prompt injection.** Generalizes `RG-PROMPT-001`
+  from name hints to real **provenance**: content traced from a retrieval/RAG
+  read, an HTTP response body, or a `@tool` return that reaches the
+  system/instruction channel (a `role="system"` dict or `SystemMessage(...)`)
+  is a confirmed HIGH. The same content in a delimited `user` turn — the correct
+  pattern — is never flagged.
+- **`RG-ACTION-002/003/004` — model-driven consequential actions.** A
+  model-controlled URL into an HTTP client (**SSRF / egress**), a
+  model-controlled path into a delete/overwrite (**irreversible filesystem
+  op**), and model output interpolated into raw **SQL**. Scoped to *model
+  provenance only* so they never fire on ordinary connector I/O — a first cut
+  that gated on "file imports an LLM" produced 66 findings on llama_index
+  (nearly all false positives); re-scoping dropped it to 0.
+- **`RG-SECRET-002` — secret/PII → prompt → provider.** Novel; no SAST checks
+  it. A hardcoded-secret literal, an `os.environ` read, or a secret/PII-named
+  var reaching a content-bearing LLM prompt argument is data egress to the model
+  provider. A key used as `api_key=` auth is correctly ignored.
+- **`RG-EXEC-004` — taint-aware deserialization.** Untrusted network/tool/
+  retrieval provenance is now a *confirmed* taint source, so a network body
+  reaching `pickle.loads` flips inferred-MEDIUM → confirmed-HIGH; strengthens
+  every code-execution sink at once.
+- **`RG-ACTION-001` — shell/OS command from model output.** Widened the
+  `RG-EXEC-001` catalog with string-form `subprocess` commands and the
+  always-shell `getoutput`/`getstatusoutput` family.
+- **`RG-PARSE-001` — unvalidated model-output parse.** `json.loads` /
+  `ast.literal_eval` of model output with no `try/except` — a reliability
+  (LOW) check that widens the buyer past security teams.
+- **`RG-TOOL-001` / `RG-GATE-001` — tool blast-radius + irreversibility gate.**
+  A `@tool` performing an irreversible action (delete/send/pay/deploy/HTTP
+  DELETE): gated → `RG-TOOL-001` LOW (declare the impact); ungated →
+  `RG-GATE-001` MEDIUM. Read/write tools and non-tool functions stay silent.
+
+### 🎯 Precision — confirmed taint through the canonical model-response extraction
+
+`resp.choices[0].message.content` lost its taint at the `[0]` subscript, so the
+most common OpenAI idiom reaching `eval`/a sink decayed to LOW/inferred despite
+fully-visible provenance. Now walked through subscript+attribute chains and
+graded confirmed HIGH. Also fixes the LangChain **factory-pattern** false-N/A
+(`return ChatOpenAI(...)` now counts as production LLM usage). Both found by
+dogfooding.
+
+### 📦 Demo — a reproducible PR-gate example
+
+`examples/demo-code-risk/` — a runnable before/after (a data-analysis agent that
+`eval()`s the model's reply vs. an allowlisted-aggregation fix) with a
+`build_demo.sh` that runs the real gate to a BLOCK, plus the `demo.html` landing
+page. Reachable from both GitHub and the website.
+
 ### 🛠️ The Action installs its own tag's code (not latest PyPI)
 
 - **Fixed a self-inconsistency in the GitHub Action:** it ran

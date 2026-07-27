@@ -14,6 +14,8 @@ from pydantic import BaseModel
 # Ensure release_gate package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from release_gate import __version__ as _RG_VERSION
+
 from release_gate_api.auth import (
     create_access_token, decode_token, hash_password, verify_password,
 )
@@ -45,7 +47,7 @@ def _gen_temp_password() -> str:
     # URL-safe, ~12 chars, human-typable
     return secrets.token_urlsafe(9)
 
-app = FastAPI(title="release-gate API", version="0.8.5")
+app = FastAPI(title="release-gate API", version=_RG_VERSION)
 
 # ── Plan limits ────────────────────────────────────────────────────────────
 PLAN_LIMITS = {"free": 10, "pro": 999999, "enterprise": 999999, "admin": 999999}
@@ -1151,7 +1153,7 @@ async def agent_scan_live(body: LiveScanRequest, request: Request = None,
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.8.7"}
+    return {"status": "ok", "version": "0.9.0"}
 
 
 @app.get("/api/debug/github-app")

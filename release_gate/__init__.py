@@ -4,7 +4,7 @@ try:
     from importlib.metadata import version, PackageNotFoundError
     __version__ = version("release-gate")
 except PackageNotFoundError:
-    __version__ = "0.8.7"
+    __version__ = "0.9.0"
 
 __author__ = "Vamsi Sudhakaran"
 __email__ = "vamsi.sudhakaran@gmail.com"

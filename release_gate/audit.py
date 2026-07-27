@@ -1763,6 +1763,7 @@ def _slugify(title: str) -> str:
 
 def emit_sarif(report: Dict[str, Any], path: str) -> None:
     """Write a SARIF 2.1.0 file to *path* representing the findings in *report*."""
+    from release_gate import __version__ as _rg_version  # local: avoid import cycle
 
     # Build unique rules from code findings + missing safeguards
     rules: List[Dict[str, Any]] = []
@@ -1863,7 +1864,7 @@ def emit_sarif(report: Dict[str, Any], path: str) -> None:
             "tool": {
                 "driver": {
                     "name": "release-gate",
-                    "version": "0.8.5",
+                    "version": _rg_version,
                     "informationUri": "https://release-gate.com",
                     "rules": rules,
                 },
