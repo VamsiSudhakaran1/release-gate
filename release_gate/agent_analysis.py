@@ -219,10 +219,20 @@ _PARSE_SINK_SUFFIXES = ("json.loads", "ujson.loads", "orjson.loads",
 # idempotent GraphQL query) is deliberately NOT classed irreversible.
 IRREVERSIBLE_VERB_HINTS = (
     "delete", "remove", "destroy", "drop", "purge", "wipe", "erase",
-    "send", "email", "pay", "charge", "refund", "purchase", "transfer",
+    # bare "send" was too broad: it matched MCP protocol notifications
+    # (send_tool_list_changed / send_resource_updated), which are events, not
+    # irreversible actions — a false positive on EVERY MCP server. Match the
+    # specific outbound-message actions instead.
+    "send_email", "send_message", "send_sms", "send_mail", "sendmail", "email",
+    "pay", "charge", "refund", "purchase", "transfer",
     "deploy", "publish", "terminate", "shutdown", "revoke", "wire",
     "place_order", "submit_order", "execute_trade", "cancel_order",
 )
+# Names that are protocol notifications / event emissions, never irreversible
+# actions even if a verb hint would otherwise match (send_*_changed, *_updated,
+# notify_*, emit_*). Keeps RG-GATE-001 off MCP servers' list-changed handlers.
+_NOTIFICATION_NAME_RE = re.compile(
+    r"(?:_changed|_updated|_notification|notify|emit)\b|^(?:notify|emit)_", re.IGNORECASE)
 # A signal in the tool body that a human/confirmation/dry-run gate exists.
 # Over-detecting a gate is the SAFE error here — it suppresses a finding
 # (false negative), never invents one, so this list can be generous.
@@ -804,6 +814,10 @@ class _Analyzer(ast.NodeVisitor):
             dotted = (_dotted(f) or "")
             if any(dotted.endswith(s) for s in _FS_DELETE_SINKS):
                 return _FS_DELETE_SINKS[next(s for s in _FS_DELETE_SINKS if dotted.endswith(s))]
+            name = f.attr if isinstance(f, ast.Attribute) else (getattr(f, "id", "") or "")
+            # A protocol notification / event emission is not irreversible.
+            if name and _NOTIFICATION_NAME_RE.search(name):
+                continue
             if isinstance(f, ast.Attribute):
                 if f.attr in _PATH_DELETE_ATTRS:
                     return f"Path.{f.attr}()"

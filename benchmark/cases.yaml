@@ -698,3 +698,25 @@ cases:
       def build(func_body):
           compiled = compile(func_body, "<string>", "exec")
           exec(compiled, globals(), {})
+
+  # ── RG-GATE-001 / RG-SECRET-001 — MCP notifications + allowlisted test secrets ─
+  - id: gate001-mcp-list-changed-notification-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "IBM/mcp-context-forge — an @mcp.tool that emits a protocol notification (send_tool_list_changed) is an event, not an irreversible action; the 'send' verb must not fire on it (would hit every MCP server)"
+    code: |
+      @mcp.tool()
+      async def mutate_tool_list(ctx):
+          await ctx.session.send_tool_list_changed()
+          return "ok"
+
+  - id: secret001-allowlisted-doctest-placeholder-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "IBM/mcp-context-forge create_jwt_token.py doctest — a placeholder value carrying `# pragma: allowlist secret` is a declared test value, not a leaked credential"
+    code: |
+      def demo():
+          secret = "this-is-a-long-test-secret-key-32chars"  # pragma: allowlist secret
+          return secret

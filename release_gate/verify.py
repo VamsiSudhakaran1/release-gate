@@ -645,6 +645,25 @@ def _is_real_secret(line: str) -> bool:
     """True only if the line plausibly contains an actual credential value."""
     if _looks_placeholder(line):
         return False
+    # Inline suppression the maintainer ALREADY added: the detect-secrets
+    # allowlist pragma, or a bandit/flake8 secret nosec/noqa. If they've declared
+    # this a known/test value, re-flagging it is a false alarm (IBM's jwt doctest
+    # used `# pragma: allowlist secret` on a `this-is-a-...-test-secret-key`).
+    low = line.lower()
+    if ("allowlist secret" in low or "# nosec" in low
+            or re.search(r"noqa:\s*s10[567]", low)):
+        return False
+    # A human-readable placeholder PHRASE — `this-is-a-...-test-secret-key`,
+    # `your-secret-here`, `example-token`, `changeme` — reads as documentation,
+    # not a live credential, even when it carries digits ("...-32chars"). Matched
+    # as multi-word phrases so a real key on a line that merely mentions "test"
+    # isn't suppressed.
+    if re.search(r"this[-_]is[-_]a|test[-_](?:secret|key|token|api)|"
+                 r"(?:secret|key|token)[-_](?:here|value|goes)|changeme|placeholder|"
+                 r"redacted|your[-_](?:secret|key|token|api|password)|"
+                 r"example[-_](?:secret|key|token|value)|dummy[-_](?:secret|key|token)|"
+                 r"not[-_]a[-_](?:real|secret)|replace[-_]me", low):
+        return False
     # Public client-side telemetry keys are DESIGNED to ship in client code —
     # they're write-only ingestion ids, not secrets (Mixpanel project token,
     # PostHog project API key `phc_…`, Segment write key, Amplitude/GA ids).

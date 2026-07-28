@@ -1367,3 +1367,30 @@ def test_compile_then_exec_still_high():
            "    exec(compiled, globals(), {})\n")
     assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
                for f in analyze_python(src, "flow.py"))
+
+
+def test_mcp_list_changed_notification_not_irreversible():
+    # IBM/mcp-context-forge FP: an @mcp.tool that emits send_tool_list_changed /
+    # send_resource_updated is a protocol notification, not an irreversible action.
+    # The 'send' verb must not fire on it — it would hit every MCP server.
+    for call in ("send_tool_list_changed", "send_resource_list_changed",
+                 "send_resource_updated", "send_prompt_list_changed"):
+        src = f"@mcp.tool()\nasync def mut(ctx):\n    await ctx.session.{call}()\n"
+        assert not any(f["rule_id"] in ("RG-GATE-001", "RG-TOOL-001")
+                       for f in analyze_python(src, "server.py")), call
+
+
+def test_real_send_email_tool_still_gated():
+    # Recall guard: a real outbound-message action still fires.
+    src = "@tool\ndef notify(addr, body):\n    return mailer.send_email(addr, body)\n"
+    assert any(f["rule_id"] == "RG-GATE-001" for f in analyze_python(src, "x.py"))
+
+
+def test_allowlisted_placeholder_secret_not_flagged():
+    from release_gate.verify import _is_real_secret
+    # detect-secrets allowlist pragma + a human-readable placeholder phrase.
+    assert _is_real_secret(
+        "secret = 'this-is-a-long-test-secret-key-32chars'  # pragma: allowlist secret") is False
+    assert _is_real_secret("jwt_secret_key = 'this-is-a-test-secret'") is False
+    # Recall guard: a real provider key still trips.
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5dE0fG"') is True

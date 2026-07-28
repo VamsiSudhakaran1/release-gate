@@ -4,6 +4,29 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🎯 Precision — MCP protocol notifications + allowlisted placeholder secrets (mcp-context-forge)
+
+Fixed two confirmed false-positive classes found dogfooding **IBM/mcp-context-forge**
+(a BLOCK verdict with 2 highs + 4 mediums, all verified against source as noise):
+- **MCP `*_changed` notifications read as irreversible sends.** `RG-GATE-001`
+  matched the bare verb `send`, so an `@mcp.tool` calling
+  `send_tool_list_changed()` / `send_resource_list_changed()` — an idempotent
+  MCP protocol notification, not a side-effecting action — was flagged as an
+  unconfirmed irreversible action needing a human gate. The verb list now drops
+  bare `send` and enumerates the actually-irreversible send actions
+  (`send_email`/`send_message`/`send_sms`/`send_mail`/`sendmail`), and a
+  notification-name pattern (`*_changed`, `*_notification`, `notify_*`, `emit_*`)
+  is excluded. Real irreversible tools (`send_email`, `delete_*`,
+  `messages_send`) still fire.
+- **Allowlisted / placeholder secrets in docstrings.** `RG-SECRET-001` flagged a
+  doctest string `secret="this-is-a-long-test-secret-key-32chars"  # pragma:
+  allowlist secret`. The secret detector now honors inline suppression markers
+  (`# pragma: allowlist secret`, `# nosec`, `# noqa: S105/6/7`) and a broader set
+  of placeholder phrases (`this-is-a-…`, `test-secret/key/token`, `changeme`,
+  `your-…`, `replace-me`, …). Real high-entropy keys (`sk-proj-…`) still fire.
+
+Two benchmark cases added (62 cases, still 100% precision / 0 FP).
+
 ### 🎯 Scope — dynamic JS/TS exec sinks fire only in agent code (gemini-cli)
 
 Re-scoped `RG-EXEC-003` on the JS/TS path to stop manufacturing low-value HOLDs.
