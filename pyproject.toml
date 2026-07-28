@@ -20,21 +20,45 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 requires-python = ">=3.10"
-# Vercel's Python runtime resolves dependencies from pyproject.toml (it builds
-# and installs this project), NOT from requirements.txt — so the FastAPI backend
-# deps MUST live here or the serverless function crashes on import with
-# ModuleNotFoundError: No module named 'fastapi'. (Moving them to an optional
-# [api] extra broke production: Vercel never installs extras.)
+# Base install = the CLI only. `pip install release-gate` pulls three small,
+# well-audited libraries — no web framework, no database driver, no auth stack.
+# This is what a security engineer sees in the dependency tree; the agent
+# scanner (the release_gate package) imports none of the SaaS/web deps.
 #
-# Trade-off: `pip install release-gate` also pulls the web stack. A truly lean
-# CLI install would require a separate distribution or Vercel config to install
-# requirements.txt explicitly.
+# The release-gate.com API (the release_gate_api package) needs the web stack —
+# it lives in the `[api]` optional extra below. IMPORTANT: Vercel installs the
+# pyproject *base* dependencies (requirements.txt is in .vercelignore), so the
+# deploy's Install Command MUST be `pip install .[api]` (pinned in vercel.json)
+# or the serverless function crashes on `import fastapi`. Verify with a preview
+# deploy after changing this.
 dependencies = [
-    # Core CLI
     "pyyaml>=6.0",
     "jsonschema>=4.0",
     "cryptography>=41.0.0",  # evidence-pack signing/verification
-    # Web / SaaS backend (release-gate.com API) — required by Vercel at import
+]
+
+# Supply-chain note: for reproducible production installs, pin dependencies with
+# hashes by running:  pip install release-gate --require-hashes -r requirements.txt
+# Generate a pinned requirements file with:  pip-compile --generate-hashes pyproject.toml
+
+[project.optional-dependencies]
+dev = [
+    # Pull in the full server + MCP stack so the WHOLE test suite runs (the API
+    # tests import fastapi/fpdf/psycopg). CI uses `pip install -e .[dev]`.
+    "release-gate[api,mcp]",
+    "pytest>=9.0",
+    "pytest-cov>=4.0",
+]
+# Optional: expose the auditor as a local MCP server for MCP-capable agents.
+# Kept out of the base install so the CLI stays lean.
+mcp = [
+    "mcp>=1.2",
+]
+# The release-gate.com SaaS API (release_gate_api). NOT needed to run the CLI.
+# Vercel installs this via `pip install .[api]` (see vercel.json). Keeping it out
+# of the base install is what makes `pip install release-gate` a lean, three-dep
+# CLI a security team can vet quickly.
+api = [
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
     "python-jose[cryptography]>=3.3.0",
@@ -44,21 +68,6 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "PyJWT>=2.8.0",
     "fpdf2>=2.7.0",  # pure-Python PDF report generation (paid detailed report)
-]
-
-# Supply-chain note: for reproducible production installs, pin dependencies with
-# hashes by running:  pip install release-gate --require-hashes -r requirements.txt
-# Generate a pinned requirements file with:  pip-compile --generate-hashes pyproject.toml
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=9.0",
-    "pytest-cov>=4.0",
-]
-# Optional: expose the auditor as a local MCP server for MCP-capable agents.
-# Kept out of the base install so the CLI stays lean.
-mcp = [
-    "mcp>=1.2",
 ]
 
 [project.scripts]

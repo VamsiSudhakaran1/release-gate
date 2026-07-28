@@ -1,10 +1,6 @@
-pyyaml>=6.0
-jsonschema>=4.0
-fastapi>=0.110.0
-uvicorn>=0.29.0
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-bcrypt==4.0.1
-httpx>=0.27.0
-psycopg2-binary>=2.9.9
-PyJWT>=2.8.0
+# Full server stack for running the release-gate.com API locally.
+# The CLI needs NONE of this — `pip install release-gate` (three deps) is enough.
+# Single source of truth is pyproject.toml; this just installs the [api] extra so
+# the list can never drift. Vercel installs the same set via vercel.json
+# (installCommand: pip install .[api]); requirements.txt itself is .vercelignore'd.
+.[api]
