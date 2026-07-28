@@ -234,6 +234,15 @@ GATE_HINTS = (
 )
 _GATE_CALL_NAMES = {"input", "confirm", "ask", "prompt", "getpass"}
 
+# A helper whose name says it verifies integrity/authenticity before returning the
+# value — an HMAC/signature check, a decrypt, an authenticated-unwrap. When a
+# deserialization sink consumes such a value, the "sign on write, verify on read"
+# guard is present and it is NOT an untrusted-deserialization RCE. (The engine's
+# own remediation for pickle already recommends exactly this — "use a signed
+# payload" — so recognizing it is consistent, not a loophole.)
+VERIFY_HELPER_HINTS = ("verify", "hmac", "signature", "signed", "authenticate",
+                       "authenticated", "decrypt", "unseal", "unsign", "unwrap_signed")
+
 # Identifier-token matching. Substring matching turned `context` into a hit for
 # "text" and `database` into a hit for "data" — a whole false-positive class.
 # A hint matches only when all its words appear as tokens of the identifier
@@ -418,6 +427,12 @@ class _Analyzer(ast.NodeVisitor):
         # internal transport, NOT external input. `pickle.loads` on one of these
         # is the stdlib logging/worker pattern, not an RCE surface.
         self.local_ipc_vars: Set[str] = set()
+        # vars assigned from an integrity / authenticity check (HMAC verify,
+        # signature verify, decrypt) — `payload = _verify_and_strip(cached_bytes)`.
+        # A deserialization sink on one of these is the deliberate "sign on write,
+        # verify on read" pattern (the safe way to cache pickled data); asserting a
+        # confirmed RCE over it is a false positive (AutoGPT's HMAC-signed cache).
+        self.integrity_verified: Set[str] = set()
         # yaml Loader classes defined in this file that SUBCLASS a safe loader —
         # `class YamlLoader(yaml.SafeLoader)` is safe even though its name isn't
         # in the known-safe list.
@@ -544,6 +559,13 @@ class _Analyzer(ast.NodeVisitor):
         if isinstance(node.value, ast.Call) and self._is_local_ipc_recv(node.value):
             for t in targets:
                 self.local_ipc_vars.add(t)
+        # x = _verify_and_strip(cached_bytes)  → x passed an HMAC/signature check;
+        # a later pickle.loads(x) is the deliberate signed-payload guard, not RCE.
+        if isinstance(node.value, ast.Call):
+            fname = _ctor_name(node.value)  # terminal Name/attr of the callee
+            if fname and _hint_match(fname, VERIFY_HELPER_HINTS):
+                for t in targets:
+                    self.integrity_verified.add(t)
         # Track request-param dicts: `params = {...}` / `self.chat_params = {...}`.
         # Keys only accumulate (union) so a value is never lost across the two
         # analysis passes or a later `params["max_tokens"] = ...` write.
@@ -1376,6 +1398,13 @@ class _Analyzer(ast.NodeVisitor):
             return
         # Reachability: does a tainted (model/user) value flow into the sink?
         arg_names = [n for a in args for n in _names_in(a)]
+        # Integrity-verified deserialization: `payload = _verify_and_strip(bytes);
+        # pickle.loads(payload)` is the sign-on-write / verify-on-read pattern —
+        # a deliberate guard, not untrusted-input RCE. Recognize it like a safe
+        # yaml loader and stay silent (AutoGPT's HMAC-signed Redis cache). Only for
+        # deserialization sinks; a code-exec sink is never made safe by this.
+        if kind in _DESERIALIZATION_SINKS and any(n in self.integrity_verified for n in arg_names):
+            return
         reaching = self._reaching_taint(arg_names)
         if reaching:
             value, source, confirmed = reaching

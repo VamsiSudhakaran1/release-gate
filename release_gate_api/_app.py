@@ -1153,7 +1153,7 @@ async def agent_scan_live(body: LiveScanRequest, request: Request = None,
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.9.2"}
+    return {"status": "ok", "version": "0.9.3"}
 
 
 @app.get("/api/debug/github-app")

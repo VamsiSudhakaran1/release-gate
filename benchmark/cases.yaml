@@ -607,3 +607,19 @@ cases:
       import subprocess
       def go(pip_cmd, target_args, specs):
           subprocess.run(pip_cmd + ["install", *target_args, *specs])
+
+  # ── RG-EXEC-002/004 — integrity-verified deserialization is the SAFE pattern ──
+  - id: exec-hmac-verified-pickle-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "AutoGPT autogpt_platform util/cache.py — HMAC-signed Redis cache: verify-then-unpickle is the safe signed-payload pattern, not RCE"
+    code: |
+      import pickle
+      def _get_from_redis(redis_key):
+          cached_bytes = _get_redis().get(redis_key)
+          if cached_bytes and isinstance(cached_bytes, bytes):
+              payload = _verify_and_strip(cached_bytes)
+              if payload is None:
+                  return _MISSING
+              return pickle.loads(payload)

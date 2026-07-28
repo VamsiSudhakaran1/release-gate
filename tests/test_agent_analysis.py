@@ -1275,3 +1275,33 @@ def test_subprocess_list_concatenation_argv_is_not_a_string_command():
            "    subprocess.Popen([self._acp_command] + self._acp_args)\n")
     assert "Dangerous execution sink" not in titles(lazy)
     assert "Dangerous execution sink" not in titles(acp)
+
+
+def test_hmac_verified_pickle_is_not_flagged():
+    # AutoGPT FP: `payload = _verify_and_strip(cached_bytes); pickle.loads(payload)`
+    # is the sign-on-write / verify-on-read pattern (HMAC-signed Redis cache) — a
+    # deliberate integrity guard, not untrusted-deserialization RCE. The engine
+    # classified `payload` as external purely from the name hint; recognizing the
+    # verify helper suppresses it.
+    src = ("import pickle\n"
+           "def _get_from_redis(redis_key):\n"
+           "    cached_bytes = _get_redis().get(redis_key)\n"
+           "    payload = _verify_and_strip(cached_bytes)\n"
+           "    if payload is None:\n"
+           "        return None\n"
+           "    return pickle.loads(payload)\n")
+    assert not any("execution sink" in f["title"].lower() or "eserial" in f["title"]
+                   for f in analyze_python(src, "cache.py"))
+
+
+def test_unguarded_pickle_of_request_still_high():
+    # Recall guard: without a verify step, pickle of request input is still RCE.
+    src = "import pickle\ndef h(request):\n    return pickle.loads(request.data)\n"
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
+               for f in analyze_python(src, "x.py"))
+
+
+def test_verify_helper_does_not_whitewash_eval():
+    # A verify step guards DESERIALIZATION, not code execution — eval still fires.
+    src = "def go(c):\n    payload = verify_signature(c)\n    return eval(payload)\n"
+    assert any(f["title"] == "Dangerous execution sink" for f in analyze_python(src, "x.py"))

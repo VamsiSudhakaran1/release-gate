@@ -2,6 +2,24 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.9.3] — 2026-07-28
+
+### 🎯 Precision — integrity-verified deserialization is not RCE
+
+Fixed a confirmed-HIGH false positive found dogfooding **Significant-Gravitas/
+AutoGPT**: `payload = _verify_and_strip(cached_bytes); pickle.loads(payload)` in
+its HMAC-signed Redis cache was flagged as a "Dangerous execution sink" with
+`payload` labeled "external user/request input." Two mistakes: `payload` was
+classed external purely from the variable *name* (it's actually the cache's own
+signed bytes from Redis), and the **HMAC-SHA256 verify-on-read guard** — the
+textbook safe signed-pickle pattern the engine's own remediation recommends —
+was ignored. The analyzer now recognizes an integrity/authenticity check
+(`verify`/`hmac`/`signature`/`decrypt`/… helper) feeding a deserialization sink
+and stays silent, exactly as it does for `yaml.safe_load`. Unguarded
+`pickle.loads(request.data)`, a network body → `pickle.loads`, and a verified
+value reaching `eval()` (code execution is never made safe by a verify step) all
+still fire. Regression case added to the benchmark (54 cases, still 0 FP).
+
 ## [0.9.2] — 2026-07-28
 
 ### 📦 Packaging — a lean, three-dependency CLI
