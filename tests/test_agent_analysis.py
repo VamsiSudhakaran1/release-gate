@@ -1327,3 +1327,37 @@ def test_js_external_input_in_system_turn_still_high():
     code = 'const m = [{ role: "system", content: `You are X. ${req.body.text}` }];'
     fs = _scan_js_file("p.ts", code)
     assert any("system prompt" in f["title"].lower() and f["severity"] == "high" for f in fs)
+
+
+def test_hmac_guard_clause_dill_not_flagged():
+    # langflow FP: dill.loads gated by an `if not hmac.compare_digest(): return`
+    # clause in the same function — the verify-then-load pattern where the payload
+    # is a slice, not a var assigned from a verify helper.
+    src = ("import dill, hmac\n"
+           "async def get(self, key):\n"
+           "    value = await self._client.get(key)\n"
+           "    tag, payload = value[:32], value[32:]\n"
+           "    if not hmac.compare_digest(tag, self._tag(key, payload)):\n"
+           "        return CACHE_MISS\n"
+           "    return dill.loads(payload)\n")
+    assert not any("execution sink" in f["title"].lower() for f in analyze_python(src, "cache.py"))
+
+
+def test_compile_for_validation_not_flagged():
+    # langflow FP: compile() used to validate syntax (no exec) does not execute.
+    src = ("import ast\n"
+           "def validate_code(code):\n"
+           "    tree = ast.parse(code)\n"
+           "    compile(ast.Module(body=tree.body, type_ignores=[]), '<string>', 'exec')\n"
+           "    return True\n")
+    assert not any("execution sink" in f["title"].lower() for f in analyze_python(src, "validate.py"))
+
+
+def test_compile_then_exec_still_high():
+    # Recall guard: compile() whose output is exec()'d in the same function is a
+    # real code-execution sink.
+    src = ("def build(func_body):\n"
+           "    compiled = compile(func_body, '<string>', 'exec')\n"
+           "    exec(compiled, globals(), {})\n")
+    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
+               for f in analyze_python(src, "flow.py"))

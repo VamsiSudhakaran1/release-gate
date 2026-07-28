@@ -650,3 +650,41 @@ cases:
         { role: "system", content: `You are a bot. ${req.body.userText}` },
         { role: "user", content: "hi" },
       ];
+
+  # ── RG-EXEC-001 — HMAC-guard-clause deser + compile-for-validation (langflow) ─
+  - id: exec-hmac-guard-clause-dill-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "langflow services/cache/service.py — dill.loads gated by an `if not hmac.compare_digest(...): return` clause in the same function (HMAC-signed Redis cache)"
+    code: |
+      import dill, hmac
+      async def get(self, key):
+          value = await self._client.get(key)
+          tag, payload = value[:32], value[32:]
+          expected = self._integrity_tag(key, payload)
+          if not hmac.compare_digest(tag, expected):
+              return CACHE_MISS
+          return dill.loads(payload)
+
+  - id: exec-compile-for-validation-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "langflow validate.py — compile() for SYNTAX VALIDATION only (docstring: MUST NOT execute); compile without exec does not run code"
+    code: |
+      import ast
+      def validate_code(code):
+          tree = ast.parse(code)
+          compile(ast.Module(body=tree.body, type_ignores=[]), "<string>", "exec")
+          return True
+
+  - id: exec-compile-then-exec-vuln
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "langflow helpers/flow.py — compile(func_body) followed by exec() in the same function is a real code-execution sink"
+    code: |
+      def build(func_body):
+          compiled = compile(func_body, "<string>", "exec")
+          exec(compiled, globals(), {})

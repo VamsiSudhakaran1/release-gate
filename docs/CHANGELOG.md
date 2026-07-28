@@ -4,6 +4,27 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🎯 Precision — HMAC-guarded deserialization + compile() without exec (langflow)
+
+Fixed two confirmed-HIGH false-positive classes found dogfooding
+**langflow-ai/langflow**:
+- **HMAC guard-clause deserialization.** `dill.loads(payload)` in langflow's
+  Redis cache was flagged RCE, but `payload` is a slice gated by an
+  `if not hmac.compare_digest(...): return CACHE_MISS` clause in the same
+  function. The 0.9.3 integrity-guard recognition only caught `payload =
+  verify_helper(...)` assignments; it now also recognizes an HMAC/`compare_digest`
+  check anywhere in the enclosing function (function-scoped).
+- **compile() used for validation.** `compile(ast.Module(...), "<string>",
+  "exec")` was flagged as an execution sink, but `compile()` produces a code
+  object without running it — langflow's `validate.py` uses it purely for syntax
+  checking (its docstring: "MUST NOT execute the code"). `compile()` now fires
+  only when the enclosing function actually `exec()`s/`eval()`s; a real
+  `compile(func_body)` + `exec()` (langflow's flow helper) still fires HIGH.
+
+Trade-off (precision-first): the integrity-guard check is function-scoped, so an
+unrelated `hmac` call in the same function as an *unguarded* deserialize is a
+miss rather than a false alarm. Three benchmark cases added (59 cases, 0 FP).
+
 ### 🎯 Precision — JS/TS system-prompt attribution keys on the *nearest* role
 
 Fixed a confirmed-HIGH false positive found dogfooding **firecrawl/firecrawl**:

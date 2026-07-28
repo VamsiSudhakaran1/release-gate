@@ -365,6 +365,35 @@ def _names_in(node: ast.AST) -> Set[str]:
     return out
 
 
+def _scan_has_exec(node: ast.AST) -> bool:
+    """True if this function body actually executes a code object — exec()/eval()
+    (or types.FunctionType). compile() is only a code-execution risk when its
+    output is run; compile() for syntax validation (no exec) is safe."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Name) and f.id in ("exec", "eval"):
+                return True
+            if isinstance(f, ast.Attribute) and f.attr == "FunctionType":
+                return True
+    return False
+
+
+def _scan_has_integrity_check(node: ast.AST) -> bool:
+    """True if this function body performs an HMAC/signature integrity check —
+    the verify-then-deserialize guard, even when the payload is a slice gated by
+    an `if not hmac.compare_digest(...): return` clause (langflow's Redis cache)."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            d = (_dotted(n.func) or "").lower()
+            last = d.split(".")[-1] if d else (getattr(n.func, "id", "") or "").lower()
+            if "compare_digest" in last or "hmac" in d:
+                return True
+            if last and _hint_match(last, VERIFY_HELPER_HINTS):
+                return True
+    return False
+
+
 def _is_string_build(node: ast.AST) -> bool:
     """True if `node` builds a STRING at runtime — an f-string, or a `+`/`%`
     expression that visibly involves a string literal. Critically, list/tuple
@@ -433,6 +462,16 @@ class _Analyzer(ast.NodeVisitor):
         # verify on read" pattern (the safe way to cache pickled data); asserting a
         # confirmed RCE over it is a false positive (AutoGPT's HMAC-signed cache).
         self.integrity_verified: Set[str] = set()
+        # Function-scoped signals, set while visiting a function body:
+        #  * _fn_has_integrity — the enclosing function does an HMAC/signature
+        #    check (hmac.compare_digest, …), so a deserialization sink in it is the
+        #    verify-then-load guard even when the payload is a slice gated by an
+        #    `if not compare_digest(...): return` clause (langflow's Redis cache).
+        #  * _fn_has_exec — the enclosing function actually exec()s. compile() is a
+        #    dangerous sink ONLY when its output is executed; compile() used to
+        #    validate syntax (langflow's validate.py, "MUST NOT execute") is safe.
+        self._fn_has_integrity = False
+        self._fn_has_exec = False
         # yaml Loader classes defined in this file that SUBCLASS a safe loader —
         # `class YamlLoader(yaml.SafeLoader)` is safe even though its name isn't
         # in the known-safe list.
@@ -710,7 +749,13 @@ class _Analyzer(ast.NodeVisitor):
                 is_tool = True
         if is_tool:
             self._check_tool_blast_radius(node)
+        # Function-scoped sink context (integrity guard / real exec) — OR with the
+        # enclosing scope so a nested function inherits it; restored on the way out.
+        prev_integrity, prev_exec = self._fn_has_integrity, self._fn_has_exec
+        self._fn_has_integrity = prev_integrity or _scan_has_integrity_check(node)
+        self._fn_has_exec = prev_exec or _scan_has_exec(node)
         self.generic_visit(node)
+        self._fn_has_integrity, self._fn_has_exec = prev_integrity, prev_exec
 
     def _check_tool_blast_radius(self, node):
         # RG-TOOL-001 / RG-GATE-001. An agent tool whose body performs an
@@ -1392,18 +1437,29 @@ class _Analyzer(ast.NodeVisitor):
         kind = self._sink_kind(node)
         if not kind:
             return
+        # compile() produces a code object but does NOT run it — it is a
+        # code-execution risk only when its output is exec()'d/eval()'d. compile()
+        # used for SYNTAX VALIDATION (langflow's validate.py, whose docstring says
+        # it "MUST NOT execute the code") is safe. Flag it only when the enclosing
+        # function actually executes. flow.py's compile(func_body)+exec() still fires.
+        if kind == "compile()" and not self._fn_has_exec:
+            return
         args = list(node.args)
         # Benign: every argument is a constant literal (e.g. os.system('clear')).
         if _is_all_constant(args):
             return
         # Reachability: does a tainted (model/user) value flow into the sink?
         arg_names = [n for a in args for n in _names_in(a)]
-        # Integrity-verified deserialization: `payload = _verify_and_strip(bytes);
-        # pickle.loads(payload)` is the sign-on-write / verify-on-read pattern —
-        # a deliberate guard, not untrusted-input RCE. Recognize it like a safe
-        # yaml loader and stay silent (AutoGPT's HMAC-signed Redis cache). Only for
-        # deserialization sinks; a code-exec sink is never made safe by this.
-        if kind in _DESERIALIZATION_SINKS and any(n in self.integrity_verified for n in arg_names):
+        # Integrity-verified deserialization: the sign-on-write / verify-on-read
+        # pattern is a deliberate guard, not untrusted-input RCE. Two shapes:
+        #  * `payload = _verify_and_strip(bytes); pickle.loads(payload)` (AutoGPT)
+        #  * a slice gated by `if not hmac.compare_digest(...): return` in the same
+        #    function (langflow's HMAC-signed Redis cache).
+        # Recognize it like a safe yaml loader and stay silent. Deserialization
+        # only — a code-exec sink is never made safe by an integrity check.
+        if kind in _DESERIALIZATION_SINKS and (
+                self._fn_has_integrity
+                or any(n in self.integrity_verified for n in arg_names)):
             return
         reaching = self._reaching_taint(arg_names)
         if reaching:
