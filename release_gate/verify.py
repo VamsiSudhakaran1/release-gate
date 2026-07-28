@@ -785,6 +785,15 @@ _JS_SYSPROMPT_FIELD_RE = re.compile(
 _JS_CONTENT_FIELD_RE = re.compile(r"content\s*[:=]\s*$", re.IGNORECASE)
 _JS_SYSTEM_ROLE_RE = re.compile(
     r"role\s*:\s*['\"](?:system|developer)['\"]", re.IGNORECASE)
+# ALL role declarations, to find the NEAREST one before a content: field. A
+# `content:` belongs to a system prompt only if the closest preceding role is
+# system/developer — not merely if a system role appears somewhere in the window.
+# Firecrawl puts a constant `{role:"system", content: SYS}` object right before a
+# `{role:"user", content:`...${scraped}`}` object; keying on "any system role
+# nearby" mis-attributed the user turn's interpolation to the system prompt.
+_JS_ANY_ROLE_RE = re.compile(
+    r"role\s*:\s*['\"](system|developer|user|assistant|tool|human|model)['\"]",
+    re.IGNORECASE)
 # Source classification for an interpolated ${...} expression, mirroring the
 # Python analyzer: EXTERNAL request/user input is the worst case (HIGH); model /
 # tool output is a real but lower-confidence surface (MEDIUM); an unrecognized
@@ -1119,9 +1128,16 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
         prefix = text[max(0, start - 48):start]
         if _JS_SYSPROMPT_FIELD_RE.search(prefix):
             pass
-        elif _JS_CONTENT_FIELD_RE.search(prefix) and \
-                _JS_SYSTEM_ROLE_RE.search(text[max(0, start - 160):start]):
-            pass
+        elif _JS_CONTENT_FIELD_RE.search(prefix):
+            # A generic content: is a system prompt only when the NEAREST preceding
+            # role is system/developer. A role:"user"/"tool" between the last
+            # role:"system" and this content means the content is that user/tool
+            # turn — the CORRECT place for untrusted text, not an injection surface.
+            roles = _JS_ANY_ROLE_RE.findall(text[max(0, start - 400):start])
+            if roles and roles[-1].lower() in ("system", "developer"):
+                pass
+            else:
+                continue
         else:
             continue
         # Classify by the interpolation EXPRESSIONS only (the code inside ${...}),

@@ -1305,3 +1305,25 @@ def test_verify_helper_does_not_whitewash_eval():
     # A verify step guards DESERIALIZATION, not code execution — eval still fires.
     src = "def go(c):\n    payload = verify_signature(c)\n    return eval(payload)\n"
     assert any(f["title"] == "Dangerous execution sink" for f in analyze_python(src, "x.py"))
+
+
+def test_js_scraped_content_in_user_turn_not_flagged_as_system_prompt():
+    # firecrawl FP: a constant {role:"system"} object immediately before a
+    # {role:"user"} object whose content interpolates scraped markdown. The user
+    # turn is the CORRECT place for untrusted text — must not read as a system
+    # prompt just because a system role appears earlier in the array.
+    from release_gate.verify import _scan_js_file
+    code = ('export function build(args) {\n'
+            '  return [\n'
+            '    { role: "system", content: EXTRACTOR_SYSTEM },\n'
+            '    { role: "user", content: `${args.markdownPreview}### HTML\\n${args.anchorHtml}` },\n'
+            '  ];\n'
+            '}\n')
+    assert not any("system prompt" in f["title"].lower() for f in _scan_js_file("p.ts", code))
+
+
+def test_js_external_input_in_system_turn_still_high():
+    from release_gate.verify import _scan_js_file
+    code = 'const m = [{ role: "system", content: `You are X. ${req.body.text}` }];'
+    fs = _scan_js_file("p.ts", code)
+    assert any("system prompt" in f["title"].lower() and f["severity"] == "high" for f in fs)

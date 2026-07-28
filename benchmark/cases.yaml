@@ -623,3 +623,30 @@ cases:
               if payload is None:
                   return _MISSING
               return pickle.loads(payload)
+
+  # ── RG-PROMPT-001 (JS/TS) — nearest-role attribution (firecrawl FP class) ─────
+  - id: prompt001-js-scraped-in-user-turn-clean
+    lang: ts
+    label: clean
+    expect: []
+    source: "firecrawl deterministicJson/llm/prompts.ts — constant system message + untrusted scraped markdown in a delimited USER turn (the correct pattern)"
+    code: |
+      export function buildExtractorMessages(args) {
+        const markdown = `### Page markdown\n${args.markdownPreview}\n`;
+        return [
+          { role: "system", content: EXTRACTOR_SYSTEM },
+          { role: "user",
+            content: `${markdown}### HTML snippets\n${args.anchorHtml}\n### Schema\n${args.schemaJson}` },
+        ];
+      }
+
+  - id: prompt001-js-external-in-system-turn-vuln
+    lang: ts
+    label: vulnerable
+    expect: [RG-PROMPT-001]
+    source: "external request input interpolated directly into a role:system message"
+    code: |
+      const messages = [
+        { role: "system", content: `You are a bot. ${req.body.userText}` },
+        { role: "user", content: "hi" },
+      ];

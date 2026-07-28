@@ -2,6 +2,25 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.9.4] — 2026-07-28
+
+### 🎯 Precision — JS/TS system-prompt attribution keys on the *nearest* role
+
+Fixed a confirmed-HIGH false positive found dogfooding **firecrawl/firecrawl**:
+two `RG-PROMPT-001` "interpolated system prompt" HIGHs on
+`deterministicJson/llm/prompts.ts` where the interpolated value (scraped page
+markdown) was actually in a `role:"user"` message, with a **constant** system
+prompt right before it — the exact correct pattern the rule is meant to reward.
+The JS heuristic accepted a generic `content:` template as a system prompt if
+*any* `role:"system"` appeared in the preceding window; a `{role:"system",
+content: SYS}` object immediately before a `{role:"user", content:`…${scraped}`}`
+object tripped it. The check now finds the **nearest** preceding role and fires
+only when it is `system`/`developer` — a `role:"user"`/`"tool"` between the last
+system role and the `content:` means the text is correctly in a data turn.
+Real injections (external input in a `role:"system"` message, `systemPrompt =
+`…${req.query}``) still fire HIGH; model output into a system turn stays MEDIUM.
+Two benchmark cases added (56 cases, still 100% precision / 0 FP).
+
 ## [0.9.3] — 2026-07-28
 
 ### 🎯 Precision — integrity-verified deserialization is not RCE
