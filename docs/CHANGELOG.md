@@ -4,6 +4,21 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🎯 Scope — dynamic JS/TS exec sinks fire only in agent code (gemini-cli)
+
+Re-scoped `RG-EXEC-003` on the JS/TS path to stop manufacturing low-value HOLDs.
+A dynamic `execSync`/`exec` with no proven model/request source was flagged
+MEDIUM/LOW in *any* file — so a TypeScript CLI's own plumbing
+(`execSync(`taskkill ${pid}`)`, `where.exe`, git-metrics scripts) produced a
+wall of ~11 mediums (gemini-cli) with no agent-layer impact. That's generic
+shell-injection hygiene — Bandit/Semgrep's lane, not a pre-deploy *agent* gate.
+Now it mirrors the Python analyzer: a dynamic exec/shell sink with no proven
+source fires only when the file is **agent code** (it calls an LLM), and then as
+a quiet **LOW** nudge — not a score-moving medium. In a non-agent utility/CLI/
+test file it stays **silent**. Model-output → sink and request-input → sink still
+fire HIGH/confirmed anywhere. Also silences a JS display-string false positive
+(`sandbox-exec (${...})`) as a side effect. Benchmark updated (60 cases, 0 FP).
+
 ### 🎯 Precision — HMAC-guarded deserialization + compile() without exec (langflow)
 
 Fixed two confirmed-HIGH false-positive classes found dogfooding

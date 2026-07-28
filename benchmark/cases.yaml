@@ -277,12 +277,22 @@ cases:
       const { text } = await generateText({model: m, prompt: p, maxOutputTokens: 40});
       eval(text);
 
-  - id: ts-nonmodel-dynamic-eval-stays-low
+  - id: ts-nonagent-dynamic-eval-silent-clean
+    lang: ts
+    label: clean
+    expect: []
+    source: "re-scope (gemini-cli): a dynamic exec in a NON-agent file with no model/request source is generic shell hygiene (Bandit's lane), not an agent risk → silent, not a low-value medium"
+    code: |
+      const reply = buildTemplate(name);
+      eval(reply);
+
+  - id: ts-dynamic-eval-in-agent-code-low-vuln
     lang: ts
     label: vulnerable
     expect: [RG-EXEC-003]
-    source: "precision guard: a value from a NON-model source must stay low (RG-EXEC-003), not be promoted to model->sink"
+    source: "the same dynamic eval in AGENT code (the file calls an LLM), source unproven → a quiet LOW nudge (RG-EXEC-003), not silent"
     code: |
+      const out = await model.generate({ prompt });
       const reply = buildTemplate(name);
       eval(reply);
 

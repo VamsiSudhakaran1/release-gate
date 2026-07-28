@@ -233,13 +233,19 @@ def test_constant_interpolation_in_system_prompt_not_flagged():
     assert "Interpolated system prompt (injection surface)" not in titles(src)
 
 
-def test_js_exec_calibration_bare_low_config_medium_external_high():
+def test_js_exec_calibration_agent_scoped():
     from release_gate.verify import _scan_js_file
-    # bare variable, no interpolation, no external marker → LOW/inferred
-    bare = _scan_js_file("a.js", "const r = execSync(cmd, {shell:true})\n")
-    assert any(f["severity"] == "low" for f in bare)
-    # interpolated with a genuine external-input marker (userInput) → HIGH/confirmed
-    interp = _scan_js_file("b.js", "const r = execSync(`run ${userInput}`)\n")
+    # Re-scoped (gemini-cli): a dynamic execSync in a NON-agent utility/CLI file is
+    # generic shell hygiene (Bandit's lane), not an agent risk → SILENT.
+    util = _scan_js_file("a.js", "const r = execSync(`taskkill ${pid}`)\n")
+    assert not any("execution sink" in f["title"].lower() for f in util)
+    # The same call in AGENT code (the file calls an LLM), source unproven → a quiet
+    # LOW nudge, not a score-moving medium.
+    agent = _scan_js_file(
+        "b.js", "const x = await model.generate({prompt});\nconst r = execSync(`taskkill ${pid}`)\n")
+    assert any(f["severity"] == "low" and "agent code" in f["title"].lower() for f in agent)
+    # External request/user input reaching the sink → HIGH/confirmed, any file.
+    interp = _scan_js_file("c.js", "const r = execSync(`run ${userInput}`)\n")
     assert any(f["severity"] == "high" and f["basis"] == "confirmed" for f in interp)
 
 

@@ -980,6 +980,14 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
     # consumes model output grade as the real model→sink RCE class, not a low
     # unclassified dynamic sink (mirrors the Python analyzer's intra-proc taint).
     model_taint = _js_model_taint(lines)
+    # Is THIS file agent code (does it call an LLM)? A dynamic exec/shell sink with
+    # no proven model/request source is only OUR concern in agent code — otherwise
+    # it's a generic shell-injection question that belongs to Bandit/Semgrep, not a
+    # pre-deploy agent gate. Without this, a TypeScript CLI's own plumbing
+    # (`execSync(`taskkill ${pid}`)`, git-metrics scripts) produced a wall of
+    # low-value RG-EXEC-003 mediums (gemini-cli). Mirrors the Python analyzer, whose
+    # dynamic-sink nudge only fires when file_has_llm.
+    js_is_agent = bool(model_taint) or bool(_JS_LLM_CALL_RE.search(text))
 
     for i, line in enumerate(lines, start=1):
         stripped = line.strip()
@@ -1042,23 +1050,21 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
                     "argument list, or strictly validate/sandbox the input.",
                     confidence="high", basis="confirmed",
                     impact="Remote code execution: external input reaches this sink."))
-            elif interpolated:
+            elif js_is_agent:
+                # Agent code, but no proven model/request source reaching the sink —
+                # a quiet LOW nudge ("confirm no model output reaches it"), matching
+                # the Python analyzer. In a non-agent utility/CLI/test file we stay
+                # SILENT: a dynamic execSync there (taskkill a pid, `where.exe`,
+                # git-metrics scripts) is generic shell hygiene, not an agent risk,
+                # and flagging it manufactures low-value HOLDs. Bandit's lane.
                 findings.append(_finding(
-                    "medium", "Dynamic execution sink", rel, i, stripped[:120],
+                    "low", "Dynamic execution sink (agent code)", rel, i, stripped[:120],
                     "eval/new Function/child_process.exec runs a dynamically-built "
-                    "value. If it can come from model or request input this is remote "
-                    "code execution; if it's a trusted config/transform expression it "
-                    "may be by design. Confirm the source, or sandbox it.",
-                    confidence="medium", basis="inferred",
-                    impact="RCE only if model/request input can reach this sink — "
-                           "provenance not proven here."))
-            else:
-                findings.append(_finding(
-                    "low", "Dynamic execution sink", rel, i, stripped[:120],
-                    "eval/new Function/child_process.exec runs a non-constant value. "
-                    "Confirm it can't be reached by model or request input.",
+                    "value in agent code. Confirm no model or request input can reach "
+                    "it; a deliberate code/command tool should be sandboxed.",
                     confidence="low", basis="inferred",
-                    impact="Potential code execution — reachability not proven."))
+                    impact="Potential code execution if untrusted input can reach it "
+                           "— reachability not proven."))
 
         # Unbounded LLM loop — ONLY a truly unbounded loop (while(true) / for(;;)).
         # A bounded `while (i < max)` or a `for await (... of stream)` (just
