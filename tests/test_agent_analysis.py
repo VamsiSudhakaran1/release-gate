@@ -1263,3 +1263,15 @@ def test_irreversible_action_in_non_tool_function_is_not_flagged():
     # delete helper is the RG-ACTION-003 lane, not the tool-authority lane.
     src = "import os\ndef cleanup(path):\n    os.remove(path)\n"
     assert not any(f["rule_id"] in ("RG-TOOL-001", "RG-GATE-001") for f in _findings(src))
+
+
+def test_subprocess_list_concatenation_argv_is_not_a_string_command():
+    # Regression (hermes-agent FP): `subprocess.run(pip_cmd + ["install", *args])`
+    # and `Popen([cmd] + extra)` are safe list-argv concatenation, no shell — a
+    # BinOp first arg must NOT be misread as a built command string.
+    lazy = ("import subprocess\ndef go(target_args, pip_cmd, specs):\n"
+            "    subprocess.run(pip_cmd + ['install', *target_args, *specs])\n")
+    acp = ("import subprocess\ndef go(self):\n"
+           "    subprocess.Popen([self._acp_command] + self._acp_args)\n")
+    assert "Dangerous execution sink" not in titles(lazy)
+    assert "Dangerous execution sink" not in titles(acp)

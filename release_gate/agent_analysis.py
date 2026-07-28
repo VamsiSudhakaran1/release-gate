@@ -356,6 +356,24 @@ def _names_in(node: ast.AST) -> Set[str]:
     return out
 
 
+def _is_string_build(node: ast.AST) -> bool:
+    """True if `node` builds a STRING at runtime — an f-string, or a `+`/`%`
+    expression that visibly involves a string literal. Critically, list/tuple
+    argv concatenation (`pip_cmd + ["install", *args]`, `[cmd] + extra_args`) is
+    NOT a string build — that's the safe, shell-free subprocess form. Treating it
+    as a "string command" was a false-positive class (hermes-agent's pip/ACP
+    runners). We require a visible string literal AND no list/tuple literal."""
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        subs = list(ast.walk(node))
+        has_list = any(isinstance(s, (ast.List, ast.Tuple)) for s in subs)
+        has_str = any((isinstance(s, ast.Constant) and isinstance(s.value, str))
+                      or isinstance(s, ast.JoinedStr) for s in subs)
+        return has_str and not has_list
+    return False
+
+
 def _is_all_constant(args: List[ast.AST]) -> bool:
     """True if every arg is a literal constant (or list/tuple of constants)."""
     def const(n: ast.AST) -> bool:
@@ -1277,7 +1295,7 @@ class _Analyzer(ast.NodeVisitor):
             # the moment shell=True is added. A bare Name stays ambiguous (could be
             # a list) → not flagged, preserving the subprocess.run(cmd_list) case.
             first = node.args[0] if node.args else None
-            if isinstance(first, (ast.JoinedStr, ast.BinOp)):
+            if _is_string_build(first):
                 return "subprocess (string command)"
             return None
         # yaml.load(...) is unsafe UNLESS given a Safe/Base Loader. yaml.safe_load
