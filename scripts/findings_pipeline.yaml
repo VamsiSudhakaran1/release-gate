@@ -1,0 +1,99 @@
+# Configuration for scripts/findings_pipeline.py — the weekly outreach/findings run.
+# Every knob here is tweakable; CLI flags override the values marked (overridable).
+
+search:
+  # Free-text / topic part of each GitHub repo search. The script appends the
+  # language, stars, and pushed qualifiers below to every entry, so keep these
+  # focused on *relevance*. Add or remove entries freely.
+  queries:
+    - "ai agent in:name,description,topics"
+    - "llm agent in:name,description,topics"
+    - "autonomous agent in:name,description,topics"
+    - "topic:ai-agents"
+    - "topic:llm-agents"
+    - "topic:agentic-ai"
+    - "topic:mcp-server"
+    - "rag agent in:name,description,topics"
+
+  # One search per (query × language). Python is where the engine is deepest;
+  # TypeScript is the next frontier — keep it in so the corpus and the TS
+  # analyzer grow together.
+  languages:
+    - Python
+    - TypeScript
+
+  min_stars: 500              # (overridable: --min-stars)
+  pushed_within_days: 45      # "maintained recently" — last push within N days
+  per_query_limit: 30         # results fetched per search query
+
+filter:
+  # A candidate must match at least one of these in its name, description, or
+  # topics (case-insensitive substring). Guards against off-topic star magnets.
+  require_any:
+    - agent
+    - llm
+    - gpt
+    - claude
+    - openai
+    - anthropic
+    - langchain
+    - langgraph
+    - crewai
+    - llama
+    - autogen
+    - rag
+    - mcp
+    - copilot
+    - assistant
+    - chatbot
+
+  # Reject repos that are lists/courses/paper collections, not shipped code.
+  exclude_any:
+    - awesome
+    - curated
+    - tutorial
+    - course
+    - cookbook
+    - handbook
+    - roadmap
+    - interview
+    - papers
+    - prompts collection
+    - cheatsheet
+
+  exclude_owners: []          # e.g. [microsoft] to skip orgs you don't want to cold-contact
+  exclude_repos:              # full names, e.g. owner/repo
+    - VamsiSudhakaran1/release-gate
+
+run:
+  max_repos: 10               # scanned per run (overridable: --max-repos)
+  clone_depth: 1
+  clone_timeout_seconds: 180
+  audit_timeout_seconds: 300
+  rescan_after_days: 90       # a repo in the state file is skipped for this long
+
+findings:
+  # Which advisory buckets make a repo draft-worthy. Start confirmed-only —
+  # the whole strategy is that every filed issue is defensible.
+  include_confirmed_high: true
+  include_inferred_high: false
+  include_medium: false
+
+output:
+  drafts_dir: outreach/drafts   # per-repo issue drafts, grouped by run date
+  state_file: outreach/state.json
+
+issue:
+  # {placeholders}: repo, title, count, findings_md, rule_ids
+  title: "Model output can reach a dangerous sink — {title}"
+  body: |
+    Hi — I ran a static agent-safety scan over this repo and found {count}
+    confirmed issue(s) where LLM output can reach a dangerous sink. Filing
+    because it looked actionable, not theoretical; feel free to close if this
+    is intentional or already mitigated.
+
+    {findings_md}
+
+    Happy to add more detail or a repro if useful. Found via
+    [release-gate](https://github.com/VamsiSudhakaran1/release-gate)
+    (`release-gate audit --mode public-advisory` — confirmed findings only).

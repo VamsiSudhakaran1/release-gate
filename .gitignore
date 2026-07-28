@@ -216,3 +216,6 @@ marimo/_lsp/
 __marimo__/
 .vercel
 .env*
+
+# findings-pipeline output (drafts + scan state are local working files)
+outreach/
