@@ -53,7 +53,7 @@ def main() -> int:
     _sub("pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new}"', count=1)
     _sub("release_gate/__init__.py", r'(__version__\s*=\s*)"[^"]+"', rf'\g<1>"{new}"', count=1)
     _sub("release_gate_api/_app.py", rf'("version":\s*)"{re.escape(old)}"', rf'\g<1>"{new}"')
-    for rel in ("public/index.html", "README.md"):
+    for rel in ("public/index.html", "README.md", "docs/REFERENCE.md"):
         _sub(rel, rf'@v{re.escape(old)}\b', f'@v{new}')
 
     print("  re-embedding frontend (scripts/embed_frontend.py) ...")

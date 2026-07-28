@@ -43,7 +43,7 @@ def main() -> int:
     # 2. Every Action pin across site + docs must be @v<version>. Any other
     #    release-gate@vX.Y.Z is a stale pin.
     action_re = re.compile(r"VamsiSudhakaran1/release-gate@v(\d+\.\d+\.\d+)")
-    for rel in ("public/index.html", "README.md"):
+    for rel in ("public/index.html", "README.md", "docs/REFERENCE.md"):
         text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
         for pinned in set(action_re.findall(text)):
             if pinned != version:
