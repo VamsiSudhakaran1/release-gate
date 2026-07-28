@@ -8,7 +8,7 @@
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 [![Benchmark: 53-case corpus](https://img.shields.io/badge/benchmark-53--case_corpus_%C2%B7_26_TP_%C2%B7_0_FP_%C2%B7_2_known--miss-blue.svg)](benchmark/RESULTS.md)
 
-> **v0.9.1** *(precision patch — a `subprocess` list-argv concatenation is no longer misread as a built shell command; found dogfooding `NousResearch/hermes-agent`)* ships the **v0.9.0** agent-safety catalog: a substantially **expanded agent-safety rule catalog** (9 new rules + 2 precision upgrades), all holding the precision bar at **0 false positives** on the labeled [53-case benchmark](benchmark/RESULTS.md) (≥2 vulnerable + ≥2 clean look-alikes per rule) and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
+> **v0.9.2** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [53-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
 **Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
 
@@ -84,7 +84,7 @@ switches).
 ```
 $ release-gate score governance.yaml --evals evals.yaml
 
-  release-gate  |  Readiness Scorer  v0.9.1
+  release-gate  |  Readiness Scorer  v0.9.2
 
   Project          customer-support-agent  v1.0.0
   Checks run       5  (5 pass, 0 warn, 0 fail)
@@ -257,7 +257,7 @@ Drop it into GitHub Actions — either the raw CLI:
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: VamsiSudhakaran1/release-gate@v0.9.1
+- uses: VamsiSudhakaran1/release-gate@v0.9.2
   with:
     command: pr
     base: origin/${{ github.base_ref }}

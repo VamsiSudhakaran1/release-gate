@@ -2,6 +2,42 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.9.2] — 2026-07-28
+
+### 📦 Packaging — a lean, three-dependency CLI
+
+`pip install release-gate` now pulls only `pyyaml`, `jsonschema`, and
+`cryptography` — no web framework, database driver, or auth stack in the
+dependency tree a security team vets. The release-gate.com server stack moved to
+an opt-in `[api]` extra; `[dev]` self-references `release-gate[api,mcp]` so the
+full test suite still runs in CI. Vercel installs the extra via a pinned
+`vercel.json` (`installCommand: pip install .[api]`).
+
+### 🔬 Credibility — the accuracy benchmark now covers the full v0.9.0 catalog
+
+Expanded 27 → 53 labeled cases: every v0.9.0 rule (RG-PROMPT-002,
+RG-ACTION-002/003/004, RG-SECRET-002, RG-PARSE-001, RG-TOOL-001/RG-GATE-001, and
+the RG-EXEC-004 taint-aware deserialization upgrade) now carries ≥2 vulnerable
+and ≥2 clean look-alikes — including framework-derived cleans, aliasing cases,
+the FP controls (key-as-auth, parameterized query, list-argv subprocess), and an
+honestly-labeled cross-function KNOWN-MISS per taint class. Result: precision
+100%, 0 clean-case false positives, recall 92.9%. The zero-false-positive claim
+is now reproducible per rule (`python benchmark/run.py`), not just asserted.
+
+### 🎯 Honesty — softened claims + disclosed limitation
+
+- "0 false positives" is now scoped to "the labeled benchmark and framework
+  dogfood set"; "novel — no SAST checks it" (RG-SECRET-002) → "an agent-aware
+  egress path conventional SAST often lacks the context to model."
+- The intra-procedural (cross-function) taint limitation is disclosed up front in
+  the README and prominently in `benchmark/RESULTS.md`.
+
+### 📖 Docs — README is a landing page again
+
+Trimmed the README from ~1,130 to ~310 lines (problem · one command · one
+finding · one Action · how it's different); the full command/feature reference
+moved verbatim to `docs/REFERENCE.md`.
+
 ## [0.9.1] — 2026-07-28
 
 ### 🎯 Precision — subprocess list-argv concatenation is not a string command

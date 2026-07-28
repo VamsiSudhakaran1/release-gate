@@ -409,7 +409,7 @@ coverage.
 Gate it in CI the same way as `audit`:
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.9.1
+- uses: VamsiSudhakaran1/release-gate@v0.9.2
   with:
     command: loop-sim
     scenarios: examples/loop_scenarios.yaml
@@ -740,7 +740,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.9.1
+        uses: VamsiSudhakaran1/release-gate@v0.9.2
         with:
           command: score
           config: governance.yaml
@@ -752,7 +752,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.9.1
+- uses: VamsiSudhakaran1/release-gate@v0.9.2
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run
