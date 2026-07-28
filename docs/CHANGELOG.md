@@ -2,6 +2,21 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.9.1] — 2026-07-28
+
+### 🎯 Precision — subprocess list-argv concatenation is not a string command
+
+Fixed a false-positive class introduced with the 0.9.0 shell-sink catalog:
+`RG-ACTION-001`'s string-command detection treated *any* `BinOp` first argument
+to `subprocess` as an assembled command string. But `subprocess.run(pip_cmd +
+["install", *args])` and `Popen([cmd] + extra_args)` are safe list-argv
+concatenation with no shell — the correct, injection-free form. A `BinOp` now
+counts as a string command only when it visibly involves a string literal (or
+f-string) *and* contains no list/tuple literal; f-strings and real `"cmd " + x`
+concatenation still fire. Surfaced by a real scan of **NousResearch/hermes-agent**
+(its pip runner, ACP client, and the bundled LibreOffice skill all use `[...] +
+args`) and verified against those files. Found by dogfooding.
+
 ## [0.8.5]
 
 ### ✨ Added — `release-gate pr`, the AI-change review gate
