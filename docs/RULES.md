@@ -128,7 +128,7 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 ### RG-SECRET-002 — Secret or PII sent to the model provider
 
 - **Default severity:** high
-- **What & why:** A hardcoded secret, an env var, or a PII-shaped value is interpolated into a prompt sent to a third-party LLM — data egress to the provider (who logs and retains it). The reverse of exfiltration, and no SAST tool checks it.
+- **What & why:** A hardcoded secret, an env var, or a PII-shaped value is interpolated into a prompt sent to a third-party LLM — data egress to the provider (who logs and retains it). The reverse of exfiltration — an agent-aware egress path conventional SAST often lacks the context to model.
 - **Fix:** Redact secrets/PII before they reach the prompt; a key used as auth (api_key=, headers) is fine — only prompt content is the leak.
 - **Compliance:** OWASP-LLM:LLM06, OWASP-LLM:LLM07
 

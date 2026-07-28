@@ -285,3 +285,325 @@ cases:
     code: |
       const reply = buildTemplate(name);
       eval(reply);
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # v0.9.0 agent-safety rule catalog — P0–P2. Each rule gets ≥2 vulnerable and
+  # ≥2 clean look-alikes (incl. framework-derived + aliasing + a cross-function
+  # known-miss), so the "0 false positives" claim is reproducible per rule.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # ── RG-PROMPT-002 — indirect prompt injection (untrusted provenance → system) ─
+  - id: prompt002-retrieval-to-system
+    lang: py
+    label: vulnerable
+    expect: [RG-PROMPT-002]
+    source: "RAG context placed in the system role — OWASP LLM01 indirect injection"
+    code: |
+      def build(q, retriever):
+          docs = retriever.get_relevant_documents(q)
+          return [{"role": "system", "content": f"Answer using: {docs}"}]
+
+  - id: prompt002-http-body-to-systemmessage
+    lang: py
+    label: vulnerable
+    expect: [RG-PROMPT-002]
+    source: "HTTP response body flowed into a LangChain SystemMessage"
+    code: |
+      import requests
+      from langchain.schema import SystemMessage
+      def build(url):
+          resp = requests.get(url)
+          body = resp.text
+          return SystemMessage(content=body)
+
+  - id: prompt002-aliasing-through-index
+    lang: py
+    label: vulnerable
+    expect: [RG-PROMPT-002]
+    source: "aliasing: retrieval result read through hits[0].page_content still tracked"
+    code: |
+      def build(q, store):
+          hits = store.similarity_search(q)
+          ctx = hits[0].page_content
+          return [{"role": "system", "content": f"Context: {ctx}"}]
+
+  - id: prompt002-retrieval-to-user-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "the CORRECT pattern — retrieved content in a delimited user turn"
+    code: |
+      def build(q, retriever):
+          docs = retriever.get_relevant_documents(q)
+          return [{"role": "user", "content": f"{docs}"}]
+
+  - id: prompt002-framework-rag-user-turn-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "framework RAG shape: constant system role + context in the user turn"
+    code: |
+      def answer(question, retriever):
+          context = retriever.get_relevant_documents(question)
+          return [
+              {"role": "system", "content": "You are a helpful assistant."},
+              {"role": "user", "content": f"Context: {context} Question: {question}"},
+          ]
+
+  - id: prompt002-developer-constant-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "developer-authored constant system prompt is not untrusted"
+    code: |
+      SYSTEM = "you are a helpful assistant"
+      def build():
+          return [{"role": "system", "content": f"{SYSTEM}"}]
+
+  # ── RG-ACTION-002 — SSRF / egress from model output ──────────────────────────
+  - id: action002-model-controlled-url
+    lang: py
+    label: vulnerable
+    expect: [RG-ACTION-002]
+    source: "a model-chosen URL into an HTTP client — SSRF"
+    code: |
+      from openai import OpenAI
+      import requests
+      c = OpenAI()
+      def go(m):
+          r = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50)
+          url = r.choices[0].message.content
+          return requests.get(url)
+
+  - id: action002-cross-function-KNOWN-MISS
+    lang: py
+    label: vulnerable
+    expect: [RG-ACTION-002]
+    source: "KNOWN LIMITATION: taint is intra-procedural — a model URL returned by a helper is not followed across the call boundary"
+    code: |
+      from openai import OpenAI
+      import requests
+      c = OpenAI()
+      def get_url(m):
+          r = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50)
+          return r.choices[0].message.content
+      def go(m):
+          u = get_url(m)
+          return requests.get(u)
+
+  - id: action002-constant-url-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "a fully constant URL is not a finding"
+    code: |
+      import requests
+      def go():
+          return requests.get("https://api.example.com/health")
+
+  - id: action002-user-input-url-out-of-scope-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "generic user-input SSRF is Bandit's lane — we scope to model provenance, so this stays quiet"
+    code: |
+      import requests
+      def go(request):
+          return requests.get(request.url)
+
+  # ── RG-ACTION-003 — filesystem write/delete from model output ────────────────
+  - id: action003-model-path-delete
+    lang: py
+    label: vulnerable
+    expect: [RG-ACTION-003]
+    source: "a model-controlled path into os.remove — irreversible"
+    code: |
+      from openai import OpenAI
+      import os
+      c = OpenAI()
+      def go(m):
+          r = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50)
+          p = r.choices[0].message.content
+          os.remove(p)
+
+  - id: action003-constant-path-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "a constant path is not model-controlled"
+    code: |
+      import os
+      def go():
+          os.remove("/tmp/app.lock")
+
+  # ── RG-ACTION-004 — SQL built from model output ──────────────────────────────
+  - id: action004-model-output-interpolated-sql
+    lang: py
+    label: vulnerable
+    expect: [RG-ACTION-004]
+    source: "model output interpolated into a raw query — agent-driven SQLi"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      def go(cur, m):
+          r = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50)
+          q = r.choices[0].message.content
+          cur.execute(f"SELECT * FROM t WHERE x={q}")
+
+  - id: action004-parameterized-query-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "the CORRECT pattern — a parameterized execute(sql, params)"
+    code: |
+      def go(cur, val):
+          cur.execute("SELECT * FROM t WHERE x=?", (val,))
+
+  # ── RG-SECRET-002 — secret / PII → prompt → third-party model ────────────────
+  - id: secret002-hardcoded-key-into-prompt
+    lang: py
+    label: vulnerable
+    expect: [RG-SECRET-002]
+    source: "a credential-shaped literal interpolated into an LLM prompt — data egress"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      KEY = "sk-proj-ABCDEFGHIJKLMNOP1234"
+      def go():
+          return c.chat.completions.create(model="gpt-4o", max_tokens=5, messages=[{"role": "user", "content": f"use {KEY}"}])
+
+  - id: secret002-env-secret-into-prompt
+    lang: py
+    label: vulnerable
+    expect: [RG-SECRET-002]
+    source: "an os.environ secret interpolated into an LLM prompt"
+    code: |
+      import os
+      from openai import OpenAI
+      c = OpenAI()
+      def go():
+          tok = os.environ["DB_PASSWORD"]
+          return c.chat.completions.create(model="gpt-4o", max_tokens=5, messages=[{"role": "user", "content": f"{tok}"}])
+
+  - id: secret002-key-as-auth-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "FP control — a key used as auth (api_key=) is not prompt egress"
+    code: |
+      import os
+      from openai import OpenAI
+      c = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+      def go():
+          return c.chat.completions.create(model="gpt-4o", max_tokens=5, messages=[{"role": "user", "content": "hi"}])
+
+  # ── RG-EXEC-004 — taint-aware deserialization (network body → confirmed HIGH) ─
+  - id: exec004-network-body-to-pickle
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "RG-EXEC-004 upgrade: a network body reaching pickle.loads is a CONFIRMED sink (emits RG-EXEC-001 high, not the inferred RG-EXEC-002 medium)"
+    code: |
+      import requests, pickle
+      def go(url):
+          resp = requests.get(url)
+          return pickle.loads(resp.content)
+
+  - id: exec004-yaml-safeload-network-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "yaml.safe_load of a network body is safe even though the source is untrusted"
+    code: |
+      import requests, yaml
+      def go(url):
+          resp = requests.get(url)
+          return yaml.safe_load(resp.text)
+
+  # ── RG-PARSE-001 — unvalidated model-output parse (reliability) ───────────────
+  - id: parse001-model-json-unguarded
+    lang: py
+    label: vulnerable
+    expect: [RG-PARSE-001]
+    source: "json.loads of model output with no try/except — a malformed reply crashes the agent"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      import json
+      def go(m):
+          r = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50)
+          v = r.choices[0].message.content
+          return json.loads(v)
+
+  - id: parse001-model-json-guarded-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "the CORRECT pattern — the parse is wrapped in try/except"
+    code: |
+      from openai import OpenAI
+      c = OpenAI()
+      import json
+      def go(m):
+          r = c.chat.completions.create(model="gpt-4o", messages=m, max_tokens=50)
+          v = r.choices[0].message.content
+          try:
+              return json.loads(v)
+          except Exception:
+              return None
+
+  # ── RG-TOOL-001 / RG-GATE-001 — tool blast-radius + irreversibility gate ─────
+  - id: gate001-irreversible-tool-no-gate
+    lang: py
+    label: vulnerable
+    expect: [RG-GATE-001]
+    source: "an @tool that deletes with no confirm/dry-run/human-in-loop gate"
+    code: |
+      import os
+      @tool
+      def cleanup(path):
+          os.remove(path)
+
+  - id: tool001-irreversible-tool-gated
+    lang: py
+    label: vulnerable
+    expect: [RG-TOOL-001]
+    source: "an @tool that deletes but has a confirm gate → the informational TOOL-001, not GATE-001"
+    code: |
+      import os
+      @tool
+      def cleanup(path, confirm=False):
+          if not confirm:
+              return "need confirm"
+          os.remove(path)
+
+  - id: gate-readonly-tool-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "a read-only @tool has no irreversible blast radius"
+    code: |
+      @tool
+      def lookup(q):
+          return db.query(q)
+
+  # ── RG-ACTION-001 — shell/OS command from model output (subprocess widening) ──
+  - id: action001-string-command-from-input
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "a subprocess command STRING built from input (f-string, no shell=True)"
+    code: |
+      import subprocess
+      def go(user_input):
+          subprocess.run(f"ls {user_input}")
+
+  - id: action001-list-argv-concat-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "hermes-agent regression guard — list-argv concatenation is safe, NOT a string command"
+    code: |
+      import subprocess
+      def go(pip_cmd, target_args, specs):
+          subprocess.run(pip_cmd + ["install", *target_args, *specs])

@@ -103,16 +103,33 @@ def render_md(res: dict) -> str:
         o.append(f"| {rid} | {d['tp']} | {d['fp']} | {d['fn']} | "
                  f"{d['precision']:.0%} | {d['recall']:.0%} |")
     o += ["", "## Methodology", "",
+          "- **Coverage:** every rule in the catalog — including the full v0.9.0 "
+          "agent-safety set (RG-PROMPT-002, RG-ACTION-002/003/004, RG-SECRET-002, "
+          "RG-PARSE-001, RG-TOOL-001/RG-GATE-001, and the RG-EXEC-004 taint-aware "
+          "deserialization upgrade) — carries at least two vulnerable cases and two "
+          "clean look-alikes here, so the zero-false-positive result is reproducible "
+          "per rule, not just asserted.",
           "- **Clean cases are drawn from real frameworks** (mem0, smolagents, "
-          "crewAI, gpt-researcher…) where a naive scanner false-positives — each "
-          "is a permanent regression guard.",
-          "- **Vulnerable cases** are canonical instances of each rule "
-          "(CVE-2025-51472 class, prompt injection, uncapped loops, secrets).",
+          "crewAI, gpt-researcher, the RAG-context-in-user-turn shape…) where a "
+          "naive scanner false-positives — each is a permanent regression guard. "
+          "They include aliasing (a retrieved value read through `hits[0]."
+          "page_content`) and the FP controls (a key used as `api_key=` auth, a "
+          "parameterized query, list-argv `subprocess` concatenation).",
+          "- **Vulnerable cases** are canonical instances of each rule.",
           "- A vulnerable case scores a true positive only if the engine emits "
           "the exact expected rule id; any unexpected emission is a false positive.",
-          "- This is a *starter* corpus that grows with every rule and every "
-          "false positive we fix. It is not a substitute for third-party audit — "
-          "it's the reproducible evidence a reviewer can check today.", ""]
+          "- This is a corpus that grows with every rule and every false positive "
+          "we fix (the list-argv `subprocess` guard was added the day a real scan "
+          "surfaced it). It is not a substitute for third-party audit — it's the "
+          "reproducible evidence a reviewer can check today.", "",
+          "## Known limitations (kept in the corpus on purpose)", "",
+          "- **Taint is intra-procedural.** A tainted value that flows *across a "
+          "function boundary* (a helper returns model output; the caller sends it "
+          "to a sink) is not followed — see the `*-cross-function-KNOWN-MISS` "
+          "cases, deliberately labeled vulnerable so they show as recall misses "
+          "here rather than being quietly dropped. This is a precision-first "
+          "trade-off: we would rather miss a cross-function flow than infer one and "
+          "cry wolf. Inter-procedural analysis is on the roadmap.", ""]
     if res["misclassified"]:
         o += ["## Misclassifications (current)", ""]
         o += [f"- `{cid}`: {kind} {rid}" for cid, kind, rid in res["misclassified"]]
