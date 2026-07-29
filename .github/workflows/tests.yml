@@ -26,6 +26,15 @@ jobs:
       - name: Run tests
         run: pytest tests/ --ignore=tests/test_crypto.py -v --tb=short
 
+      - name: Accuracy benchmark (precision floor + HIGH-tier integrity)
+        run: python benchmark/run.py
+
+      - name: Reproduce the published demo (asserts every claim in the docs)
+        # The demo is the first thing a stranger runs. If the engine's output
+        # drifts from what README/demo.html quote, this fails the build rather
+        # than letting the published demo quietly become a mockup.
+        run: ./examples/demo-code-risk/build_demo.sh --check
+
       - name: Run Impact Simulator demo (safe)
         run: release-gate impact examples/governance-safe-pass.yaml
 

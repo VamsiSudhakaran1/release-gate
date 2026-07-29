@@ -173,7 +173,16 @@ output; **neither blocks a release.** release-gate is the gate.
 
 [**`examples/demo-code-risk/`**](examples/demo-code-risk/) is a runnable before/after: a data-analysis
 agent that does `expr = resp.choices[0].message.content; eval(expr, {"df": df})` vs. an allowlisted-
-aggregation fix. `./build_demo.sh` builds a throwaway git repo and runs the real gate:
+aggregation fix.
+
+```bash
+pip install release-gate
+git clone https://github.com/VamsiSudhakaran1/release-gate && cd release-gate
+./examples/demo-code-risk/build_demo.sh            # print the demo
+./examples/demo-code-risk/build_demo.sh --check    # …and assert every claim below
+```
+
+It builds a throwaway git repo and runs the real gate on the PR:
 
 ```
 🔴 release-gate — AI-change review: BLOCK
@@ -182,11 +191,26 @@ Agent Code Safety: 100 → 76 (▼ -24)
 
 Introduced by this change (not pre-existing):
   HIGH (high · confirmed)  Dangerous execution sink   agent.py:25
-    ↳ eval() executes `expr` — the model's own output.
+    ↳ eval() executes `expr`, which we traced to the model's own output at line 17.
 ```
 
-No mockup — that's the live output, which is exactly how building the demo caught (and let us fix)
-a real taint-tracking under-grade. **Live walkthrough:** [release-gate.com/demo.html](https://release-gate.com/demo.html).
+Then it scans the same service to show **both tiers side by side** — the point of the product:
+
+```
+  • HIGH    high confidence · confirmed   Dangerous execution sink        agent.py:25
+     Evidence: client.chat.completions.create() (L17) -> `expr` -> eval() (L25)
+
+  • MEDIUM  medium confidence · inferred  Deserialization of unverified data   cache.py:26
+     Evidence: `payload` -> pickle.loads() (L26) — origin unknown (name suggests external input)
+```
+
+Same danger shape, two different claims. The HIGH names the line the value came from, so you can
+open it and check us. `cache.py`'s `pickle.loads(payload)` is where a name-matching scanner asserts
+confirmed RCE — we won't, because `payload` is a bare parameter and **a name is not evidence**
+(in AutoGPT that same variable held the cache's own HMAC-signed bytes).
+
+No mockup: `--check` asserts every line quoted here, and [CI runs it on every push](.github/workflows/tests.yml),
+so the published demo can't drift from the engine. **Live walkthrough:** [release-gate.com/demo.html](https://release-gate.com/demo.html).
 
 ---
 

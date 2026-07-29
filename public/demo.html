@@ -274,7 +274,9 @@
             <div class="find">
               <span class="sev h">HIGH</span>
               <span class="txt"><span class="t">Dangerous execution sink</span> &nbsp;<span class="loc">agent.py:25</span>
-                <span class="ev">high &middot; confirmed &mdash; <code>eval()</code> executes <span class="q">expr</span> &mdash; <b>the model&rsquo;s own output.</b></span></span>
+                <span class="ev">high &middot; confirmed &mdash; <code>eval()</code> executes <span class="q">expr</span>, which we
+                  <b>traced to the model's own output at line 17</b>.<br>
+                  <code>client.chat.completions.create() (L17) &rarr; expr &rarr; eval() (L25)</code></span></span>
             </div>
             <div class="find">
               <span class="sev l">LOW</span>
@@ -295,10 +297,18 @@
         <li><b>Net-new only.</b> It blocks what <em>this</em> PR introduced and never fails you on
           debt you inherited &mdash; so the red always means &ldquo;you just added this.&rdquo;</li>
         <li><b>Confirmed, not guessed.</b> The <span style="color:var(--high)">HIGH</span> is graded
-          <em>confirmed</em> because the source is visible in scope: the value came from
-          <code>client.chat.completions.create(&hellip;)</code> and reaches <code>eval()</code> in the
-          same function. When provenance can&rsquo;t be proven, it says so and stays advisory &mdash; it
-          doesn&rsquo;t cry wolf.</li>
+          <em>confirmed</em> because we can point at where the value came from: it was assigned from
+          <code>client.chat.completions.create(&hellip;)</code> on line 17 and reaches <code>eval()</code>
+          on line 25. Open those two lines and check us &mdash; every HIGH carries that chain.</li>
+        <li><b>A variable&rsquo;s name is never evidence.</b> Scan the same service and
+          <code>cache.py</code> has <code>pickle.loads(payload)</code> &mdash; a genuinely dangerous
+          sink. A name-matching scanner calls that confirmed remote code execution because the
+          variable is <em>called</em> <code>payload</code>. We report it as a
+          <span style="color:var(--med,#c90)">MEDIUM</span> that asks you to confirm the source,
+          because it&rsquo;s a bare parameter whose caller this file can&rsquo;t see. In AutoGPT that
+          same variable held the cache&rsquo;s own HMAC-signed bytes &mdash; asserting a
+          vulnerability there is how a report gets dismissed by a maintainer who knows their code.
+          <br><code>`payload` &rarr; pickle.loads() (L26) &mdash; origin unknown</code></li>
         <li><b>It&rsquo;s just an exit code.</b> <code>0</code> promote &middot; <code>10</code> hold
           &middot; <code>1</code> block. Drops into any CI without a dashboard, an account, or your
           code leaving the runner.</li>
@@ -308,12 +318,22 @@
     <section>
       <p class="kicker"><span class="no">05</span> Run it yourself</p>
       <h2>The whole example is in the repo</h2>
-      <p>Nothing here is staged. The two agent versions and a script that builds the git
-        scenario and runs the gate live under
-        <code>examples/demo-code-risk/</code>. Reproduce the output above in about thirty seconds:</p>
+      <p>Nothing here is staged. The agent versions and the script that builds the git scenario
+        and runs the gate live under <code>examples/demo-code-risk/</code>. Reproduce the output
+        above in about thirty seconds:</p>
       <div class="cmd"><span class="f"># from a clone of the repo</span>
 <span class="p">$</span> pip install release-gate
-<span class="p">$</span> ./examples/demo-code-risk/build_demo.sh</div>
+<span class="p">$</span> ./examples/demo-code-risk/build_demo.sh
+
+<span class="f"># …or have the demo assert every claim on this page</span>
+<span class="p">$</span> ./examples/demo-code-risk/build_demo.sh --check
+OK &mdash; every claim in the demo docs reproduces from this run.</div>
+      <p style="margin-top:1rem"><b>And we don&rsquo;t rely on you to catch us.</b>
+        <code>--check</code> asserts the verdict, the score delta, the line numbers and the
+        provenance chain quoted on this page, and
+        <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/.github/workflows/tests.yml">CI
+        runs it on every push</a>. If the engine&rsquo;s output ever drifts from what you read here,
+        the build fails &mdash; so this page can&rsquo;t quietly become a mockup.</p>
     </section>
 
     <div class="cta">

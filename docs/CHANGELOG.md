@@ -4,6 +4,29 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🧪 The demo is now self-verifying — on GitHub and on the website
+
+The demo is the first thing a stranger runs before trusting anything else we
+claim, and it was quoted verbatim in three places that could silently drift from
+the engine. Now it proves itself:
+
+- **`./build_demo.sh --check`** asserts every claim the published pages make —
+  the BLOCK verdict, the `100 → 76` score delta, the confirmed HIGH at
+  `agent.py:25`, its traced-origin line, and the net-new scoping. It exits 1 on
+  drift.
+- **CI runs it on every push** (plus the accuracy benchmark), so a published
+  demo can never quietly become a mockup.
+- **`tests/test_demo_reproducible.py`** runs the real demo end to end and checks
+  that `examples/demo-code-risk/README.md`, the repo `README.md`, and
+  `public/demo.html` all still quote the live output.
+- **A second half was added** that demonstrates the tier contract on real files:
+  `lookalike/agent.py` (`pickle.loads(payload)`) is scanned in the same service
+  as the vulnerable agent, so one report shows a **confirmed HIGH with its chain**
+  next to an **inferred MEDIUM whose origin is unknown**. That gap — same danger
+  shape, two honest claims — is the product, and it is now the thing the demo
+  shows rather than something the README asserts.
+- The website demo page and both READMEs were regenerated from real output.
+
 ### 🔒 The three-tier evidence contract — a variable *name* can no longer produce a HIGH
 
 **Root cause.** Six false-positive fixes across six dogfooded repos (hermes,
