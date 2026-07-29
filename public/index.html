@@ -1169,6 +1169,7 @@
           <a href="#who-its-for" role="menuitem"><span class="ndp-t">Who it's for</span><span class="ndp-d">Teams shipping AI into production</span></a>
         </div>
       </li>
+      <li><a href="/demo.html">Demo</a></li>
       <li><a href="#enterprise">Pricing</a></li>
       <li><a href="research.html">Research</a></li>
       <li><a href="#faq">FAQ</a></li>
@@ -1202,6 +1203,10 @@
       🔒 Scanning a private repo?
       <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
       to grant read access — public repos work without it.
+    </p>
+    <p class="hero-scan-hint">
+      ▶ No repo handy? <a href="/demo.html"><strong>Watch it block a bad AI change</strong></a>
+      — a real pull request, real output, reproducible on your machine in 30 seconds.
     </p>
     <a href="#pr-gate" class="hero-pr-ribbon">
       <span class="hpr-badge">New</span>
@@ -2034,7 +2039,7 @@
             <li><strong>Cost &amp; reliability</strong> — uncapped LLM calls, unbounded <code>while True:</code> loops (the $5-task-becomes-$400 runaway), and unvalidated model-output parses that crash the agent.</li>
             <li><strong>Hardcoded secrets</strong> in agent code (a convenience check; use a dedicated scanner for full coverage).</li>
           </ul>
-          <div style="margin-top:8px">Each finding shows the exact file:line, a stable rule id (<code>RG-EXEC-001</code>) cited to OWASP LLM &amp; NIST AI RMF, and the fix. The analyzer parses the code (AST) with light taint tracking, not keywords — so it flags <code>eval(resp.choices[0].message.content)</code> as a confirmed HIGH but stays silent on a careful, gated tool. Precision-first: <strong>0 false positives</strong> across a 50+ repo dogfood (llama_index, crewAI, langgraph, open-interpreter). <a href="/demo.html" style="color:var(--accent);font-weight:600">Watch a rule fire →</a></div>
+          <div style="margin-top:8px">Each finding shows the exact file:line, a stable rule id (<code>RG-EXEC-001</code>) cited to OWASP LLM &amp; NIST AI RMF, and the fix. The analyzer parses the code (AST) with light taint tracking, not keywords — so it flags <code>eval(resp.choices[0].message.content)</code> as a confirmed HIGH but stays silent on a careful, gated tool. Precision-first, and checkable: <strong>100% precision on a public 67-case labeled benchmark</strong> you can re-run (<code>python benchmark/run.py</code>), where every HIGH is machine-verified to carry a provenance chain — origin line → value → sink line. A variable's <em>name</em> can never produce a HIGH. <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/benchmark/RESULTS.md" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">See the results →</a> &nbsp;·&nbsp; <a href="/demo.html" style="color:var(--accent);font-weight:600">Watch a rule fire →</a></div>
         </div>
       </details>
 
@@ -2101,6 +2106,7 @@
     <div class="footer-row">
       <div class="footer-logo"><span class="rg-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></span></div>
       <div class="footer-links">
+        <a href="/demo.html">Live demo</a>
         <a href="research.html">Research</a>
         <a href="#cli-section">CLI docs</a>
         <a href="#enterprise">Pricing</a>
