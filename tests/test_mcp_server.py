@@ -152,11 +152,19 @@ def test_bad_language_rejected():
 
 # ── analyze_snippet does real analysis, no fs/exec ───────────────────────────
 
-def test_analyze_snippet_flags_eval_on_user_input():
-    out = analyze_snippet("def h(user_input):\n    return eval(user_input)\n", "python")
+def test_analyze_snippet_flags_eval_on_request_input():
+    # Provenance-backed source → HIGH (0.9.4 tier contract).
+    out = analyze_snippet("def h(request):\n    return eval(request.json['e'])\n", "python")
     assert out["high"] >= 1
     assert any(f["title"] == "Dangerous execution sink" for f in out["findings"])
     assert out["_safety"] == SAFETY_NOTE
+
+
+def test_analyze_snippet_bare_param_is_not_high():
+    # A name alone never reaches the HIGH tier — reported at medium instead.
+    out = analyze_snippet("def h(user_input):\n    return eval(user_input)\n", "python")
+    assert out["high"] == 0
+    assert any(f["title"] == "Dangerous execution sink" for f in out["findings"])
 
 
 def test_analyze_snippet_never_returns_raw_source():

@@ -92,7 +92,7 @@ def test_findings_sorted_high_severity_first(tmp_path):
         "from openai import OpenAI\nclient = OpenAI()\n"
         "r1 = client.chat.completions.create(model='gpt-4', messages=a)\n"
         "r2 = client.chat.completions.create(model='gpt-4', messages=b)\n"
-        "def h(user_input):\n    return eval(user_input)\n")})
+        "def h(request):\n    return eval(request.json['e'])\n")})
     report = build_report(tmp_path, mode="ci")
     sevs = [f["severity"] for f in report["code_findings"]]
     assert sevs[0] in ("high", "critical")
@@ -163,11 +163,14 @@ def _clean_agent_repo(tmp_path):
 
 
 def _risky_agent_repo(tmp_path):
+    # A real request read (not a bare param name) so this stays a CONFIRMED high
+    # under the 0.9.4 tier contract — the fixture must represent a repo that
+    # genuinely deserves to be blocked.
     _make(tmp_path, {"agent.py": (
         "from openai import OpenAI\nclient = OpenAI()\n"
-        "def h(user_input):\n"
+        "def h(request):\n"
         "    client.chat.completions.create(model='gpt-4', messages=[], max_tokens=1)\n"
-        "    return eval(user_input)\n")})
+        "    return eval(request.json['expr'])\n")})
 
 
 def test_audit_mode_clean_repo_is_review_not_block(tmp_path):

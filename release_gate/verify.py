@@ -749,7 +749,12 @@ def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
         if _SECRET_RE.search(line) and _is_real_secret(line):
             findings.append(_finding(
                 "high", "Hardcoded secret / API key", rel, i, "<redacted>",
-                "Move secrets to environment variables or a secrets manager — never commit them.",
+                "Move secrets to environment variables or a secrets manager — never "
+                "commit them. Rotate this credential: it is in git history even if "
+                "you delete the line.",
+                confidence="high", basis="confirmed",
+                impact="Credential disclosure: the literal is committed to the "
+                       "repository and must be treated as compromised.",
             ))
     return findings
 
@@ -1024,7 +1029,12 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
         if _JS_SECRET_RE.search(line) and _is_real_secret(line):
             findings.append(_finding(
                 "high", "Hardcoded secret / API key", rel, i, "<redacted>",
-                "Move secrets to environment variables or a secrets manager — never commit them.",
+                "Move secrets to environment variables or a secrets manager — never "
+                "commit them. Rotate this credential: it is in git history even if "
+                "you delete the line.",
+                confidence="high", basis="confirmed",
+                impact="Credential disclosure: the literal is committed to the "
+                       "repository and must be treated as compromised.",
             ))
 
         # exec/eval sink — only when the command is DYNAMIC. A constant string
@@ -1052,23 +1062,43 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
             if escaped and not strong:
                 pass  # shell-escaped / quoted args are mitigated — not an injection
             elif model_src:
-                findings.append(_finding(
+                # Cite the exact assignment line the tainted var came from, so the
+                # JS highs carry the same checkable chain as the Python ones.
+                _src = min(((v, ln) for v, ln in model_taint.items()
+                            if ln < i and re.search(rf"\b{re.escape(v)}\b", arg_region)),
+                           key=lambda vl: vl[1])
+                f = _finding(
                     "high", "Dangerous execution sink", rel, i, stripped[:120],
-                    "eval/new Function/child_process.exec executes model output — a "
-                    "value assigned from an LLM call in this file. This is the "
+                    f"eval/new Function/child_process.exec executes `{_src[0]}`, "
+                    f"assigned from an LLM call at line {_src[1]}. This is the "
                     "CVE-2025-51472 remote-code-execution class: never eval text a "
                     "model produced; parse it (JSON/a strict grammar), or sandbox "
                     "execution.",
                     confidence="high", basis="confirmed",
-                    impact="Remote code execution: model output reaches this sink."))
+                    impact="Remote code execution: model output reaches this sink.")
+                f["provenance"] = {"origin_line": _src[1], "origin_expr": "an LLM call",
+                                   "value": _src[0], "sink_line": i}
+                findings.append(f)
             elif interpolated and strong:
-                findings.append(_finding(
+                # Locate the line in the 3-line window where the request/model
+                # marker actually appears — that is the origin we can point at.
+                _oline = i
+                for _k in range(max(0, i - 3), i + 1):
+                    if _JS_STRONG_INPUT_RE.search(lines[_k]):
+                        _oline = _k
+                        break
+                f = _finding(
                     "high", "Dangerous execution sink", rel, i, stripped[:120],
                     "eval/new Function/child_process.exec executes a value that reaches "
-                    "it from request/model input — remote code execution. Use a fixed "
-                    "argument list, or strictly validate/sandbox the input.",
+                    f"it from request/model input (line {_oline}) — remote code "
+                    "execution. Use a fixed argument list, or strictly validate/"
+                    "sandbox the input.",
                     confidence="high", basis="confirmed",
-                    impact="Remote code execution: external input reaches this sink."))
+                    impact="Remote code execution: external input reaches this sink.")
+                f["provenance"] = {"origin_line": _oline,
+                                   "origin_expr": "request/model input",
+                                   "value": "the interpolated value", "sink_line": i}
+                findings.append(f)
             elif js_is_agent:
                 # Agent code, but no proven model/request source reaching the sink —
                 # a quiet LOW nudge ("confirm no model output reaches it"), matching

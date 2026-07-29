@@ -32,6 +32,34 @@ def test_recall_floor():
     assert _res()["recall"] >= 0.90
 
 
+def test_every_high_is_confirmed_and_provenance_backed():
+    """THE HIGH-TIER INVARIANT (0.9.4) — the CI floor that keeps HIGHs watertight.
+
+    A HIGH is the only thing we ask a maintainer to act on, so across the whole
+    corpus every HIGH must be `basis=confirmed`, and every HIGH from a
+    taint-based rule must carry a provenance chain (origin line → value → sink
+    line) a reader can open and check. If a future rule tries to grade a
+    name-hint guess as HIGH, this fails.
+    """
+    v = _res()["high_tier_violations"]
+    assert v == [], f"HIGH-tier integrity violated: {v}"
+
+
+def test_a_bare_name_hint_can_never_produce_a_high():
+    """The root-cause regression guard, stated directly.
+
+    `payload` was AutoGPT's own HMAC-signed cache bytes; `func_body` was
+    langflow's own template. Both were reported as confirmed RCE because of how
+    they were SPELLED. Whatever else changes, that must never come back.
+    """
+    from release_gate.agent_analysis import analyze_python
+    for name in ("payload", "body", "request_data", "user_input", "func_body"):
+        src = f"import pickle\ndef h({name}):\n    return pickle.loads({name})\n"
+        for f in analyze_python(src, "x.py"):
+            assert f["severity"] not in ("high", "critical"), \
+                f"a bare parameter named {name!r} produced a HIGH: {f['title']}"
+
+
 def test_results_md_in_sync():
     doc = Path(__file__).resolve().parent.parent / "benchmark" / "RESULTS.md"
     # encoding pinned to utf-8: the file has em-dashes; Path.read_text() would

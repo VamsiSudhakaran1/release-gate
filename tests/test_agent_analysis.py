@@ -61,10 +61,17 @@ def test_real_openai_call_without_ceiling():
     assert "LLM call with no token ceiling" in titles(src)
 
 
-def test_eval_on_user_input_is_high():
+def test_eval_on_bare_param_is_medium_inferred_not_high():
+    # TIER CONTRACT (0.9.4): a parameter merely NAMED `user_input` does not prove
+    # the origin — we cannot cite a line where it came from outside. The exec sink
+    # is real, so we still report it, but at the inferred/MEDIUM tier that asks
+    # the reader to confirm the source. A name must never mint a HIGH.
     src = "def handler(user_input):\n    return eval(user_input)\n"
-    fs = analyze_python(src, "x.py")
-    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
+    fs = [f for f in analyze_python(src, "x.py")
+          if f["title"] == "Dangerous execution sink"]
+    assert fs, "the exec sink itself must still be reported"
+    assert fs[0]["severity"] == "medium"
+    assert fs[0]["basis"] == "inferred"
 
 
 def test_os_system_dynamic_from_request():
@@ -168,11 +175,27 @@ def test_method_named_exec_not_a_sink():
     assert "Dangerous execution sink" not in titles(src)
 
 
-def test_os_popen_with_tainted_input_flagged_high():
-    # os.popen reachable from user/model input → high (the agent-specific case)
+def test_os_popen_with_named_param_is_reported_but_not_high():
+    # Still reported (the sink is real); tier follows provenance, not the name.
     src = "import os\ndef run(user_input):\n    return os.popen(user_input).read()\n"
-    fs = analyze_python(src, "x.py")
-    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs)
+    fs = [f for f in analyze_python(src, "x.py")
+          if f["title"] == "Dangerous execution sink"]
+    assert fs and fs[0]["severity"] == "medium" and fs[0]["basis"] == "inferred"
+
+
+def test_os_popen_from_real_request_read_is_confirmed_high():
+    # The provenance-backed counterpart: a real read off the request object is
+    # visible evidence, so it earns HIGH — and carries a citable chain.
+    src = ("import os\n"
+           "def run(request):\n"
+           "    cmd = request.args['c']\n"
+           "    return os.popen(cmd).read()\n")
+    fs = [f for f in analyze_python(src, "x.py")
+          if f["title"] == "Dangerous execution sink"]
+    assert fs and fs[0]["severity"] == "high" and fs[0]["basis"] == "confirmed"
+    prov = fs[0]["provenance"]
+    assert prov["origin_line"] == 3 and prov["sink_line"] == 4
+    assert "request.args" in prov["origin_expr"]
 
 
 def test_secret_key_name_not_flagged():
@@ -821,10 +844,11 @@ def test_hint_matching_is_token_based_not_substring():
     src = "import openai\ndef f(context, database):\n    eval(context)\n    os.system(database)\n"
     fs = analyze_python(src, "x.py")
     assert not any(f["title"] == "Dangerous execution sink" for f in fs)
-    # Real hints still match through snake_case: user_input → eval is high.
+    # Real hints still match through snake_case: user_input → eval is reported
+    # (at the inferred tier — see test_eval_on_bare_param_is_medium_inferred).
     src2 = "def f(user_input):\n    eval(user_input)\n"
     fs2 = analyze_python(src2, "x.py")
-    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high" for f in fs2)
+    assert any(f["title"] == "Dangerous execution sink" for f in fs2)
 
 
 def test_inferred_exec_sink_is_medium_not_high():
@@ -992,13 +1016,26 @@ def test_subprocess_string_command_fstring_from_input_is_flagged():
     # injection). Bare `subprocess.run(cmd_list)` stays quiet (a list is safe).
     src = "import subprocess\ndef run(user_input):\n    subprocess.run(f'ls {user_input}')\n"
     hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
-    assert hits and hits[0]["severity"] == "high"
+    # Reported; MEDIUM because `user_input` is a bare param with no visible origin.
+    assert hits and hits[0]["severity"] == "medium"
 
 
 def test_subprocess_string_command_concat_is_flagged():
-    src = "import subprocess\ndef run(request):\n    subprocess.check_output('grep ' + request.q)\n"
+    # A real request read (`request.args`) is visible provenance → confirmed HIGH.
+    src = ("import subprocess\n"
+           "def run(request):\n"
+           "    subprocess.check_output('grep ' + request.args['q'])\n")
     assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
-               for f in _findings(src))
+               and f["basis"] == "confirmed" for f in _findings(src))
+
+
+def test_nonstandard_attr_on_request_object_is_not_confirmed():
+    # TIER CONTRACT: we confirm on a real request DATA read (.args/.json/.form…),
+    # not on any attribute of an object that happens to be named `request` —
+    # `request.q` could be any object. Reported, but at the inferred tier.
+    src = "import subprocess\ndef run(request):\n    subprocess.check_output('grep ' + request.q)\n"
+    hits = [f for f in _findings(src) if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["basis"] == "inferred"
 
 
 def test_subprocess_constant_string_command_stays_quiet():
@@ -1359,14 +1396,18 @@ def test_compile_for_validation_not_flagged():
     assert not any("execution sink" in f["title"].lower() for f in analyze_python(src, "validate.py"))
 
 
-def test_compile_then_exec_still_high():
+def test_compile_then_exec_still_reported():
     # Recall guard: compile() whose output is exec()'d in the same function is a
-    # real code-execution sink.
+    # real code-execution sink and must still be reported. It is MEDIUM, not
+    # HIGH: `func_body` is a bare parameter — this is exactly the langflow case
+    # where the old engine asserted a confirmed RCE on the strength of the token
+    # "body" in a variable name.
     src = ("def build(func_body):\n"
            "    compiled = compile(func_body, '<string>', 'exec')\n"
            "    exec(compiled, globals(), {})\n")
-    assert any(f["title"] == "Dangerous execution sink" and f["severity"] == "high"
-               for f in analyze_python(src, "flow.py"))
+    hits = [f for f in analyze_python(src, "flow.py")
+            if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "medium" and hits[0]["basis"] == "inferred"
 
 
 def test_mcp_list_changed_notification_not_irreversible():
@@ -1394,3 +1435,88 @@ def test_allowlisted_placeholder_secret_not_flagged():
     assert _is_real_secret("jwt_secret_key = 'this-is-a-test-secret'") is False
     # Recall guard: a real provider key still trips.
     assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5dE0fG"') is True
+
+
+# ── 0.9.4 tier contract: provenance decides the tier, never the variable name ──
+
+def test_i18n_catalog_retrieve_is_not_untrusted_retrieval():
+    # crewAI planner_observer.py: I18N_DEFAULT.retrieve("planning", "…") is a
+    # translation-catalog lookup by CONSTANT key — the project's own prompt
+    # template. Putting it in the system role is how a system prompt is built.
+    src = ('def build(task_desc):\n'
+           '    system_prompt = I18N_DEFAULT.retrieve("planning", "obs_system_prompt")\n'
+           '    return [{"role": "system", "content": system_prompt},\n'
+           '            {"role": "user", "content": task_desc}]\n')
+    assert not any(f["rule_id"] == "RG-PROMPT-002"
+                   for f in analyze_python(src, "planner.py"))
+
+
+def test_real_retriever_call_still_confirmed_untrusted():
+    # Recall guard: a retriever driven by a QUERY VALUE returns world-data, and
+    # putting it in the system channel is still a confirmed HIGH — with a chain.
+    src = ('def build(retriever, question):\n'
+           '    docs = retriever.retrieve(question)\n'
+           '    return [{"role": "system", "content": f"Notes: {docs}"}]\n')
+    hits = [f for f in analyze_python(src, "rag.py") if f["rule_id"] == "RG-PROMPT-002"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+    assert hits[0]["provenance"]["origin_line"] == 2
+
+
+def test_every_high_carries_a_checkable_provenance_chain():
+    # A HIGH must always name the origin line, the value, and the sink line, so a
+    # reviewer can open the file and verify the claim without trusting us.
+    src = ("import os\n"
+           "def h(request):\n"
+           "    cmd = request.json['c']\n"
+           "    os.system(cmd)\n")
+    hits = [f for f in analyze_python(src, "x.py") if f["severity"] == "high"]
+    assert hits
+    p = hits[0]["provenance"]
+    assert p["origin_line"] == 3 and p["sink_line"] == 4 and p["value"] == "cmd"
+    assert "request.json" in hits[0]["evidence"] and "L3" in hits[0]["evidence"]
+
+
+def test_tier_ceiling_is_enforced_centrally():
+    # Even if a rule asks for HIGH, a non-confirmed basis is clamped down. This
+    # is the structural guarantee: no future rule can leak a name-inferred HIGH.
+    from release_gate.agent_analysis import _Analyzer
+    import ast
+    a = _Analyzer("x.py")
+    node = ast.parse("x = 1").body[0]
+    f = a._f("high", "Dangerous execution sink", node, "r", basis="inferred")
+    assert f["severity"] == "medium"
+    f2 = a._f("high", "Dangerous execution sink", node, "r", basis="heuristic")
+    assert f2["severity"] == "low"
+
+
+def test_model_output_to_shell_is_confirmed_with_chain():
+    # The flagship agent risk end-to-end: LLM call → extraction → shell sink.
+    src = ("import os\n"
+           "from openai import OpenAI\n"
+           "client = OpenAI()\n"
+           "def run():\n"
+           "    resp = client.chat.completions.create(model='gpt-4', messages=[], max_tokens=9)\n"
+           "    cmd = resp.choices[0].message.content\n"
+           "    os.system(cmd)\n")
+    hits = [f for f in analyze_python(src, "agent.py")
+            if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+    # Origin cites the LLM call line (5), not the extraction line.
+    assert hits[0]["provenance"]["origin_line"] == 5
+
+
+def test_provenance_does_not_leak_across_functions():
+    # Taint is intra-procedural. `payload = request.json[...]` in one handler must
+    # not make an unrelated `def load_cache(payload)` look request-derived — the
+    # exact cross-scope confusion that would resurrect name-based HIGHs.
+    src = ("import os, pickle\n"
+           "def handle(request):\n"
+           "    payload = request.json['c']\n"
+           "    os.system('run ' + payload)\n"
+           "def load_cache(payload):\n"
+           "    return pickle.loads(payload)\n")
+    fs = analyze_python(src, "x.py")
+    confirmed_lines = [f["line"] for f in fs if f["basis"] == "confirmed"]
+    assert 4 in confirmed_lines, "the real request-derived flow must stay HIGH"
+    leaked = [f for f in fs if f["line"] == 6 and f["severity"] == "high"]
+    assert not leaked, f"provenance leaked into another function: {leaked}"

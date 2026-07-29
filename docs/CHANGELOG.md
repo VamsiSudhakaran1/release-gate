@@ -4,6 +4,74 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🔒 The three-tier evidence contract — a variable *name* can no longer produce a HIGH
+
+**Root cause.** Six false-positive fixes across six dogfooded repos (hermes,
+AutoGPT, langflow, firecrawl, gemini-cli, mcp-context-forge) were six patches to
+six *code idioms*. They shared one defect underneath: the analyzer's
+confirmed/HIGH tier could be minted from a **variable name**. `_reaching_taint`
+treated a name matching `request`/`body`/`payload`/`user_input` as proof of
+external input, so the tier reflected how a value was *spelled*, not where it
+came from. AutoGPT's `payload` was its own HMAC-signed cache bytes; langflow's
+`func_body` was its own template — both were reported as *confirmed remote code
+execution*. Patching idioms one repo at a time could never converge, because the
+space of naming conventions in real codebases is unbounded.
+
+**Repercussion if left as-is.** Every new large repo was one unusual naming
+convention away from a confirmed HIGH on the maintainer's own trusted data. That
+is the failure mode that ends a security tool: a HIGH is the only thing we ask a
+maintainer to act on, and a single bad one costs more credibility than ten missed
+MEDIUMs. It also silently corrupted everything keyed on `basis == "confirmed"` —
+the `public-advisory` outreach lens and CI's confirmed-only gate — so a name
+guess could BLOCK a pipeline or be mailed to a stranger as a vulnerability report.
+
+**The fix — tier follows provenance, never spelling:**
+
+| Tier | Max severity | Requires |
+|---|---|---|
+| `confirmed` | **high** | A traced origin visible in this file, with an origin line to cite |
+| `inferred` | **medium** | Real dangerous structure, origin guessed from a name |
+| `heuristic` | **low** | Pattern present in agent code; no flow established |
+
+- **A provenance ledger** records where each tainted value actually came from, so
+  every HIGH now carries a machine-readable `provenance` block and an evidence
+  chain a reviewer can open and check:
+  `request.json (L7) -> \`payload\` -> os.system() (L8)`.
+- **Real external input is still confirmed** — but it must be a genuine read off
+  a request object (`request.json`, `request.args[...]`), inline or assigned,
+  rather than a variable that merely looks like one. Model-output, retrieval,
+  HTTP and tool provenance were already traced and are unchanged.
+- **The ceiling is enforced centrally** in `_f()`, not at call sites, so no
+  future rule can leak a name-inferred HIGH even by mistake.
+- **Taint no longer leaks across functions.** The ledger is snapshotted per
+  function and parameters shadow inherited entries, so `payload = request.json[…]`
+  in one handler cannot make an unrelated `def load_cache(payload)` look
+  request-derived.
+- **A new corpus-wide invariant**, `high_tier_violations`, machine-checks that
+  *every* HIGH the engine emits anywhere in the benchmark is `confirmed` and —
+  for taint-based rules — provenance-backed. It is a CI floor
+  (`test_every_high_is_confirmed_and_provenance_backed`), so this cannot regress.
+
+**It immediately paid for itself.** The new invariant caught a live HIGH false
+positive no case had covered: crewAI's `I18N_DEFAULT.retrieve("planning",
+"observation_system_prompt")` was read as untrusted RAG retrieval, when it is a
+translation-catalog lookup by constant key — the project's *own* prompt template.
+A `.retrieve()` whose arguments are all string literals is now a static lookup,
+not world-data, and i18n/template/config receivers are excluded.
+
+**Messaging was rewritten per tier.** A confirmed finding states the traced
+origin and line and what an attacker gains; an inferred finding says plainly that
+the origin is *not* visible and asks the reader to confirm it ("this is a lead to
+check, not a confirmed vulnerability"); a heuristic finding says it is a placement
+nudge, not a detected vulnerability. Hardcoded secrets are now correctly
+`confirmed` (the committed literal *is* the evidence) and advise rotation.
+
+**Recall held.** 67 cases, 100% precision, recall 94.1% (up from 93.3%), 0
+HIGH-tier violations, and 0 highs across a 15-framework dogfood corpus. Detection
+did not change — every rule still fires on every vulnerable case; what changed is
+the *claim* attached to it. Bare-parameter cases (`eval(user_input)`,
+`compile(func_body)+exec()`) are still reported, now as MEDIUM/inferred.
+
 ### 🎯 Precision — MCP protocol notifications + allowlisted placeholder secrets (mcp-context-forge)
 
 Fixed two confirmed false-positive classes found dogfooding **IBM/mcp-context-forge**

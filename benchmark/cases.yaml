@@ -720,3 +720,68 @@ cases:
       def demo():
           secret = "this-is-a-long-test-secret-key-32chars"  # pragma: allowlist secret
           return secret
+
+  # ── The 0.9.4 tier contract: provenance decides the tier, never the name ────
+  # These pair a name-only lookalike against its provenance-backed twin. Both
+  # still emit the rule (recall is unchanged); what differs is the CLAIM tier,
+  # which the high_tier_violations audit checks corpus-wide.
+  - id: tier-exec-request-read-confirmed-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "Provenance-backed external input: a real read off a request object gives a citable origin line, so this earns the confirmed/HIGH tier"
+    code: |
+      import os
+      def handler(request):
+          cmd = request.args["c"]
+          os.system("run " + cmd)
+
+  - id: tier-exec-bare-param-name-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-002]
+    source: "AutoGPT/langflow class: a parameter merely NAMED payload proves nothing about its origin. Still reported (the sink is real) but capped at inferred/MEDIUM — asserting confirmed RCE here is the credibility-killing overclaim 0.9.4 removed"
+    code: |
+      import pickle
+      def load(payload):
+          return pickle.loads(payload)
+
+  - id: tier-model-output-to-shell-confirmed-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "Model output traced from an LLM call in scope to a shell sink — the flagship agent risk, confirmed with an origin line"
+    code: |
+      import os
+      from openai import OpenAI
+      client = OpenAI()
+      def run():
+          resp = client.chat.completions.create(model="gpt-4", messages=[], max_tokens=64)
+          cmd = resp.choices[0].message.content
+          os.system(cmd)
+
+  - id: prompt002-i18n-catalog-retrieve-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "crewAI planner_observer.py — I18N_DEFAULT.retrieve('planning', 'observation_system_prompt') is a translation-catalog lookup by constant key, i.e. the project's OWN prompt template. Putting it in the system role is how a system prompt is built, not indirect injection"
+    code: |
+      def build_messages(task_desc):
+          system_prompt = I18N_DEFAULT.retrieve("planning", "observation_system_prompt")
+          return [
+              {"role": "system", "content": system_prompt},
+              {"role": "user", "content": task_desc},
+          ]
+
+  - id: prompt002-real-rag-retrieve-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-PROMPT-002]
+    source: "The provenance-backed counterpart: a real retriever call driven by a query variable returns world-data; placing it in the system role is indirect prompt injection"
+    code: |
+      def build_messages(retriever, question):
+          docs = retriever.retrieve(question)
+          return [
+              {"role": "system", "content": f"Use these notes: {docs}"},
+              {"role": "user", "content": question},
+          ]

@@ -27,13 +27,49 @@ from release_gate.verify import _scan_file, _scan_js_file  # noqa: E402
 ROOT = Path(__file__).resolve().parent
 
 
-def _rule_ids(case) -> set:
+def _findings(case) -> list:
     code, lang = case["code"], case.get("lang", "py")
     if lang in ("ts", "js", "tsx", "jsx"):
-        findings = _scan_js_file(f"case.{lang}", code)
-    else:
-        findings = _scan_file("case.py", code)
-    return {f.get("rule_id") for f in findings if f.get("rule_id")}
+        return _scan_js_file(f"case.{lang}", code)
+    return _scan_file("case.py", code)
+
+
+def _rule_ids(case) -> set:
+    return {f.get("rule_id") for f in _findings(case) if f.get("rule_id")}
+
+
+# Rules whose HIGH tier is backed by a traced value, and so must carry a
+# provenance chain. Rules that grade HIGH on STRUCTURE alone (a system-prompt
+# constructor, an unbounded loop) are proven by the shape of the code itself,
+# so they assert confirmed without a value chain.
+_TAINT_RULES = {"RG-EXEC-001", "RG-EXEC-004", "RG-ACTION-002", "RG-ACTION-003",
+                "RG-ACTION-004", "RG-PROMPT-002"}
+
+
+def audit_high_tier(cases) -> list:
+    """THE HIGH-TIER INVARIANT — the check that keeps HIGHs watertight.
+
+    Every HIGH the engine emits anywhere in the corpus must be `confirmed`, and
+    every HIGH from a taint-based rule must carry a `provenance` block with the
+    origin and sink line numbers. A reader can then open those two lines and
+    check the claim. Violations are returned; the test suite fails on any.
+
+    This exists because a HIGH is the only thing we ask a maintainer to act on.
+    Before 0.9.4 a variable NAME could mint one, and each such HIGH that turned
+    out to be the project's own trusted data cost more credibility than ten
+    missed MEDIUMs would have.
+    """
+    violations = []
+    for c in cases:
+        for f in _findings(c):
+            if f.get("severity") not in ("high", "critical"):
+                continue
+            rid, basis = f.get("rule_id"), f.get("basis")
+            if basis != "confirmed":
+                violations.append((c["id"], rid, f"HIGH with basis={basis!r}"))
+            elif rid in _TAINT_RULES and not f.get("provenance"):
+                violations.append((c["id"], rid, "HIGH with no provenance chain"))
+    return violations
 
 
 def evaluate(cases) -> dict:
@@ -73,6 +109,7 @@ def evaluate(cases) -> dict:
         "f1": round(2 * pr(tp, fp) * pr(tp, fn) / (pr(tp, fp) + pr(tp, fn)), 4)
               if (pr(tp, fp) + pr(tp, fn)) else 0.0,
         "clean_quiet_rate": round(clean_quiet / clean_total, 4) if clean_total else 1.0,
+        "high_tier_violations": audit_high_tier(cases),
         "per_rule": {k: {**v, "precision": pr(v["tp"], v["fp"]),
                          "recall": pr(v["tp"], v["fn"])}
                      for k, v in sorted(per_rule.items())},
@@ -97,6 +134,17 @@ def render_md(res: dict) -> str:
          f"| F1 | {res['f1']:.3f} |",
          f"| Clean cases kept quiet (no false positive) | **{res['clean_quiet_rate']:.1%}** |",
          f"| True pos · False pos · False neg | {res['tp']} · {res['fp']} · {res['fn']} |",
+         f"| HIGH-tier integrity violations | **{len(res['high_tier_violations'])}** |",
+         "",
+         "### The HIGH-tier invariant", "",
+         "Every HIGH in this corpus is machine-checked to be `basis=confirmed` "
+         "**and** — for the taint-based rules — to carry a `provenance` block "
+         "naming the origin line, the value, and the sink line. A HIGH is the "
+         "only thing we ask a maintainer to act on, so it may never rest on a "
+         "variable *name*: `payload` was AutoGPT's own HMAC-signed cache, "
+         "`func_body` was langflow's own template, and both were reported as "
+         "confirmed RCE on the strength of their spelling. Since 0.9.4 a name "
+         "yields at most a MEDIUM that asks you to confirm the source.",
          "", "## Per-rule", "", "| Rule | TP | FP | FN | Precision | Recall |",
          "|---|---|---|---|---|---|"]
     for rid, d in res["per_rule"].items():
@@ -147,6 +195,12 @@ def main() -> int:
     print(f"cases={res['cases']}  precision={res['precision']:.1%}  "
           f"recall={res['recall']:.1%}  clean-quiet={res['clean_quiet_rate']:.1%}  "
           f"(TP {res['tp']} · FP {res['fp']} · FN {res['fn']})")
+    hv = res["high_tier_violations"]
+    status = ("OK — every HIGH is confirmed + provenance-backed" if not hv
+              else f"{len(hv)} VIOLATION(S)")
+    print(f"high-tier integrity: {status}")
+    for cid, rid, why in hv:
+        print(f"  VIOLATION: {cid} -> {rid}: {why}")
     for cid, kind, rid in res["misclassified"]:
         print(f"  {kind}: {cid} -> {rid}")
     return 0

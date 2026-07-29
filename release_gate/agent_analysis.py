@@ -20,7 +20,63 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+
+# ── Evidence tiers ───────────────────────────────────────────────────────────
+# Three tiers, and the tier is the CONTRACT for what we are allowed to claim.
+#
+#   CONFIRMED  → may be HIGH.  We traced the value to an origin we can SEE in
+#                this file and can print the chain (origin line → var → sink
+#                line). "Watertight" means: a reader can open the file at those
+#                two line numbers and check us. No name heuristic may ever
+#                produce this tier.
+#   INFERRED   → capped at MEDIUM. The dangerous STRUCTURE is proven (there is
+#                really an exec sink / a system prompt / an irreversible tool),
+#                but the value's origin is a guess from its NAME. We must say
+#                so in the finding and ask the reader to confirm the source.
+#   HEURISTIC  → capped at LOW. Pattern present in agent code; neither the flow
+#                nor the source is established. Advisory nudge only.
+#
+# Root cause this encodes: before 0.9.4 a bare variable NAME (`payload`, `body`)
+# could mint a CONFIRMED HIGH. A name is a guess wearing the costume of a fact —
+# AutoGPT's `payload` was its own HMAC-signed cache bytes, and we called it
+# remote code execution. One bad HIGH costs more trust than ten missed MEDIUMs,
+# so the tier is now derived from provenance, never from spelling.
+CONFIRMED = "confirmed"
+INFERRED = "inferred"
+HEURISTIC = "heuristic"
+# Severity ceiling per tier — enforced centrally in _f() so no call site can
+# leak a name-inferred HIGH by passing severity="high" directly.
+TIER_MAX_SEVERITY = {CONFIRMED: "high", INFERRED: "medium", HEURISTIC: "low"}
+_SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+class Taint(NamedTuple):
+    """A tainted value reaching a sink, with the evidence that backs the claim.
+
+    `origin_line`/`origin_expr` are populated only for the CONFIRMED tier — they
+    are what makes a HIGH reproducible: the exact line the value came from.
+    """
+    name: str            # the variable reaching the sink
+    source: str          # human label for where it came from
+    tier: str            # CONFIRMED | INFERRED | HEURISTIC
+    origin_line: int = 0     # line the value was assigned from its source
+    origin_expr: str = ""    # the source expression, e.g. "request.json"
+
+    @property
+    def confirmed(self) -> bool:
+        return self.tier == CONFIRMED
+
+    def chain(self, sink_line: int, sink: str) -> str:
+        """A citable provenance chain: `request.json` (L42) -> body -> pickle.loads() (L87).
+
+        Below the confirmed tier there is no origin to cite — that is the honest
+        point — so the chain says so instead of dressing a guess up as a trace.
+        """
+        if self.tier == CONFIRMED and self.origin_line:
+            return (f"{self.origin_expr} (L{self.origin_line}) -> "
+                    f"`{self.name}` -> {sink} (L{sink_line})")
+        return f"`{self.name}` -> {sink} (L{sink_line}) — origin unknown ({self.source})"
 
 # ── Known LLM SDK surface ────────────────────────────────────────────────────
 LLM_IMPORT_ROOTS = {
@@ -156,6 +212,27 @@ HTTP_BODY_ATTRS = {"text", "content", "json", "read", "body"}
 # A locally-defined function decorated as an agent tool: its RETURN is world-data
 # the tool fetched, not developer instruction.
 TOOL_DECORATOR_HINTS = ("tool", "function_tool", "register_tool")
+
+# ── PROVEN external input: a real web-request object read ────────────────────
+# This is the REPLACEMENT for "the variable is spelled `request`/`body`". We no
+# longer trust the name; we require an actual read off a request object, which
+# gives us an origin line to cite. `body = request.json` is confirmed external
+# input; `def handle(body)` is not (it's inferred — the caller may pass anything).
+# Objects that ARE a web request: the framework globals plus conventional
+# handler-parameter names, but only when something is READ OFF them.
+REQUEST_OBJECT_NAMES = {"request", "req", "flask_request", "starlette_request"}
+# Attributes/methods on a request object that yield caller-controlled data.
+REQUEST_DATA_ATTRS = {
+    "json", "form", "args", "data", "body", "values", "files", "query_params",
+    "path_params", "query", "params", "headers", "cookies", "get_json",
+    "stream", "content", "text", "POST", "GET",
+}
+# Direct stdlib/CLI reads of outside-the-process input. `input()` and `sys.argv`
+# are the OPERATOR at a terminal, not a remote attacker — deliberately excluded:
+# asserting "remote code execution" on a CLI's own argv is the overclaim that
+# gets a report dismissed. Webhook/event payloads passed to a handler are the
+# real remote surface but arrive as params, so they stay INFERRED by design.
+EXTERNAL_READ_CALLS = {"recv", "recvfrom", "read_message", "receive"}
 # Unambiguous system/instruction-channel constructors (LangChain / LangGraph).
 SYSTEM_MSG_CTORS = {"SystemMessage", "SystemMessagePromptTemplate"}
 
@@ -513,6 +590,16 @@ class _Analyzer(ast.NodeVisitor):
         self.secret_env_vars: Set[str] = set()
         # RG-PARSE-001: nesting inside a `try:` BODY — a parse there is guarded.
         self._try_depth = 0
+        # ── The provenance ledger — what makes a CONFIRMED finding checkable ──
+        # var name -> (origin_line, origin_expression). Written ONLY where we can
+        # actually see the value's source in this file (a model call, a retrieval
+        # /HTTP/tool read, a request-object read), never from a name hint. A HIGH
+        # is allowed to exist only if its value appears in here, so every HIGH can
+        # print "origin (L42) -> var -> sink (L87)" and be checked by a reader.
+        self.provenance: Dict[str, Tuple[int, str]] = {}
+        # Vars proven to hold caller-controlled web-request data (`request.json`).
+        # This replaces the old "is it SPELLED request/body?" test.
+        self.request_derived: Set[str] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -570,6 +657,8 @@ class _Analyzer(ast.NodeVisitor):
             for t in targets:
                 self.tainted.add(t)
                 self.tainted_model.add(t)
+            self._record_provenance(targets, node.lineno,
+                                    (_dotted(node.value.func) or "an LLM call") + "()")
         # x = generate_blender_code(...) — assigned from a locally-named LLM
         # codegen helper. The SDK call is hidden inside the helper, so this is
         # inferred (not confirmed) model output; it only bites at an exec/eval
@@ -600,6 +689,12 @@ class _Analyzer(ast.NodeVisitor):
                     self.tainted.add(t)
                     self.tainted_model.add(t)
                     self.model_extracted.add(t)
+                # Cite the LLM call's own line when the chain roots in a known
+                # response var; otherwise this extraction line is the origin.
+                orig = self.provenance.get(croot) if croot else None
+                self._record_provenance(targets, orig[0] if orig else node.lineno,
+                                        orig[1] if orig else
+                                        (_dotted(node.value) or "the model response"))
             elif croot and croot in self.tainted:
                 for t in targets:
                     self.tainted.add(t)
@@ -643,12 +738,37 @@ class _Analyzer(ast.NodeVisitor):
                 self.tainted.add(t)
                 if is_http:
                     self.http_response_vars.add(t)
+            self._record_provenance(targets, node.lineno,
+                                    _dotted(val.func) or "an external source")
         elif isinstance(val, (ast.Attribute, ast.Subscript, ast.Call)):
             croot = _chain_root(val)
             if croot and croot in self.untrusted_provenance:
                 for t in targets:
                     self.untrusted_provenance.add(t)
                     self.tainted.add(t)
+                # Carry the ORIGINAL origin through the hop, so
+                # `body = resp.text` still cites the requests.get() line.
+                orig = self.provenance.get(croot)
+                if orig:
+                    self._record_provenance(targets, orig[0], orig[1])
+        # PROVEN external input: a read off a real request object. This is the
+        # only path that may mint a CONFIRMED "external user/request input"
+        # claim — a variable merely NAMED `body`/`payload` no longer can.
+        req_expr = self._request_read_expr(val)
+        if req_expr:
+            for t in targets:
+                self.request_derived.add(t)
+                self.tainted.add(t)
+            self._record_provenance(targets, node.lineno, req_expr)
+        elif isinstance(val, (ast.Attribute, ast.Subscript, ast.Call)):
+            croot = _chain_root(val)
+            if croot and croot in self.request_derived:
+                for t in targets:
+                    self.request_derived.add(t)
+                    self.tainted.add(t)
+                orig = self.provenance.get(croot)
+                if orig:
+                    self._record_provenance(targets, orig[0], orig[1])
         # RG-SECRET-002 sources. A credential-shaped literal → high tier; an
         # os.environ read, or a secret/PII-shaped target name → medium tier.
         if isinstance(val, ast.Constant) and isinstance(val.value, str) \
@@ -661,6 +781,38 @@ class _Analyzer(ast.NodeVisitor):
                 if _hint_match(t, SECRET_NAME_HINTS):
                     self.secret_env_vars.add(t)
         self.generic_visit(node)
+
+    # -- PROVEN external input: a read off a real web-request object ---------
+    def _request_read_expr(self, node: ast.AST) -> Optional[str]:
+        """The source expression if `node` reads caller-controlled data off a
+        request object (`request.json`, `await request.body()`, `req.args['q']`),
+        else None. Requires a real read off a request OBJECT — a variable merely
+        NAMED `body` does not qualify. That distinction is the whole point: it is
+        what turns a name-guess into a citable origin line."""
+        if isinstance(node, ast.Await):
+            node = node.value
+        if isinstance(node, ast.Call):
+            inner = self._request_read_expr(node.func)
+            return f"{inner}()" if inner else None
+        if isinstance(node, ast.Subscript):
+            return self._request_read_expr(node.value)
+        if isinstance(node, ast.Attribute):
+            if node.attr not in REQUEST_DATA_ATTRS:
+                # Allow one level of chaining: request.json["x"].get(...) is
+                # handled by the Subscript/Call arms; anything else is not a read.
+                return None
+            root = _root_name(node)
+            base = _dotted(node.value) or ""
+            # `request.json`, `self.request.json`, `flask.request.args`.
+            if root in REQUEST_OBJECT_NAMES or base.split(".")[-1] in REQUEST_OBJECT_NAMES:
+                return _dotted(node) or f"{base}.{node.attr}"
+        return None
+
+    def _record_provenance(self, targets, line: int, expr: str):
+        """Note that each target var came from `expr` at `line` — the evidence a
+        CONFIRMED finding cites. First write wins (the original origin)."""
+        for t in targets:
+            self.provenance.setdefault(t, (line, expr))
 
     @staticmethod
     def _is_env_read(node: ast.AST) -> bool:
@@ -688,7 +840,23 @@ class _Analyzer(ast.NodeVisitor):
     # -- RG-PROMPT-002: is this call an untrusted external source? -----------
     def _is_retrieval_call(self, node: ast.Call) -> bool:
         f = node.func
-        return isinstance(f, ast.Attribute) and f.attr in RETRIEVAL_METHODS
+        if not (isinstance(f, ast.Attribute) and f.attr in RETRIEVAL_METHODS):
+            return False
+        # A retrieval whose arguments are ALL string literals is a STATIC LOOKUP
+        # by a fixed key, not a semantic search over world-data. crewAI's
+        # `I18N_DEFAULT.retrieve("planning", "observation_system_prompt")` fetches
+        # the project's OWN prompt template out of a translation catalog — putting
+        # it in the system channel is how the prompt is BUILT, not injection.
+        # A real RAG read is driven by a query value, not two constants.
+        if node.args and _is_all_constant(list(node.args)) and not node.keywords:
+            return False
+        # An i18n / config / template catalog is never a retrieval corpus,
+        # whatever it names its accessor.
+        recv = (_dotted(f.value) or "").lower()
+        if any(h in recv for h in ("i18n", "_i18n", "translation", "locale",
+                                   "catalog", "template", "prompts", "config")):
+            return False
+        return True
 
     def _is_http_call(self, node: ast.Call) -> bool:
         f = node.func
@@ -707,6 +875,12 @@ class _Analyzer(ast.NodeVisitor):
     def _untrusted_source_call(self, node: ast.Call) -> bool:
         return (self._is_retrieval_call(node) or self._is_http_call(node)
                 or self._is_tool_call(node))
+
+    def _prov_taint(self, name: str, label: str) -> Taint:
+        """Build a CONFIRMED Taint for a var already proven untrusted, so the
+        RG-PROMPT-002 highs carry the same citable chain as the sink rules."""
+        line, expr = self.provenance.get(name, (0, ""))
+        return Taint(name, label, CONFIRMED, line, expr)
 
     def _untrusted_name_in(self, node: ast.AST) -> Optional[str]:
         """First name in an expression that is traced to an untrusted source
@@ -764,7 +938,27 @@ class _Analyzer(ast.NodeVisitor):
         prev_integrity, prev_exec = self._fn_has_integrity, self._fn_has_exec
         self._fn_has_integrity = prev_integrity or _scan_has_integrity_check(node)
         self._fn_has_exec = prev_exec or _scan_has_exec(node)
+        # ── Provenance must not leak ACROSS functions ────────────────────────
+        # `payload = request.json[...]` in one handler must not make an unrelated
+        # `def load_cache(payload)` elsewhere look request-derived. Taint is
+        # intra-procedural by design, so the ledger is snapshotted on the way in
+        # and restored on the way out: module-level provenance stays visible,
+        # function-local provenance dies with the function. Parameters SHADOW any
+        # inherited entry of the same name — a param's value comes from the
+        # caller, which we cannot see.
+        _saved = (dict(self.provenance), set(self.request_derived),
+                  set(self.untrusted_provenance), set(self.tainted_model),
+                  set(self.model_extracted))
+        for a in node.args.args + node.args.kwonlyargs:
+            self.provenance.pop(a.arg, None)
+            self.request_derived.discard(a.arg)
+            self.untrusted_provenance.discard(a.arg)
+            self.tainted_model.discard(a.arg)
+            self.model_extracted.discard(a.arg)
         self.generic_visit(node)
+        (self.provenance, self.request_derived, self.untrusted_provenance,
+         self.tainted_model, self.model_extracted) = (
+            _saved[0], _saved[1], _saved[2], _saved[3], _saved[4])
         self._fn_has_integrity, self._fn_has_exec = prev_integrity, prev_exec
 
     def _check_tool_blast_radius(self, node):
@@ -917,24 +1111,30 @@ class _Analyzer(ast.NodeVisitor):
             return
         hit = self._untrusted_name_in(content)
         if hit:
+            t = self._prov_taint(hit, "an untrusted external source")
             self.findings.append(self._f(
                 "high", "Untrusted content in instruction channel", node,
-                "Content traced from an untrusted source (a retrieval result, an "
-                "HTTP response body, or a tool return) is placed in a SystemMessage "
-                "— the instruction channel. A poisoned document then reads as an "
-                "operator instruction (indirect prompt injection). Keep "
+                f"`{hit}`, traced to an untrusted source at line "
+                f"{t.origin_line or getattr(node, 'lineno', 0)} (a retrieval "
+                "result, an HTTP response body, or a tool return), is placed in a "
+                "SystemMessage — the instruction channel. A poisoned document then "
+                "reads as an operator instruction (indirect prompt injection). Keep "
                 "retrieved/fetched content in a human/tool message, not the system role.",
-                evidence=f"untrusted `{hit}` -> SystemMessage",
-                confidence="high", basis="confirmed",
+                evidence=t.chain(getattr(node, "lineno", 0), "SystemMessage"),
+                taint=t, confidence="high", basis="confirmed",
                 impact="Indirect prompt injection if the retrieved/fetched/tool "
                        "content can carry attacker-influenced text — it enters the "
                        "instruction channel, not a delimited data turn.",
             ))
 
     # -- shared helpers for the P1 action sinks ---------------------------------
-    def _model_taint(self, arg: Optional[ast.AST]):
-        """(value, source, confirmed) if a MODEL-OUTPUT value reaches this argument,
-        else None. Deliberately NARROWER than _reaching_taint: the action sinks
+    def _model_taint(self, arg: Optional[ast.AST]) -> Optional[Taint]:
+        """The `Taint` if a MODEL-OUTPUT value reaches this argument, else None.
+
+        Already provenance-only (it never consults an input NAME hint), so its
+        CONFIRMED tier was never part of the name-guess problem — but it now
+        carries the origin line too, so an SSRF/fs/SQL high cites a chain like
+        every other confirmed finding. Deliberately NARROWER than _reaching_taint: the action sinks
         (SSRF / fs / SQL) fire only on model provenance, because a dynamic URL /
         path / query is ubiquitous and benign in ordinary I/O (a data connector
         paginating an API, a temp-file write). Generic user-input SSRF/SQLi is
@@ -944,15 +1144,20 @@ class _Analyzer(ast.NodeVisitor):
         if arg is None or _is_all_constant([arg]):
             return None
         names = list(_names_in(arg))
+
+        def _confirm(n: str) -> Taint:
+            line, expr = self.provenance.get(n, (0, ""))
+            return Taint(n, "the model's own output", CONFIRMED, line, expr)
+
         for n in names:
             if n in self.model_extracted:
-                return n, "the model's own output", True
+                return _confirm(n)
         for n in names:
             if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):
-                return n, "the model's own output", True
+                return _confirm(n)
         for n in names:
             if n in self.llm_helper_output:
-                return n, "output of an in-scope model-generation helper", False
+                return Taint(n, "output of an in-scope model-generation helper", INFERRED)
         return None
 
     @staticmethod
@@ -971,40 +1176,61 @@ class _Analyzer(ast.NodeVisitor):
             return
         url_arg = node.args[0] if node.args else self._kwarg(node, HTTP_URL_ARG_KEYS)
         reaching = self._model_taint(url_arg)
+        sink = f"{(_dotted(node.func) or 'http call')}()"
+        line = getattr(node, "lineno", 0)
         if reaching:
-            value, source, confirmed = reaching
+            value, source, confirmed = reaching.name, reaching.source, reaching.confirmed
             # A constant scheme+host prefix with only a tainted path segment is
             # path injection, not full host-controlled SSRF → demote to medium.
             demoted = confirmed and self._has_const_url_prefix(url_arg)
             conf = confirmed and not demoted
+            if conf:
+                rec = (f"An HTTP request is sent to a URL built from `{value}`, "
+                       f"which we traced to {source} at line {reaching.origin_line or line}. "
+                       "A model or a poisoned tool result can steer this to an "
+                       "internal endpoint (SSRF) or an attacker-controlled host. "
+                       "Validate the host against an allowlist before the request; "
+                       "never let generated text choose the destination.")
+                impact = ("SSRF / data egress: the model chooses the destination "
+                          f"host of this request (L{line}).")
+            elif demoted:
+                rec = (f"The path segment of this URL is built from `{value}` ({source}), "
+                       "but the scheme and host are constant. That bounds it to path "
+                       "injection against a host you control, not host-controlled "
+                       "SSRF — validate the segment (no `..`, no leading `/`).")
+                impact = ("Path injection on a fixed host — the destination host "
+                          "itself is not model-controlled.")
+            else:
+                rec = (f"An HTTP request is sent to a URL built from `{value}` ({source}). "
+                       "We could not prove the value is model-controlled, so confirm "
+                       "it before acting: if generated text can reach it, allowlist "
+                       "the host.")
+                impact = ("SSRF / data egress IF the value is model-influenced — "
+                          "not proven here.")
             self.findings.append(self._f(
                 "high" if conf else "medium",
-                "Server-side request from model output", node,
-                f"An HTTP request is sent to a URL built from `{value}` — {source}. "
-                "A model or tool can steer this to an internal endpoint (SSRF) or an "
-                "attacker host. Validate the host against an allowlist before the "
-                "request; never let generated text choose the destination.",
-                evidence=f"{source} `{value}` -> {(_dotted(node.func) or 'http call')}()",
+                "Server-side request from model output", node, rec,
+                evidence=reaching.chain(line, sink),
                 confidence="high" if conf else "medium",
-                basis="confirmed" if conf else "inferred",
-                impact="SSRF / data egress if the host can be model- or "
-                       "attacker-influenced — a runtime allowlist could still contain it.",
+                basis=CONFIRMED if conf else INFERRED,
+                impact=impact, taint=reaching if conf else None,
             ))
             return
         # URL is safe but the request BODY carries tainted data → exfiltration shape.
         body_arg = self._kwarg(node, HTTP_BODY_ARG_KEYS)
         reaching = self._model_taint(body_arg)
         if reaching:
-            value, source, _c = reaching
+            value, source = reaching.name, reaching.source
             self.findings.append(self._f(
                 "medium", "Server-side request from model output", node,
                 f"Model/tool-derived data (`{value}` — {source}) is sent in the body "
-                "of an outbound request. If the destination is untrusted this is a "
-                "data-exfiltration path. Confirm what leaves the process.",
-                evidence=f"tainted body `{value}` -> {(_dotted(node.func) or 'http call')}()",
-                confidence="medium", basis="inferred",
-                impact="Data egress if the endpoint is untrusted — body is "
-                       "model/tool-influenced.",
+                "of an outbound request to a constant destination. That is only a "
+                "leak if the destination is outside your trust boundary — confirm "
+                "what this endpoint does with the data before treating it as an "
+                "exfiltration path.",
+                evidence=f"tainted body `{value}` -> {sink} (L{line})",
+                confidence="medium", basis=INFERRED,
+                impact="Data egress only if the (constant) endpoint is untrusted.",
             ))
 
     @staticmethod
@@ -1059,23 +1285,38 @@ class _Analyzer(ast.NodeVisitor):
                     if content_taint:
                         self._emit_fs(node, content_taint, f"Path.{f.attr}()", irreversible=False)
 
-    def _emit_fs(self, node, reaching, label, irreversible):
-        value, source, confirmed = reaching
+    def _emit_fs(self, node, reaching: Taint, label, irreversible):
+        value, source, confirmed = reaching.name, reaching.source, reaching.confirmed
         high = irreversible and confirmed
-        what = ("deletes/overwrites a path" if irreversible
-                else "writes content") + f" derived from `{value}`"
+        line = getattr(node, "lineno", 0)
+        if high:
+            rec = (f"{label} deletes or overwrites a path built from `{value}`, "
+                   f"traced to {source} at line {reaching.origin_line or line}. "
+                   "A model or a poisoned tool result can point this at any file "
+                   "the process can reach, and the write can't be undone. "
+                   "Resolve the path inside an explicit sandbox directory and "
+                   "reject anything that escapes it before the operation.")
+            impact = (f"Irreversible file loss/overwrite: the model chooses which "
+                      f"path is destroyed (L{line}).")
+        elif irreversible:
+            rec = (f"{label} deletes or overwrites a path built from `{value}` "
+                   f"({source}). We could not prove the value is model-controlled — "
+                   "confirm it, then constrain the path to a sandbox directory.")
+            impact = ("Irreversible file loss IF the path is model-controlled — "
+                      "not proven here.")
+        else:
+            rec = (f"{label} writes content derived from `{value}` ({source}) to "
+                   "disk. Model-written content is only a risk if the file is later "
+                   "executed, served, or trusted — confirm what reads this path.")
+            impact = ("Model-controlled content written to disk; the path itself "
+                      "is not model-controlled.")
         self.findings.append(self._f(
             "high" if high else "medium",
-            "Filesystem write/delete from model output", node,
-            f"{label} {what} — {source}. A model or tool can then remove or clobber "
-            "an arbitrary file; the action can't be undone. Constrain the path to an "
-            "explicit sandbox directory and validate it before the operation.",
-            evidence=f"{source} `{value}` -> {label}",
+            "Filesystem write/delete from model output", node, rec,
+            evidence=reaching.chain(line, label),
             confidence="high" if high else "medium",
-            basis="confirmed" if confirmed else "inferred",
-            impact=("Irreversible file loss/overwrite if the path is "
-                    "model/tool-controlled." if irreversible else
-                    "Model-controlled content written to disk — confirm the sink dir."),
+            basis=CONFIRMED if confirmed else INFERRED,
+            impact=impact, taint=reaching if high else None,
         ))
 
     def _check_sql_sink(self, node: ast.Call):
@@ -1092,19 +1333,32 @@ class _Analyzer(ast.NodeVisitor):
             return
         reaching = self._model_taint(query)
         if reaching:
-            value, source, confirmed = reaching
+            value, source, confirmed = reaching.name, reaching.source, reaching.confirmed
+            line = getattr(node, "lineno", 0)
+            if confirmed:
+                rec = (f"A SQL query is assembled by interpolating `{value}`, traced "
+                       f"to {source} at line {reaching.origin_line or line}, then run "
+                       f"via .{f.attr}(). This is agent-driven SQL injection: the "
+                       "model — not an HTTP param — is the taint source, so a prompt "
+                       "injection reaches your database directly. Use a parameterized "
+                       "query (execute(sql, params)); never interpolate generated "
+                       "text into SQL.")
+                impact = (f"SQL injection reachable from model output: read/modify "
+                          f"any data this connection can touch (L{line}).")
+            else:
+                rec = (f"A SQL query interpolates `{value}` ({source}) and runs it "
+                       f"via .{f.attr}(). We could not prove the value is "
+                       "model-controlled — confirm the source. Either way, a "
+                       "parameterized query (execute(sql, params)) removes the risk.")
+                impact = ("SQL injection IF the interpolated value is untrusted — "
+                          "source not proven here.")
             self.findings.append(self._f(
                 "high" if confirmed else "medium",
-                "SQL built from model output", node,
-                f"A SQL query is assembled by interpolating `{value}` — {source} — "
-                f"then run via .{f.attr}(). Agent-driven SQL injection: the model, "
-                "not an HTTP param, is the taint source. Use a parameterized query "
-                "(execute(sql, params)); never interpolate untrusted text into SQL.",
-                evidence=f"{source} `{value}` -> .{f.attr}(f\"…\")",
+                "SQL built from model output", node, rec,
+                evidence=reaching.chain(line, f".{f.attr}(f\"…\")"),
                 confidence="high" if confirmed else "medium",
-                basis="confirmed" if confirmed else "inferred",
-                impact="SQL injection if the interpolated value is untrusted — "
-                       "reachability is proven; runtime escaping could still catch it.",
+                basis=CONFIRMED if confirmed else INFERRED,
+                impact=impact, taint=reaching if confirmed else None,
             ))
 
     def _check_secret_to_prompt(self, node: ast.Call):
@@ -1183,19 +1437,22 @@ class _Analyzer(ast.NodeVisitor):
         reaching = self._model_taint(node.args[0] if node.args else None)
         if not reaching:
             return
-        value, source, _c = reaching
+        value, source = reaching.name, reaching.source
         label = dotted.split(".")[-2] + "." + dotted.split(".")[-1] if "." in dotted else dotted
+        # Severity stays LOW by design — this is a reliability finding, not a
+        # security one — but the basis reflects the real evidence tier, so a
+        # confirmed model-output parse still carries its provenance chain.
         self.findings.append(self._f(
             "low", "Unvalidated model-output parse", node,
-            f"{label}() parses `{value}` — {source} — with no surrounding "
+            f"{label}() parses `{value}` ({source}) with no surrounding "
             "try/except. Model output is frequently malformed or unexpectedly "
             "shaped; an unguarded parse turns that into a crash, and a parse with "
             "no schema check lets the agent act on garbage. Wrap it in try/except "
             "and validate the result (pydantic / explicit key checks).",
-            evidence=f"{source} `{value}` -> {label}() (unguarded)",
-            confidence="medium", basis="inferred",
-            impact="Reliability: a malformed model response crashes the agent or "
-                   "feeds unvalidated data into control flow. Not a security issue.",
+            evidence=reaching.chain(getattr(node, "lineno", 0), f"{label}() (unguarded)"),
+            confidence="medium", basis=reaching.tier,
+            impact="Reliability, not security: a malformed model response crashes "
+                   "the agent or feeds unvalidated data into control flow.",
         ))
 
     def visit_For(self, node: ast.For):
@@ -1393,58 +1650,90 @@ class _Analyzer(ast.NodeVisitor):
             return "yaml.load()"
         return None
 
-    def _reaching_taint(self, arg_names):
-        """Return (value_name, source_label, confirmed) for the tainted value
-        reaching a sink, or None.
+    def _inline_request_read(self, nodes) -> Optional[Taint]:
+        """A request read used DIRECTLY as a sink argument — `pickle.loads(
+        request.body)`, `os.system('run ' + request.body)`. There is no
+        assignment to have recorded, but the provenance is still fully visible:
+        the source expression is right there at the sink. Confirmed, citing the
+        sink's own line as the origin."""
+        for n in nodes or ():
+            for sub in ast.walk(n):
+                expr = self._request_read_expr(sub)
+                if expr:
+                    return Taint(expr, "external user/request input", CONFIRMED,
+                                 getattr(sub, "lineno", 0) or getattr(n, "lineno", 0),
+                                 expr)
+        return None
 
-        `confirmed` distinguishes evidence we can SEE (a value assigned from an
-        LLM call in scope, or an unambiguous external-input name like `request`)
-        from a value we only INFER from a generic/serialized name (`data`,
-        `message_ser`) whose real source isn't visible here. That distinction is
-        what keeps us from asserting "confirmed RCE" on a framework's own internal
-        pickling (the livekit / MetaGPT false-positive class).
+    def _reaching_taint(self, arg_names, nodes=None) -> Optional[Taint]:
+        """Return the `Taint` reaching a sink, or None.
+
+        The tier is decided ONLY by provenance we can point at:
+
+          * CONFIRMED — the value is in `self.provenance`, i.e. we watched it be
+            assigned from a model call, a retrieval/HTTP/tool read, or a real
+            request-object read. The finding can cite origin line → sink line,
+            so a reader can verify it without trusting us.
+          * INFERRED  — the name suggests model/user data but we never saw the
+            assignment (a bare parameter, a generic name). Capped at MEDIUM.
+
+        A NAME NEVER CONFIRMS. That rule is the whole fix: `payload` was AutoGPT's
+        own HMAC-signed cache bytes, `func_body` was langflow's own template —
+        both were called confirmed RCE on the strength of their spelling alone.
         """
         # A value received off a local IPC pipe is trusted internal transport,
         # never external input — don't let a generic name make it look like a
         # user-controlled RCE surface.
         arg_names = [n for n in arg_names if n not in self.local_ipc_vars]
-        # Confirmed: text extracted off a model response in scope
-        # (resp.choices[0].message.content). Provenance is fully visible, so the
-        # var name is irrelevant here — unlike a bare object var, this IS the
-        # model's text reaching the sink.
+
+        def _confirm(n: str, label: str) -> Taint:
+            line, expr = self.provenance.get(n, (0, ""))
+            return Taint(n, label, CONFIRMED, line, expr)
+
+        # ── CONFIRMED tier: provenance recorded in scope ─────────────────────
+        # A request read spelled out at the sink itself (`pickle.loads(
+        # request.body)`) — visible provenance with no assignment to trace.
+        inline = self._inline_request_read(nodes)
+        if inline:
+            return inline
+        # Text extracted off a model response (resp.choices[0].message.content).
+        # The var name is irrelevant here — we watched the extraction happen.
         for n in arg_names:
             if n in self.model_extracted:
-                return n, "the model's own output", True
-        # Confirmed (RG-EXEC-004): traced from an untrusted external source in
-        # scope — a retrieval result, an HTTP response body, or a @tool return.
-        # Reaching pickle/eval/a shell, this is the taint-aware upgrade: what was
-        # an INFERRED "unverified data" medium becomes a CONFIRMED high, because we
-        # can point at the network/tool origin, not just guess from a name.
+                return _confirm(n, "the model's own output")
+        # Traced from an untrusted external source — a retrieval result, an HTTP
+        # response body, or a @tool return (RG-EXEC-004's taint-aware upgrade).
         for n in arg_names:
             if n in self.untrusted_provenance:
-                return n, "an untrusted external source (retrieval / HTTP / tool output)", True
-        # Confirmed: assigned from an LLM call we can see in this file.
+                return _confirm(n, "an untrusted external source (retrieval / HTTP / tool output)")
+        # A real read off a web-request object (`body = request.json`). This is
+        # the ONLY way "external user/request input" can now be asserted.
+        for n in arg_names:
+            if n in self.request_derived:
+                return _confirm(n, "external user/request input")
+        # Assigned from an LLM call we can see in this file.
         for n in arg_names:
             if n in self.tainted_model and _hint_match(n, MODEL_SOURCE_HINTS):
-                return n, "the model's own output", True
-        # Confirmed: an unambiguous external-input name (request/body/payload/…).
-        # NB: uses SINK_STRONG_INPUT_HINTS — a bare args/params/prompt is the
-        # local operator's own CLI input, not a confirmed remote RCE surface.
-        for n in arg_names:
-            if _hint_match(n, SINK_STRONG_INPUT_HINTS):
-                return n, "external user/request input", True
-        # Inferred: the name hints at model/user data, but the source isn't
-        # visible here (a bare parameter, a generic name). Present, not proven.
-        # Inferred: assigned from an in-scope helper whose name says "codegen"
+                return _confirm(n, "the model's own output")
+
+        # ── INFERRED tier: structure proven, origin guessed from a name ──────
+        # Assigned from an in-scope helper whose name says "codegen"
         # (generate_blender_code → exec). Source is one hop away, not a bare name.
         for n in arg_names:
             if n in self.llm_helper_output:
-                return n, "output of an in-scope code-generation helper", False
+                return Taint(n, "output of an in-scope code-generation helper", INFERRED)
+        # Demoted from CONFIRMED in 0.9.4: an "external-looking" name
+        # (request/body/payload/…) with no visible assignment. The structure is
+        # real, the origin is a guess — so it is a MEDIUM that says "confirm the
+        # source", never a HIGH that asserts remote code execution.
+        for n in arg_names:
+            if _hint_match(n, SINK_STRONG_INPUT_HINTS):
+                return Taint(n, "name suggests external input", INFERRED)
         for n in arg_names:
             if _hint_match(n, MODEL_SOURCE_HINTS):
-                return n, "possible model output", False
+                return Taint(n, "possible model output", INFERRED)
             if _hint_match(n, USER_SOURCE_HINTS) or n in self.tainted:
-                return n, "data of unverified origin", False
+                return Taint(n, "data of unverified origin", INFERRED)
         return None
 
     def _check_exec_sink(self, node: ast.Call):
@@ -1475,9 +1764,9 @@ class _Analyzer(ast.NodeVisitor):
                 self._fn_has_integrity
                 or any(n in self.integrity_verified for n in arg_names)):
             return
-        reaching = self._reaching_taint(arg_names)
+        reaching = self._reaching_taint(arg_names, args)
         if reaching:
-            value, source, confirmed = reaching
+            value, source, confirmed = reaching.name, reaching.source, reaching.confirmed
             # Intentional (if weak) sandbox: exec(code, {"__builtins__": {}}, …).
             # The maintainer stripped builtins — a deliberate restriction (lollms'
             # custom-node editor). Empty-builtins is bypassable, so it's still a
@@ -1485,6 +1774,7 @@ class _Analyzer(ast.NodeVisitor):
             # they clearly put there. Demote confirmed→inferred.
             if confirmed and kind == "exec()" and _restricts_builtins(node):
                 confirmed = False
+                reaching = reaching._replace(tier=INFERRED)
                 source = source + " (into an empty-__builtins__ sandbox — a weak, bypassable restriction)"
             # Deserialization (pickle/marshal/dill) is ubiquitous for a
             # framework's OWN internal transport — IPC, caching, state persistence.
@@ -1496,16 +1786,19 @@ class _Analyzer(ast.NodeVisitor):
             if kind in _DESERIALIZATION_SINKS and not confirmed:
                 self.findings.append(self._f(
                     "medium", "Deserialization of unverified data", node,
-                    f"{kind} deserializes `{value}`, whose source isn't visible "
-                    "here. If it can ever come from an untrusted channel (network, "
-                    "another process, a shared store, model/tool output) this is "
-                    "remote code execution; if it's always your own local/trusted "
-                    "data it's fine. Confirm the source, or use a safe format "
-                    "(json / a signed payload).",
-                    evidence=f"{kind} on `{value}` (source unverified)",
-                    confidence="medium", basis="inferred",
-                    impact="RCE only if an untrusted source can reach this sink — "
-                           "provenance not proven here.",
+                    f"{kind} deserializes `{value}`. We could NOT see where "
+                    f"`{value}` comes from in this file ({source}), so we are not "
+                    "claiming this is exploitable. Check the callers: if "
+                    f"`{value}` can ever carry data from an untrusted channel "
+                    "(network, another process, a shared cache, model/tool "
+                    "output) this is remote code execution — switch to json or a "
+                    "signed payload. If it is always your own trusted data, this "
+                    "is fine to dismiss.",
+                    evidence=reaching.chain(getattr(node, "lineno", 0), kind),
+                    confidence="medium", basis=INFERRED,
+                    impact="RCE only if an untrusted source can reach this sink. "
+                           "Origin not proven here — this is a lead to check, not "
+                           "a confirmed vulnerability.",
                 ))
                 return
             # The agent-specific, undismissable case: name the exact value and its
@@ -1513,21 +1806,33 @@ class _Analyzer(ast.NodeVisitor):
             # Severity follows proof: a flow we can SEE is high; a flow inferred
             # from a name alone is medium — same calibration as deserialization.
             # Asserting HIGH on a name-guess is how a report loses its maintainer.
+            line = getattr(node, "lineno", 0)
+            if confirmed:
+                rec = (f"{kind} executes `{value}`, which we traced to {source} "
+                       f"at line {reaching.origin_line or line}. A prompt injection "
+                       "your input guardrail can't catch (it succeeds inside the "
+                       "model) or a poisoned tool result becomes remote code "
+                       "execution here — after your output evaluator has already "
+                       "scored the text as fine. Parse with ast.literal_eval/json "
+                       "instead, or run it in a sandbox with no network and no "
+                       "filesystem.")
+                impact = (f"Remote code execution: whoever controls {source} "
+                          f"controls the code this process runs (L{line}).")
+            else:
+                rec = (f"{kind} executes `{value}` ({source}). The sink is real, "
+                       "but we could not see where the value comes from, so treat "
+                       "this as a lead: confirm whether model or user output can "
+                       f"reach `{value}`. If it can, parse with "
+                       "ast.literal_eval/json or sandbox the execution.")
+                impact = ("Remote code execution IF an untrusted source reaches "
+                          "this sink — the flow is not proven here.")
             self.findings.append(self._f(
                 "high" if confirmed else "medium",
-                "Dangerous execution sink", node,
-                f"{kind} executes `{value}` — {source}. A prompt injection your "
-                "input guardrail can't catch (it succeeds inside the model) or a "
-                "bad tool result becomes remote code execution here, after your "
-                "output evaluator has already scored the text. Parse with "
-                "ast.literal_eval/json, or sandbox execution.",
-                evidence=f"{source} `{value}` -> {kind}",
+                "Dangerous execution sink", node, rec,
+                evidence=reaching.chain(line, kind),
                 confidence="high" if confirmed else "medium",
-                basis="confirmed" if confirmed else "inferred",
-                impact="Remote code execution if model/user output reaches this sink."
-                       if confirmed else
-                       "Remote code execution if the inferred source is real — "
-                       "flow not proven here.",
+                basis=CONFIRMED if confirmed else INFERRED,
+                impact=impact, taint=reaching,
             ))
         elif self.file_has_llm:
             # A dynamic sink in agent code we can't prove is reachable → a quiet
@@ -1536,12 +1841,13 @@ class _Analyzer(ast.NodeVisitor):
             # is Bandit's job, not ours, so outside agent files we stay silent.
             self.findings.append(self._f(
                 "low", "Dynamic execution sink (agent code)", node,
-                f"{kind} runs a non-constant value in agent code. Confirm no model "
-                "or user output can reach it; a deliberate code tool should be "
-                "sandboxed.",
-                confidence="low", basis="inferred",
-                impact="Potential code execution if untrusted input can reach it "
-                       "— reachability not proven.",
+                f"{kind} runs a non-constant value in a file that calls an LLM. "
+                "We found no flow from model or user output to it — this is a "
+                "placement nudge, not a detected vulnerability. Worth a glance "
+                "that a deliberate code tool here is sandboxed.",
+                evidence=f"{kind} on a non-constant value (no tainted flow found)",
+                confidence="low", basis=HEURISTIC,
+                impact="Advisory only: no untrusted flow to this sink was found.",
             ))
 
     # -- f-string system prompts ------------------------------------------
@@ -1564,18 +1870,21 @@ class _Analyzer(ast.NodeVisitor):
         if role_is_system and content_val is not None:
             hit = self._untrusted_name_in(content_val)
             if hit:
+                t = self._prov_taint(hit, "an untrusted external source")
                 self.findings.append(self._f(
                     "high", "Untrusted content in instruction channel", content_val,
-                    "Content traced from an untrusted source (a retrieval result, "
-                    "an HTTP response body, or a tool return) is placed in the "
-                    "system/instruction channel. A poisoned document then reads as "
-                    "an operator instruction — indirect prompt injection your input "
-                    "filter never sees, because the text arrives from your own "
-                    "retrieval/tool layer, not the user turn. Keep retrieved/fetched "
-                    "content in a clearly-delimited user/data turn so it can't "
-                    "override system instructions.",
-                    evidence=f"untrusted `{hit}` -> system/instruction channel",
-                    confidence="high", basis="confirmed",
+                    f"`{hit}`, traced to an untrusted source at line "
+                    f"{t.origin_line or getattr(content_val, 'lineno', 0)} (a "
+                    "retrieval result, an HTTP response body, or a tool return), is "
+                    "placed in the system/instruction channel. A poisoned document "
+                    "then reads as an operator instruction — indirect prompt "
+                    "injection your input filter never sees, because the text "
+                    "arrives from your own retrieval/tool layer, not the user turn. "
+                    "Keep retrieved/fetched content in a clearly-delimited user/data "
+                    "turn so it can't override system instructions.",
+                    evidence=t.chain(getattr(content_val, "lineno", 0),
+                                     "system/instruction channel"),
+                    taint=t, confidence="high", basis="confirmed",
                     impact="Indirect prompt injection if the retrieved/fetched/tool "
                            "content can carry attacker-influenced text — it enters "
                            "the instruction channel, not a delimited data turn.",
@@ -1630,20 +1939,44 @@ class _Analyzer(ast.NodeVisitor):
 
     def _f(self, severity: str, title: str, node: ast.AST, rec: str,
            evidence: str = "", confidence: str = "medium",
-           basis: str = "inferred", impact: str = "") -> Dict[str, Any]:
+           basis: str = INFERRED, impact: str = "",
+           taint: Optional[Taint] = None) -> Dict[str, Any]:
         # confidence: how sure we are this is what we say it is (high/medium/low).
-        # basis: "confirmed" = we can point at the exact tainted flow / structure;
-        #        "inferred"  = the pattern is present but reachability isn't proven.
-        # These let a developer triage instantly and let CI gate on confirmed-only.
+        # basis (the evidence tier): see the CONFIRMED/INFERRED/HEURISTIC block at
+        # the top of this module. These let a developer triage instantly and let
+        # CI gate on confirmed-only.
+        #
+        # THE CEILING IS ENFORCED HERE, not at the call sites. A HIGH is a claim
+        # we are asking a maintainer to act on, so it must be impossible to emit
+        # one from a name guess — even by mistake in a future rule. Any call site
+        # that passes severity="high" with a non-confirmed basis is clamped down
+        # to that tier's maximum rather than trusted.
         from release_gate.rules import rule_id_for_title
-        return {
+        cap = TIER_MAX_SEVERITY.get(basis, "medium")
+        if _SEVERITY_ORDER.get(severity, 1) > _SEVERITY_ORDER[cap]:
+            severity = cap
+            if _SEVERITY_ORDER.get(confidence, 1) > _SEVERITY_ORDER[cap]:
+                confidence = cap
+        line = getattr(node, "lineno", 0)
+        out = {
             "severity": severity, "title": title, "file": self.rel,
-            "line": getattr(node, "lineno", 0), "snippet": "",
+            "line": line, "snippet": "",
             "recommendation": rec, "evidence": evidence,
             "confidence": confidence, "basis": basis, "impact": impact,
             # Stable, citable rule id (RG-EXEC-001) — never changes when a title is reworded.
             "rule_id": rule_id_for_title(title),
         }
+        # Machine-readable provenance chain for CONFIRMED findings: the two line
+        # numbers a reviewer opens to check the claim themselves. This is what
+        # "reproducible evidence" means concretely — not prose, coordinates.
+        if taint is not None and taint.tier == CONFIRMED and taint.origin_line:
+            out["provenance"] = {
+                "origin_line": taint.origin_line,
+                "origin_expr": taint.origin_expr,
+                "value": taint.name,
+                "sink_line": line,
+            }
+        return out
 
 
 def has_llm_usage(source: str) -> bool:
