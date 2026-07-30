@@ -2,7 +2,7 @@
 
 All notable changes to release-gate will be documented in this file.
 
-## [0.9.4] — 2026-07-28
+## [0.9.4] — 2026-07-30
 
 ### 🧬 Method summaries — taint through the client-class shape agents actually use
 
@@ -72,8 +72,10 @@ stays silent (both are FP controls in the corpus).
 
 **Performance.** The summary phase adds a pass, mitigated by a cheap textual
 pre-filter — a file with no model/request/retrieval marker cannot contribute a
-summary, so it is never parsed. `dify` (8,892 files) scans in **49s**, aider in
-3.2s. Cost is proportional to agent code, not repo size.
+summary, so it is never parsed, and the transitive fixpoint only re-walks files
+containing `return self.method(...)` — the one shape that can need it. `dify`
+(8,892 files) scans in **39s**, aider in 2.7s. Cost is proportional to agent
+code, not repo size.
 
 **Still open, now precisely characterized.** `gpt-engineer` — the case that
 motivated this work — still does not fire, and the reason is neither modules nor
@@ -81,7 +83,9 @@ files: its model call is `ai.start(...)`, a **method on a project-defined class*
 (`AI` in `core/ai.py`, wrapping `ChatOpenAI`), reached transitively through
 `start` → `next` → `self.llm.invoke`. Cross-module summaries cover
 `from x import func`, not methods on classes resolved through a variable's type.
-Method-level summaries with transitive resolution are the next milestone.
+(Method summaries landed in this same release — see above — and close that
+specific hop; what remains for `gpt-engineer` is the factory method and its
+custom container/store classes.)
 
 ### 🔗 Inter-procedural taint — the labeled benchmark reaches 100% recall
 
