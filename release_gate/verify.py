@@ -492,6 +492,33 @@ MAX_SCAN_FILES = 25_000
 # none of them cannot contribute to the cross-module index, so the summary pass
 # skips parsing them entirely — the difference between scanning agent code and
 # re-parsing an entire monorepo.
+# ── Project-level gate architecture (RG-GATE-001 suppression) ────────────────
+# RG-GATE-001 claims "this irreversible tool has no gate". That is a statement
+# about the WHOLE PROJECT, but the check only ever looked inside the tool
+# function body — so a project that gates centrally was reported as ungated.
+#
+# homeassistant-ai/ha-mcp taught us this the hard way: it ships a ReadOnly
+# middleware that blocks writes at call time, a catalog transform that hides
+# write tools entirely, a persisted tool-security policy, and MCP readOnlyHint
+# annotations. We flagged 11 of its tools as "no gate" and the maintainer,
+# correctly, replied that everything we suggested already existed.
+#
+# So: if a repo demonstrably implements a gate layer, we must not assert the
+# absence of one. Precision-first — a missed finding beats telling a maintainer
+# to build what they already built.
+_GATE_LAYER_RE = re.compile(
+    r"read[_-]?only[_-]?mode|READ_ONLY_MODE|ReadOnly(?:Middleware|ToolsTransform)|"
+    r"(?:tool|security)[_-]?polic(?:y|ies)|ToolPolicy|PolicyMiddleware|"
+    r"readOnlyHint|destructiveHint|"
+    r"require[_-]?(?:confirm|confirmation|approval)|"
+    r"confirmation[_-]?(?:required|middleware)|approval[_-]?(?:required|middleware)")
+# A gate layer only counts when it is ENFORCED, not merely mentioned — a README
+# word or a lone constant is not a control.
+_GATE_ENFORCE_RE = re.compile(
+    r"class\s+\w*(?:ReadOnly|Policy|Approval|Confirm)\w*|"
+    r"def\s+\w*(?:read_only|policy|approval|confirm)\w*|"
+    r"add_middleware|middleware\s*=|\.use\(|transform\s*=")
+
 _SUMMARY_MARKER_RE = re.compile(
     r"\b(?:openai|anthropic|cohere|litellm|ollama|groq|mistralai|together|"
     r"vertexai|langchain|llama_index|bedrock|generativeai|"
@@ -530,6 +557,7 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
     # memory: a 25k-file monorepo of 200KB files would be gigabytes.
     from release_gate.agent_analysis import collect_summaries, module_name_for
     index: Dict[str, Dict[str, Any]] = {}
+    gate_layer = False   # repo implements a central approval / read-only layer
     seen_py = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
@@ -546,6 +574,11 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
             # if one of these appears in the text, so files without any marker
             # cannot contribute to the index and needn't be parsed. This keeps
             # the extra pass proportional to agent code, not repo size.
+            # Does this project implement a central gate layer? Decided over the
+            # whole repo, because "no gate" is a whole-repo claim.
+            if not gate_layer and _GATE_LAYER_RE.search(text) \
+                    and _GATE_ENFORCE_RE.search(text):
+                gate_layer = True
             if not _SUMMARY_MARKER_RE.search(text):
                 continue
             summaries = collect_summaries(text, str(fpath.relative_to(root)))
@@ -581,8 +614,41 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
         "files_scannable": scannable,
         "truncated": scannable > scanned,
         "max_files": max_files,
+        "gate_layer": gate_layer,
     }
+    if gate_layer:
+        findings = _suppress_gate_findings(findings)
     return _finalize_findings(findings, split=return_excluded)
+
+
+def _suppress_gate_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop RG-GATE-001 when the project gates centrally, replacing the pile
+    with one honest note.
+
+    We cannot assert 'this tool has no gate' from a function body when the
+    project enforces approval in middleware, a policy engine, or a read-only
+    mode. Reporting N of them tells a maintainer to build what they already
+    built -- which is exactly what happened on ha-mcp.
+    """
+    kept = [f for f in findings if f.get("rule_id") != "RG-GATE-001"]
+    dropped = len(findings) - len(kept)
+    if dropped:
+        first = next(f for f in findings if f.get("rule_id") == "RG-GATE-001")
+        kept.append({
+            **first,
+            "severity": "low", "confidence": "low", "basis": "heuristic",
+            "title": "Irreversible tools present; project gates centrally",
+            "recommendation": (
+                f"This project implements a central gate layer (read-only mode, "
+                f"a tool policy, or approval middleware), so per-tool gate "
+                f"analysis is suppressed: {dropped} irreversible tool(s) were "
+                "found but we cannot claim they are ungated. Worth confirming "
+                "the layer covers each of them, and that it is on by default."),
+            "evidence": f"{dropped} irreversible tool(s); central gate layer detected",
+            "impact": ("Advisory only — a project-level control was detected, so "
+                       "absence of a per-tool gate proves nothing."),
+        })
+    return kept
 
 
 def _finalize_findings(findings: List[Dict[str, Any]], split: bool = False):

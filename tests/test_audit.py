@@ -1077,3 +1077,57 @@ def test_truncation_warning_is_printed_before_the_verdict(tmp_path, capsys):
     assert "TRUNCATED" in out
     assert "2,000 of 8,892" in out
     assert "does not mean the repo is clean" in out
+
+
+# ── Project-level gate layer (RG-GATE-001 suppression) ───────────────────────
+
+def test_central_gate_layer_suppresses_per_tool_gate_findings(tmp_path):
+    """The ha-mcp lesson. RG-GATE-001 claims "this tool has no gate" — a
+    whole-project statement — but only inspected tool function bodies. ha-mcp
+    ships a ReadOnly middleware, a catalog transform, a tool policy and
+    readOnlyHint annotations; we flagged 11 of its tools anyway and the
+    maintainer correctly replied that it all already existed."""
+    from release_gate.verify import scan_code_findings
+    import release_gate.verify as v
+    _make(tmp_path, {
+        "server.py": (
+            "class ReadOnlyMiddleware:\n"
+            "    def on_call(self, tool, args):\n"
+            "        if self.settings.read_only_mode:\n"
+            "            raise ToolError('READ_ONLY_MODE')\n"
+            "app.add_middleware(ReadOnlyMiddleware())\n"),
+        "tools.py": (
+            "@tool\ndef delete_device(device_id):\n    return client.delete(device_id)\n"
+            "@tool\ndef remove_zone(zone_id):\n    return client.remove_zone(zone_id)\n"),
+    })
+    findings = scan_code_findings(tmp_path)
+    assert v.LAST_SCAN_COVERAGE.get("gate_layer") is True
+    accusing = [f for f in findings
+                if f.get("rule_id") == "RG-GATE-001"
+                and "gates centrally" not in f.get("title", "")]
+    assert not accusing, "must not claim individual tools are ungated"
+    note = [f for f in findings if "gates centrally" in f.get("title", "")]
+    assert len(note) == 1 and note[0]["severity"] == "low"
+
+
+def test_without_a_gate_layer_tools_are_still_reported(tmp_path):
+    # Recall guard: the suppression must key on a real enforcement layer, not
+    # fire for every project.
+    from release_gate.verify import scan_code_findings
+    import release_gate.verify as v
+    _make(tmp_path, {"tools.py": (
+        "@tool\ndef delete_device(device_id):\n    return client.delete(device_id)\n")})
+    findings = scan_code_findings(tmp_path)
+    assert v.LAST_SCAN_COVERAGE.get("gate_layer") is False
+    assert [f for f in findings if f.get("rule_id") == "RG-GATE-001"]
+
+
+def test_a_mere_mention_of_policy_is_not_a_gate_layer(tmp_path):
+    # "policy" in a docstring is not a control; enforcement evidence is required.
+    from release_gate.verify import scan_code_findings
+    import release_gate.verify as v
+    _make(tmp_path, {"tools.py": (
+        '"""Our security policy is documented in the wiki."""\n'
+        "@tool\ndef delete_device(d):\n    return client.delete(d)\n")})
+    scan_code_findings(tmp_path)
+    assert v.LAST_SCAN_COVERAGE.get("gate_layer") is False

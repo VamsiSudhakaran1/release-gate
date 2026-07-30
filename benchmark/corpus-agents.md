@@ -54,9 +54,23 @@ became outreach material** — which is the point of the corpus:
    `ha_config_list_helpers`), so an *anchored* read-verb rule matched none of
    them and every Home Assistant getter was reported as destructive.
 
-Five classes, five rounds of looking — each one found by reading the source
-behind a finding, and each one would have gone to a maintainer. Verify before
-you send anything.
+6. **A gate layer the check couldn't see — found by a maintainer, not by us.**
+   `RG-GATE-001` claims "this tool has no gate", a statement about the whole
+   project, but only ever inspected tool *function bodies*. homeassistant-ai/ha-mcp
+   ships a `ReadOnlyMiddleware` that blocks writes at call time, a catalog
+   transform that hides write tools, a persisted tool-security policy and MCP
+   `readOnlyHint` annotations. We filed an issue suggesting they add exactly
+   those things; the maintainer replied that none of it was missing. They were
+   right. The scan now detects a central gate layer across the repo and collapses
+   the per-tool findings into one advisory note — 19 accusations became 1 note on
+   ha-mcp. **awslabs/mcp and google_workspace_mcp trip the same detection**, so
+   the queued AWS issue would have been wrong in the same way.
+
+Six classes. Five were caught by reading source before sending; the sixth cost a
+public correction — and was the most valuable of the lot, because no labeled
+benchmark can encode "gated somewhere else in the repo". Verify before you send,
+and expect the population where this rule legitimately fires to be *immature*
+projects, not well-engineered ones.
 
 ## 3. Agent applications — "do we find anything where it matters?"
 
