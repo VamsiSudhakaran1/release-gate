@@ -151,7 +151,7 @@ Two disciplines run through every rule:
   **Where it still stops, measured:** a client built by a *factory method*, and model output
   marshalled through project-specific container/store classes — which is why `gpt-engineer`
   (a ten-hop chain) stays silent. Across the [20-repo deployed-agent corpus](benchmark/corpus-agents.md)
-  the taint rules produced **0 confirmed HIGHs** as of the last full measurement; the rule that
+  the taint rules produce **0 confirmed HIGHs** (72 findings, all medium/low); the rule that
   *does* fire there is blast
   radius (`RG-GATE-001`) — irreversible tools with no code-level gate. Following the rest needs
   whole-program type inference, which we'd rather disclose than fake. We publish the numbers that

@@ -82,15 +82,26 @@ labeled benchmark tests `x = llm(); sink(x)` in one function; production agents
 never look like that. **0.9.4 closed the first hop and measured the rest.** Taint now follows a local
 helper's return across the call boundary (both `*-cross-function` benchmark cases
 went from KNOWN-MISS to caught, taking the labeled corpus to **100% recall** with
-precision unchanged). But on this corpus it changed **nothing** — 70 findings
-before, 70 after, still 0 confirmed HIGHs — because the hops that matter here are
-not function boundaries. They are *module* boundaries, a data structure, and the
-*filesystem*. **What actually blocks `gpt-engineer` turned out to be none of those.** Its model
+precision unchanged). But on this corpus it barely moved: **70 findings before, 72 after all of
+0.9.4's taint work** — inter-procedural, cross-module, file-mediated, method
+summaries and container mutation combined — and **still 0 confirmed HIGHs**. **What actually blocks `gpt-engineer` turned out to be none of those.** Its model
 call is `ai.start(...)` — a **method on a project-defined class** (`AI` in
 `core/ai.py`, wrapping `ChatOpenAI`), reached transitively via
 `start` → `next` → `self.llm.invoke`. Cross-module summaries resolve
 `from x import func`; they do not resolve a method on a class reached through a
 variable's type. That — method-level summaries with transitive resolution — is
 the next milestone, and it is a sharper target than "cross-module" was.
+
+**The honest conclusion.** Closing four hops took the labeled corpus from 94.3%
+to 100% recall and did essentially nothing here. So the deployed-agent gap was
+never mainly about those hops. What remains is a client built by a *factory
+method*, model output marshalled through *project-specific container and store
+classes*, and execution delegated to a *container* (Docker/E2B) where the sink is
+an API call we don't model. Those need whole-program type inference, not another
+traversal trick.
+
+Meanwhile the rule that does fire here — `RG-GATE-001`, irreversible tools with
+no code-level gate — is architecture-level, not dataflow. That is the signal to
+build on for deployed agents.
 
 We publish the numbers that did not move, not just the ones that did.
