@@ -4,6 +4,44 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🧬 Method summaries — taint through the client-class shape agents actually use
+
+Summarizing only module-level functions missed the dominant shape in real agent
+code: the model wrapped in a **client class**. Methods are now summarized as
+`Class.method` and resolved at the call site, with three supporting pieces:
+
+- **Receiver types**, taken from evidence rather than inferred — an annotated
+  parameter (`def gen(ai: AI)`), a constructor assignment (`ai = AI()`), or
+  `self.x = C()` in `__init__`.
+- **Transitive resolution** with a fixpoint, so a method returning another
+  method's result resolves regardless of definition order:
+  `AI.start` → `AI.next` → `self.llm.invoke` collapses to one summary, and the
+  chain still cites `core/ai.py:9`.
+- **LLM clients held on attributes.** `self.llm = ChatOpenAI(...)` then
+  `self.llm.invoke(...)` — the single most common construction in agent code —
+  was previously invisible, because client tracking only handled bare `Name`
+  targets. This was a real recall hole well beyond method summaries.
+
+**Container mutation.** `messages.append(model_reply)` now carries taint to
+`messages`. Accumulating model output into a conversation list and using it later
+is *the* agent pattern, and the taint used to die at the append.
+
+Four benchmark cases (79 total, still 100% precision / 100% recall / 0 HIGH-tier
+violations), five unit tests. One of the new FP controls immediately earned its
+place by catching a mislabeled case of my own: a list named `args` correctly
+yields an inferred MEDIUM on name-hint grounds, which is by design, not a
+regression — the case now uses a neutral name so it tests what it claims to.
+
+**`gpt-engineer` still does not fire, and this is where we stop chasing it.** The
+remaining chain is ten hops: `self.llm = self._create_chat_model()` (a *factory
+method* returning the client), `backoff_inference` → `next` → a mutated list →
+`start`, then a custom `FilesDict` container, a cross-module return, a custom
+`FileStore` that writes to disk, and finally `Popen(command, shell=True)` in a
+third module. Following that end-to-end requires whole-program type inference and
+modeling project-specific container/store classes — a research problem, not a
+feature. The method-summary work is general and lands the common cases; this one
+repo is documented as out of reach rather than special-cased.
+
 ### 🌐 Cross-module and file-mediated taint — following the flow real agents use
 
 Two more of the four hops the deployed-agent corpus identified are now closed.

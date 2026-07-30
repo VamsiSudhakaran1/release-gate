@@ -883,3 +883,64 @@ cases:
           r = client.chat.completions.create(model="gpt-4o", messages=m, max_tokens=9)
           f = open("out.txt", "w")
           f.write(r.choices[0].message.content)
+
+  # ── Method summaries: the client-class shape real agent code uses ──────────
+  - id: exec-method-summary-client-class-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "Real agents wrap the model in a client class; summarizing only module-level functions missed the dominant shape (gpt-engineer's AI.start, and every `self.llm.ask()` wrapper)"
+    code: |
+      from openai import OpenAI
+      import os
+      class LLMClient:
+          def __init__(self):
+              self.client = OpenAI()
+          def ask(self, q):
+              r = self.client.chat.completions.create(model="gpt-4o", messages=q, max_tokens=9)
+              return r.choices[0].message.content
+      def run(q):
+          c = LLMClient()
+          answer = c.ask(q)
+          os.system(answer)
+
+  - id: exec-container-mutation-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "Accumulating model output into a conversation list and using it later is THE agent pattern; taint used to die at the append"
+    code: |
+      from openai import OpenAI
+      import os
+      client = OpenAI()
+      def chat(m):
+          msgs = []
+          r = client.chat.completions.create(model="gpt-4o", messages=m, max_tokens=9)
+          msgs.append(r.choices[0].message.content)
+          os.system(msgs[-1])
+
+  - id: exec-container-mutation-untainted-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "FP control — appending a CONSTANT to a list and running it is ordinary code, not laundered model output. (Uses a neutral name: `args` is a deliberate input-hint that correctly yields an inferred MEDIUM on its own.)"
+    code: |
+      import os
+      def build():
+          parts = []
+          parts.append("ls")
+          os.system(parts[0])
+
+  - id: exec-method-summary-readonly-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "FP control — a client-class method that returns developer config, not model output, must not summarize to taint"
+    code: |
+      import os
+      class Config:
+          def get_cmd(self):
+              return "ls -la"
+      def run():
+          c = Config()
+          os.system(c.get_cmd())

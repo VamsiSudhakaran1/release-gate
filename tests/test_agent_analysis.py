@@ -1724,3 +1724,70 @@ def test_untainted_file_write_then_shell_stays_silent():
            "    subprocess.run('bash build.sh', shell=True)\n")
     assert not [f for f in analyze_python(src, "x.py")
                 if f["severity"] in ("high", "critical")]
+
+
+# ── Method summaries + container mutation (0.9.4) ────────────────────────────
+
+def test_method_summary_same_file_client_class():
+    """Real agent code wraps the model in a client class — summarizing only
+    module-level functions missed the dominant shape."""
+    src = ("from openai import OpenAI\nimport os\n"
+           "class LLMClient:\n"
+           "    def __init__(self):\n        self.client = OpenAI()\n"
+           "    def ask(self, q):\n"
+           "        r = self.client.chat.completions.create(model='gpt-4o', messages=q, max_tokens=9)\n"
+           "        return r.choices[0].message.content\n"
+           "def run(q):\n    c = LLMClient()\n    a = c.ask(q)\n    os.system(a)\n")
+    hits = [f for f in analyze_python(src, "a.py") if f["severity"] == "high"]
+    assert hits and hits[0]["basis"] == "confirmed"
+
+
+def test_method_summary_transitive_across_modules():
+    """start() -> next() -> self.llm.invoke(), resolved through an annotated
+    parameter and an imported class."""
+    from release_gate.agent_analysis import build_project_index
+    ai = ("from langchain_openai import ChatOpenAI\n"
+          "class AI:\n"
+          "    def __init__(self):\n        self.llm = ChatOpenAI(max_tokens=9)\n"
+          "    def start(self, system, user):\n"
+          "        msgs = [system, user]\n        return self.next(msgs)\n"
+          "    def next(self, messages):\n        return self.llm.invoke(messages)\n")
+    steps = ("import os\nfrom core.ai import AI\n"
+             "def gen(ai: AI, m):\n    out = ai.start('sys', m)\n    os.system(out)\n")
+    idx = build_project_index({"core/ai.py": ai, "core/steps.py": steps})
+    hits = [f for f in analyze_python(steps, "core/steps.py", idx)
+            if f["severity"] == "high"]
+    assert hits and hits[0]["basis"] == "confirmed"
+    assert "core/ai.py" in hits[0]["evidence"]
+
+
+def test_llm_client_held_on_an_attribute_is_resolved():
+    # `self.llm = ChatOpenAI(...)` then `self.llm.invoke(...)` — the dominant
+    # shape; tracking only bare names made every such call invisible.
+    from release_gate.agent_analysis import collect_summaries
+    src = ("from langchain_openai import ChatOpenAI\n"
+           "class C:\n"
+           "    def __init__(self):\n        self.llm = ChatOpenAI(max_tokens=9)\n"
+           "    def go(self, m):\n        return self.llm.invoke(m)\n")
+    assert "C.go" in collect_summaries(src, "c.py")
+
+
+def test_container_mutation_carries_taint():
+    # Accumulating model output into a list and using it later is THE agent
+    # pattern (conversation history); taint used to die at the append.
+    src = ("from openai import OpenAI\nimport os\nclient = OpenAI()\n"
+           "def chat(m):\n    msgs = []\n"
+           "    r = client.chat.completions.create(model='gpt-4o', messages=m, max_tokens=9)\n"
+           "    msgs.append(r.choices[0].message.content)\n"
+           "    os.system(msgs[-1])\n")
+    hits = [f for f in analyze_python(src, "x.py") if f["severity"] == "high"]
+    assert hits and hits[0]["basis"] == "confirmed"
+
+
+def test_container_mutation_of_untainted_value_stays_silent():
+    # Neutral variable name on purpose: `args` is a deliberate input-hint that
+    # correctly yields an inferred MEDIUM on its own, which isn't what this tests.
+    src = ("import os\n"
+           "def build():\n    parts = []\n    parts.append('ls')\n    os.system(parts[0])\n")
+    assert not [f for f in analyze_python(src, "x.py")
+                if f["severity"] in ("high", "critical")]

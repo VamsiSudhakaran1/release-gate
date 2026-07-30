@@ -6,9 +6,9 @@
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
-[![Benchmark: 75-case corpus](https://img.shields.io/badge/benchmark-75--case_corpus_%C2%B7_100%25_precision_%C2%B7_100%25_recall-blue.svg)](benchmark/RESULTS.md)
+[![Benchmark: 79-case corpus](https://img.shields.io/badge/benchmark-79--case_corpus_%C2%B7_100%25_precision_%C2%B7_100%25_recall-blue.svg)](benchmark/RESULTS.md)
 
-> **v0.9.4** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [75-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
+> **v0.9.4** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [79-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
 **Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
 
@@ -119,7 +119,7 @@ Two disciplines run through every rule:
 
 - **Precision over recall — we don't cry wolf.** When the analyzer can't *prove* a real risk it
   stays quiet. **Zero false positives on the current labeled benchmark and framework dogfood set** —
-  the [75-case corpus](benchmark/RESULTS.md) now carries ≥2 vulnerable and ≥2 clean look-alikes for
+  the [79-case corpus](benchmark/RESULTS.md) now carries ≥2 vulnerable and ≥2 clean look-alikes for
   *every* rule (including the v0.9.0 catalog), so that result is reproducible per rule (run
   `python benchmark/run.py`), not just asserted; and the engine stayed correctly silent across a
   framework dogfood (llama_index, crewAI, langgraph, open-interpreter).
@@ -144,12 +144,18 @@ Two disciplines run through every rule:
   and the chain names the defining file), and through the **filesystem** — model output written to
   a script that is later executed. Labeled corpus: **100% precision, 100% recall**.
 
-  **Where it still stops, measured:** a model call behind a **method on a project-defined class**
-  (`ai.start(...)` resolving through `AI` → `next` → `self.llm.invoke`) is not resolved, which is
-  why `gpt-engineer` stays silent. Across the [20-repo deployed-agent corpus](benchmark/corpus-agents.md)
-  the taint rules still produce **0 confirmed HIGHs**; the rule that *does* fire there is blast
-  radius (`RG-GATE-001`) — irreversible tools with no code-level gate. Method-level summaries are
-  the next milestone. We publish the numbers that didn't move, not just the ones that did.
+  It also resolves **methods on classes** (`ai.start(...)` → `AI.start` → `AI.next` →
+  `self.llm.invoke`, transitively and across modules), clients held on attributes
+  (`self.llm = ChatOpenAI(...)`), and **container mutation** (`messages.append(reply)`).
+
+  **Where it still stops, measured:** a client built by a *factory method*, and model output
+  marshalled through project-specific container/store classes — which is why `gpt-engineer`
+  (a ten-hop chain) stays silent. Across the [20-repo deployed-agent corpus](benchmark/corpus-agents.md)
+  the taint rules produced **0 confirmed HIGHs** as of the last full measurement; the rule that
+  *does* fire there is blast
+  radius (`RG-GATE-001`) — irreversible tools with no code-level gate. Following the rest needs
+  whole-program type inference, which we'd rather disclose than fake. We publish the numbers that
+  didn't move, not just the ones that did.
 
 | Rule | Detects | Severity |
 |---|---|---|

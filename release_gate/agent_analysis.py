@@ -634,6 +634,15 @@ class _Analyzer(ast.NodeVisitor):
         self.imported_summaries: Dict[str, Tuple[str, int, str, str]] = {}
         # Local alias -> module dotted path, from `from x.y import f` / `import x.y`.
         self.import_module_of: Dict[str, str] = {}
+        # ── Method summaries: which CLASS are we inside, and what type is a var ─
+        # Real agent code wraps the model in a client class (`ai.start(...)`,
+        # `self.llm.ask(...)`), so summarizing only module-level functions misses
+        # the main flow. Methods are keyed `Class.method`; to resolve a call we
+        # need the receiver's class, which we take from annotations
+        # (`def f(ai: AI)`) and constructor assignments (`ai = AI()`).
+        self.current_class: Optional[str] = None
+        self.var_class: Dict[str, str] = {}      # local var  -> class name
+        self.attr_class: Dict[str, str] = {}     # self.x     -> class name
         # ── File-mediated taint ──────────────────────────────────────────────
         # A path whose CONTENT we watched a tainted value get written into:
         #   path-var / literal path -> (origin_line, origin_expr)
@@ -685,6 +694,17 @@ class _Analyzer(ast.NodeVisitor):
         if ctor and (ctor in LLM_CONSTRUCTORS or ctor in self.llm_aliases):
             self.llm_signal = True
             ctor_kwargs = {k.arg.lower() for k in node.value.keywords if k.arg}
+            # A client held on an ATTRIBUTE (`self.llm = ChatOpenAI(...)`) is the
+            # dominant shape in agent code — a client class built once in
+            # __init__ and called as `self.llm.invoke(...)` everywhere else.
+            # Tracking only bare names made every such call invisible.
+            for tnode in node.targets:
+                if isinstance(tnode, ast.Attribute):
+                    d = _dotted(tnode)
+                    if d:
+                        self.llm_vars.add(d)
+                        if ctor_kwargs & TOKEN_KEYS or "model_kwargs" in ctor_kwargs:
+                            self.llm_vars_capped.add(d)
             for t in targets:
                 self.llm_vars.add(t)
                 # LangChain-style clients take the ceiling at construction time
@@ -814,13 +834,33 @@ class _Analyzer(ast.NodeVisitor):
                 orig = self.provenance.get(croot)
                 if orig:
                     self._record_provenance(targets, orig[0], orig[1])
+        # Receiver types: `ai = AI(...)` / `self.ai = AI(...)` name the class, so
+        # a later `ai.start(...)` resolves to the `AI.start` summary.
+        _ctor = _ctor_name(val) if isinstance(val, ast.Call) else None
+        if _ctor and _ctor[:1].isupper():
+            for t in targets:
+                self.var_class[t] = _ctor
+            for tnode in node.targets:
+                if isinstance(tnode, ast.Attribute):
+                    key = _dotted(tnode)
+                    if key:
+                        self.attr_class[key] = _ctor
         # INTER-PROCEDURAL: `c = get_cmd(request)` where the local helper
         # `get_cmd` was summarized as returning a traced value. The taint —
         # and the origin line INSIDE the helper — carries to the caller, so the
         # finding still cites a real source a reviewer can open.
-        if isinstance(val, ast.Call) and isinstance(val.func, ast.Name):
-            summ = self.fn_returns_taint.get(val.func.id)
-            imp = self.imported_summaries.get(val.func.id)
+        if isinstance(val, ast.Call):
+            if isinstance(val.func, ast.Name):
+                _key, _impkey = val.func.id, val.func.id
+            else:
+                # `ai.start(...)` -> AI.start, looked up locally or via the class's
+                # own import. This is the shape most real agent code uses.
+                _cls = self._receiver_class(val.func)
+                _attr = getattr(val.func, "attr", None)
+                _key = f"{_cls}.{_attr}" if _cls and _attr else None
+                _impkey = f"{_cls}:{_attr}" if _cls and _attr else None
+            summ = self.fn_returns_taint.get(_key) if _key else None
+            imp = self.imported_summaries.get(_impkey) if _impkey else None
             if summ is None and imp is not None:
                 # Cross-module: the helper lives in another file. Cite that
                 # file:line so the chain stays checkable.
@@ -1092,6 +1132,9 @@ class _Analyzer(ast.NodeVisitor):
         for a in node.args.args + node.args.kwonlyargs:
             if _hint_match(a.arg, INPUT_HINTS):
                 self.tainted.add(a.arg)
+        # Annotated params tell us a receiver's class, which is how `ai.start()`
+        # resolves to `AI.start` without inferring types.
+        self._record_type_annotations(node)
         # A function decorated as an agent tool (@tool, @function_tool, @agent.tool)
         # returns world-data it fetched — untrusted provenance for RG-PROMPT-002.
         is_tool = False
@@ -1158,6 +1201,37 @@ class _Analyzer(ast.NodeVisitor):
                 walk(stmt)
         return out
 
+    def _self_method_key(self, func: ast.AST) -> Optional[str]:
+        """`self.next` inside class C -> "C.next"."""
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id == "self" and self.current_class):
+            return f"{self.current_class}.{func.attr}"
+        return None
+
+    def _receiver_class(self, func: ast.AST) -> Optional[str]:
+        """The class of the receiver in `obj.method(...)`, from the types we
+        track: an annotated parameter (`ai: AI`), a constructor assignment
+        (`ai = AI()`), `self.x` set in __init__, or `self` itself."""
+        if not isinstance(func, ast.Attribute):
+            return None
+        recv = func.value
+        if isinstance(recv, ast.Name):
+            if recv.id == "self":
+                return self.current_class
+            return self.var_class.get(recv.id)
+        if isinstance(recv, ast.Attribute):
+            return self.attr_class.get(_dotted(recv) or "")
+        return None
+
+    def _record_type_annotations(self, node):
+        """Types from a function's parameter annotations: `def f(ai: AI)`."""
+        for a in list(node.args.args) + list(node.args.kwonlyargs):
+            ann = a.annotation
+            cls = (getattr(ann, "id", None)
+                   or (ann.attr if isinstance(ann, ast.Attribute) else None))
+            if cls:
+                self.var_class[a.arg] = cls
+
     def _summarize_returns(self, node):
         """Record (kind, origin_line, origin_expr) if this function returns a
         value we traced to a real source in its own body.
@@ -1172,17 +1246,25 @@ class _Analyzer(ast.NodeVisitor):
             if val is None:
                 continue
             # A request read spelled out in the return: `return request.data`.
+            key = f"{self.current_class}.{node.name}" if self.current_class else node.name
             expr = self._request_read_expr(val)
             if expr:
-                self.fn_returns_taint[node.name] = (
+                self.fn_returns_taint[key] = (
                     "request", getattr(ret, "lineno", 0), expr)
                 return
             # An LLM call returned directly: `return client.chat...create(...)`.
             if isinstance(val, ast.Call) and self._is_llm_call(val):
-                self.fn_returns_taint[node.name] = (
+                self.fn_returns_taint[key] = (
                     "model", getattr(ret, "lineno", 0),
                     (_dotted(val.func) or "an LLM call") + "()")
                 return
+            # Transitive: `return self.next(...)` inherits that method's summary,
+            # which is how a client class layers start() -> next() -> invoke().
+            if isinstance(val, ast.Call):
+                inner = self._self_method_key(val.func)
+                if inner and inner in self.fn_returns_taint:
+                    self.fn_returns_taint[key] = self.fn_returns_taint[inner]
+                    return
             names = _names_in(val)
             croot = _chain_root(val)
             cands = names | ({croot} if croot else set())
@@ -1194,7 +1276,7 @@ class _Analyzer(ast.NodeVisitor):
                 if hit:
                     line, oexpr = self.provenance.get(
                         hit, (getattr(ret, "lineno", 0), f"`{hit}`"))
-                    self.fn_returns_taint[node.name] = (kind, line, oexpr)
+                    self.fn_returns_taint[key] = (kind, line, oexpr)
                     return
 
     def _check_tool_blast_radius(self, node):
@@ -1327,7 +1409,11 @@ class _Analyzer(ast.NodeVisitor):
             # is an app wrapper, not a known SDK call, and `max_tokens` may be
             # handled inside it. A name-based guess is not a finding you can put
             # in front of a maintainer.
-            return root in self.llm_vars or root in self.llm_aliases
+            # The receiver may be an attribute (`self.llm.invoke(...)`), so also
+            # check the dotted receiver against the clients we resolved.
+            recv = _dotted(func.value) or ""
+            return (root in self.llm_vars or root in self.llm_aliases
+                    or recv in self.llm_vars)
         return False
 
     def visit_Call(self, node: ast.Call):
@@ -1353,7 +1439,40 @@ class _Analyzer(ast.NodeVisitor):
         self._record_param_update(node)
         # File-mediated taint: did this call write a tainted value into a file?
         self._record_tainted_write(node)
+        # Container mutation: `messages.append(model_reply)` makes `messages`
+        # carry the model's output. Accumulating into a list and returning it is
+        # the single most common shape in agent code (conversation history), and
+        # without this the taint dies at the append.
+        self._record_container_mutation(node)
         self.generic_visit(node)
+
+    _MUTATORS = {"append", "extend", "insert", "add", "update"}
+
+    def _record_container_mutation(self, node: ast.Call):
+        f = node.func
+        if not isinstance(f, ast.Attribute) or f.attr not in self._MUTATORS:
+            return
+        if not node.args:
+            return
+        target = f.value
+        key = target.id if isinstance(target, ast.Name) else _dotted(target)
+        if not key:
+            return
+        for arg in node.args:
+            t = self._taint_of(arg)
+            if not t:
+                continue
+            self.tainted.add(key)
+            if t.source.startswith("the model"):
+                self.tainted_model.add(key)
+                self.model_extracted.add(key)
+            elif "request" in t.source:
+                self.request_derived.add(key)
+            else:
+                self.untrusted_provenance.add(key)
+            if t.origin_line:
+                self._record_provenance([key], t.origin_line, t.origin_expr)
+            return
 
     def _check_system_message_ctor(self, node: ast.Call, ctor: Optional[str]):
         # RG-PROMPT-002 sink #2: SystemMessage(untrusted) / SystemMessage(content=…)
@@ -1668,7 +1787,12 @@ class _Analyzer(ast.NodeVisitor):
             bn = (_dotted(base) or getattr(base, "id", "") or "").lower()
             if any(safe in bn for safe in _SAFE_YAML_LOADERS):
                 self.safe_yaml_loaders.add(node.name.lower())
+        # Methods are summarized as `Class.method` — real agent code wraps the
+        # model in a client class, so module-level functions alone miss it.
+        prev = self.current_class
+        self.current_class = node.name
         self.generic_visit(node)
+        self.current_class = prev
 
     def visit_Try(self, node: ast.Try):
         # A parse inside the try BODY is guarded (RG-PARSE-001). The except/else/
@@ -2282,7 +2406,15 @@ def collect_summaries(source: str, rel: str) -> Dict[str, Tuple[str, int, str]]:
     except SyntaxError:
         return {}
     a = _Analyzer(rel)
-    a.visit(tree)
+    # Fixpoint: a method can return another method's result (`start` ->
+    # `next` -> `invoke`), and the callee may be defined later in the file, so
+    # one pass isn't enough. Iterate until the summary set stops growing —
+    # bounded, because summaries only ever accumulate.
+    for _ in range(4):
+        before = len(a.fn_returns_taint)
+        a.visit(tree)
+        if len(a.fn_returns_taint) == before:
+            break
     return dict(a.fn_returns_taint)
 
 
@@ -2347,9 +2479,18 @@ def _imported_summaries(a: "_Analyzer", rel: str,
                     cand = funcs
                     target = mod
                     break
-        if cand and orig_name in cand:
+        if not cand:
+            continue
+        f = target.replace(".", "/") + ".py"
+        if orig_name in cand:
             kind, line, expr = cand[orig_name]
-            out[local] = (kind, line, expr, target.replace(".", "/") + ".py")
+            out[local] = (kind, line, expr, f)
+        # An imported CLASS brings its methods: `from x import AI` makes
+        # `AI.start` reachable, keyed "AI:start" for the call-site lookup.
+        prefix = orig_name + "."
+        for k, (kind, line, expr) in cand.items():
+            if k.startswith(prefix):
+                out[f"{local}:{k[len(prefix):]}"] = (kind, line, expr, f)
     return out
 
 
