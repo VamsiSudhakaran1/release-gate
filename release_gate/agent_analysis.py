@@ -1293,6 +1293,15 @@ class _Analyzer(ast.NodeVisitor):
         # irreversible tools — read/write tools stay silent — and grade the ungated
         # case MEDIUM, not HIGH: static sees the absence of a CODE gate, never an
         # out-of-band approval, so overclaiming here would cry wolf.
+        # A tool's NAME is its contract with the model, and that cuts both ways:
+        # if it declares a read (`get_*`/`list_*`/`describe_*`), the model is not
+        # being offered a destructive action, whatever the body's plumbing is
+        # called. awslabs' `get_cloudformation_pre_deploy_validation_instructions`
+        # calls `cloudformation_pre_deploy_validation()` — "deploy" in a helper
+        # that returns guidance. Precision-first: we'd rather miss a badly-named
+        # tool that deletes than tell a maintainer their getter is destructive.
+        if _READ_ONLY_NAME_RE.match(node.name):
+            return
         action = self._irreversible_action_in(node)
         if not action:
             # An agent tool's NAME is its contract with the model — it is what the

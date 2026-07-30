@@ -1830,3 +1830,21 @@ def test_read_verb_prefix_beats_an_irreversible_noun_in_the_name():
         src = f"@tool\ndef {name}(x):\n    return client.do(x)\n"
         assert [f for f in analyze_python(src, "t.py")
                 if f["rule_id"] == "RG-GATE-001"], name
+
+
+def test_read_only_tool_name_overrides_body_plumbing():
+    """awslabs aws-iac-mcp-server: the getter's BODY calls
+    `cloudformation_pre_deploy_validation()` — "deploy" in a helper that returns
+    guidance. The name-based exclusion has to beat the body scan too, or the
+    getter still gets reported as destructive."""
+    src = ("@tool\ndef get_cloudformation_pre_deploy_validation_instructions():\n"
+           "    result = cloudformation_pre_deploy_validation()\n"
+           "    return sanitize_tool_response(result)\n")
+    assert not [f for f in analyze_python(src, "server.py")
+                if f["rule_id"] in ("RG-GATE-001", "RG-TOOL-001")]
+    # Recall guard: a tool that DECLARES a destructive action still fires even
+    # when its body delegates to an SDK client.
+    src2 = ("@tool\ndef delete_db_instance(db_id):\n"
+            "    return client.delete_db_instance(DBInstanceIdentifier=db_id)\n")
+    assert [f for f in analyze_python(src2, "server.py")
+            if f["rule_id"] == "RG-GATE-001"]

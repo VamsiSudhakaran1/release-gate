@@ -981,3 +981,14 @@ cases:
       @tool
       def delete_patient_studies(datastore_id, study_id):
           return client.delete_image_set(datastoreId=datastore_id, imageSetId=study_id)
+
+  - id: gate001-read-tool-body-plumbing-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "awslabs aws-iac-mcp-server — the getter's body calls cloudformation_pre_deploy_validation(); 'deploy' in a helper that returns guidance must not make a getter destructive"
+    code: |
+      @tool
+      def get_cloudformation_pre_deploy_validation_instructions():
+          result = cloudformation_pre_deploy_validation()
+          return sanitize_tool_response(result)
