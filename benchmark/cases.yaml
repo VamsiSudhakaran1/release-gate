@@ -1007,3 +1007,23 @@ cases:
               db_connection_map.remove(conn, db)
               raise
           return "ok"
+
+  - id: gate001-namespaced-read-verb-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "homeassistant-ai/ha-mcp — MCP tools are namespaced (ha_get_zone, ha_config_list_helpers), so an anchored read-verb rule missed every getter"
+    code: |
+      @tool
+      def ha_config_list_helpers(entry_id):
+          return client.get_helpers(entry_id)
+
+  - id: gate001-namespaced-action-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-GATE-001]
+    source: "ha-mcp ha_remove_device — a namespaced tool with no read verb must still fire; the exclusion keys on the read verb, not on the prefix"
+    code: |
+      @tool
+      def ha_remove_device(device_id):
+          return client.delete_device(device_id)

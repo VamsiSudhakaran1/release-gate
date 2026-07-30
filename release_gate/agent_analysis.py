@@ -327,8 +327,13 @@ _STAGING_NAME_RE = re.compile(r"draft|preview|prepare|compose|stage|template",
 # Only excluded as BODY matches; a tool NAMED `remove_series_from_image_set`
 # still fires on its own name.
 _COLLECTION_MUTATORS = {"remove", "pop", "discard", "clear"}
+# MCP tools are usually NAMESPACED (`ha_get_zone`, `ha_config_list_helpers`,
+# `mcp_get_status`), so the read verb rarely sits at position 0. Allow a few
+# short prefix segments before it — still anchored, so `ha_config_remove_group`
+# and `delete_patient_studies` are untouched because they contain no read verb.
 _READ_ONLY_NAME_RE = re.compile(
-    r"^(?:get|list|search|read|fetch|describe|find|query|show|view|inspect|"
+    r"^(?:[a-z0-9]{1,12}_){0,3}"
+    r"(?:get|list|search|read|fetch|describe|find|query|show|view|inspect|"
     r"count|check|validate|preview|summarize|analyze|explain)_", re.IGNORECASE)
 _HELPER_NAME_RE = re.compile(
     r"^_?(?:validate|check|verify|assert|ensure|parse|format|render|build|make|"

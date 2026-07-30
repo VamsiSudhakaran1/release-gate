@@ -50,8 +50,13 @@ became outreach material** — which is the point of the corpus:
    pool on error. Python's collection API (`remove`/`pop`/`discard`/`clear`)
    collides with destructive verbs; bookkeeping is not a real-world action.
 
-Four classes, four rounds of looking. Assume a fifth exists — verify against
-source before you send anything to a maintainer.
+5. **Namespaced tool names.** MCP tools are namespaced (`ha_get_zone`,
+   `ha_config_list_helpers`), so an *anchored* read-verb rule matched none of
+   them and every Home Assistant getter was reported as destructive.
+
+Five classes, five rounds of looking — each one found by reading the source
+behind a finding, and each one would have gone to a maintainer. Verify before
+you send anything.
 
 ## 3. Agent applications — "do we find anything where it matters?"
 

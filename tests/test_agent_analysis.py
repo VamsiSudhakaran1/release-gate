@@ -1868,3 +1868,19 @@ def test_in_memory_collection_mutation_is_not_an_irreversible_action():
                  "@tool\ndef delete_db_instance(i):\n    return client.delete_db_instance(DBInstanceIdentifier=i)\n"):
         assert [f for f in analyze_python(src2, "server.py")
                 if f["rule_id"] == "RG-GATE-001"], src2
+
+
+def test_namespaced_read_verb_is_still_read_only():
+    """MCP tools are namespaced (`ha_get_zone`, `ha_config_list_helpers`), so the
+    read verb rarely sits at position 0 — the anchored rule missed all of them."""
+    for name in ("ha_get_blueprint", "ha_config_get_category",
+                 "ha_config_list_helpers", "ha_get_zone", "mcp_describe_stack"):
+        src = f"@tool\ndef {name}(x):\n    return c.do(x)\n"
+        assert not [f for f in analyze_python(src, "t.py")
+                    if f["rule_id"] == "RG-GATE-001"], name
+    # Namespaced ACTIONS contain no read verb, so they are untouched.
+    for name in ("ha_remove_area_or_floor", "ha_config_remove_automation",
+                 "ha_config_delete_dashboard", "ha_remove_device", "mcp_delete_app"):
+        src = f"@tool\ndef {name}(x):\n    return c.do(x)\n"
+        assert [f for f in analyze_python(src, "t.py")
+                if f["rule_id"] == "RG-GATE-001"], name
