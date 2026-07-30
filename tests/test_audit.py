@@ -1020,3 +1020,60 @@ def test_render_ai_pr_comment_leads_with_net_new_and_ignores_debt():
     assert "Dangerous execution sink" in md and "a.py:10" in md
     assert "Inherited debt ignored" in md and "4 finding" in md
     assert "0 test files touched" in md
+
+
+# ── Scan coverage: a truncated scan must never look like a clean one ──────────
+
+def test_scan_coverage_reports_full_coverage(tmp_path):
+    from release_gate.verify import scan_code_findings
+    import release_gate.verify as v
+    _make(tmp_path, {"agent.py": "from openai import OpenAI\nclient = OpenAI()\n"})
+    scan_code_findings(tmp_path)
+    cov = v.LAST_SCAN_COVERAGE
+    assert cov["truncated"] is False
+    assert cov["files_scanned"] == cov["files_scannable"] >= 1
+
+
+def test_scan_coverage_flags_truncation_and_counts_the_whole_repo(tmp_path):
+    """The bug this guards: the old scanner stopped at 2,000 files and returned
+    silently, so dify (8,892 files) was graded on 22% of its code and still
+    printed a clean verdict. Truncation must be detected AND the true total
+    reported, so the caller can say '5 of 31', not an unbounded '5+'."""
+    from release_gate.verify import scan_code_findings
+    import release_gate.verify as v
+    files = {f"mod{i}.py": "x = 1\n" for i in range(12)}
+    files["agent.py"] = "from openai import OpenAI\nclient = OpenAI()\n"
+    _make(tmp_path, files)
+    scan_code_findings(tmp_path, max_files=4)
+    cov = v.LAST_SCAN_COVERAGE
+    assert cov["truncated"] is True
+    assert cov["files_scanned"] == 4
+    assert cov["files_scannable"] == 13, "must count past the ceiling for true coverage"
+
+
+def test_default_file_ceiling_covers_a_real_monorepo():
+    # dify has ~8.9k scannable files; the ceiling must clear real agent apps.
+    from release_gate.verify import MAX_SCAN_FILES
+    assert MAX_SCAN_FILES >= 20_000
+
+
+def test_report_carries_scan_coverage(tmp_path):
+    _make(tmp_path, {"agent.py": "from openai import OpenAI\nclient = OpenAI()\n"})
+    report = build_report(tmp_path, mode="audit")
+    assert "scan_coverage" in report
+    assert report["scan_coverage"]["truncated"] is False
+
+
+def test_truncation_warning_is_printed_before_the_verdict(tmp_path, capsys):
+    """A clean-looking score on a partial scan is the most damaging output this
+    tool can produce, so the warning has to be on screen, not just in JSON."""
+    from release_gate.audit import render_terminal
+    _make(tmp_path, {"agent.py": "from openai import OpenAI\nclient = OpenAI()\n"})
+    report = build_report(tmp_path, mode="audit")
+    report["scan_coverage"] = {"files_scanned": 2000, "files_scannable": 8892,
+                               "truncated": True, "max_files": 2000}
+    render_terminal(report)
+    out = capsys.readouterr().out
+    assert "TRUNCATED" in out
+    assert "2,000 of 8,892" in out
+    assert "does not mean the repo is clean" in out

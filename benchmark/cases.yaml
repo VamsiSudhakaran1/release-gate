@@ -785,3 +785,45 @@ cases:
               {"role": "system", "content": f"Use these notes: {docs}"},
               {"role": "user", "content": question},
           ]
+
+  # ── RG-GATE-001 blast radius: the deployed-agent signal (agent-app corpus) ──
+  - id: gate001-tool-name-declares-irreversible-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-GATE-001]
+    source: "Upsonic mail/gmail/slack toolkits — a tool's NAME is its contract with the model; the body delegates to an SDK client that body-only scanning cannot resolve, so name-declared irreversible tools were entirely missed"
+    code: |
+      @tool
+      def send_email(to, subject, body):
+          return self._client.messages().send(to=to, subject=subject, body=body)
+
+  - id: gate001-draft-tool-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "Upsonic gmail.py create_draft_email — a draft sends nothing; it IS the reviewable step a human gate produces, so flagging it inverts the rule"
+    code: |
+      @tool
+      def create_draft_email(to, subject, body):
+          return self._client.drafts().create(to=to, subject=subject, body=body)
+
+  - id: gate001-validator-helper-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "Upsonic mail.py _validate_email_params — the old bare 'email' verb matched a VALIDATOR, citing a helper that acts on nothing as the irreversible action"
+    code: |
+      @tool
+      def check_inbox(address):
+          _validate_email_params(address)
+          return fetch_messages(address)
+
+  - id: gate001-readonly-tool-name-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "Read-only agent tools must stay silent — name-based blast-radius detection must not fire on get/list/search/read"
+    code: |
+      @tool
+      def list_files(path):
+          return self._client.list(path)

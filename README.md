@@ -6,9 +6,9 @@
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
-[![Benchmark: 67-case corpus](https://img.shields.io/badge/benchmark-67--case_corpus_%C2%B7_32_TP_%C2%B7_0_FP_%C2%B7_0_bad--highs-blue.svg)](benchmark/RESULTS.md)
+[![Benchmark: 71-case corpus](https://img.shields.io/badge/benchmark-71--case_corpus_%C2%B7_33_TP_%C2%B7_0_FP_%C2%B7_0_bad--highs-blue.svg)](benchmark/RESULTS.md)
 
-> **v0.9.4** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [67-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
+> **v0.9.4** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [71-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
 **Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
 
@@ -119,7 +119,7 @@ Two disciplines run through every rule:
 
 - **Precision over recall — we don't cry wolf.** When the analyzer can't *prove* a real risk it
   stays quiet. **Zero false positives on the current labeled benchmark and framework dogfood set** —
-  the [67-case corpus](benchmark/RESULTS.md) now carries ≥2 vulnerable and ≥2 clean look-alikes for
+  the [71-case corpus](benchmark/RESULTS.md) now carries ≥2 vulnerable and ≥2 clean look-alikes for
   *every* rule (including the v0.9.0 catalog), so that result is reproducible per rule (run
   `python benchmark/run.py`), not just asserted; and the engine stayed correctly silent across a
   framework dogfood (llama_index, crewAI, langgraph, open-interpreter).
@@ -144,6 +144,14 @@ Two disciplines run through every rule:
   followed. The benchmark keeps labeled `*-cross-function-KNOWN-MISS` cases so this shows as a
   recall miss rather than being hidden. Precision-first: we'd rather miss a cross-function flow than
   infer one. Inter-procedural analysis is on the roadmap.
+
+  **What that costs, measured:** across a [20-repo deployed-agent corpus](benchmark/corpus-agents.md)
+  the taint rules produced **zero** confirmed HIGHs — including on apps that demonstrably execute
+  model output. Real agents marshal model output into objects, persist it to disk, and execute it by
+  path (`gpt-engineer`: LLM → `FilesDict` → file → `bash run.sh` → `Popen(shell=True)`, across three
+  modules), or hand it to a container. We follow none of those hops today. The rule that *does* fire
+  on real agent apps is blast radius (`RG-GATE-001`) — irreversible tools with no code-level gate.
+  We publish this rather than reporting the silence as a precision win.
 
 | Rule | Detects | Severity |
 |---|---|---|

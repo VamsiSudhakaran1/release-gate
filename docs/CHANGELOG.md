@@ -4,6 +4,53 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🚨 Scan coverage — a truncated scan can no longer look like a clean one
+
+Found by pointing the tool at a **deployed-agent corpus** (20 agent
+*applications*, not libraries — see `benchmark/corpus-agents.md`). The scanner's
+`max_files` ceiling was **2,000**, and on exceeding it the walk simply returned
+what it had. `langgenius/dify` has 8,892 scannable files, so it was graded on
+**22% of its code** and still printed a clean verdict; LibreChat 60%, Skyvern
+64%. No warning, no flag, no way for a user to know. Deployed agents are
+monorepos, so this hit the target market precisely.
+
+- Ceiling raised to **25,000** files, and the walk now counts *past* the ceiling
+  so true coverage is reportable ("2,000 of 8,892", not an unbounded "2,000+").
+- `scan_coverage` (`files_scanned` / `files_scannable` / `truncated`) is now in
+  the report, and a **`⚠ TRUNCATED`** banner prints above the verdict. A partial
+  scan that reads as clean is the most damaging output this tool can produce.
+
+### 🎯 Blast radius — the signal that actually fires on deployed agents
+
+The same corpus showed `RG-GATE-001` is the top non-advisory finding on real
+agent apps, and surfaced two precision bugs in it:
+
+- **A tool's NAME is its contract with the model.** Upsonic's mail/gmail/slack/
+  telegram toolkits delegate to SDK client objects, so body-only scanning missed
+  the entire class — `send_email`, `delete_file`, `delete_message`,
+  `shutdown_sandbox` all went unreported. An `@tool` whose own name declares an
+  irreversible action now counts, staying MEDIUM/inferred like every other
+  blast-radius finding. Read-only names (`get_*`/`list_*`/`search_*`/`read_*`)
+  stay silent.
+- **Drafts and validators are not irreversible actions.** `create_draft_email`
+  matched the over-broad bare verb `email` — a draft sends nothing; it *is* the
+  reviewable step a gate produces. Worse, the matched call was often
+  `_validate_email_params()`, so even true positives cited a **validator** as the
+  risk. Bare `email` is gone (same lesson as bare `send` in the MCP fix), and
+  staging (`draft`/`preview`/`compose`) and helper (`validate_`/`check_`/
+  `format_`/`get_`…) names are excluded.
+
+Four benchmark cases added (71 cases, 100% precision, 0 HIGH-tier violations).
+
+**Disclosed honestly:** across those 20 agent applications the taint-based rules
+produced **zero** confirmed HIGHs, including on apps that demonstrably execute
+model output. Real agents marshal model output into objects, persist it to disk,
+and execute it by path (`gpt-engineer`: LLM → `FilesDict` → file → `bash run.sh`
+→ `Popen(shell=True)`, across three modules), or hand it to a container. Our
+taint is intra-procedural and in-memory and follows none of those hops. That is a
+recall gap, not a precision win, and it is written up in
+`benchmark/corpus-agents.md` rather than hidden.
+
 ### 🧪 The demo is now self-verifying — on GitHub and on the website
 
 The demo is the first thing a stranger runs before trusting anything else we

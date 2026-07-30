@@ -1165,9 +1165,15 @@ def build_report(root: Path, mode: str = "ci",
     # not the deployed framework, so they never drive the score (which is what
     # makes the grade trustworthy to the maintainer). They're still surfaced,
     # clearly labelled as unscored, under `example_findings`.
+    from release_gate import verify as _verify
     from release_gate.verify import scan_code_findings
+    scan_coverage: Dict[str, Any] = {}
     if agent_detected:
         raw_findings, raw_examples = scan_code_findings(root, return_excluded=True)
+        # Coverage is part of the verdict's honesty: if we could not read the
+        # whole repo, "no findings" does not mean "no risk", and the report has
+        # to say which one it is.
+        scan_coverage = dict(_verify.LAST_SCAN_COVERAGE)
     else:
         raw_findings, raw_examples = [], []
     def _tag(f):
@@ -1265,6 +1271,7 @@ def build_report(root: Path, mode: str = "ci",
         "passing":            passing,
         "code_findings":      code_findings,
         "example_findings":   example_findings,
+        "scan_coverage":      scan_coverage,
         "suppressed":         suppressed_findings,
         "expired_suppressions": expired_suppressions,
         "score":              score,
@@ -2218,6 +2225,22 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
 
     # Path
     print(f"  {_col('Repo', _MUTED)}  {report['path']}")
+
+    # Scan coverage — printed BEFORE the score whenever we could not read the
+    # whole repo, because a truncated scan that prints a clean verdict is the
+    # most damaging thing this tool can do.
+    _cov = report.get("scan_coverage") or {}
+    if _cov.get("truncated"):
+        _msg = (
+            "⚠ TRUNCATED — analyzed {:,} of {:,} scannable files (limit {:,}). "
+            "Findings below are INCOMPLETE; a clean result here does not mean "
+            "the repo is clean.".format(
+                _cov.get("files_scanned", 0),
+                _cov.get("files_scannable", 0),
+                _cov.get("max_files", 0),
+            )
+        )
+        print(f"  {_col('Coverage', _MUTED)}  {_col(_msg, _YELLOW, _BOLD)}")
 
     # Frameworks
     fw = report["frameworks"]

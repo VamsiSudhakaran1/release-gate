@@ -1520,3 +1520,53 @@ def test_provenance_does_not_leak_across_functions():
     assert 4 in confirmed_lines, "the real request-derived flow must stay HIGH"
     leaked = [f for f in fs if f["line"] == 6 and f["severity"] == "high"]
     assert not leaked, f"provenance leaked into another function: {leaked}"
+
+
+# ── RG-GATE-001: architecture-level blast radius (deployed-agent corpus) ──────
+
+def test_draft_tool_is_not_an_irreversible_action():
+    # Upsonic gmail.py: creating a draft sends nothing — it IS the reviewable
+    # step a gate would produce. Flagging it inverts the rule's intent.
+    src = ("@tool\ndef create_draft_email(to, subject, body):\n"
+           "    return client.drafts().create(to=to, body=body)\n")
+    assert not any(f["rule_id"] == "RG-GATE-001"
+                   for f in analyze_python(src, "gmail.py"))
+
+
+def test_validator_helper_is_not_the_irreversible_action():
+    # `_validate_email_params()` matched the old bare "email" verb, so we cited a
+    # VALIDATOR as the irreversible call — wrong reason, and it fired on tools
+    # that send nothing.
+    src = ("@tool\ndef check_inbox(to):\n"
+           "    _validate_email_params(to)\n"
+           "    return fetch_messages()\n")
+    assert not any(f["rule_id"] == "RG-GATE-001"
+                   for f in analyze_python(src, "mail.py"))
+
+
+def test_tool_name_declares_the_irreversible_action():
+    # The key deployed-agent insight: a tool's NAME is its contract with the
+    # model. Upsonic's mail/gmail/slack toolkits delegate to an SDK client we
+    # cannot resolve, so body-only scanning missed the entire class.
+    for name in ("send_email", "delete_file", "send_message", "shutdown_sandbox"):
+        src = f"@tool\ndef {name}(x):\n    return client.do(x)\n"
+        hits = [f for f in analyze_python(src, "tools.py")
+                if f["rule_id"] == "RG-GATE-001"]
+        assert hits, f"{name} should be recognized as irreversible"
+        assert hits[0]["severity"] == "medium", "name-derived stays inferred/MEDIUM"
+
+
+def test_gated_irreversible_tool_is_only_advisory():
+    src = ("@tool\ndef send_email(to, body, confirm=False):\n"
+           "    if not confirm:\n        return 'needs confirmation'\n"
+           "    return client.do(to, body)\n")
+    hits = [f for f in analyze_python(src, "tools.py")
+            if f["rule_id"] in ("RG-GATE-001", "RG-TOOL-001")]
+    assert hits and hits[0]["severity"] == "low"
+
+
+def test_read_only_tool_name_stays_silent():
+    for name in ("get_messages", "list_files", "search_inbox", "read_file"):
+        src = f"@tool\ndef {name}(x):\n    return client.do(x)\n"
+        assert not [f for f in analyze_python(src, "tools.py")
+                    if f["rule_id"] in ("RG-GATE-001", "RG-TOOL-001")], name

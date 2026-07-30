@@ -481,36 +481,64 @@ _JS_WHILE_RE = re.compile(r"\bwhile\s*\(\s*true\s*\)", re.IGNORECASE)
 _SCANNABLE_EXTS = {".py", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"}
 
 
-def scan_code_findings(root: Path, max_files: int = 2000, max_bytes: int = 200_000,
+# How much of a repo we will read before giving up. Deployed agent apps are
+# monorepos — dify is ~8.9k scannable files, LibreChat ~3.3k, Skyvern ~3.1k — so
+# the old 2,000 ceiling silently scanned a fraction of exactly the repos this
+# tool exists to gate (dify at 22% coverage) and still printed a clean verdict.
+# A gate that under-reports without saying so is worse than a slow one.
+MAX_SCAN_FILES = 25_000
+# Set by the last scan_code_findings() call: how many scannable files were seen,
+# how many were actually analyzed, and whether we hit the ceiling. build_report
+# surfaces this so a truncated scan can never masquerade as a clean one.
+LAST_SCAN_COVERAGE: Dict[str, Any] = {}
+
+
+def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
+                       max_bytes: int = 200_000,
                        return_excluded: bool = False):
     """Static analysis for AI-agent-specific risks.
 
     Returns the list of scored (production) findings. With return_excluded=True
     returns (scored, excluded) where `excluded` are findings in non-production
     paths (cookbook/examples/tests/docs/…) that must NOT drive the score.
+
+    Coverage is recorded in `LAST_SCAN_COVERAGE`. If the repo has more scannable
+    files than `max_files` we analyze the first `max_files` and mark the scan
+    TRUNCATED — the caller must say so rather than imply the repo is clean.
     """
+    global LAST_SCAN_COVERAGE
     findings: List[Dict[str, Any]] = []
     skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv",
                  "dist", "build", "site-packages", ".tox", "tests", "test"}
-    count = 0
+    scanned = 0        # files actually analyzed
+    scannable = 0      # files we would analyze given no ceiling
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fname in filenames:
             if not any(fname.endswith(ext) for ext in _SCANNABLE_EXTS):
                 continue
-            count += 1
-            if count > max_files:
-                return _finalize_findings(findings, split=return_excluded)
+            scannable += 1
+            # Keep counting past the ceiling so we can report true coverage
+            # ("scanned 25,000 of 41,300") instead of an unbounded "1000+".
+            if scanned >= max_files:
+                continue
             fpath = Path(dirpath) / fname
             try:
                 text = fpath.read_bytes()[:max_bytes].decode("utf-8", errors="ignore")
             except OSError:
                 continue
+            scanned += 1
             rel = str(fpath.relative_to(root))
             if any(fname.endswith(ext) for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs")):
                 findings.extend(_scan_js_file(rel, text))
             else:
                 findings.extend(_scan_file(rel, text))
+    LAST_SCAN_COVERAGE = {
+        "files_scanned": scanned,
+        "files_scannable": scannable,
+        "truncated": scannable > scanned,
+        "max_files": max_files,
+    }
     return _finalize_findings(findings, split=return_excluded)
 
 

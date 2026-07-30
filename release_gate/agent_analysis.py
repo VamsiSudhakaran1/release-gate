@@ -300,7 +300,9 @@ IRREVERSIBLE_VERB_HINTS = (
     # (send_tool_list_changed / send_resource_updated), which are events, not
     # irreversible actions — a false positive on EVERY MCP server. Match the
     # specific outbound-message actions instead.
-    "send_email", "send_message", "send_sms", "send_mail", "sendmail", "email",
+    # NB: no bare "email" — it matches `_validate_email_params` / `format_email`
+    # (Upsonic), i.e. helpers that send nothing. Same lesson as bare "send".
+    "send_email", "send_message", "send_sms", "send_mail", "sendmail",
     "pay", "charge", "refund", "purchase", "transfer",
     "deploy", "publish", "terminate", "shutdown", "revoke", "wire",
     "place_order", "submit_order", "execute_trade", "cancel_order",
@@ -310,6 +312,18 @@ IRREVERSIBLE_VERB_HINTS = (
 # notify_*, emit_*). Keeps RG-GATE-001 off MCP servers' list-changed handlers.
 _NOTIFICATION_NAME_RE = re.compile(
     r"(?:_changed|_updated|_notification|notify|emit)\b|^(?:notify|emit)_", re.IGNORECASE)
+# Staging actions that PREPARE an irreversible action without performing it.
+# Found dogfooding Upsonic: `create_draft_email` matched the "email" verb, but a
+# draft is not sent — it is the reviewable step a human gate would produce, so
+# flagging it inverts the rule's intent. Sending a draft still fires (send_*).
+_STAGING_NAME_RE = re.compile(r"draft|preview|prepare|compose|stage|template",
+                              re.IGNORECASE)
+# Helpers that inspect or shape a value rather than act on it. A call to one of
+# these is never the irreversible action, whatever nouns are in its name.
+_HELPER_NAME_RE = re.compile(
+    r"^_?(?:validate|check|verify|assert|ensure|parse|format|render|build|make|"
+    r"get|list|fetch|read|load|find|search|resolve|normalize|serialize|encode|"
+    r"decode|count|is|has)_", re.IGNORECASE)
 # A signal in the tool body that a human/confirmation/dry-run gate exists.
 # Over-detecting a gate is the SAFE error here — it suppresses a finding
 # (false negative), never invents one, so this list can be generous.
@@ -971,6 +985,18 @@ class _Analyzer(ast.NodeVisitor):
         # out-of-band approval, so overclaiming here would cry wolf.
         action = self._irreversible_action_in(node)
         if not action:
+            # An agent tool's NAME is its contract with the model — it is what the
+            # LLM reads when choosing to call it. A tool called `send_email` or
+            # `delete_file` offers the model an irreversible action even when the
+            # body delegates through an SDK we can't resolve (Upsonic's mail/gmail
+            # toolkits hand off to a client object). Scanning only the body misses
+            # the entire class, which is most real agent tools. Name-derived, so
+            # it stays MEDIUM/inferred like every other blast-radius finding.
+            if (_hint_match(node.name, IRREVERSIBLE_VERB_HINTS)
+                    and not _STAGING_NAME_RE.search(node.name)
+                    and not _NOTIFICATION_NAME_RE.search(node.name)):
+                action = f"the tool's declared action `{node.name}`"
+        if not action:
             return
         if self._has_gate(node):
             self.findings.append(self._f(
@@ -1011,6 +1037,14 @@ class _Analyzer(ast.NodeVisitor):
             name = f.attr if isinstance(f, ast.Attribute) else (getattr(f, "id", "") or "")
             # A protocol notification / event emission is not irreversible.
             if name and _NOTIFICATION_NAME_RE.search(name):
+                continue
+            # Nor is STAGING one: create_draft_email prepares a message it does
+            # not send. Flagging it would penalize the reviewable step.
+            if name and _STAGING_NAME_RE.search(name):
+                continue
+            # Nor is a validator/formatter — `_validate_email_params()` acts on
+            # nothing, and matching it made us cite the wrong call as the risk.
+            if name and _HELPER_NAME_RE.match(name):
                 continue
             if isinstance(f, ast.Attribute):
                 if f.attr in _PATH_DELETE_ATTRS:
