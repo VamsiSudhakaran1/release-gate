@@ -320,6 +320,12 @@ _STAGING_NAME_RE = re.compile(r"draft|preview|prepare|compose|stage|template",
                               re.IGNORECASE)
 # Helpers that inspect or shape a value rather than act on it. A call to one of
 # these is never the irreversible action, whatever nouns are in its name.
+# A tool whose name STARTS with a read verb returns data and changes nothing,
+# however alarming the nouns after it are. Anchored deliberately: `delete_report`
+# must still fire, only `get_..._delete_...` is excused.
+_READ_ONLY_NAME_RE = re.compile(
+    r"^(?:get|list|search|read|fetch|describe|find|query|show|view|inspect|"
+    r"count|check|validate|preview|summarize|analyze|explain)_", re.IGNORECASE)
 _HELPER_NAME_RE = re.compile(
     r"^_?(?:validate|check|verify|assert|ensure|parse|format|render|build|make|"
     r"get|list|fetch|read|load|find|search|resolve|normalize|serialize|encode|"
@@ -1296,7 +1302,14 @@ class _Analyzer(ast.NodeVisitor):
             # toolkits hand off to a client object). Scanning only the body misses
             # the entire class, which is most real agent tools. Name-derived, so
             # it stays MEDIUM/inferred like every other blast-radius finding.
+            # A READ verb at the front settles it, whatever else is in the name.
+            # AWS's `get_cloudformation_pre_deploy_validation_instructions`
+            # matched "deploy", and `list_metadata_transfer_jobs` matched
+            # "transfer" — both return data and change nothing. Telling a
+            # maintainer their getter is an irreversible action is instantly
+            # dismissible, so the leading verb wins over any noun in the middle.
             if (_hint_match(node.name, IRREVERSIBLE_VERB_HINTS)
+                    and not _READ_ONLY_NAME_RE.match(node.name)
                     and not _STAGING_NAME_RE.search(node.name)
                     and not _NOTIFICATION_NAME_RE.search(node.name)):
                 action = f"the tool's declared action `{node.name}`"

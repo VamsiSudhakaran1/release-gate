@@ -961,3 +961,23 @@ cases:
       """
       def build(cfg):
           return cfg
+
+  - id: gate001-read-verb-prefix-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "awslabs/mcp — `get_cloudformation_pre_deploy_validation_instructions` matched the verb 'deploy' and `list_metadata_transfer_jobs` matched 'transfer'. Both are getters; a leading read verb must beat an irreversible noun later in the name"
+    code: |
+      @tool
+      def get_cloudformation_pre_deploy_validation_instructions(stack):
+          return client.describe(stack)
+
+  - id: gate001-real-delete-still-fires-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-GATE-001]
+    source: "awslabs/mcp HealthImaging — delete_patient_studies is exactly the blast radius an MCP server should gate; the read-verb exclusion is anchored so this still fires"
+    code: |
+      @tool
+      def delete_patient_studies(datastore_id, study_id):
+          return client.delete_image_set(datastoreId=datastore_id, imageSetId=study_id)

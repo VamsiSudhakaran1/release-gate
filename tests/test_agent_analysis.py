@@ -1809,3 +1809,24 @@ def test_docstring_placeholder_secret_with_words_between_is_not_flagged():
         assert _is_real_secret(line) is False, line
     # Recall guard: real provider keys still fire.
     assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5dE0fG"') is True
+
+
+def test_read_verb_prefix_beats_an_irreversible_noun_in_the_name():
+    """AWS MCP servers, found triaging the MCP corpus:
+    `get_cloudformation_pre_deploy_validation_instructions` matched "deploy" and
+    `list_metadata_transfer_jobs` matched "transfer". Both return data and change
+    nothing — telling a maintainer their getter is an irreversible action is
+    instantly dismissible, so a leading read verb settles it."""
+    for name in ("get_cloudformation_pre_deploy_validation_instructions",
+                 "get_metadata_transfer_job", "list_metadata_transfer_jobs",
+                 "describe_delete_protection", "check_transfer_status",
+                 "search_deleted_items"):
+        src = f"@tool\ndef {name}(x):\n    return client.do(x)\n"
+        assert not [f for f in analyze_python(src, "t.py")
+                    if f["rule_id"] == "RG-GATE-001"], name
+    # Recall guard: the exclusion is ANCHORED, so real actions still fire.
+    for name in ("delete_db_instance", "delete_patient_studies",
+                 "rabbitmq_broker_purge_queue", "transfer_funds", "deploy_stack"):
+        src = f"@tool\ndef {name}(x):\n    return client.do(x)\n"
+        assert [f for f in analyze_python(src, "t.py")
+                if f["rule_id"] == "RG-GATE-001"], name
