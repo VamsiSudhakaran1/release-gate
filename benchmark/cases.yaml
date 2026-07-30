@@ -944,3 +944,20 @@ cases:
       def run():
           c = Config()
           os.system(c.get_cmd())
+
+  - id: secret001-docstring-placeholder-words-between-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "PrefectHQ/fastmcp auth0.py — `your-auth0-client-secret` in a docstring example. Caught during MCP-corpus dogfooding BEFORE it was reported to a 27k-star project; the placeholder pattern needed to allow words between `your-` and the credential noun"
+    code: |
+      """Auth0 provider.
+
+      Example (OAuth proxy):
+          auth = Auth0Provider(
+              client_id="your-auth0-client-id",
+              client_secret="your-auth0-client-secret",
+          )
+      """
+      def build(cfg):
+          return cfg

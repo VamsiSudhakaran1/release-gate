@@ -731,7 +731,10 @@ def _is_real_secret(line: str) -> bool:
     # isn't suppressed.
     if re.search(r"this[-_]is[-_]a|test[-_](?:secret|key|token|api)|"
                  r"(?:secret|key|token)[-_](?:here|value|goes)|changeme|placeholder|"
-                 r"redacted|your[-_](?:secret|key|token|api|password)|"
+                 # `your-...-secret` with words in between: PrefectHQ/fastmcp's
+                 # docstring example uses `your-auth0-client-secret`, which the
+                 # old "your-" + credential-word-immediately-after pattern missed.
+                 r"redacted|your[-_][\w-]{0,24}?(?:secret|key|token|api|password|credential)|"
                  r"example[-_](?:secret|key|token|value)|dummy[-_](?:secret|key|token)|"
                  r"not[-_]a[-_](?:real|secret)|replace[-_]me", low):
         return False

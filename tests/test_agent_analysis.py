@@ -1791,3 +1791,21 @@ def test_container_mutation_of_untainted_value_stays_silent():
            "def build():\n    parts = []\n    parts.append('ls')\n    os.system(parts[0])\n")
     assert not [f for f in analyze_python(src, "x.py")
                 if f["severity"] in ("high", "critical")]
+
+
+def test_docstring_placeholder_secret_with_words_between_is_not_flagged():
+    """PrefectHQ/fastmcp auth0.py — `client_secret="your-auth0-client-secret"`
+    inside a module docstring example. The old pattern required the credential
+    word immediately after `your-`; this has `auth0-client-` in between.
+
+    Reporting this would have meant telling a 27k-star maintainer they committed
+    a secret that sits three lines under the words "Example (OAuth proxy):".
+    """
+    from release_gate.verify import _is_real_secret
+    for line in ('client_secret="your-auth0-client-secret",',
+                 'client_id="your-auth0-client-id",',
+                 'api_key="your-company-openai-api-key"',
+                 'token = "your-token"'):
+        assert _is_real_secret(line) is False, line
+    # Recall guard: real provider keys still fire.
+    assert _is_real_secret('api_key = "sk-proj-9aZ2kQ7mN4pL8vR1tY6wX3bC5dE0fG"') is True
