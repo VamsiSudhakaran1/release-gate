@@ -827,3 +827,59 @@ cases:
       @tool
       def list_files(path):
           return self._client.list(path)
+
+  # ── File-mediated taint: model output → a file → executed by path ──────────
+  - id: exec-file-mediated-write-then-shell-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "gpt-engineer class — agents don't exec() code in memory, they write a script and run it; without file tracking the filesystem launders the provenance away"
+    code: |
+      import subprocess
+      from openai import OpenAI
+      client = OpenAI()
+      def run(m):
+          r = client.chat.completions.create(model="gpt-4o", messages=m, max_tokens=9)
+          f = open("run.sh", "w")
+          f.write(r.choices[0].message.content)
+          subprocess.run("bash run.sh", shell=True)
+
+  - id: exec-file-mediated-pathlib-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-EXEC-001]
+    source: "Path(p).write_text(model_output) then `bash {p}` — the same laundering through pathlib"
+    code: |
+      import subprocess
+      from pathlib import Path
+      from openai import OpenAI
+      client = OpenAI()
+      def run(m, script):
+          r = client.chat.completions.create(model="gpt-4o", messages=m, max_tokens=9)
+          Path(script).write_text(r.choices[0].message.content)
+          subprocess.run(f"bash {script}", shell=True)
+
+  - id: exec-file-constant-content-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "FP control — writing a CONSTANT script and running it is an ordinary build step, not laundered model output"
+    code: |
+      import subprocess
+      def run():
+          f = open("build.sh", "w")
+          f.write("echo hello")
+          subprocess.run("bash build.sh", shell=True)
+
+  - id: exec-file-write-without-exec-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "FP control — writing model output to a file is normal (logs, artifacts, generated code the user reviews); only EXECUTING it is the risk"
+    code: |
+      from openai import OpenAI
+      client = OpenAI()
+      def save(m):
+          r = client.chat.completions.create(model="gpt-4o", messages=m, max_tokens=9)
+          f = open("out.txt", "w")
+          f.write(r.choices[0].message.content)

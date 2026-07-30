@@ -1640,3 +1640,87 @@ def test_nested_function_returns_do_not_leak_to_the_outer_summary():
            "    os.system(outer(request))\n")
     assert not [f for f in analyze_python(src, "x.py")
                 if f["severity"] in ("high", "critical")]
+
+
+# ── Cross-module taint + file-mediated taint (0.9.4) ─────────────────────────
+
+def test_cross_module_helper_return_is_traced():
+    """Real agents put the model call in one module and the sink in another —
+    the shape a per-file analyzer is structurally blind to."""
+    from release_gate.agent_analysis import build_project_index
+    files = {
+        "app/steps.py": ("from openai import OpenAI\nclient = OpenAI()\n"
+                         "def gen(m):\n"
+                         "    r = client.chat.completions.create(model='gpt-4o', messages=m, max_tokens=9)\n"
+                         "    return r.choices[0].message.content\n"),
+        "app/runner.py": ("import os\nfrom app.steps import gen\n"
+                          "def run(m):\n    cmd = gen(m)\n    os.system(cmd)\n"),
+    }
+    idx = build_project_index(files)
+    hits = [f for f in analyze_python(files["app/runner.py"], "app/runner.py", idx)
+            if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+    # The chain must name the DEFINING file — a line number in a file you aren't
+    # looking at is useless without it.
+    assert "app/steps.py" in hits[0]["evidence"]
+    assert hits[0]["provenance"]["origin_line"] == 4
+
+
+def test_cross_module_relative_import_resolves():
+    from release_gate.agent_analysis import build_project_index
+    files = {
+        "pkg/steps.py": "def get_cmd(request):\n    return request.data\n",
+        "pkg/run.py": ("import os\nfrom .steps import get_cmd\n"
+                       "def go(request):\n    c = get_cmd(request)\n    os.system(c)\n"),
+    }
+    idx = build_project_index(files)
+    hits = [f for f in analyze_python(files["pkg/run.py"], "pkg/run.py", idx)
+            if f["severity"] == "high"]
+    assert hits and "pkg/steps.py" in hits[0]["evidence"]
+
+
+def test_cross_module_untainted_helper_stays_silent():
+    from release_gate.agent_analysis import build_project_index
+    files = {
+        "app/cfg.py": "def get_cmd():\n    return 'ls -la'\n",
+        "app/run.py": ("import os\nfrom app.cfg import get_cmd\n"
+                       "def go():\n    os.system(get_cmd())\n"),
+    }
+    idx = build_project_index(files)
+    assert not [f for f in analyze_python(files["app/run.py"], "app/run.py", idx)
+                if f["severity"] in ("high", "critical")]
+
+
+def test_file_mediated_taint_open_write_then_shell():
+    """Agents don't exec() code in memory — they write a script and run it.
+    Without file tracking the filesystem launders the provenance away."""
+    src = ("import subprocess\nfrom openai import OpenAI\nclient = OpenAI()\n"
+           "def run(m):\n"
+           "    r = client.chat.completions.create(model='gpt-4o', messages=m, max_tokens=9)\n"
+           "    f = open('run.sh', 'w')\n"
+           "    f.write(r.choices[0].message.content)\n"
+           "    subprocess.run('bash run.sh', shell=True)\n")
+    hits = [f for f in analyze_python(src, "x.py")
+            if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+
+
+def test_file_mediated_taint_pathlib_write_text():
+    src = ("import subprocess\nfrom pathlib import Path\nfrom openai import OpenAI\n"
+           "client = OpenAI()\n"
+           "def run(m, script):\n"
+           "    r = client.chat.completions.create(model='gpt-4o', messages=m, max_tokens=9)\n"
+           "    Path(script).write_text(r.choices[0].message.content)\n"
+           "    subprocess.run(f'bash {script}', shell=True)\n")
+    assert [f for f in analyze_python(src, "x.py") if f["severity"] == "high"]
+
+
+def test_untainted_file_write_then_shell_stays_silent():
+    # The FP control: writing a constant script and running it is a build step.
+    src = ("import subprocess\n"
+           "def run():\n"
+           "    f = open('build.sh', 'w')\n"
+           "    f.write('echo hello')\n"
+           "    subprocess.run('bash build.sh', shell=True)\n")
+    assert not [f for f in analyze_python(src, "x.py")
+                if f["severity"] in ("high", "critical")]

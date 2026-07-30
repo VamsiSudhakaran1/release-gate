@@ -487,6 +487,18 @@ _SCANNABLE_EXTS = {".py", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"}
 # tool exists to gate (dify at 22% coverage) and still printed a clean verdict.
 # A gate that under-reports without saying so is worse than a slow one.
 MAX_SCAN_FILES = 25_000
+# A function can only summarize to a taint source (model call / request read /
+# retrieval / HTTP / @tool return) if one of these strings is present. Files with
+# none of them cannot contribute to the cross-module index, so the summary pass
+# skips parsing them entirely — the difference between scanning agent code and
+# re-parsing an entire monorepo.
+_SUMMARY_MARKER_RE = re.compile(
+    r"\b(?:openai|anthropic|cohere|litellm|ollama|groq|mistralai|together|"
+    r"vertexai|langchain|llama_index|bedrock|generativeai|"
+    r"request|req|requests|httpx|aiohttp|urlopen|"
+    r"completions?|chat|invoke|predict|generate|choices|"
+    r"retrieve|similarity_search|get_relevant_documents|tool)\b",
+    re.IGNORECASE)
 # Set by the last scan_code_findings() call: how many scannable files were seen,
 # how many were actually analyzed, and whether we hit the ceiling. build_report
 # surfaces this so a truncated scan can never masquerade as a clean one.
@@ -510,6 +522,37 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
     findings: List[Dict[str, Any]] = []
     skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv",
                  "dist", "build", "site-packages", ".tox", "tests", "test"}
+
+    # ── Phase 1: whole-program summary index ────────────────────────────────
+    # What does each function in this repo RETURN? Built before any analysis so
+    # a sink in module B can be traced to a model call in module A — the shape
+    # every real agent app uses. We re-walk rather than holding every source in
+    # memory: a 25k-file monorepo of 200KB files would be gigabytes.
+    from release_gate.agent_analysis import collect_summaries, module_name_for
+    index: Dict[str, Dict[str, Any]] = {}
+    seen_py = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            if not fname.endswith(".py") or seen_py >= max_files:
+                continue
+            seen_py += 1
+            fpath = Path(dirpath) / fname
+            try:
+                text = fpath.read_bytes()[:max_bytes].decode("utf-8", errors="ignore")
+            except OSError:
+                continue
+            # Cheap pre-filter: a function can only summarize to a taint source
+            # if one of these appears in the text, so files without any marker
+            # cannot contribute to the index and needn't be parsed. This keeps
+            # the extra pass proportional to agent code, not repo size.
+            if not _SUMMARY_MARKER_RE.search(text):
+                continue
+            summaries = collect_summaries(text, str(fpath.relative_to(root)))
+            if summaries:
+                index[module_name_for(str(fpath.relative_to(root)))] = summaries
+
+    # ── Phase 2: analyze, resolving imports against the index ───────────────
     scanned = 0        # files actually analyzed
     scannable = 0      # files we would analyze given no ceiling
     for dirpath, dirnames, filenames in os.walk(root):
@@ -532,7 +575,7 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
             if any(fname.endswith(ext) for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs")):
                 findings.extend(_scan_js_file(rel, text))
             else:
-                findings.extend(_scan_file(rel, text))
+                findings.extend(_scan_file(rel, text, index=index))
     LAST_SCAN_COVERAGE = {
         "files_scanned": scanned,
         "files_scannable": scannable,
@@ -758,7 +801,7 @@ def _is_real_secret(line: str) -> bool:
     return has_alpha and (has_digit or has_mixed_or_special)
 
 
-def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
+def _scan_file(rel: str, text: str, index: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Python source — real AST analysis (LLM calls, exec sinks, prompt
     injection) plus a placeholder-aware secret scan.
 
@@ -768,7 +811,7 @@ def _scan_file(rel: str, text: str) -> List[Dict[str, Any]]:
     enough to put in front of a maintainer.
     """
     from release_gate.agent_analysis import analyze_python
-    findings: List[Dict[str, Any]] = list(analyze_python(text, rel))
+    findings: List[Dict[str, Any]] = list(analyze_python(text, rel, index=index))
 
     for i, line in enumerate(text.splitlines(), start=1):
         s = line.strip()

@@ -624,6 +624,26 @@ class _Analyzer(ast.NodeVisitor):
         # Provenance still comes from a real source INSIDE the helper, so a
         # summary can only ever carry evidence we could already cite.
         self.fn_returns_taint: Dict[str, Tuple[str, int, str]] = {}
+        # ── Cross-module: summaries for names IMPORTED into this file ────────
+        # local name -> (kind, origin_line, origin_expr, origin_file). Supplied
+        # by the project-wide index (see build_project_index / analyze_python's
+        # `imported` argument), because real agents put the model call in one
+        # module and the sink in another. Carries the DEFINING file so the
+        # evidence chain can name it — a chain that cites a line in a file you
+        # aren't looking at is useless without the filename.
+        self.imported_summaries: Dict[str, Tuple[str, int, str, str]] = {}
+        # Local alias -> module dotted path, from `from x.y import f` / `import x.y`.
+        self.import_module_of: Dict[str, str] = {}
+        # ── File-mediated taint ──────────────────────────────────────────────
+        # A path whose CONTENT we watched a tainted value get written into:
+        #   path-var / literal path -> (origin_line, origin_expr)
+        # Agents don't hand code to exec() in memory; they write a script and run
+        # it (`gpt-engineer`: model output -> run.sh -> `bash run.sh`). Without
+        # this the filesystem is a laundering step that erases provenance.
+        self.tainted_paths: Dict[str, Tuple[int, str]] = {}
+        # File handles opened for WRITING, mapped to their path key, so
+        # `f = open(p, "w"); f.write(model_out)` is tracked across two statements.
+        self.write_handles: Dict[str, str] = {}
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -645,6 +665,13 @@ class _Analyzer(ast.NodeVisitor):
         for a in node.names:
             if (a.asname or a.name) in ("eval", "exec", "compile"):
                 self.shadowed_builtins.add(a.asname or a.name)
+        # Remember where each imported name came from, so the project index can
+        # be consulted for its summary. Relative imports keep their leading dots
+        # (`.steps`), resolved against this file's package by the caller.
+        mod = ("." * (node.level or 0)) + (node.module or "")
+        for a in node.names:
+            if a.name != "*":
+                self.import_module_of[a.asname or a.name] = f"{mod}:{a.name}"
         self.generic_visit(node)
 
     # -- assignments: track LLM clients + tainted (model output) vars ------
@@ -722,6 +749,18 @@ class _Analyzer(ast.NodeVisitor):
             elif croot and croot in self.tainted:
                 for t in targets:
                     self.tainted.add(t)
+        # f = open(path, "w")  → remember which path this handle writes to, so a
+        # later `f.write(model_output)` marks the PATH, not the handle.
+        if isinstance(node.value, ast.Call) and _ctor_name(node.value) == "open" \
+                and node.value.args:
+            mode = node.value.args[1] if len(node.value.args) > 1 else None
+            mode_s = mode.value if isinstance(mode, ast.Constant) and isinstance(
+                mode.value, str) else "r"
+            if any(m in mode_s for m in ("w", "a", "x", "+")):
+                key = self._path_key(node.value.args[0])
+                if key:
+                    for t in targets:
+                        self.write_handles[t] = key
         # x = self._duplex.recv_bytes()  → x came off a LOCAL IPC pipe, which the
         # process controls — trusted transport, not external input.
         if isinstance(node.value, ast.Call) and self._is_local_ipc_recv(node.value):
@@ -781,6 +820,12 @@ class _Analyzer(ast.NodeVisitor):
         # finding still cites a real source a reviewer can open.
         if isinstance(val, ast.Call) and isinstance(val.func, ast.Name):
             summ = self.fn_returns_taint.get(val.func.id)
+            imp = self.imported_summaries.get(val.func.id)
+            if summ is None and imp is not None:
+                # Cross-module: the helper lives in another file. Cite that
+                # file:line so the chain stays checkable.
+                kind, oline, oexpr, ofile = imp
+                summ = (kind, oline, f"{oexpr} [{ofile}]")
             if summ:
                 kind, oline, oexpr = summ
                 for t in targets:
@@ -917,6 +962,89 @@ class _Analyzer(ast.NodeVisitor):
     def _untrusted_source_call(self, node: ast.Call) -> bool:
         return (self._is_retrieval_call(node) or self._is_http_call(node)
                 or self._is_tool_call(node))
+
+    # -- file-mediated taint: model output -> a file -> executed by path -------
+    @staticmethod
+    def _path_key(node: ast.AST) -> Optional[str]:
+        """A stable key for a path: the variable name, or the literal string."""
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Call):          # Path(p) / open(p, ...)
+            return _Analyzer._path_key(node.args[0]) if node.args else None
+        if isinstance(node, ast.Attribute):
+            return _dotted(node)
+        return None
+
+    def _taint_of(self, node: ast.AST) -> Optional[Taint]:
+        """The Taint carried by an expression, by any provenance we already
+        track. Used to decide whether a WRITE launders tainted content."""
+        names = set(_names_in(node))
+        croot = _chain_root(node)
+        if croot:
+            names.add(croot)
+        if isinstance(node, ast.Call) and self._is_llm_call(node):
+            return Taint("the model's response", "the model's own output", CONFIRMED,
+                         getattr(node, "lineno", 0),
+                         (_dotted(node.func) or "an LLM call") + "()")
+        for pool, label in ((self.model_extracted, "the model's own output"),
+                            (self.tainted_model, "the model's own output"),
+                            (self.untrusted_provenance,
+                             "an untrusted external source (retrieval / HTTP / tool output)"),
+                            (self.request_derived, "external user/request input")):
+            hit = next((n for n in names if n in pool), None)
+            if hit:
+                line, expr = self.provenance.get(hit, (0, ""))
+                return Taint(hit, label, CONFIRMED, line, expr)
+        return None
+
+    def _record_tainted_write(self, node: ast.Call):
+        """Note a path whose contents came from a tainted source.
+
+        Shapes handled: `open(p,'w').write(t)`, `f.write(t)` where f came from
+        `open(p,'w')`, and `Path(p).write_text(t)`.
+        """
+        f = node.func
+        if not isinstance(f, ast.Attribute) or f.attr not in ("write", "write_text",
+                                                              "write_bytes", "writelines"):
+            return
+        if not node.args:
+            return
+        t = self._taint_of(node.args[0])
+        if not t:
+            return
+        recv = f.value
+        key = None
+        if isinstance(recv, ast.Call):
+            fn = _ctor_name(recv)
+            if fn in ("open", "Path") and recv.args:
+                key = self._path_key(recv.args[0])
+        elif isinstance(recv, ast.Name):
+            key = self.write_handles.get(recv.id) or recv.id
+        if key:
+            self.tainted_paths.setdefault(
+                key, (t.origin_line or getattr(node, "lineno", 0),
+                      t.origin_expr or t.source))
+
+    def _tainted_path_in(self, node: ast.AST) -> Optional[Taint]:
+        """A tainted file path referenced by a command expression — `bash run.sh`,
+        f"bash {entrypoint}", or a list argv containing the path."""
+        for sub in ast.walk(node):
+            key = None
+            if isinstance(sub, ast.Name):
+                key = sub.id
+            elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                # A literal command line mentioning a tainted path: "bash run.sh".
+                for p in self.tainted_paths:
+                    if p and p in sub.value:
+                        key = p
+                        break
+            if key and key in self.tainted_paths:
+                line, expr = self.tainted_paths[key]
+                return Taint(key, "a file written from model/untrusted output",
+                             CONFIRMED, line, expr)
+        return None
 
     def _prov_taint(self, name: str, label: str) -> Taint:
         """Build a CONFIRMED Taint for a var already proven untrusted, so the
@@ -1223,6 +1351,8 @@ class _Analyzer(ast.NodeVisitor):
         self._check_secret_to_prompt(node)
         self._check_parse_sink(node)
         self._record_param_update(node)
+        # File-mediated taint: did this call write a tainted value into a file?
+        self._record_tainted_write(node)
         self.generic_visit(node)
 
     def _check_system_message_ctor(self, node: ast.Call, ctor: Optional[str]):
@@ -1876,8 +2006,13 @@ class _Analyzer(ast.NodeVisitor):
         if kind == "compile()" and not self._fn_has_exec:
             return
         args = list(node.args)
+        # File-mediated taint is checked BEFORE the constant-argument shortcut:
+        # `subprocess.run("bash run.sh")` is entirely constant, yet run.sh may
+        # have just been written from model output. The danger is in the file's
+        # CONTENT, which the command string never shows.
+        _fpath = next((t for t in (self._tainted_path_in(a) for a in args) if t), None)
         # Benign: every argument is a constant literal (e.g. os.system('clear')).
-        if _is_all_constant(args):
+        if _is_all_constant(args) and not _fpath:
             return
         # Reachability: does a tainted (model/user) value flow into the sink?
         arg_names = [n for a in args for n in _names_in(a)]
@@ -1893,6 +2028,11 @@ class _Analyzer(ast.NodeVisitor):
                 or any(n in self.integrity_verified for n in arg_names)):
             return
         reaching = self._reaching_taint(arg_names, args)
+        if reaching is None:
+            # File-mediated: the command doesn't carry tainted TEXT, it names a
+            # tainted FILE — `bash run.sh` where run.sh was written from model
+            # output. Nothing is in scope to see unless we track the path.
+            reaching = _fpath
         if reaching:
             value, source, confirmed = reaching.name, reaching.source, reaching.confirmed
             # Intentional (if weak) sandbox: exec(code, {"__builtins__": {}}, …).
@@ -2120,8 +2260,107 @@ def has_llm_usage(source: str) -> bool:
     return a.llm_signal or bool(a.llm_vars)
 
 
-def analyze_python(source: str, rel: str) -> List[Dict[str, Any]]:
-    """Analyze one Python file. Returns findings; empty on parse failure."""
+def module_name_for(rel: str) -> str:
+    """Dotted module path for a repo-relative file: a/b/c.py -> a.b.c,
+    a/b/__init__.py -> a.b. Used to key the cross-module summary index."""
+    p = rel.replace("\\", "/")
+    p = p[:-3] if p.endswith(".py") else p
+    if p.endswith("/__init__"):
+        p = p[: -len("/__init__")]
+    return p.replace("/", ".")
+
+
+def collect_summaries(source: str, rel: str) -> Dict[str, Tuple[str, int, str]]:
+    """Phase 1 of the whole-program pass: what does each function in this file
+    RETURN? Returns {func_name: (kind, origin_line, origin_expr)}.
+
+    Cheap enough to run over a whole repo — it is the same traversal the
+    per-file analysis does, with findings discarded.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    a = _Analyzer(rel)
+    a.visit(tree)
+    return dict(a.fn_returns_taint)
+
+
+def build_project_index(files: Dict[str, str]) -> Dict[str, Dict[str, Tuple[str, int, str]]]:
+    """{module: {func: summary}} for every file in the repo.
+
+    This is what makes cross-module taint possible: real agents put the model
+    call in one module and the sink in another, so a per-file analyzer is
+    structurally blind to their main flow.
+    """
+    index: Dict[str, Dict[str, Tuple[str, int, str]]] = {}
+    for rel, src in files.items():
+        summaries = collect_summaries(src, rel)
+        if summaries:
+            index[module_name_for(rel)] = summaries
+    return index
+
+
+def _resolve_module(spec: str, package: str) -> str:
+    """Resolve an import target to an absolute dotted module.
+
+    `spec` is "<module-with-optional-leading-dots>:<name>"; `package` is the
+    importing file's PACKAGE (not its module). One dot means "this package", so
+    `from .steps import f` inside `pkg/run.py` resolves to `pkg.steps` — each
+    extra dot climbs one level above that.
+    """
+    mod = spec.rsplit(":", 1)[0]
+    dots = len(mod) - len(mod.lstrip("."))
+    if not dots:
+        return mod
+    base = [p for p in package.split(".") if p]
+    if dots > 1:
+        base = base[: max(0, len(base) - (dots - 1))]
+    tail = mod.lstrip(".")
+    return ".".join(base + ([tail] if tail else []))
+
+
+def _package_of(rel: str) -> str:
+    """The package a file belongs to: pkg/run.py -> pkg, pkg/__init__.py -> pkg."""
+    mod = module_name_for(rel)
+    if rel.replace("\\", "/").endswith("__init__.py"):
+        return mod
+    return mod.rsplit(".", 1)[0] if "." in mod else ""
+
+
+def _imported_summaries(a: "_Analyzer", rel: str,
+                        index: Dict[str, Dict[str, Tuple[str, int, str]]]
+                        ) -> Dict[str, Tuple[str, int, str, str]]:
+    """Resolve this file's `from x import f` against the project index."""
+    pkg = _package_of(rel)
+    out: Dict[str, Tuple[str, int, str, str]] = {}
+    for local, spec in a.import_module_of.items():
+        target = _resolve_module(spec, pkg)
+        orig_name = spec.rsplit(":", 1)[1]
+        # Try the exact module, then a suffix match — a repo may be rooted at a
+        # package dir, so `gpt_engineer.core.steps` can appear as `core.steps`.
+        cand = index.get(target)
+        if cand is None:
+            for mod, funcs in index.items():
+                if (mod.endswith("." + target) or target.endswith("." + mod)) \
+                        and orig_name in funcs:
+                    cand = funcs
+                    target = mod
+                    break
+        if cand and orig_name in cand:
+            kind, line, expr = cand[orig_name]
+            out[local] = (kind, line, expr, target.replace(".", "/") + ".py")
+    return out
+
+
+def analyze_python(source: str, rel: str,
+                   index: Optional[Dict[str, Dict[str, Tuple[str, int, str]]]] = None
+                   ) -> List[Dict[str, Any]]:
+    """Analyze one Python file. Returns findings; empty on parse failure.
+
+    `index` is the optional project-wide summary map from build_project_index();
+    with it, taint follows an imported helper's return across module boundaries.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -2129,6 +2368,9 @@ def analyze_python(source: str, rel: str) -> List[Dict[str, Any]]:
     a = _Analyzer(rel)
     # Two passes so assignments/imports seen anywhere inform call classification.
     a.visit(tree)
+    if index:
+        # Imports are known after pass 1; resolve them, then let pass 2 use them.
+        a.imported_summaries = _imported_summaries(a, rel, index)
     # Whether this file is genuinely agent code (constructs/calls an LLM) — used
     # to keep dynamic-sink LOW nudges scoped to agent files, not generic Python.
     a.file_has_llm = a.llm_signal or bool(a.llm_vars)

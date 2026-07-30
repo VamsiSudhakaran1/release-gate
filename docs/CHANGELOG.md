@@ -4,6 +4,47 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🌐 Cross-module and file-mediated taint — following the flow real agents use
+
+Two more of the four hops the deployed-agent corpus identified are now closed.
+
+**Cross-module.** `scan_code_findings` is now a two-phase whole-program pass: a
+summary index (`build_project_index`) records what every function in the repo
+returns, then each file is analyzed with its imports resolved against it. A sink
+in module B is traced to a model call in module A, and the chain **names the
+defining file** — a line number in a file you aren't looking at is useless
+without it:
+
+```
+client.chat.completions.create() [app/steps.py] (L4) -> `cmd` -> os.system() (L5)
+```
+
+Absolute and relative imports both resolve (`from .steps import gen` against the
+importing file's *package*, not its module).
+
+**File-mediated.** Agents don't `exec()` code in memory — they write a script and
+run it, and the filesystem was laundering the provenance away. We now track a
+path whose contents came from a tainted value (`open(p,'w').write(...)`,
+`f.write(...)` through a tracked handle, `Path(p).write_text(...)`) and fire when
+that path is later executed. This deliberately runs *before* the
+constant-argument shortcut: `subprocess.run("bash run.sh")` is entirely constant,
+yet the danger is in the file's content, which the command string never shows.
+Writing a *constant* script, or writing model output to a file nobody executes,
+stays silent (both are FP controls in the corpus).
+
+**Performance.** The summary phase adds a pass, mitigated by a cheap textual
+pre-filter — a file with no model/request/retrieval marker cannot contribute a
+summary, so it is never parsed. `dify` (8,892 files) scans in **49s**, aider in
+3.2s. Cost is proportional to agent code, not repo size.
+
+**Still open, now precisely characterized.** `gpt-engineer` — the case that
+motivated this work — still does not fire, and the reason is neither modules nor
+files: its model call is `ai.start(...)`, a **method on a project-defined class**
+(`AI` in `core/ai.py`, wrapping `ChatOpenAI`), reached transitively through
+`start` → `next` → `self.llm.invoke`. Cross-module summaries cover
+`from x import func`, not methods on classes resolved through a variable's type.
+Method-level summaries with transitive resolution are the next milestone.
+
 ### 🔗 Inter-procedural taint — the labeled benchmark reaches 100% recall
 
 Taint now follows a value **across a local function call**. Each function is

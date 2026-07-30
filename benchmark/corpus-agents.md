@@ -73,8 +73,9 @@ command = files_dict[ENTRYPOINT_FILE] → written to disk → "bash run.sh"  # m
 subprocess.Popen(command, shell=True)                              # module C
 ```
 
-Four boundaries: function, module, **data structure**, and **filesystem**. Since 0.9.4 we follow the
-function hop; the other three remain. Real agents
+Four boundaries: function, module, **data structure**, and **filesystem**. 0.9.4
+closed three of them — function summaries, a whole-program cross-module index,
+and file-mediated taint (write to a path, later execute it). Real agents
 marshal model output into objects, persist it as files, and execute it by path —
 or hand it to a container, where the sink is an API call we don't model. The
 labeled benchmark tests `x = llm(); sink(x)` in one function; production agents
@@ -84,8 +85,12 @@ went from KNOWN-MISS to caught, taking the labeled corpus to **100% recall** wit
 precision unchanged). But on this corpus it changed **nothing** — 70 findings
 before, 70 after, still 0 confirmed HIGHs — because the hops that matter here are
 not function boundaries. They are *module* boundaries, a data structure, and the
-*filesystem*. Closing those needs whole-program analysis across files plus
-file-identity tracking (write to path P, later execute P), which is a
-substantially bigger change than function summaries and is the next milestone.
+*filesystem*. **What actually blocks `gpt-engineer` turned out to be none of those.** Its model
+call is `ai.start(...)` — a **method on a project-defined class** (`AI` in
+`core/ai.py`, wrapping `ChatOpenAI`), reached transitively via
+`start` → `next` → `self.llm.invoke`. Cross-module summaries resolve
+`from x import func`; they do not resolve a method on a class reached through a
+variable's type. That — method-level summaries with transitive resolution — is
+the next milestone, and it is a sharper target than "cross-module" was.
 
-We publish the number that did not move, not just the one that did.
+We publish the numbers that did not move, not just the ones that did.
