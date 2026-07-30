@@ -323,6 +323,10 @@ _STAGING_NAME_RE = re.compile(r"draft|preview|prepare|compose|stage|template",
 # A tool whose name STARTS with a read verb returns data and changes nothing,
 # however alarming the nouns after it are. Anchored deliberately: `delete_report`
 # must still fire, only `get_..._delete_...` is excused.
+# Bare collection methods — list/set/dict mutation, not real-world actions.
+# Only excluded as BODY matches; a tool NAMED `remove_series_from_image_set`
+# still fires on its own name.
+_COLLECTION_MUTATORS = {"remove", "pop", "discard", "clear"}
 _READ_ONLY_NAME_RE = re.compile(
     r"^(?:get|list|search|read|fetch|describe|find|query|show|view|inspect|"
     r"count|check|validate|preview|summarize|analyze|explain)_", re.IGNORECASE)
@@ -1371,6 +1375,15 @@ class _Analyzer(ast.NodeVisitor):
             # Nor is a validator/formatter — `_validate_email_params()` acts on
             # nothing, and matching it made us cite the wrong call as the risk.
             if name and _HELPER_NAME_RE.match(name):
+                continue
+            # Python's COLLECTION API collides with destructive verbs. awslabs'
+            # `connect_to_database` was flagged because it calls
+            # `db_connection_map.remove(...)` to drop a broken connection from an
+            # in-process pool on error — bookkeeping, not a real-world action.
+            # Real filesystem deletes (os.remove/unlink/rmtree) are matched
+            # earlier via _FS_DELETE_SINKS, so excluding the bare methods here
+            # costs no recall.
+            if isinstance(f, ast.Attribute) and f.attr in _COLLECTION_MUTATORS:
                 continue
             if isinstance(f, ast.Attribute):
                 if f.attr in _PATH_DELETE_ATTRS:

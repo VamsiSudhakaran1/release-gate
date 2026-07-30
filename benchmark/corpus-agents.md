@@ -45,7 +45,13 @@ became outreach material** — which is the point of the corpus:
    `cloudformation_pre_deploy_validation()`, so fixing the name check alone left
    it firing.
 
-Assume a fourth exists. Verify before you send anything to a maintainer.
+4. **In-memory collection mutation.** awslabs' `connect_to_database` calls
+   `db_connection_map.remove(...)` to drop a broken connection from an in-process
+   pool on error. Python's collection API (`remove`/`pop`/`discard`/`clear`)
+   collides with destructive verbs; bookkeeping is not a real-world action.
+
+Four classes, four rounds of looking. Assume a fifth exists — verify against
+source before you send anything to a maintainer.
 
 ## 3. Agent applications — "do we find anything where it matters?"
 

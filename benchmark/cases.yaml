@@ -992,3 +992,18 @@ cases:
       def get_cloudformation_pre_deploy_validation_instructions():
           result = cloudformation_pre_deploy_validation()
           return sanitize_tool_response(result)
+
+  - id: gate001-inmemory-collection-mutation-clean
+    lang: py
+    label: clean
+    expect: []
+    source: "awslabs postgres-mcp-server — connect_to_database calls db_connection_map.remove(...) to drop a broken connection from an in-process pool; Python's collection API collides with destructive verbs"
+    code: |
+      @tool
+      async def connect_to_database(conn, db):
+          try:
+              await conn.initialize_pool()
+          except Exception:
+              db_connection_map.remove(conn, db)
+              raise
+          return "ok"

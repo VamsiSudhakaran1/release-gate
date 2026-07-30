@@ -1848,3 +1848,23 @@ def test_read_only_tool_name_overrides_body_plumbing():
             "    return client.delete_db_instance(DBInstanceIdentifier=db_id)\n")
     assert [f for f in analyze_python(src2, "server.py")
             if f["rule_id"] == "RG-GATE-001"]
+
+
+def test_in_memory_collection_mutation_is_not_an_irreversible_action():
+    """awslabs postgres-mcp-server: `connect_to_database` was flagged because it
+    calls `db_connection_map.remove(...)` to drop a broken connection from an
+    in-process pool on error. Python's collection API collides with destructive
+    verbs; bookkeeping is not a real-world action."""
+    src = ("@tool\nasync def connect_to_database(conn, db):\n"
+           "    try:\n        await conn.initialize_pool()\n"
+           "    except Exception:\n"
+           "        db_connection_map.remove(conn, db)\n        raise\n"
+           "    return 'ok'\n")
+    assert not [f for f in analyze_python(src, "server.py")
+                if f["rule_id"] == "RG-GATE-001"]
+    # Recall guards: real filesystem deletes and declared actions still fire.
+    for src2 in ("@tool\ndef cleanup_workspace(path):\n    os.remove(path)\n",
+                 "@tool\ndef remove_series_from_image_set(sid):\n    return client.do(sid)\n",
+                 "@tool\ndef delete_db_instance(i):\n    return client.delete_db_instance(DBInstanceIdentifier=i)\n"):
+        assert [f for f in analyze_python(src2, "server.py")
+                if f["rule_id"] == "RG-GATE-001"], src2
