@@ -614,6 +614,16 @@ class _Analyzer(ast.NodeVisitor):
         # Vars proven to hold caller-controlled web-request data (`request.json`).
         # This replaces the old "is it SPELLED request/body?" test.
         self.request_derived: Set[str] = set()
+        # ── Inter-procedural summaries: which local functions RETURN taint ────
+        # fn name -> (kind, origin_line, origin_expr). Built in pass 1 by looking
+        # at what each function actually returns, then applied in pass 2 so
+        # `c = get_cmd(request); eval(c)` is followed across the call. This is the
+        # limitation the deployed-agent corpus showed was fatal: real agents put
+        # the model call in a helper and the sink in the caller, so an
+        # intra-procedural engine sees a bare local and stays silent.
+        # Provenance still comes from a real source INSIDE the helper, so a
+        # summary can only ever carry evidence we could already cite.
+        self.fn_returns_taint: Dict[str, Tuple[str, int, str]] = {}
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import):
@@ -765,6 +775,24 @@ class _Analyzer(ast.NodeVisitor):
                 orig = self.provenance.get(croot)
                 if orig:
                     self._record_provenance(targets, orig[0], orig[1])
+        # INTER-PROCEDURAL: `c = get_cmd(request)` where the local helper
+        # `get_cmd` was summarized as returning a traced value. The taint —
+        # and the origin line INSIDE the helper — carries to the caller, so the
+        # finding still cites a real source a reviewer can open.
+        if isinstance(val, ast.Call) and isinstance(val.func, ast.Name):
+            summ = self.fn_returns_taint.get(val.func.id)
+            if summ:
+                kind, oline, oexpr = summ
+                for t in targets:
+                    self.tainted.add(t)
+                    if kind == "model":
+                        self.tainted_model.add(t)
+                        self.model_extracted.add(t)
+                    elif kind == "request":
+                        self.request_derived.add(t)
+                    else:
+                        self.untrusted_provenance.add(t)
+                self._record_provenance(targets, oline, oexpr)
         # PROVEN external input: a read off a real request object. This is the
         # only path that may mint a CONFIRMED "external user/request input"
         # claim — a variable merely NAMED `body`/`payload` no longer can.
@@ -970,10 +998,76 @@ class _Analyzer(ast.NodeVisitor):
             self.tainted_model.discard(a.arg)
             self.model_extracted.discard(a.arg)
         self.generic_visit(node)
+        # Summarize what this function RETURNS while its scope is still live —
+        # this is what lets a caller follow the taint across the call boundary.
+        self._summarize_returns(node)
         (self.provenance, self.request_derived, self.untrusted_provenance,
          self.tainted_model, self.model_extracted) = (
             _saved[0], _saved[1], _saved[2], _saved[3], _saved[4])
         self._fn_has_integrity, self._fn_has_exec = prev_integrity, prev_exec
+
+    @staticmethod
+    def _returns_in(node) -> List[ast.Return]:
+        """Return statements belonging to THIS function — not to a nested def,
+        whose returns describe a different function."""
+        out: List[ast.Return] = []
+
+        def walk(n, top=False):
+            for child in ast.iter_child_nodes(n):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)) and not top:
+                    continue
+                if isinstance(child, ast.Return):
+                    out.append(child)
+                if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                          ast.Lambda, ast.ClassDef)):
+                    walk(child)
+        for stmt in node.body:
+            if isinstance(stmt, ast.Return):
+                out.append(stmt)
+            elif not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                       ast.ClassDef)):
+                walk(stmt)
+        return out
+
+    def _summarize_returns(self, node):
+        """Record (kind, origin_line, origin_expr) if this function returns a
+        value we traced to a real source in its own body.
+
+        Only PROVEN sources qualify — a model call, a request read, or an
+        untrusted external read. A helper that returns a bare parameter
+        summarizes to nothing, so the tier contract holds across the call: a
+        name still can't manufacture evidence, it just travels one hop further.
+        """
+        for ret in self._returns_in(node):
+            val = ret.value
+            if val is None:
+                continue
+            # A request read spelled out in the return: `return request.data`.
+            expr = self._request_read_expr(val)
+            if expr:
+                self.fn_returns_taint[node.name] = (
+                    "request", getattr(ret, "lineno", 0), expr)
+                return
+            # An LLM call returned directly: `return client.chat...create(...)`.
+            if isinstance(val, ast.Call) and self._is_llm_call(val):
+                self.fn_returns_taint[node.name] = (
+                    "model", getattr(ret, "lineno", 0),
+                    (_dotted(val.func) or "an LLM call") + "()")
+                return
+            names = _names_in(val)
+            croot = _chain_root(val)
+            cands = names | ({croot} if croot else set())
+            for kind, pool in (("model", self.model_extracted),
+                               ("model", self.tainted_model),
+                               ("request", self.request_derived),
+                               ("untrusted", self.untrusted_provenance)):
+                hit = next((n for n in cands if n in pool), None)
+                if hit:
+                    line, oexpr = self.provenance.get(
+                        hit, (getattr(ret, "lineno", 0), f"`{hit}`"))
+                    self.fn_returns_taint[node.name] = (kind, line, oexpr)
+                    return
 
     def _check_tool_blast_radius(self, node):
         # RG-TOOL-001 / RG-GATE-001. An agent tool whose body performs an

@@ -4,6 +4,35 @@ All notable changes to release-gate will be documented in this file.
 
 ## [0.9.4] — 2026-07-28
 
+### 🔗 Inter-procedural taint — the labeled benchmark reaches 100% recall
+
+Taint now follows a value **across a local function call**. Each function is
+summarized by what it *returns*; if that value was traced to a real source inside
+the helper (a model call, a request read, an untrusted external read), the caller
+inherits the taint **and the origin line inside the helper**, so the finding still
+cites evidence a reviewer can open:
+
+```
+def get_cmd(request):  return request.data          # L2
+def run(request):      c = get_cmd(request); eval(c)  # L5
+→ request.data (L2) -> `c` -> eval() (L5)   [confirmed HIGH]
+```
+
+Both `*-cross-function-KNOWN-MISS` cases are now caught and relabeled, taking the
+labeled corpus from 94.3% to **100% recall (0 false negatives)** with precision
+and HIGH-tier integrity unchanged. The tier contract survives the extra hop: a
+helper that merely passes a parameter through summarizes to *nothing*, so a name
+still cannot manufacture evidence — it just travels one hop further. Nested
+functions' returns don't leak into the enclosing summary.
+
+**And the number that did not move.** On the 20-repo deployed-agent corpus this
+changed **nothing** — 70 findings before, 70 after, still 0 confirmed HIGHs. The
+hops that matter there are not function calls: they are *module* boundaries, a
+data structure, and the *filesystem* (`gpt-engineer`: LLM → `FilesDict` → file on
+disk → `bash run.sh` → `Popen(shell=True)`, across three modules). Closing those
+needs whole-program analysis plus file-identity tracking, which is the next
+milestone. Both numbers are published in `benchmark/corpus-agents.md`.
+
 ### 🚨 Scan coverage — a truncated scan can no longer look like a clean one
 
 Found by pointing the tool at a **deployed-agent corpus** (20 agent

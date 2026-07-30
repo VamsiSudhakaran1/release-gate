@@ -1570,3 +1570,73 @@ def test_read_only_tool_name_stays_silent():
         src = f"@tool\ndef {name}(x):\n    return client.do(x)\n"
         assert not [f for f in analyze_python(src, "tools.py")
                     if f["rule_id"] in ("RG-GATE-001", "RG-TOOL-001")], name
+
+
+# ── Inter-procedural taint (0.9.4): follow a helper's return across the call ──
+
+def test_interprocedural_request_read_through_helper():
+    # Was a KNOWN MISS: the deployed-agent corpus showed real apps put the source
+    # in a helper and the sink in the caller, so intra-procedural analysis was
+    # silent on the whole class.
+    src = ("def get_cmd(request):\n"
+           "    return request.data\n"
+           "def run(request):\n"
+           "    c = get_cmd(request)\n"
+           "    eval(c)\n")
+    hits = [f for f in analyze_python(src, "x.py")
+            if f["title"] == "Dangerous execution sink"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+    # The chain must cite the origin line INSIDE the helper, not the call site.
+    assert hits[0]["provenance"]["origin_line"] == 2
+    assert hits[0]["provenance"]["sink_line"] == 5
+
+
+def test_interprocedural_model_output_through_helper():
+    src = ("from openai import OpenAI\nimport requests\nc = OpenAI()\n"
+           "def get_url(m):\n"
+           "    r = c.chat.completions.create(model='gpt-4o', messages=m, max_tokens=50)\n"
+           "    return r.choices[0].message.content\n"
+           "def go(m):\n"
+           "    u = get_url(m)\n"
+           "    return requests.get(u)\n")
+    hits = [f for f in analyze_python(src, "x.py") if f["rule_id"] == "RG-ACTION-002"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+    assert hits[0]["provenance"]["origin_line"] == 5
+
+
+def test_helper_returning_a_bare_param_does_not_manufacture_evidence():
+    """The tier contract must survive the extra hop: a helper that just passes a
+    parameter through proves nothing about where the value came from, so it must
+    not summarize to a confirmed source."""
+    src = ("import pickle\n"
+           "def get_payload(payload):\n"
+           "    return payload\n"
+           "def run(payload):\n"
+           "    p = get_payload(payload)\n"
+           "    return pickle.loads(p)\n")
+    for f in analyze_python(src, "x.py"):
+        assert f["severity"] not in ("high", "critical"), f
+
+
+def test_helper_returning_a_constant_is_not_tainted():
+    src = ("def get_cmd():\n"
+           "    return 'ls -la'\n"
+           "import os\n"
+           "def run():\n"
+           "    os.system(get_cmd())\n")
+    assert not [f for f in analyze_python(src, "x.py")
+                if f["severity"] in ("high", "critical")]
+
+
+def test_nested_function_returns_do_not_leak_to_the_outer_summary():
+    # An inner def's `return request.data` describes the INNER function; the
+    # outer one returns a constant and must not inherit its taint.
+    src = ("def outer(request):\n"
+           "    def inner():\n"
+           "        return request.data\n"
+           "    return 'safe'\n"
+           "import os\n"
+           "def run(request):\n"
+           "    os.system(outer(request))\n")
+    assert not [f for f in analyze_python(src, "x.py")
+                if f["severity"] in ("high", "critical")]

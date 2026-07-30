@@ -7,10 +7,10 @@
 | Metric | Value |
 |---|---|
 | Precision | **100.0%** |
-| Recall | **94.3%** |
-| F1 | 0.971 |
+| Recall | **100.0%** |
+| F1 | 1.000 |
 | Clean cases kept quiet (no false positive) | **100.0%** |
-| True pos · False pos · False neg | 33 · 0 · 2 |
+| True pos · False pos · False neg | 35 · 0 · 0 |
 | HIGH-tier integrity violations | **0** |
 
 ### The HIGH-tier invariant
@@ -21,11 +21,11 @@ Every HIGH in this corpus is machine-checked to be `basis=confirmed` **and** —
 
 | Rule | TP | FP | FN | Precision | Recall |
 |---|---|---|---|---|---|
-| RG-ACTION-002 | 1 | 0 | 1 | 100% | 50% |
+| RG-ACTION-002 | 2 | 0 | 0 | 100% | 100% |
 | RG-ACTION-003 | 1 | 0 | 0 | 100% | 100% |
 | RG-ACTION-004 | 1 | 0 | 0 | 100% | 100% |
 | RG-COST-001 | 2 | 0 | 0 | 100% | 100% |
-| RG-EXEC-001 | 10 | 0 | 1 | 100% | 91% |
+| RG-EXEC-001 | 11 | 0 | 0 | 100% | 100% |
 | RG-EXEC-002 | 2 | 0 | 0 | 100% | 100% |
 | RG-EXEC-003 | 1 | 0 | 0 | 100% | 100% |
 | RG-GATE-001 | 2 | 0 | 0 | 100% | 100% |
@@ -48,9 +48,4 @@ Every HIGH in this corpus is machine-checked to be `basis=confirmed` **and** —
 ## Known limitations (kept in the corpus on purpose)
 
 - **Taint is intra-procedural.** A tainted value that flows *across a function boundary* (a helper returns model output; the caller sends it to a sink) is not followed — see the `*-cross-function-KNOWN-MISS` cases, deliberately labeled vulnerable so they show as recall misses here rather than being quietly dropped. This is a precision-first trade-off: we would rather miss a cross-function flow than infer one and cry wolf. Inter-procedural analysis is on the roadmap.
-
-## Misclassifications (current)
-
-- `exec-cross-function-taint-KNOWN-MISS`: MISS RG-EXEC-001
-- `action002-cross-function-KNOWN-MISS`: MISS RG-ACTION-002
 

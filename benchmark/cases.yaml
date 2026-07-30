@@ -62,11 +62,11 @@ cases:
           os.system(database)
 
   # Honest limitations — kept in the corpus on purpose (precision-first design).
-  - id: exec-cross-function-taint-KNOWN-MISS
+  - id: exec-cross-function-taint-interprocedural
     lang: py
     label: vulnerable
     expect: [RG-EXEC-001]
-    source: "KNOWN LIMITATION: taint is intra-procedural; it does not follow a value across function boundaries"
+    source: "Was a KNOWN MISS until 0.9.4: taint now follows a local helper's return across the call boundary, citing the origin line INSIDE the helper"
     code: |
       def get_cmd(request):
           return request.data
@@ -385,7 +385,7 @@ cases:
           url = r.choices[0].message.content
           return requests.get(url)
 
-  - id: action002-cross-function-KNOWN-MISS
+  - id: action002-cross-function-interprocedural
     lang: py
     label: vulnerable
     expect: [RG-ACTION-002]

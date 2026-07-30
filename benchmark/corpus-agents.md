@@ -73,11 +73,19 @@ command = files_dict[ENTRYPOINT_FILE] → written to disk → "bash run.sh"  # m
 subprocess.Popen(command, shell=True)                              # module C
 ```
 
-Four boundaries: function, module, **data structure**, and **filesystem**. Our
-taint is intra-procedural and in-memory, so it follows none of them. Real agents
+Four boundaries: function, module, **data structure**, and **filesystem**. Since 0.9.4 we follow the
+function hop; the other three remain. Real agents
 marshal model output into objects, persist it as files, and execute it by path —
 or hand it to a container, where the sink is an API call we don't model. The
 labeled benchmark tests `x = llm(); sink(x)` in one function; production agents
-never look like that. This is the honest recall gap, and it is why
-inter-procedural + file-mediated taint is the next engine milestone rather than
-another rule.
+never look like that. **0.9.4 closed the first hop and measured the rest.** Taint now follows a local
+helper's return across the call boundary (both `*-cross-function` benchmark cases
+went from KNOWN-MISS to caught, taking the labeled corpus to **100% recall** with
+precision unchanged). But on this corpus it changed **nothing** — 70 findings
+before, 70 after, still 0 confirmed HIGHs — because the hops that matter here are
+not function boundaries. They are *module* boundaries, a data structure, and the
+*filesystem*. Closing those needs whole-program analysis across files plus
+file-identity tracking (write to path P, later execute P), which is a
+substantially bigger change than function summaries and is the next milestone.
+
+We publish the number that did not move, not just the one that did.
