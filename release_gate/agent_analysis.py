@@ -2384,6 +2384,11 @@ def has_llm_usage(source: str) -> bool:
     return a.llm_signal or bool(a.llm_vars)
 
 
+# `return self.something(...)` — the only shape whose summary can depend on a
+# method defined later in the file, and so the only one needing a second pass.
+_RETURNS_SELF_CALL_RE = re.compile(r"return\s+self\.\w+\s*\(")
+
+
 def module_name_for(rel: str) -> str:
     """Dotted module path for a repo-relative file: a/b/c.py -> a.b.c,
     a/b/__init__.py -> a.b. Used to key the cross-module summary index."""
@@ -2406,15 +2411,18 @@ def collect_summaries(source: str, rel: str) -> Dict[str, Tuple[str, int, str]]:
     except SyntaxError:
         return {}
     a = _Analyzer(rel)
-    # Fixpoint: a method can return another method's result (`start` ->
-    # `next` -> `invoke`), and the callee may be defined later in the file, so
-    # one pass isn't enough. Iterate until the summary set stops growing —
-    # bounded, because summaries only ever accumulate.
-    for _ in range(4):
-        before = len(a.fn_returns_taint)
-        a.visit(tree)
-        if len(a.fn_returns_taint) == before:
-            break
+    a.visit(tree)
+    # Fixpoint, but only where it can possibly help: a method that returns
+    # ANOTHER method's result (`return self.next(...)`) may reference a callee
+    # defined later in the file, so one pass isn't enough. Every other file is
+    # already at its fixpoint after one visit, and re-walking them was tripling
+    # scan time on large repos for no additional summaries.
+    if _RETURNS_SELF_CALL_RE.search(source):
+        for _ in range(3):
+            before = len(a.fn_returns_taint)
+            a.visit(tree)
+            if len(a.fn_returns_taint) == before:
+                break
     return dict(a.fn_returns_taint)
 
 
