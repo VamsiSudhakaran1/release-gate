@@ -16,7 +16,38 @@ Latest run: **0 highs, 90 advisory findings.** These are *libraries* — the thi
 users build with. A high here is almost always our bug, so this corpus is a
 precision guard.
 
-## 2. Agent applications — "do we find anything where it matters?"
+## 2. MCP servers — "where does the gate actually fire?"
+
+28 servers weighted toward capability surface (`benchmark/corpus-mcp.sh`):
+shell-executing (hexstrike-ai, pentest-ai, Windows-MCP, agent-infra/sandbox),
+irreversible real-world actions (google_workspace, ha-mcp, tradingview,
+linkedin), and broad tool platforms (awslabs/mcp, aci, fastmcp).
+
+**This is the segment that produces findings.** 155 findings across 28 repos vs
+72 across 20 deployed agent apps — and they concentrate exactly where capability
+does: awslabs/mcp, ha-mcp, davinci-resolve-mcp, google_workspace_mcp.
+
+Almost all of it is `RG-GATE-001`: irreversible tools with no code-level gate.
+The taint rules stayed quiet again. The architecture-level rule is the one that
+works on real agent surfaces.
+
+**Three false-positive classes were caught here by triage, before any of it
+became outreach material** — which is the point of the corpus:
+
+1. **Placeholder secrets with words in between.** PrefectHQ/fastmcp's docstring
+   example uses `client_secret="your-auth0-client-secret"`; the placeholder
+   pattern required the credential word immediately after `your-`. Both HIGHs in
+   the corpus were this, in a 27k-star repo.
+2. **A read verb beaten by an irreversible noun.** awslabs'
+   `get_cloudformation_pre_deploy_validation_instructions` matched "deploy",
+   `list_metadata_transfer_jobs` matched "transfer".
+3. **The same class through the body.** That getter's body calls
+   `cloudformation_pre_deploy_validation()`, so fixing the name check alone left
+   it firing.
+
+Assume a fourth exists. Verify before you send anything to a maintainer.
+
+## 3. Agent applications — "do we find anything where it matters?"
 
 The thing release-gate actually gates: software people **deploy**. Reproduce with
 `benchmark/corpus-agents.sh`.
