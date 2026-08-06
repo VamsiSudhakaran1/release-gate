@@ -2,6 +2,66 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [Unreleased]
+
+### 🎭 RG-PII-001 — sensitive context reaching the model unmasked on one path
+
+The structural half of a check practitioners already run by hand ("is PII masked
+before context reaches the LLM endpoint?"), built to a shape that cannot repeat
+the RG-GATE-001 mistake.
+
+**The design constraint is the feature.** Stated the obvious way — "no mask on
+this path" — the rule is a *universal negative* over the whole repo plus its
+deployment. Masking can live in middleware, a template renderer, or a gateway
+outside the codebase. That is the exact claim that made RG-GATE-001 wrong on
+ha-mcp, in public. So this rule only ever fires on **divergence**: the project
+redacts on one path to a model call and not on another. The repo supplies its own
+oracle — we assert nothing about what anyone *ought* to do, only that the code is
+inconsistent with itself. Both paths are printed, so the claim is checkable in two
+file opens.
+
+That gate self-protects against the original failure: when masking is hoisted
+into shared middleware, *neither* path shows a local sanitizer, the precondition
+fails, and the rule stays silent. **It is structurally unable to punish the fix it
+recommends.** A project that masks nothing gets nothing from this rule — the
+intended trade, because a silent miss costs one finding and a confident accusation
+against a correct team costs the only asset the tool has.
+
+- **Sanitizer recognition.** Redaction engines (presidio, scrubadub) and explicit
+  regex masking (`re.sub(EMAIL, "***", t)`, recognised by the *replacement's*
+  shape) are CONFIRMED. A helper known only by its **name** (`mask_pii`) is
+  INFERRED and capped at MEDIUM — `mask_url()` may mask nothing.
+- **Masked values stay untrusted.** Redaction removes PII; it does not make
+  retrieved text trustworthy, so injection rules still see it and the masked path
+  can still print a full provenance chain.
+- **Sink reach: project-defined LLM wrappers.** Real code calls
+  `call_llm(system, user_msg)` — a local function POSTing to a provider host —
+  which an SDK-shaped detector never sees. Recognising the provider **host**
+  closes this. Scoped to this rule deliberately; widening the global
+  `_is_llm_call` would move five other rules and the benchmark at once.
+- **Multi-file benchmark cases.** `files:` cases scan a miniature repo through the
+  real directory walker, because a repo-level claim cannot be expressed — or
+  disproved — in a single snippet. 93 cases, still 100% precision / 100% recall /
+  0 HIGH-tier violations.
+
+**What it does NOT reach yet, measured.** Across 17 real repos (~9,500 files,
+LightRAG, graphrag, onyx, PageIndex and a live LangGraph RAG app) it produced
+**0 findings — and 0 egress sites at all.** Not one false positive, but no true
+positives either, because the *source* side never arrives. The barrier is
+specific and reproducible:
+
+```
+retriever_node:  index.query(...) → context → return {"retrieved_chunks": …}
+                          ↓  framework-managed state dict, across node functions
+generator_node:  chunks = state.get("retrieved_chunks")   ← taint dies here
+                 context = "\n".join(...) → call_llm(system, f"…{context}…")
+```
+
+This is the **data-structure boundary** the deployed-agent corpus already
+identified as open. LangGraph-style string-keyed state channels are now the
+sharpest next target on the source side, and unlike "cross-module" it is a
+concrete, enumerable pattern. We publish the numbers that did not move.
+
 ## [0.9.4] — 2026-07-30
 
 ### 🧬 Method summaries — taint through the client-class shape agents actually use

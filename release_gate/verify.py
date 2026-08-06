@@ -588,6 +588,10 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
     # ── Phase 2: analyze, resolving imports against the index ───────────────
     scanned = 0        # files actually analyzed
     scannable = 0      # files we would analyze given no ceiling
+    # Prompt-egress sites, collected across every file. RG-PII-001 needs the
+    # whole repo before it can say anything: the masked path and the unmasked
+    # one usually live in different modules.
+    egress: List[Dict[str, Any]] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fname in filenames:
@@ -608,7 +612,8 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
             if any(fname.endswith(ext) for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs")):
                 findings.extend(_scan_js_file(rel, text))
             else:
-                findings.extend(_scan_file(rel, text, index=index))
+                findings.extend(_scan_file(rel, text, index=index, egress=egress))
+    findings.extend(_pii_divergence_findings(egress))
     LAST_SCAN_COVERAGE = {
         "files_scanned": scanned,
         "files_scannable": scannable,
@@ -619,6 +624,78 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
     if gate_layer:
         findings = _suppress_gate_findings(findings)
     return _finalize_findings(findings, split=return_excluded)
+
+
+def _pii_divergence_findings(egress: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """RG-PII-001 — untrusted context reaching the model masked here, raw there.
+
+    THE PRECONDITION IS THE RULE. We fire only when the project demonstrably
+    redacts on at least one path to a model call. "You have no PII masking" is a
+    universal negative over the whole repo plus its deployment — the exact claim
+    that made RG-GATE-001 wrong on ha-mcp — and we do not make it. "You mask at
+    A and not at B" is a positive existential the code itself proves, and both
+    halves get printed so a reviewer can check it in two file opens.
+
+    Consequence of that choice, stated plainly: a project that masks NOTHING
+    gets nothing from this rule. That is the intended trade. A silent miss costs
+    one finding; a confident accusation against a team whose masking lives in
+    middleware costs the tool's credibility, which is the only asset it has.
+    """
+    if not egress:
+        return []
+    masked = [e for e in egress if e["sanitized"]]
+    unmasked = [e for e in egress if not e["sanitized"]]
+    if not masked or not unmasked:
+        return []
+    # The strongest masked exemplar is the oracle we cite. A redaction engine or
+    # an explicit regex mask (CONFIRMED) can carry a HIGH; a helper recognised
+    # only by its NAME cannot — `mask_url()` may mask nothing, and the tier
+    # ceiling in _f() exists precisely so a guess cannot mint a HIGH.
+    ref = next((m for m in masked if m["sanitizer_tier"] == "confirmed"), masked[0])
+    ref_confirmed = ref["sanitizer_tier"] == "confirmed"
+    out: List[Dict[str, Any]] = []
+    for e in unmasked:
+        # A HIGH also needs the unmasked side to be traceable: without an origin
+        # line there is no chain to print, and the corpus invariant (every HIGH
+        # carries non-empty evidence + provenance) would rightly reject it.
+        traceable = bool(e["origin_line"])
+        confirmed = ref_confirmed and traceable
+        origin = (f"{e['origin_expr']} (L{e['origin_line']})" if traceable
+                  else f"`{e['value']}`")
+        evidence = (
+            f"masked: {ref['sanitizer']} before {ref['sink']} "
+            f"({ref['file']}:{ref['line']}) — "
+            f"unmasked: {origin} -> `{e['value']}` -> {e['sink']} "
+            f"({e['file']}:{e['line']})"
+        )
+        f = _finding(
+            "high" if confirmed else "medium",
+            "Sensitive context reaches the model unmasked on one path",
+            e["file"], e["line"], "",
+            "Route this path through the same redaction step used at "
+            f"{ref['file']}:{ref['line']}, or hoist masking into one place both "
+            "paths must pass through (a wrapper around the model client, or "
+            "middleware) so a new retrieval path cannot silently skip it.",
+            confidence="high" if confirmed else "medium",
+            basis="confirmed" if confirmed else "inferred",
+            evidence=evidence,
+            impact=(
+                "Untrusted context reaches the model provider unredacted on this "
+                "path while an equivalent path redacts it. Whatever is in the "
+                "prompt leaves your process and is retained by the provider, so "
+                "the protection the masked path provides does not hold here."
+            ),
+        )
+        if confirmed:
+            # The two coordinates a reviewer opens to check the claim.
+            f["provenance"] = {
+                "origin_line": e["origin_line"],
+                "origin_expr": e["origin_expr"],
+                "value": e["value"],
+                "sink_line": e["line"],
+            }
+        out.append(f)
+    return out
 
 
 def _suppress_gate_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -870,7 +947,8 @@ def _is_real_secret(line: str) -> bool:
     return has_alpha and (has_digit or has_mixed_or_special)
 
 
-def _scan_file(rel: str, text: str, index: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def _scan_file(rel: str, text: str, index: Optional[Dict[str, Any]] = None,
+               egress: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """Python source — real AST analysis (LLM calls, exec sinks, prompt
     injection) plus a placeholder-aware secret scan.
 
@@ -880,7 +958,8 @@ def _scan_file(rel: str, text: str, index: Optional[Dict[str, Any]] = None) -> L
     enough to put in front of a maintainer.
     """
     from release_gate.agent_analysis import analyze_python
-    findings: List[Dict[str, Any]] = list(analyze_python(text, rel, index=index))
+    findings: List[Dict[str, Any]] = list(
+        analyze_python(text, rel, index=index, egress=egress))
 
     for i, line in enumerate(text.splitlines(), start=1):
         s = line.strip()

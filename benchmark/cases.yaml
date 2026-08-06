@@ -1055,3 +1055,109 @@ cases:
           while True:
               r = client.messages.create(model="m", messages=m, max_tokens=100)
               m.append(r)
+
+  # ── RG-PII-001 — masked on one path to the model, raw on another ──────────
+  # These are `files:` cases: whole miniature repos, because the claim is about
+  # a project, not a file. The clean cases matter more than the vulnerable one —
+  # they are what stop this rule from repeating RG-GATE-001's universal-negative
+  # mistake, where "no gate here" was asserted over code gated somewhere else.
+
+  - id: pii001-masked-here-raw-there
+    label: vulnerable
+    expect: [RG-PII-001]
+    source: "The structural half of the check practitioners run by hand ('is PII masked before context reaches the LLM endpoint?'), reported only as a self-inconsistency: safe.py redacts retrieved context, summarize.py sends the same shape raw"
+    files:
+      safe.py: |
+        from openai import OpenAI
+        from presidio_anonymizer import AnonymizerEngine
+        client = OpenAI()
+        engine = AnonymizerEngine()
+        def answer(store, q):
+            docs = store.similarity_search(q)
+            clean = engine.anonymize(docs)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": clean}], max_tokens=512)
+      summarize.py: |
+        from openai import OpenAI
+        client = OpenAI()
+        def summarize(store, topic):
+            docs = store.similarity_search(topic)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": docs}], max_tokens=512)
+
+  - id: pii001-no-masking-anywhere-clean
+    label: clean
+    expect: []
+    source: "THE precondition. A project that masks nothing gets NOTHING from this rule — 'you have no PII masking' is a universal negative over the repo plus its deployment (masking may live in middleware or a gateway), which is exactly the claim that made RG-GATE-001 wrong on ha-mcp. A silent miss costs one finding; a confident accusation costs the tool's credibility"
+    files:
+      a.py: |
+        from openai import OpenAI
+        client = OpenAI()
+        def answer(store, q):
+            docs = store.similarity_search(q)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": docs}], max_tokens=512)
+      b.py: |
+        from openai import OpenAI
+        client = OpenAI()
+        def summarize(store, t):
+            docs = store.similarity_search(t)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": docs}], max_tokens=512)
+
+  - id: pii001-all-paths-masked-clean
+    label: clean
+    expect: []
+    source: "No divergence, nothing to say — the consistent case must be silent or the rule becomes a tax on teams that already do the right thing"
+    files:
+      a.py: |
+        from openai import OpenAI
+        from presidio_anonymizer import AnonymizerEngine
+        client = OpenAI()
+        engine = AnonymizerEngine()
+        def answer(store, q):
+            docs = store.similarity_search(q)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": engine.anonymize(docs)}], max_tokens=512)
+      b.py: |
+        from openai import OpenAI
+        from presidio_anonymizer import AnonymizerEngine
+        client = OpenAI()
+        engine = AnonymizerEngine()
+        def summarize(store, t):
+            docs = store.similarity_search(t)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": engine.anonymize(docs)}], max_tokens=512)
+
+  - id: pii001-constant-prompt-not-egress-clean
+    label: clean
+    expect: []
+    source: "A developer-authored constant prompt is not untrusted context. Only retrieval/HTTP/tool-derived values are egress sites, so a masked path beside a hardcoded prompt must not implicate the constant"
+    files:
+      a.py: |
+        from openai import OpenAI
+        from presidio_anonymizer import AnonymizerEngine
+        client = OpenAI()
+        engine = AnonymizerEngine()
+        def answer(store, q):
+            docs = store.similarity_search(q)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": engine.anonymize(docs)}], max_tokens=512)
+      b.py: |
+        from openai import OpenAI
+        client = OpenAI()
+        def greet():
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "say hello"}], max_tokens=512)
+
+  - id: pii001-whitespace-resub-is-not-a-mask-clean
+    label: clean
+    expect: []
+    source: "re.sub(r'\\s+', ' ', t) is a whitespace normalizer, not a redaction. Recognising it as masking would invent an oracle out of nothing and make every other path in the repo a finding"
+    files:
+      a.py: |
+        import re
+        from openai import OpenAI
+        client = OpenAI()
+        def answer(store, q):
+            docs = store.similarity_search(q)
+            tidy = re.sub(r"\s+", " ", docs)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": tidy}], max_tokens=512)
+      b.py: |
+        from openai import OpenAI
+        client = OpenAI()
+        def summarize(store, t):
+            docs = store.similarity_search(t)
+            return client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": docs}], max_tokens=512)
