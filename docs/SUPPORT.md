@@ -51,7 +51,7 @@ pip install "release-gate>=0.8,<0.9"
 
 ```yaml
 # GitHub Action — pin the tag
-- uses: VamsiSudhakaran1/release-gate@v0.8.5
+- uses: VamsiSudhakaran1/release-gate@v0.10.1
 ```
 
 For maximum reproducibility, pin hashes with

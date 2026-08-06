@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0        # required for `command: pr`
 
-      - uses: VamsiSudhakaran1/release-gate@v0.9.4
+      - uses: VamsiSudhakaran1/release-gate@v0.10.1
         with:
           command: pr
           base: origin/main
@@ -43,7 +43,7 @@ that blocks you for someone else's 2023 commit gets turned off on day two.
 Any evidence from the other integrations drops into the same action:
 
 ```yaml
-      - uses: VamsiSudhakaran1/release-gate@v0.9.4
+      - uses: VamsiSudhakaran1/release-gate@v0.10.1
         with:
           command: score
           config: governance.yaml
@@ -135,7 +135,7 @@ jobs:
             -o langfuse-traces.json
 
       # 3. Release & governance layer — one verdict over all of it.
-      - uses: VamsiSudhakaran1/release-gate@v0.9.4
+      - uses: VamsiSudhakaran1/release-gate@v0.10.1
         with:
           command: score
           config: governance.yaml
@@ -166,7 +166,7 @@ For the fastest possible feedback, before CI is even involved:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/VamsiSudhakaran1/release-gate
-    rev: v0.9.4
+    rev: v0.10.1
     hooks:
       - id: release-gate
 ```

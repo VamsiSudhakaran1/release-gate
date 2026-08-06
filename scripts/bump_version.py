@@ -53,8 +53,31 @@ def main() -> int:
     _sub("pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new}"', count=1)
     _sub("release_gate/__init__.py", r'(__version__\s*=\s*)"[^"]+"', rf'\g<1>"{new}"', count=1)
     _sub("release_gate_api/_app.py", rf'("version":\s*)"{re.escape(old)}"', rf'\g<1>"{new}"')
-    for rel in ("public/index.html", "README.md", "docs/REFERENCE.md"):
-        _sub(rel, rf'@v{re.escape(old)}\b', f'@v{new}')
+    # Action pins are DISCOVERED, not listed. A hardcoded file list quietly
+    # stopped covering new docs — `integrations/` shipped pinned at @v0.9.4 and
+    # two older docs sat at @v0.7.3 / @v0.8.5 for several releases, because
+    # nothing walked the tree. Users copy these verbatim, so a stale pin hands
+    # them the wrong release.
+    pin_re = re.compile(r"(VamsiSudhakaran1/release-gate@v|rev:\s*v)(\d+\.\d+\.\d+)")
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
+                 "release_gate.egg-info", "dist", "build"}
+    updated = 0
+    for path in sorted(ROOT.rglob("*")):
+        if path.suffix not in (".md", ".html", ".yml", ".yaml"):
+            continue
+        if any(part in skip_dirs for part in path.parts):
+            continue
+        if path.name == "CHANGELOG.md":   # a release history keeps its old versions
+            continue
+        text = path.read_text(encoding="utf-8")
+        newtext, n = pin_re.subn(rf"\g<1>{new}", text)
+        if n:
+            path.write_text(newtext, encoding="utf-8")
+            print(f"  updated {path.relative_to(ROOT).as_posix()} "
+                  f"({n} pin{'s' if n != 1 else ''})")
+            updated += n
+    if not updated:
+        sys.exit("FATAL: no Action pins found to update — check the repo by hand.")
 
     print("  re-embedding frontend (scripts/embed_frontend.py) ...")
     subprocess.run([sys.executable, str(ROOT / "scripts" / "embed_frontend.py")],

@@ -2,7 +2,7 @@
 
 All notable changes to release-gate will be documented in this file.
 
-## [Unreleased]
+## [0.10.1] — 2026-08-06
 
 ### 📡 The loop verifier reads platform exports too
 

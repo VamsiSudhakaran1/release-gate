@@ -40,14 +40,33 @@ def main() -> int:
         if needle not in text:
             errors.append(f"{rel}: expected {needle!r} (pyproject is {version})")
 
-    # 2. Every Action pin across site + docs must be @v<version>. Any other
-    #    release-gate@vX.Y.Z is a stale pin.
-    action_re = re.compile(r"VamsiSudhakaran1/release-gate@v(\d+\.\d+\.\d+)")
-    for rel in ("public/index.html", "README.md", "docs/REFERENCE.md"):
-        text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
-        for pinned in set(action_re.findall(text)):
-            if pinned != version:
-                errors.append(f"{rel}: Action pin @v{pinned} != pyproject {version}")
+    # 2. Every Action pin anywhere in the repo must be @v<version>. Any other
+    #    release-gate@vX.Y.Z is a stale pin a user would copy verbatim.
+    #
+    #    DISCOVERED, not listed. A hardcoded file list silently stopped covering
+    #    new docs: `integrations/` shipped with @v0.9.4 pins and this check
+    #    passed the release anyway. A copy-pasteable pin pointing at the wrong
+    #    release is exactly the drift this guard exists to prevent, so the guard
+    #    has to find files rather than be told about them.
+    action_re = re.compile(
+        r"VamsiSudhakaran1/release-gate@v(\d+\.\d+\.\d+)"
+        r"|rev:\s*v(\d+\.\d+\.\d+)")
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
+                 "release_gate.egg-info", "dist", "build"}
+    for path in sorted(ROOT.rglob("*")):
+        if path.suffix not in (".md", ".html", ".yml", ".yaml"):
+            continue
+        if any(part in skip_dirs for part in path.parts):
+            continue
+        # The changelog is a HISTORY of releases — old versions belong in it.
+        if path.name == "CHANGELOG.md":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel = path.relative_to(ROOT).as_posix()
+        for a, b in set(action_re.findall(text)):
+            pinned = a or b
+            if pinned and pinned != version:
+                errors.append(f"{rel}: Action pin v{pinned} != pyproject {version}")
 
     if errors:
         print("Version drift detected (source of truth: pyproject.toml = "
@@ -59,7 +78,7 @@ def main() -> int:
         return 1
 
     print(f"[OK] version {version} consistent across pyproject, package, API, and "
-          "all Action pins (site + README).")
+          "every Action pin found in the repo.")
     return 0
 
 
