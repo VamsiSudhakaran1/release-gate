@@ -1,0 +1,69 @@
+# release-gate × Arize / Phoenix — gate a deploy on OpenInference spans.
+#
+# Copy to .github/workflows/release-gate-arize.yml
+#
+# Secrets required:
+#   PHOENIX_COLLECTOR_ENDPOINT   e.g. https://app.phoenix.arize.com
+#   PHOENIX_API_KEY
+
+name: release-gate (Arize / Phoenix)
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        # arize-phoenix is needed only to EXPORT the spans in this job.
+        # release-gate itself never imports it — it reads the exported JSON.
+        run: pip install release-gate "arize-phoenix-client" pandas
+
+      - name: Export spans from Phoenix
+        env:
+          PHOENIX_COLLECTOR_ENDPOINT: ${{ secrets.PHOENIX_COLLECTOR_ENDPOINT }}
+          PHOENIX_API_KEY: ${{ secrets.PHOENIX_API_KEY }}
+        run: |
+          python - <<'PY'
+          import phoenix as px
+
+          df = px.Client().get_spans_dataframe()
+          if df.empty:
+              # Fail loudly. An empty export would otherwise produce a clean
+              # verdict on zero evidence, which is worse than no gate at all.
+              raise SystemExit("No spans returned from Phoenix — refusing to gate on nothing.")
+          df.to_json("phoenix-spans.json", orient="records")
+          print(f"Exported {len(df)} span(s).")
+          PY
+
+      - name: Show what release-gate read
+        # Guardrail and structural spans are skipped on purpose — the ingest
+        # output states which, so the gap is visible in the job log.
+        run: release-gate ingest phoenix-spans.json
+
+      - name: Gate on the spans
+        run: |
+          release-gate score governance.yaml \
+            --traces phoenix-spans.json \
+            --output-evidence release-gate-report.json \
+            --full
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: release-gate-report.json

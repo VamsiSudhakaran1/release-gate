@@ -1,0 +1,73 @@
+# release-gate × Langfuse — gate a deploy on production traces.
+#
+# Copy to .github/workflows/release-gate-langfuse.yml
+#
+# Secrets required:
+#   LANGFUSE_HOST        e.g. https://cloud.langfuse.com
+#   LANGFUSE_PUBLIC_KEY
+#   LANGFUSE_SECRET_KEY
+
+name: release-gate (Langfuse)
+
+on:
+  pull_request:
+  schedule:
+    # Traces are evidence about the version that is ALREADY running, so a
+    # nightly run is as meaningful as a per-PR one: it catches an agent whose
+    # behaviour drifted without the code changing.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install release-gate
+        run: pip install release-gate
+
+      - name: Pull recent traces from Langfuse
+        env:
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          # --fail so an auth error surfaces here rather than as an empty trace
+          # file that silently produces a clean verdict.
+          curl --fail --silent --show-error \
+            -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
+            "$LANGFUSE_HOST/api/public/traces?limit=100" \
+            -o langfuse-traces.json
+
+      - name: Show what release-gate read
+        # Optional, but worth keeping: the ingest step prints what it could NOT
+        # map, so a coverage gap shows up in the job log instead of being
+        # invisible behind a green check.
+        run: release-gate ingest langfuse-traces.json
+
+      - name: Gate on the traces
+        run: |
+          release-gate score governance.yaml \
+            --traces langfuse-traces.json \
+            --output-evidence release-gate-report.json \
+            --full
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: release-gate-report.json
+
+# Exit codes: 0 = PROMOTE, 10 = HOLD, 1 = BLOCK.
+# HOLD fails the job by default here. To let HOLD pass, use the composite action
+# with `fail-on-warn: false` instead of calling the CLI directly.

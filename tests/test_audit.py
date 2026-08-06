@@ -1131,3 +1131,36 @@ def test_a_mere_mention_of_policy_is_not_a_gate_layer(tmp_path):
         "@tool\ndef delete_device(d):\n    return client.delete(d)\n")})
     scan_code_findings(tmp_path)
     assert v.LAST_SCAN_COVERAGE.get("gate_layer") is False
+
+
+def test_mcp_tool_annotations_count_as_declared_blast_radius(tmp_path):
+    """jeff-nasseri/mikrotik-mcp annotates all 28 destructive tools
+    `annotate(DESTRUCTIVE, ...)` — textbook MCP practice. We were about to file
+    an issue telling them to add what they already had, because the gate
+    detector matched only camelCase `destructiveHint` (TypeScript SDK) while the
+    Python SDK uses snake_case. Under the MCP spec the SERVER declares and the
+    CLIENT prompts: that split IS the gate."""
+    from release_gate.verify import scan_code_findings
+    import release_gate.verify as v
+    _make(tmp_path, {
+        "app.py": ("from mcp.types import ToolAnnotations\n"
+                   "DESTRUCTIVE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)\n"
+                   "READ = ToolAnnotations(read_only_hint=True)\n"),
+        "tools.py": ("@mcp.tool(name='remove_user', annotations=annotate(DESTRUCTIVE, 'Remove User'))\n"
+                     "async def mikrotik_remove_user(ctx, name):\n"
+                     "    return await run(f'/user remove {name}')\n"),
+    })
+    findings = scan_code_findings(tmp_path)
+    assert v.LAST_SCAN_COVERAGE.get("gate_layer") is True
+    accusing = [f for f in findings if f.get("rule_id") == "RG-GATE-001"
+                and "gates centrally" not in f.get("title", "")]
+    assert not accusing, "a server that annotates destructive tools has declared blast radius"
+
+
+def test_unannotated_destructive_tool_is_still_reported(tmp_path):
+    # Recall guard: no annotations, no policy layer -> the finding is real.
+    from release_gate.verify import scan_code_findings
+    _make(tmp_path, {"tools.py": (
+        "@mcp.tool()\nasync def remove_user(ctx, name):\n"
+        "    return await run(f'/user remove {name}')\n")})
+    assert [f for f in scan_code_findings(tmp_path) if f.get("rule_id") == "RG-GATE-001"]

@@ -527,11 +527,134 @@ def _build_agent_callable(agent_spec):
     return client.as_eval_callable(profile), profile
 
 
-def _gather_score_inputs(config_path, evals_path, traces_path, agent_spec=None):
+def run_ingest_command(path, source, out_path, as_json, default_severity):
+    """Convert a platform export into release-gate's native evidence format."""
+    try:
+        from release_gate.adapters import IngestError, ingest_file
+    except ImportError:
+        print("Error: ingest adapters not available. Please reinstall release-gate.")
+        sys.exit(1)
+
+    try:
+        result = ingest_file(path, source=source, default_severity=default_severity)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    except IngestError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"Error: Could not parse {path}: {exc}")
+        sys.exit(1)
+
+    payload = result["payload"]
+    coverage = result["coverage"]
+
+    if as_json:
+        print(json.dumps(result, indent=2))
+        sys.exit(0)
+
+    if out_path:
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except OSError as exc:
+            print(f"Error: could not write {out_path}: {exc}")
+            sys.exit(1)
+
+    print("\n" + "=" * 80)
+    print("\U0001f6aa release-gate  |  Ingest")
+    print("=" * 80 + "\n")
+
+    detected = result.get("detected") or []
+    how = f"auto-detected ({detected[0][1]}% confidence)" if detected else "explicit --from"
+    print(f"  Source           {result['label']}  [{how}]")
+    print(f"  Evidence kind    {result['kind']}")
+
+    if result["kind"] == "traces":
+        n_traces = len(payload)
+        n_steps = sum(len(t.get("steps", [])) for t in payload)
+        print(f"  Converted        {n_traces} trace(s), {n_steps} step(s)")
+        print(f"  Spans mapped     {coverage['records_mapped']} / {coverage['records_seen']}")
+    else:
+        print(f"  Converted        {payload['total']} eval case(s)  "
+              f"({payload['passed']} pass, {payload['failed']} fail)")
+        if payload["critical_failed"]:
+            print(f"  Critical failed  {payload['critical_failed']}")
+
+    skipped = coverage.get("skipped_by_reason") or {}
+    if skipped:
+        print(f"\n  Not mapped ({coverage['records_skipped']}) — stated, not silently dropped:")
+        for reason, count in sorted(skipped.items(), key=lambda kv: -kv[1]):
+            print(f"    · {count:>3}  {reason}")
+
+    for note in coverage.get("notes", []):
+        print(f"\n  Note: {note}")
+
+    if out_path:
+        flag = "--traces" if result["kind"] == "traces" else "--eval-results"
+        print(f"\n  ✓  Wrote {out_path}")
+        print(f"\n  Next:  release-gate score governance.yaml {flag} {out_path}")
+    else:
+        print("\n  (dry run — pass -o <file> to write the converted evidence)")
+    print()
+    sys.exit(0)
+
+
+def _load_eval_results(path):
+    """Load pre-computed eval results for --eval-results.
+
+    Accepts either release-gate's own eval-results aggregate (as written by
+    `release-gate ingest`) or a raw platform export, which is converted on the
+    fly. Accepting the raw export means the common case is one command, not two.
+    """
+    try:
+        from release_gate.adapters import IngestError, convert, load_document
+    except ImportError:
+        print("Error: ingest adapters not available. Please reinstall release-gate.")
+        sys.exit(1)
+
+    try:
+        doc = load_document(path)
+    except FileNotFoundError:
+        print(f"Error: Eval results file not found: {path}")
+        sys.exit(1)
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"Error: Could not parse eval results {path}: {exc}")
+        sys.exit(1)
+
+    # Already a release-gate aggregate — use it as-is.
+    if isinstance(doc, dict) and "total" in doc and isinstance(doc.get("results"), list):
+        return doc
+
+    try:
+        result = convert(doc)
+    except IngestError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    if result["kind"] != "eval_results":
+        print(f"Error: {path} looks like {result['label']} *traces*, not eval results.")
+        print("       Pass it to --traces instead.")
+        sys.exit(1)
+
+    print(f"Ingested eval results from {result['label']} "
+          f"({result['coverage']['records_mapped']} case(s)).")
+    for note in result["coverage"].get("notes", []):
+        print(f"  Note: {note}")
+    return result["payload"]
+
+
+def _gather_score_inputs(config_path, evals_path, traces_path, agent_spec=None,
+                         eval_results_path=None):
     """Run checks, impact, evals, and trace validation for a config.
 
     When agent_spec is set, evals run live against the real agent and a
     runtime latency profile is returned as the sixth element.
+
+    When eval_results_path is set, *already-graded* eval results are loaded
+    instead of running any — the ingest path for promptfoo and friends. We rule
+    on their verdict; we do not re-grade it.
     """
     config = load_config(config_path)
     check_results = run_checks(config)
@@ -546,7 +669,13 @@ def _gather_score_inputs(config_path, evals_path, traces_path, agent_spec=None):
     agent_callable, runtime_profile = _build_agent_callable(agent_spec)
 
     eval_results = None
-    if evals_path:
+    if eval_results_path:
+        if evals_path:
+            print("Error: --evals and --eval-results are mutually exclusive.")
+            print("       --evals runs a suite; --eval-results ingests one that already ran.")
+            sys.exit(1)
+        eval_results = _load_eval_results(eval_results_path)
+    elif evals_path:
         try:
             eval_results = EvalRunner().run(load_evals(evals_path), agent_callable=agent_callable)
         except FileNotFoundError:
@@ -560,9 +689,72 @@ def _gather_score_inputs(config_path, evals_path, traces_path, agent_spec=None):
     trace_results = None
     if traces_path:
         policies = config.get("trace_policies", {})
-        trace_results = TraceValidator().validate_file(traces_path, policies)
+        traces = _load_traces(traces_path)
+        if traces is None:
+            trace_results = TraceValidator().validate_file(traces_path, policies)
+        else:
+            validator = TraceValidator()
+            per_trace = [validator.validate(t, policies) for t in traces]
+            trace_results = _merge_trace_results(per_trace)
 
     return config, check_results, impact, eval_results, trace_results, runtime
+
+
+def _load_traces(path):
+    """Return native traces converted from a platform export, or None.
+
+    None means "this is already a native trace file" — the caller falls back to
+    TraceValidator.validate_file, preserving its exact existing behaviour.
+    """
+    try:
+        from release_gate.adapters import IngestError, convert, detect, load_document
+    except ImportError:
+        return None
+
+    try:
+        doc = load_document(path)
+    except Exception:
+        return None  # Let validate_file produce the canonical error.
+
+    # A native trace file already has `steps`; never route it through an adapter.
+    if isinstance(doc, dict) and isinstance(doc.get("steps"), list):
+        return None
+    if isinstance(doc, list) and doc and isinstance(doc[0], dict) and "steps" in doc[0]:
+        return None
+
+    scores = detect(doc)
+    if not scores or scores[0][1] < 50:
+        return None
+
+    try:
+        result = convert(doc)
+    except IngestError:
+        return None
+    if result["kind"] != "traces":
+        return None
+
+    coverage = result["coverage"]
+    print(f"Ingested traces from {result['label']} "
+          f"({coverage['records_mapped']}/{coverage['records_seen']} span(s) mapped).")
+    for note in coverage.get("notes", []):
+        print(f"  Note: {note}")
+    return result["payload"]
+
+
+def _merge_trace_results(per_trace):
+    """Aggregate per-trace validations the same way validate_file does."""
+    all_violations = [v for r in per_trace for v in r.get("violations", [])]
+    all_warnings = [w for r in per_trace for w in r.get("warnings", [])]
+    all_unauth = list({t for r in per_trace for t in r.get("unauthorized_tool_calls", [])})
+    overall = "FAIL" if all_violations else ("WARN" if all_warnings else "PASS")
+    return {
+        "status": overall,
+        "trace_count": len(per_trace),
+        "violations": all_violations,
+        "warnings": all_warnings,
+        "unauthorized_tool_calls": all_unauth,
+        "per_trace": per_trace,
+    }
 
 
 def _print_score_report(scoring, project, evals, traces, impact, runtime=None, full=False):
@@ -666,14 +858,14 @@ def _build_evidence_data(scoring, project, evals, traces, impact, runtime=None):
 
 
 def run_score_command(config_path, evals_path, traces_path, html_report, evidence_path,
-                      agent_spec=None):
+                      agent_spec=None, eval_results_path=None):
     """Compute a 0-100 readiness score and emit PROMOTE / HOLD / BLOCK."""
     if not V6_AVAILABLE:
         print("Error: Scoring engine not available. Please reinstall release-gate.")
         sys.exit(1)
 
     config, check_results, impact, eval_results, trace_results, runtime = _gather_score_inputs(
-        config_path, evals_path, traces_path, agent_spec
+        config_path, evals_path, traces_path, agent_spec, eval_results_path
     )
     project = config.get("project", {}).get("name", "AI Agent")
 
@@ -851,14 +1043,14 @@ def _print_baseline_diff(diff):
 
 
 def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
-                              agent_spec=None):
+                              agent_spec=None, eval_results_path=None):
     """Generate the full evidence pack (JSON + Markdown + HTML)."""
     if not V6_AVAILABLE:
         print("Error: Evidence pack generator not available. Please reinstall release-gate.")
         sys.exit(1)
 
     config, check_results, impact, eval_results, trace_results, runtime = _gather_score_inputs(
-        config_path, evals_path, traces_path, agent_spec
+        config_path, evals_path, traces_path, agent_spec, eval_results_path
     )
     project = config.get("project", {}).get("name", "AI Agent")
 
@@ -913,6 +1105,9 @@ def print_help():
     print("                        emits an issue-ready shortlist (what you'd actually file on a stranger's repo)")
     print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
+    print("  release-gate ingest <export.json>       # Convert Langfuse / promptfoo / OTel / Arize evidence -> release-gate")
+    print("      Auto-detects the platform. Traces -> --traces, eval results -> --eval-results.")
+    print("      Reports what it could NOT map, so a gap never passes as a clean verdict.")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
     print("  release-gate evidence-pack <config.yaml> # Generate JSON + Markdown + HTML evidence")
     print("  release-gate impact <config.yaml>       # Impact Simulator — show money at risk")
@@ -934,8 +1129,15 @@ def print_help():
     print("  --report <file.json>                    Write the full scorecard (+frameworks) as JSON evidence")
     print("  --html-report <file.html>               Write a self-contained HTML evidence file")
     print("  --json                                  Machine-readable output (add --frameworks for the mapping)")
+    print("\nOptions for 'ingest':")
+    print("  --from <platform>                       langfuse | promptfoo | otel | arize (default: auto)")
+    print("  -o, --output <file.json>                Write the converted evidence")
+    print("  --json                                  Full result incl. coverage, machine-readable")
+    print("  --default-severity <level>              Severity for eval cases that declare none (default: medium)")
     print("\nOptions for 'score' and 'evidence-pack':")
     print("  --evals <evals.yaml>                    Run behavior eval cases")
+    print("  --eval-results <file.json>              Ingest eval results that ALREADY ran (e.g. promptfoo)")
+    print("                                          We rule on their verdict; we never re-grade it.")
     print("  --agent <spec>                          Run evals LIVE against a real agent")
     print("                                          (py:module:fn | cmd:./script | http(s)://url)")
     print("  --traces <trace.json>                   Validate an agent execution trace")
@@ -1410,6 +1612,7 @@ def main():
     elif command == 'score':
         if len(sys.argv) < 3:
             print("Usage: release-gate score <config.yaml> [--evals evals.yaml] "
+                  "[--eval-results results.json] "
                   "[--agent py:mod:fn|cmd:./script|http(s)://url] "
                   "[--traces trace.json] [--html-report report.html] "
                   "[--output-evidence report.json]")
@@ -1421,6 +1624,21 @@ def main():
             _flag(sys.argv, '--html-report'),
             _flag(sys.argv, '--output-evidence'),
             _flag(sys.argv, '--agent'),
+            _flag(sys.argv, '--eval-results'),
+        )
+
+    elif command == 'ingest':
+        if len(sys.argv) < 3 or sys.argv[2].startswith('-'):
+            print("Usage: release-gate ingest <export.json> "
+                  "[--from auto|langfuse|promptfoo|otel|arize] "
+                  "[-o out.json] [--json] [--default-severity medium]")
+            sys.exit(1)
+        run_ingest_command(
+            sys.argv[2],
+            _flag(sys.argv, '--from') or 'auto',
+            _flag(sys.argv, '--output') or _flag(sys.argv, '-o'),
+            '--json' in sys.argv,
+            _flag(sys.argv, '--default-severity') or 'medium',
         )
 
     elif command == 'compare':
@@ -1440,6 +1658,7 @@ def main():
             _flag(sys.argv, '--traces'),
             _flag(sys.argv, '--output-dir') or 'release-evidence',
             _flag(sys.argv, '--agent'),
+            _flag(sys.argv, '--eval-results'),
         )
 
     elif command == 'pricing-lock':
@@ -1520,22 +1739,36 @@ def _run_verify_command():
             print(f"Error reading governance file: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    # Load trace. Accepts release-gate's own steps as well as OTel/OTLP,
-    # Langfuse and OpenInference exports — the formats deployed agents already
-    # emit — so nobody has to hand-write a trace file to use the runtime gate.
+    # Load trace. `score --traces` already accepts platform exports through the
+    # ingest adapters; the loop verifier gets the same treatment, so a running
+    # loop can be gated on the telemetry it already emits instead of a bespoke
+    # file. Native step files keep their existing behaviour exactly.
     trace = None
     if trace_path:
-        try:
-            from release_gate.trace_adapters import load_trace
-            trace = load_trace(trace_path)
-        except Exception as exc:
-            print(f"Error reading trace file: {exc}", file=sys.stderr)
-            sys.exit(1)
-        if trace is None:
-            print(f"Error: no agent activity found in {trace_path}. Expected "
-                  f"release-gate steps, an OTLP/JSON export, Langfuse "
-                  f"observations, or OpenInference spans.", file=sys.stderr)
-            sys.exit(1)
+        converted = _load_traces(trace_path)
+        if converted:
+            # The verifier judges ONE iteration, so multiple runs in an export
+            # are flattened in order rather than silently reduced to the first —
+            # dropping the rest would let a violation in run 2 pass a gate that
+            # only ever read run 1.
+            if len(converted) == 1:
+                trace = converted[0]
+            else:
+                steps = [st for t in converted for st in t.get('steps', [])]
+                trace = {'trace_id': f'{len(converted)} traces', 'steps': steps}
+        else:
+            try:
+                import json as _j
+                text = open(trace_path, encoding='utf-8').read().strip()
+                if trace_path.endswith('.jsonl'):
+                    steps = [_j.loads(l) for l in text.splitlines() if l.strip()]
+                    trace = {'steps': steps}
+                else:
+                    obj = _j.loads(text)
+                    trace = obj if isinstance(obj, dict) else {'steps': obj}
+            except Exception as exc:
+                print(f"Error reading trace file: {exc}", file=sys.stderr)
+                sys.exit(1)
 
     # Load evals
     evals = None

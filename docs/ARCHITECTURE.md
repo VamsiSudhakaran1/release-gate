@@ -50,7 +50,7 @@ admitted?*
 | `release_gate/lockfile.py` | The **AIBOM / context lock** — pins model + prompts + governance + evals + MCP/tool config with a TTL; `compare_lock()` detects behaviour drift. |
 | `release_gate/loop_verifier.py`, `loop_sim.py`, `agent_score.py` | The *behavioural* half — actually run an agent/loop for SHIP/CONTINUE/ROLLBACK and a 0-100 score. (Advanced; complements the static gate.) |
 | `release_gate/trace_validator.py` | Judges one execution trace against `trace_policies` — forbidden tools, retry storms, token overruns, and an agent repeating an *identical* call instead of progressing. |
-| `release_gate/trace_adapters.py` | Turns the telemetry agents already emit (OTLP/JSON, Langfuse, OpenInference) into trace steps. The static→dynamic bridge is a mapping, not a model: no LLM, so runtime verdicts stay as reproducible as static ones. |
+| `release_gate/adapters/` | Turns the telemetry teams already emit (OpenTelemetry, Langfuse, Arize/Phoenix, Promptfoo) into native traces and eval results, reporting what it could **not** map. The static→dynamic bridge is a mapping, not a model: no LLM, so runtime verdicts stay as reproducible as static ones. |
 | `release_gate/evidence_pack.py` | Signed, machine-readable evidence bundle for compliance/attestation. |
 | `release_gate_api/` | The optional hosted platform (FastAPI) — history, dashboard, PDF reports. Not required for the CLI. |
 | `release_gate/mcp_server.py` | Exposes the auditor as a read-only MCP server so a coding agent can gate itself before opening a PR. |

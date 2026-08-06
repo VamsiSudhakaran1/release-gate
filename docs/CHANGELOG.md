@@ -4,53 +4,18 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
-### 📡 OTel / Langfuse trace adapter — the runtime gate stops asking for a file nobody has
+### 📡 The loop verifier reads platform exports too
 
-`TraceValidator` and `LoopVerifier` could already answer the questions
-practitioners run by hand: did the agent call a tool it shouldn't have, did it
-spin on the same tool, did it blow the token budget. They just demanded a
-bespoke JSONL nobody had — while every deployed agent was *already* emitting
-those facts through its tracer.
+`score --traces` already accepted Langfuse / OpenTelemetry / Arize-Phoenix
+exports through the ingest adapters. `verify --trace` did not, so gating a
+*running* loop still meant hand-writing a trace file — the one place the runtime
+gate asked for work nobody had done. It now uses the same adapters: a raw export
+is detected and converted in place, and native step files keep their exact
+previous behaviour, never routed through an adapter.
 
-`--trace` now auto-detects and ingests:
-
-- **OTLP/JSON** exports (`resourceSpans` → `scopeSpans` → `spans`), reading the
-  GenAI semantic conventions — `gen_ai.operation.name`, `gen_ai.tool.name`,
-  `gen_ai.usage.*` — including the **legacy `prompt_tokens`/`completion_tokens`
-  spellings**, because plenty of shipped instrumentation predates the rename and
-  reading only the current names would silently zero out real usage.
-- **Langfuse** observations (`GENERATION` / `SPAN`, `usage.input|output`).
-- **OpenInference** spans (`openinference.span.kind`, `llm.token_count.*`,
-  `tool.parameters`) as emitted by LlamaIndex and Arize.
-- The native step shapes, unchanged — existing files keep working.
-
-**The design rule is never to invent a fact.** A span with no token count
-produces no token count rather than a zero, because `TraceValidator` *sums*
-tokens against a declared ceiling and a fabricated zero reads as free headroom
-on a run we know nothing about — a clean report that is worse than no report.
-Spans that can't be classified are dropped, not defaulted into a `tool_call`: a
-phantom entry would corrupt the consecutive-repeat check. A retry requires an
-explicit signal (`retry.attempt`, a retry-named span), because inferring one
-from two similar spans would manufacture violations out of coincidence.
-
-Spans are grouped one-trace-per-run and **sorted by start time** — sequence is
-not cosmetic, since the check that detects a stuck agent is meaningless if the
-steps arrive out of order.
-
-Concretely, this makes the second practitioner's **#1 manual pre-deploy check**
-— *"fire 20-30 requests and watch whether it calls the same tool with the same
-args more than twice"* — answerable from telemetry the app already produces:
-
-```
-$ release-gate verify governance.yaml --trace otel-run.json --iteration 3
-decision: ROLLBACK
-violations: ['Forbidden tool called: shell',
-             'Token budget exceeded: 21,000 > 20,000']
-```
-
-18 new tests. Static → dynamic turned out to need an adapter, not another model:
-the verdict stays deterministic and reproducible, which is the whole basis of
-the positioning.
+Multiple runs in one export are flattened in emitted order rather than reduced to
+the first, since the verifier judges one iteration and silently dropping runs 2..n
+would let a violation pass a gate that never read it.
 
 ### 🔁 The loop check now keys on tool name **plus arguments**
 
@@ -552,8 +517,6 @@ args`) and verified against those files. Found by dogfooding.
 A template literal was graded by scanning the whole template's prose, so a
 benign `${new Date()}` plus the word "input" in the instructions produced a
 false HIGH (found on mem0). Now only the code inside each `${…}` is classified.
-
-## [Unreleased]
 
 ## [0.9.0] — 2026-07-27
 

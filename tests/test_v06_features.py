@@ -400,3 +400,50 @@ class TestEvidencePack:
         data  = self._data()
         paths = generate_evidence_pack(data, str(tmp_path / "evidence"))
         assert str(data["readiness_score"]) in Path(paths["html"]).read_text()
+
+
+class TestVerifyTraceIngestion:
+    """`release-gate verify --trace` accepts platform exports, not just native.
+
+    `score --traces` already went through the ingest adapters; the loop verifier
+    did not, so gating a running loop still required hand-writing a file. These
+    pin the wiring — the adapters themselves are covered in test_adapters.py.
+    """
+
+    def _otlp(self, *spans):
+        return {"resourceSpans": [{"scopeSpans": [{"spans": list(spans)}]}]}
+
+    def _span(self, name, t, attrs, trace_id="t1"):
+        return {"traceId": trace_id, "spanId": f"s{t}", "name": name,
+                "startTimeUnixNano": str(t),
+                "attributes": [{"key": k, "value": v} for k, v in attrs.items()]}
+
+    def test_otlp_export_reaches_the_loop_verifier(self, tmp_path, capsys):
+        from release_gate.cli import _load_traces
+        doc = self._otlp(
+            self._span("chat gpt-4o", 1, {
+                "gen_ai.operation.name": {"stringValue": "chat"},
+                "gen_ai.request.model": {"stringValue": "gpt-4o"},
+                "gen_ai.usage.input_tokens": {"intValue": "1500"},
+                "gen_ai.usage.output_tokens": {"intValue": "548"}}),
+            self._span("execute_tool shell", 2, {
+                "gen_ai.operation.name": {"stringValue": "execute_tool"},
+                "gen_ai.tool.name": {"stringValue": "shell"}}),
+        )
+        p = tmp_path / "otel.json"
+        p.write_text(json.dumps(doc))
+
+        traces = _load_traces(str(p))
+        assert traces, "OTLP export should convert to native traces"
+        result = TraceValidator().validate(traces[0], {"forbidden_tools": ["shell"]})
+        assert result["status"] == "FAIL"
+        assert any("shell" in v for v in result["violations"])
+
+    def test_native_trace_file_is_never_routed_through_an_adapter(self, tmp_path):
+        """Existing files must keep their exact behaviour — a native trace has
+        `steps` already, so the adapters are bypassed entirely."""
+        from release_gate.cli import _load_traces
+        p = tmp_path / "native.json"
+        p.write_text(json.dumps({"trace_id": "t", "steps": [
+            {"type": "tool_call", "tool": "search_docs", "args": {}}]}))
+        assert _load_traces(str(p)) is None

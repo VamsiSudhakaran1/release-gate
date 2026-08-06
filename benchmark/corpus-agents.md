@@ -80,7 +80,16 @@ became outreach material** — which is the point of the corpus:
    `RG-PROMPT-001` (Python and JS) and in every JS finding, because the JS
    `_finding()` constructor had no evidence field. All fixed.
 
-Seven classes. Five were caught by reading source before sending; the sixth cost a
+8. **MCP tool annotations, missed on the Python SDK.** `jeff-nasseri/mikrotik-mcp`
+   annotates all 28 of its destructive tools `annotate(DESTRUCTIVE, ...)` —
+   textbook MCP practice, where the server declares `destructive_hint` and the
+   client prompts. The gate detector matched only camelCase `destructiveHint`
+   (TypeScript SDK); the Python SDK uses snake_case, so every correctly-annotated
+   Python MCP server looked ungated. We had a 21-tool issue drafted and were one
+   step from filing it — the ha-mcp mistake, one week later. Caught by reading
+   the source before sending. 21 accusations became 1 note.
+
+Eight classes. Six were caught by reading source before sending; the sixth cost a
 public correction — and was the most valuable of the lot, because no labeled
 benchmark can encode "gated somewhere else in the repo". Verify before you send,
 and expect the population where this rule legitimately fires to be *immature*

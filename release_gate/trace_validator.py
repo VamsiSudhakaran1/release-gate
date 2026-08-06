@@ -182,20 +182,13 @@ class TraceValidator:
         if not path.exists():
             return {"status": "ERROR", "error": f"Trace file not found: {trace_path}"}
 
-        # Accept OTel / Langfuse / OpenInference exports as well as the native
-        # shape. The runtime checks were always able to answer these questions;
-        # they just demanded a file nobody had, while every deployed agent was
-        # already emitting the same facts through its tracer.
-        from release_gate.trace_adapters import load_trace_file
-        try:
-            traces = load_trace_file(str(path))
-        except (ValueError, OSError) as exc:
-            return {"status": "ERROR", "error": f"Could not parse trace file: {exc}"}
-        if not traces:
-            return {"status": "ERROR",
-                    "error": f"No agent activity found in {trace_path}. Expected "
-                             f"release-gate steps, an OTLP/JSON export, Langfuse "
-                             f"observations, or OpenInference spans."}
+        text = path.read_text(encoding="utf-8").strip()
+
+        if path.suffix == ".jsonl":
+            traces = [json.loads(line) for line in text.splitlines() if line.strip()]
+        else:
+            obj = json.loads(text)
+            traces = obj if isinstance(obj, list) else [obj]
 
         results = [self.validate(t, policies) for t in traces]
 

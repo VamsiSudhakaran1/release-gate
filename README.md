@@ -8,7 +8,7 @@
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 [![Benchmark: 93-case corpus](https://img.shields.io/badge/benchmark-93--case_corpus_%C2%B7_100%25_precision_%C2%B7_100%25_recall-blue.svg)](benchmark/RESULTS.md)
 
-> **Unreleased** — **`RG-PII-001`**: sensitive context reaching the model **unmasked on one path** while an equivalent path redacts it. Reported only on *divergence*, so the repo supplies its own oracle and a project that masks centrally (in middleware) stays silent — the rule is structurally unable to punish the fix it recommends. Plus the runtime gate now **ingests the traces you already emit** — OTLP/JSON, Langfuse observations, OpenInference spans — so `release-gate verify --trace` needs no bespoke file and no new instrumentation, and the loop check keys on tool **name + arguments** so multi-query retrieval is no longer mistaken for a stuck agent. [93-case benchmark](benchmark/RESULTS.md), 100% precision / 100% recall.
+> **Unreleased** — **`RG-PII-001`**: sensitive context reaching the model **unmasked on one path** while an equivalent path redacts it. Reported only on *divergence*, so the repo supplies its own oracle and a project that masks centrally (in middleware) stays silent — the rule is structurally unable to punish the fix it recommends. Plus the **loop verifier** now accepts the same platform exports `score --traces` does, so a running loop can be gated on the telemetry it already emits; and the loop check keys on tool **name + arguments**, so multi-query retrieval is no longer mistaken for a stuck agent and an agent oscillating between two tools now is. [93-case benchmark](benchmark/RESULTS.md), 100% precision / 100% recall.
 >
 > **v0.9.4** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [93-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
@@ -315,6 +315,78 @@ Drop it into GitHub Actions — either the raw CLI:
     base: origin/${{ github.base_ref }}
     pr-comment: true            # create/update one sticky comment on the PR
 ```
+
+---
+
+## Works with what you already run — the integrations
+
+release-gate does not build observability and does not build quality evals. Those
+layers are mature and well served. It **consumes** them and answers the question
+neither one asks: *should this ship?*
+
+> Observability answers **"what happened?"** · Evaluation answers **"was the output good?"**
+> Neither answers **"should this ship?"**
+
+| Integration | You already have | release-gate turns it into |
+|---|---|---|
+| **[Langfuse](integrations/langfuse/)** | Traces of what your agent did | A trace-policy verdict: forbidden tools, token ceilings, retry storms |
+| **[Promptfoo](integrations/promptfoo/)** | A graded eval suite | A verdict weighing *which* evals failed, not how many |
+| **[OpenTelemetry](integrations/opentelemetry/)** | GenAI-semconv spans, any backend | The same verdict, vendor-neutral |
+| **[Arize / Phoenix](integrations/arize/)** | OpenInference spans | The same verdict, from AX or Phoenix |
+| **[GitHub Actions](integrations/github-actions/)** | A CI pipeline | All of the above, blocking a merge |
+
+There is no conversion step to run first — `--traces` and `--eval-results`
+auto-detect the platform and convert in place:
+
+```bash
+release-gate score governance.yaml --traces langfuse-export.json
+release-gate score governance.yaml --eval-results promptfoo-results.json
+
+# Or combine them — one verdict over both kinds of evidence:
+release-gate score governance.yaml \
+  --traces langfuse-export.json --eval-results promptfoo-results.json
+```
+
+Run it right now against the shipped examples:
+
+```bash
+release-gate score integrations/governance.yaml \
+  --traces integrations/langfuse/example-trace.json --full
+```
+
+```
+Ingested traces from Langfuse (5/6 span(s) mapped).
+
+  Traces checked   1  (2 violations)
+  Score            91 / 100   confidence: medium
+
+  Critical failures:
+    ✗ unauthorized_tool_call [trace] — Unauthorized tool called: send_email_external
+
+  Decision:  ✗  BLOCK  (score 91/100)
+```
+
+**91/100 and blocked** — that's the design, not a bug. Nothing in that trace
+errored; every span is green in the Langfuse UI. But the agent called a tool the
+release policy forbids, and critical failures are **non-compensatory**: a score is
+an average, and averages let strength in one dimension buy down catastrophe in
+another.
+
+Three rules every adapter follows, which are what make them safe in front of a deploy:
+
+1. **No new dependencies.** Adapters parse exported JSON; they never import a
+   vendor SDK. `pip install release-gate` stays a three-library install whether
+   you use one integration or all five.
+2. **Never invent a step.** A span that can't be mapped with evidence is skipped,
+   not guessed. A gate that cries wolf gets disabled, and a disabled gate protects
+   nothing.
+3. **Report the gap.** Every conversion states what it could not map and why, so
+   *"meets the declared policy, with these gaps not assessed"* stays literally
+   true instead of merely well-intentioned.
+
+Details, CI workflows, and per-platform mapping tables:
+**[`integrations/`](integrations/)**. Background on why this layer exists:
+**["Why AI observability isn't enough"](docs/articles/why-observability-isnt-enough.md)**.
 
 ---
 

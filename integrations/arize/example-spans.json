@@ -1,0 +1,100 @@
+[
+  {
+    "name": "RefundAgent",
+    "span_kind": "AGENT",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0001",
+    "parent_id": null,
+    "start_time": "2026-02-11T09:14:02.120000+00:00",
+    "end_time": "2026-02-11T09:14:10.540000+00:00",
+    "attributes": {
+      "openinference.span.kind": "AGENT",
+      "input.value": "Customer 55021 wants a refund on order 9912."
+    }
+  },
+  {
+    "name": "ChatCompletion",
+    "span_kind": "LLM",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0002",
+    "parent_id": "0001",
+    "start_time": "2026-02-11T09:14:02.200000+00:00",
+    "end_time": "2026-02-11T09:14:04.010000+00:00",
+    "attributes": {
+      "openinference.span.kind": "LLM",
+      "llm.model_name": "gpt-4o",
+      "llm.token_count.prompt": 1840,
+      "llm.token_count.completion": 260,
+      "llm.token_count.total": 2100
+    }
+  },
+  {
+    "name": "policy_docs",
+    "span_kind": "RETRIEVER",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0003",
+    "parent_id": "0001",
+    "start_time": "2026-02-11T09:14:04.100000+00:00",
+    "end_time": "2026-02-11T09:14:04.380000+00:00",
+    "attributes": {
+      "openinference.span.kind": "RETRIEVER",
+      "retrieval.documents.0.document.score": 0.88
+    }
+  },
+  {
+    "name": "issue_refund",
+    "span_kind": "TOOL",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0004",
+    "parent_id": "0001",
+    "start_time": "2026-02-11T09:14:04.500000+00:00",
+    "end_time": "2026-02-11T09:14:05.020000+00:00",
+    "attributes": {
+      "openinference.span.kind": "TOOL",
+      "tool.name": "issue_refund",
+      "tool.parameters": "{\"order_id\": \"9912\", \"amount\": \"412.00\"}"
+    }
+  },
+  {
+    "name": "prompt_injection_filter",
+    "span_kind": "GUARDRAIL",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0005",
+    "parent_id": "0001",
+    "start_time": "2026-02-11T09:14:05.100000+00:00",
+    "end_time": "2026-02-11T09:14:05.160000+00:00",
+    "attributes": {
+      "openinference.span.kind": "GUARDRAIL",
+      "guardrail.triggered": false
+    }
+  },
+  {
+    "name": "delete_database",
+    "span_kind": "TOOL",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0006",
+    "parent_id": "0001",
+    "start_time": "2026-02-11T09:14:05.200000+00:00",
+    "end_time": "2026-02-11T09:14:05.900000+00:00",
+    "attributes": {
+      "openinference.span.kind": "TOOL",
+      "tool.name": "delete_database",
+      "tool.parameters": "{\"table\": \"stale_sessions\"}"
+    }
+  },
+  {
+    "name": "ChatCompletion",
+    "span_kind": "LLM",
+    "context.trace_id": "b19a7f2c8d3e4f501a2b3c4d5e6f7081",
+    "span_id": "0007",
+    "parent_id": "0001",
+    "start_time": "2026-02-11T09:14:06.000000+00:00",
+    "end_time": "2026-02-11T09:14:10.400000+00:00",
+    "attributes": {
+      "openinference.span.kind": "LLM",
+      "llm.model_name": "gpt-4o",
+      "llm.token_count.prompt": 2900,
+      "llm.token_count.completion": 380
+    }
+  }
+]
