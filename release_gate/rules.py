@@ -108,6 +108,17 @@ RULES: List[Rule] = [
          "Add an explicit gate (a confirm/dry_run parameter, an approval step) before "
          "the irreversible call.",
          ["OWASP-LLM:LLM08", "NIST-AI-RMF:MANAGE-2.2"]),
+    Rule("RG-PII-001", "Sensitive context reaches the model unmasked on one path",
+         "SECRET", "pii_egress", "high",
+         "This project redacts retrieved/user context before sending it to the model "
+         "on one path, and sends it unredacted on another — the classic refactor "
+         "regression, where a second retrieval path is added and the masking step is "
+         "not. Reported only when the repo masks somewhere, so it is an "
+         "inconsistency the code itself proves, never an opinion about what you owe.",
+         "Route the unmasked path through the same redaction step, or hoist masking "
+         "into one place both paths must pass through.",
+         ["OWASP-LLM:LLM02", "OWASP-LLM:LLM06", "NIST-AI-RMF:MAP-5.1",
+          "EU-AI-Act:Art-10"]),
     Rule("RG-PROMPT-001", "Interpolated system prompt (injection surface)", "PROMPT",
          "prompt_injection_risk", "high",
          "Untrusted (user/model) text is interpolated into a system prompt, where "

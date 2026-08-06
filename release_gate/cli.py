@@ -1116,6 +1116,7 @@ def print_help():
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
+    print("  release-gate verify governance.yaml --trace otel.json  # …from OTel / Langfuse traces you already emit")
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("\nOptions for 'agent-score':")
@@ -1702,6 +1703,11 @@ def _run_verify_command():
 
     Examples:
       release-gate verify governance.yaml --iteration 3 --cost 0.12 --trace trace.jsonl
+
+    --trace accepts release-gate's own steps AND the formats deployed agents
+    already emit: OTLP/JSON exports, Langfuse observations, OpenInference
+    spans. Format is auto-detected; no conversion step, no instrumentation
+    work — if you run OpenTelemetry or Langfuse today, you have the input.
       release-gate verify governance.yaml --iteration 1 --output "Paris" --evals evals.yaml
     """
     import json as _json
@@ -1733,21 +1739,36 @@ def _run_verify_command():
             print(f"Error reading governance file: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    # Load trace
+    # Load trace. `score --traces` already accepts platform exports through the
+    # ingest adapters; the loop verifier gets the same treatment, so a running
+    # loop can be gated on the telemetry it already emits instead of a bespoke
+    # file. Native step files keep their existing behaviour exactly.
     trace = None
     if trace_path:
-        try:
-            import json as _j
-            text = open(trace_path, encoding='utf-8').read().strip()
-            if trace_path.endswith('.jsonl'):
-                steps = [_j.loads(l) for l in text.splitlines() if l.strip()]
-                trace = {'steps': steps}
+        converted = _load_traces(trace_path)
+        if converted:
+            # The verifier judges ONE iteration, so multiple runs in an export
+            # are flattened in order rather than silently reduced to the first —
+            # dropping the rest would let a violation in run 2 pass a gate that
+            # only ever read run 1.
+            if len(converted) == 1:
+                trace = converted[0]
             else:
-                obj = _j.loads(text)
-                trace = obj if isinstance(obj, dict) else {'steps': obj}
-        except Exception as exc:
-            print(f"Error reading trace file: {exc}", file=sys.stderr)
-            sys.exit(1)
+                steps = [st for t in converted for st in t.get('steps', [])]
+                trace = {'trace_id': f'{len(converted)} traces', 'steps': steps}
+        else:
+            try:
+                import json as _j
+                text = open(trace_path, encoding='utf-8').read().strip()
+                if trace_path.endswith('.jsonl'):
+                    steps = [_j.loads(l) for l in text.splitlines() if l.strip()]
+                    trace = {'steps': steps}
+                else:
+                    obj = _j.loads(text)
+                    trace = obj if isinstance(obj, dict) else {'steps': obj}
+            except Exception as exc:
+                print(f"Error reading trace file: {exc}", file=sys.stderr)
+                sys.exit(1)
 
     # Load evals
     evals = None

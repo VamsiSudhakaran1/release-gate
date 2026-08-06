@@ -75,6 +75,29 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 - **Fix:** Add an explicit gate (a confirm/dry_run parameter, an approval step) before the irreversible call.
 - **Compliance:** OWASP-LLM:LLM08, NIST-AI-RMF:MANAGE-2.2
 
+## Secrets
+
+### RG-PII-001 — Sensitive context reaches the model unmasked on one path
+
+- **Default severity:** high
+- **What & why:** This project redacts retrieved/user context before sending it to the model on one path, and sends it unredacted on another — the classic refactor regression, where a second retrieval path is added and the masking step is not. Reported only when the repo masks somewhere, so it is an inconsistency the code itself proves, never an opinion about what you owe.
+- **Fix:** Route the unmasked path through the same redaction step, or hoist masking into one place both paths must pass through.
+- **Compliance:** OWASP-LLM:LLM02, OWASP-LLM:LLM06, NIST-AI-RMF:MAP-5.1, EU-AI-Act:Art-10
+
+### RG-SECRET-001 — Hardcoded secret / API key
+
+- **Default severity:** high
+- **What & why:** A live-looking credential appears in source — a leaked key and a denial-of-wallet surface.
+- **Fix:** Move secrets to environment variables or a secrets manager; rotate the exposed key.
+- **Compliance:** OWASP-LLM:LLM07
+
+### RG-SECRET-002 — Secret or PII sent to the model provider
+
+- **Default severity:** high
+- **What & why:** A hardcoded secret, an env var, or a PII-shaped value is interpolated into a prompt sent to a third-party LLM — data egress to the provider (who logs and retains it). The reverse of exfiltration — an agent-aware egress path conventional SAST often lacks the context to model.
+- **Fix:** Redact secrets/PII before they reach the prompt; a key used as auth (api_key=, headers) is fine — only prompt content is the leak.
+- **Compliance:** OWASP-LLM:LLM06, OWASP-LLM:LLM07
+
 ## Prompt-injection surfaces
 
 ### RG-PROMPT-001 — Interpolated system prompt (injection surface)
@@ -115,20 +138,4 @@ Every finding release-gate emits carries a **stable rule id** you can cite. Ids 
 - **What & why:** An infinite loop wraps an LLM call with no iteration cap — the AutoGPT-style runaway that turns a small task into an unbounded bill.
 - **Fix:** Add an explicit max-iterations ceiling; a model-controlled break is not a cap.
 - **Compliance:** OWASP-LLM:LLM10, NIST-AI-RMF:MANAGE-2.2
-
-## Secrets
-
-### RG-SECRET-001 — Hardcoded secret / API key
-
-- **Default severity:** high
-- **What & why:** A live-looking credential appears in source — a leaked key and a denial-of-wallet surface.
-- **Fix:** Move secrets to environment variables or a secrets manager; rotate the exposed key.
-- **Compliance:** OWASP-LLM:LLM07
-
-### RG-SECRET-002 — Secret or PII sent to the model provider
-
-- **Default severity:** high
-- **What & why:** A hardcoded secret, an env var, or a PII-shaped value is interpolated into a prompt sent to a third-party LLM — data egress to the provider (who logs and retains it). The reverse of exfiltration — an agent-aware egress path conventional SAST often lacks the context to model.
-- **Fix:** Redact secrets/PII before they reach the prompt; a key used as auth (api_key=, headers) is fine — only prompt content is the leak.
-- **Compliance:** OWASP-LLM:LLM06, OWASP-LLM:LLM07
 

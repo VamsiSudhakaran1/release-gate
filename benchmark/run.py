@@ -28,6 +28,20 @@ ROOT = Path(__file__).resolve().parent
 
 
 def _findings(case) -> list:
+    # A `files:` case is a whole miniature REPO, scanned through the real
+    # directory walker. Repo-level rules (RG-PII-001's masked-here/raw-there
+    # comparison) are claims about a project, not a file, so a single-snippet
+    # harness cannot express either their true positives or — more importantly —
+    # the clean cases that prove they stay quiet.
+    if "files" in case:
+        import tempfile
+        from release_gate.verify import scan_code_findings
+        with tempfile.TemporaryDirectory() as d:
+            for name, src in case["files"].items():
+                p = Path(d) / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(src)
+            return list(scan_code_findings(Path(d)))
     code, lang = case["code"], case.get("lang", "py")
     if lang in ("ts", "js", "tsx", "jsx"):
         return _scan_js_file(f"case.{lang}", code)
@@ -43,7 +57,7 @@ def _rule_ids(case) -> set:
 # constructor, an unbounded loop) are proven by the shape of the code itself,
 # so they assert confirmed without a value chain.
 _TAINT_RULES = {"RG-EXEC-001", "RG-EXEC-004", "RG-ACTION-002", "RG-ACTION-003",
-                "RG-ACTION-004", "RG-PROMPT-002"}
+                "RG-ACTION-004", "RG-PROMPT-002", "RG-PII-001"}
 
 
 def audit_high_tier(cases) -> list:

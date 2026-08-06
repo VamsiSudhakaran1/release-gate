@@ -276,6 +276,57 @@ SECRET_NAME_HINTS = ("secret", "password", "passwd", "api_key", "apikey", "token
 PROMPT_ARG_KEYS = {"messages", "prompt", "input", "contents", "content", "query",
                    "question", "text", "system", "instructions", "user", "inputs"}
 
+# ── RG-PII-001: sensitive context reaching the model provider, unmasked ──────
+# The check practitioners already do by hand: "is PII masked before context
+# reaches the LLM endpoint?" Stated the obvious way — "no mask on this path" —
+# it is RG-GATE-001's mistake all over again: a UNIVERSAL NEGATIVE. Masking can
+# live in middleware, a prompt-template renderer, or a gateway outside the repo,
+# and we would be telling correct teams they are leaking PII. That rule cost us
+# a public correction once (ha-mcp); it does not get to happen twice.
+#
+# So this rule only ever fires on DIVERGENCE: the project masks on one path to a
+# model call and not on another. The repo supplies its own oracle — we assert
+# nothing about what anyone *ought* to do, only that the code is inconsistent
+# with itself. That converts the universal negative into a positive existential
+# ("here are two paths, one masked, one not"), the only shape this engine is
+# allowed to grade HIGH. It also self-protects against the ha-mcp failure: if
+# masking happens centrally in middleware, NEITHER path shows a sanitizer, the
+# precondition fails, and we stay silent.
+#
+# Redaction engines — a constructor is an import-level fact, so CONFIRMED tier.
+_SANITIZER_CTORS = {
+    "AnonymizerEngine", "AnalyzerEngine", "BatchAnonymizerEngine",   # presidio
+    "PresidioAnonymizer", "PresidioReversibleAnonymizer",            # langchain
+    "Scrubber",                                                      # scrubadub
+}
+# Dotted call suffixes that ARE a redaction, whatever the receiver is named.
+# Deliberately not bare `.clean()` — that collides with dataframe/text helpers.
+_SANITIZER_DOTTED = (
+    "scrubadub.clean", "scrubadub.scrub",
+    ".anonymize", ".analyze_and_anonymize", ".deanonymize",
+)
+# Locally-named redaction helpers. A NAME is a guess wearing the costume of a
+# fact (the AutoGPT lesson at the top of this module), so a sanitizer recognised
+# only this way caps the finding at INFERRED/MEDIUM — never HIGH.
+_SANITIZER_NAME_RE = re.compile(
+    r"(?:^|_)(?:mask|redact|scrub|sanitiz|anonymi[sz]|pseudonymi[sz]|"
+    r"deidentify|de_identify|obfuscat|strip_pii|remove_pii|filter_pii)",
+    re.I)
+# A `re.sub(EMAIL_RE, "***", text)` — regex masking, which is what most teams
+# actually ship. Recognised by the REPLACEMENT being a mask-shaped constant, so
+# an ordinary `re.sub(r"\s+", " ", t)` whitespace fix is not mistaken for one.
+_MASK_REPLACEMENT_RE = re.compile(r"^(?:[*X#x\-•]{2,}|\[?<?[A-Z_]{3,}>?\]?)$")
+# Provider API hosts. Real agent code routes the model call through a project's
+# own wrapper (`call_llm(system_prompt, user_message)` doing requests.post to a
+# Gemini URL), so the SDK-shaped sink detector never sees it — the same
+# method-summary gap the deployed-agent corpus found blocking gpt-engineer.
+# Recognising the HOST makes the wrapper itself an egress sink.
+_LLM_HOST_RE = re.compile(
+    r"(?:api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com"
+    r"|api\.cohere\.(?:ai|com)|api\.mistral\.ai|api\.groq\.com|api\.together\.xyz"
+    r"|api\.deepseek\.com|openai\.azure\.com|bedrock-runtime\.[\w-]+\.amazonaws\.com"
+    r"|api\.perplexity\.ai|\.openai\.azure\.com|api\.x\.ai)", re.I)
+
 # ── RG-ACTION-002: SSRF / egress — the HTTP call is here a SINK, not a source ─
 # The URL-bearing argument (model-controlled host → SSRF) and the body-bearing
 # ones (model-controlled data → exfiltration).
@@ -617,6 +668,25 @@ class _Analyzer(ast.NodeVisitor):
         # from either flowing into an LLM prompt is data egress to the provider.
         self.secret_literal_vars: Set[str] = set()
         self.secret_env_vars: Set[str] = set()
+        # RG-PII-001. `sanitizer_vars` = vars holding a redaction engine
+        # (`engine = AnonymizerEngine()`), so `engine.anonymize(...)` resolves.
+        # `sanitized` = var -> (tier, label, line) for values that went THROUGH a
+        # redaction step. We deliberately do NOT clear `untrusted_provenance`
+        # here: masking removes PII, it does not make retrieved text trusted, and
+        # RG-PROMPT-002's injection claim still stands over a masked document.
+        self.sanitizer_vars: Set[str] = set()
+        self.sanitized: Dict[str, Tuple[str, str, int]] = {}
+        # Local functions that ARE a model call: their body invokes an SDK or
+        # POSTs to a provider host. Scoped to RG-PII-001's egress recording on
+        # purpose — widening the global _is_llm_call would move five other rules
+        # and the 93-case benchmark at once, which is a separate decision.
+        self.llm_wrapper_funcs: Set[str] = set()
+        # Prompt-egress sites: one record per (LLM call, untrusted value reaching
+        # a content-bearing arg), noting whether a sanitizer was on that path.
+        # The divergence comparison happens in verify.py, across the whole repo —
+        # a second unmasked path is usually in a different file from the masked
+        # one, which is exactly the refactor this rule exists to catch.
+        self.llm_egress: List[Dict[str, Any]] = []
         # RG-PARSE-001: nesting inside a `try:` BODY — a parse there is guarded.
         self._try_depth = 0
         # ── The provenance ledger — what makes a CONFIRMED finding checkable ──
@@ -849,6 +919,38 @@ class _Analyzer(ast.NodeVisitor):
                 orig = self.provenance.get(croot)
                 if orig:
                     self._record_provenance(targets, orig[0], orig[1])
+        # RG-PII-001: a redaction step. `engine = AnonymizerEngine()` names an
+        # engine; `clean = mask_pii(doc)` launders a value.
+        if isinstance(val, ast.Call):
+            _ctor_s = _ctor_name(val)
+            if _ctor_s and _ctor_s in _SANITIZER_CTORS:
+                for t in targets:
+                    self.sanitizer_vars.add(t)
+            san = self._sanitizer_of(val)
+            if san:
+                tier, label = san
+                # A masked document is still a retrieved document: carry the
+                # untrusted taint AND the original origin line through the
+                # redaction, so the masked path can still print a full chain.
+                # Without this the masked side of the comparison is invisible and
+                # the divergence check never has an oracle to fire against.
+                src = next((n for n in _names_in(val) if n in self.untrusted_provenance),
+                           None)
+                for t in targets:
+                    self.sanitized[t] = (tier, label, node.lineno)
+                    if src:
+                        self.untrusted_provenance.add(t)
+                        self.tainted.add(t)
+                if src:
+                    orig = self.provenance.get(src)
+                    if orig:
+                        self._record_provenance(targets, orig[0], orig[1])
+        # A masked value stays masked across a plain hop: `text = clean.content`.
+        elif isinstance(val, (ast.Attribute, ast.Subscript)):
+            _sroot = _chain_root(val)
+            if _sroot and _sroot in self.sanitized:
+                for t in targets:
+                    self.sanitized[t] = self.sanitized[_sroot]
         # Receiver types: `ai = AI(...)` / `self.ai = AI(...)` name the class, so
         # a later `ai.start(...)` resolves to the `AI.start` summary.
         _ctor = _ctor_name(val) if isinstance(val, ast.Call) else None
@@ -1018,6 +1120,53 @@ class _Analyzer(ast.NodeVisitor):
         return (self._is_retrieval_call(node) or self._is_http_call(node)
                 or self._is_tool_call(node))
 
+    # -- RG-PII-001: recognising a redaction step -----------------------------
+    def _sanitizer_of(self, node: ast.Call) -> Optional[Tuple[str, str]]:
+        """(tier, label) if this call redacts its input, else None.
+
+        CONFIRMED only for a real redaction engine or an explicit regex mask —
+        things whose purpose is unambiguous from the code. A helper recognised
+        by NAME alone is INFERRED, because `mask_url` might mask nothing.
+        """
+        dotted = _dotted(node.func) or ""
+        root = _root_name(node.func)
+        # A known engine: `AnonymizerEngine().anonymize(...)`, `engine.anonymize(...)`.
+        if any(dotted == s or dotted.endswith(s) for s in _SANITIZER_DOTTED):
+            return (CONFIRMED, f"{dotted}()")
+        if root and root in self.sanitizer_vars:
+            return (CONFIRMED, f"{dotted or root}()")
+        ctor = _ctor_name(node)
+        if ctor and ctor in _SANITIZER_CTORS:
+            return (CONFIRMED, f"{ctor}()")
+        # Regex masking: `re.sub(EMAIL_RE, "***", text)`. Confirmed by the shape
+        # of the replacement, not by anyone's naming discipline.
+        if dotted.endswith("re.sub") or dotted == "sub":
+            repl = node.args[1] if len(node.args) > 1 else None
+            if isinstance(repl, ast.Constant) and isinstance(repl.value, str) \
+                    and _MASK_REPLACEMENT_RE.match(repl.value.strip()):
+                return (CONFIRMED, f're.sub(…, "{repl.value}", …)')
+        # A locally-named redaction helper — a guess, so it cannot confirm.
+        callee = dotted.split(".")[-1] if dotted else ""
+        if callee and _SANITIZER_NAME_RE.search(callee):
+            return (INFERRED, f"{callee}()")
+        return None
+
+    def _inline_sanitizer(self, node: ast.AST) -> Optional[Tuple[str, str]]:
+        """A redaction applied INLINE in the argument: `create(prompt=mask(doc))`.
+
+        Returns the strongest tier found, so one confirmed mask in a nested
+        expression is not downgraded by an inferred one beside it.
+        """
+        best: Optional[Tuple[str, str]] = None
+        for n in ast.walk(node):
+            if isinstance(n, ast.Call):
+                san = self._sanitizer_of(n)
+                if san and (best is None or san[0] == CONFIRMED):
+                    best = san
+                    if san[0] == CONFIRMED:
+                        break
+        return best
+
     # -- file-mediated taint: model output -> a file -> executed by path -------
     @staticmethod
     def _path_key(node: ast.AST) -> Optional[str]:
@@ -1176,20 +1325,24 @@ class _Analyzer(ast.NodeVisitor):
         # caller, which we cannot see.
         _saved = (dict(self.provenance), set(self.request_derived),
                   set(self.untrusted_provenance), set(self.tainted_model),
-                  set(self.model_extracted))
+                  set(self.model_extracted), dict(self.sanitized))
         for a in node.args.args + node.args.kwonlyargs:
             self.provenance.pop(a.arg, None)
             self.request_derived.discard(a.arg)
             self.untrusted_provenance.discard(a.arg)
             self.tainted_model.discard(a.arg)
             self.model_extracted.discard(a.arg)
+            # A masked value in one function says nothing about a same-named
+            # parameter in another — claiming otherwise would let one masked
+            # path silence every unmasked one that happens to share a name.
+            self.sanitized.pop(a.arg, None)
         self.generic_visit(node)
         # Summarize what this function RETURNS while its scope is still live —
         # this is what lets a caller follow the taint across the call boundary.
         self._summarize_returns(node)
         (self.provenance, self.request_derived, self.untrusted_provenance,
-         self.tainted_model, self.model_extracted) = (
-            _saved[0], _saved[1], _saved[2], _saved[3], _saved[4])
+         self.tainted_model, self.model_extracted, self.sanitized) = (
+            _saved[0], _saved[1], _saved[2], _saved[3], _saved[4], _saved[5])
         self._fn_has_integrity, self._fn_has_exec = prev_integrity, prev_exec
 
     @staticmethod
@@ -1476,6 +1629,7 @@ class _Analyzer(ast.NodeVisitor):
         self._check_sql_sink(node)
         self._check_secret_to_prompt(node)
         self._check_parse_sink(node)
+        self._check_pii_egress(node)
         self._record_param_update(node)
         # File-mediated taint: did this call write a tainted value into a file?
         self._record_tainted_write(node)
@@ -1812,6 +1966,105 @@ class _Analyzer(ast.NodeVisitor):
                             "it isn't sensitive."),
                 ))
                 return
+
+    def _find_llm_wrappers(self, tree: ast.AST):
+        """Local functions whose body performs the model call.
+
+        `def call_llm(system_prompt, user_message): ... requests.post(gemini_url…)`
+        is the shape real projects use, and it hides the sink from an
+        SDK-shaped detector. A wrapper is only recognised when it takes
+        parameters — a zero-arg function cannot be carrying context out.
+        """
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not (fn.args.args or fn.args.kwonlyargs):
+                continue
+            has_http = False
+            for n in ast.walk(fn):
+                if not isinstance(n, ast.Call):
+                    continue
+                if self._is_llm_call(n):
+                    self.llm_wrapper_funcs.add(fn.name)
+                    break
+                # Any request-shaped call. Broader than _is_http_call on purpose:
+                # projects reach providers through httpx.Client().post, aiohttp,
+                # or a session object, and the provider-host constant below is
+                # what actually gates this — an unrecognised client is no reason
+                # to miss the sink.
+                has_http = has_http or self._is_http_call(n) or (
+                    getattr(n.func, "attr", "") in
+                    {"post", "get", "request", "stream", "send"})
+            else:
+                # The URL is almost never a literal at the call — it is built
+                # above it (`url = f"https://generativelanguage…/{model}"`), so
+                # look for a provider host anywhere in the function alongside an
+                # HTTP call, rather than only inside the call's own arguments.
+                if has_http and any(
+                        isinstance(s, ast.Constant) and isinstance(s.value, str)
+                        and _LLM_HOST_RE.search(s.value)
+                        for s in ast.walk(fn)):
+                    self.llm_wrapper_funcs.add(fn.name)
+
+    def _is_egress_sink(self, node: ast.Call) -> bool:
+        """An SDK model call, or a call to a local function that makes one."""
+        if self._is_llm_call(node):
+            return True
+        callee = _dotted(node.func) or ""
+        return (callee.split(".")[-1] in self.llm_wrapper_funcs
+                if callee else False)
+
+    def _check_pii_egress(self, node: ast.Call):
+        """Record a prompt-egress site for RG-PII-001, SDK call or local wrapper."""
+        if self._is_llm_call(node):
+            args = list(node.args)
+            args += [k.value for k in node.keywords if k.arg in PROMPT_ARG_KEYS]
+        elif self._is_egress_sink(node):
+            # A wrapper's parameters are named by the project (`user_message`,
+            # `augmented_query`), so PROMPT_ARG_KEYS cannot filter them. Every
+            # argument is a candidate; carrying untrusted taint is the filter.
+            args = list(node.args) + [k.value for k in node.keywords]
+        else:
+            return
+        self._record_prompt_egress(node, args)
+
+    def _record_prompt_egress(self, node: ast.Call, prompt_args: List[ast.AST]):
+        """Note that untrusted context reaches this model call, masked or not.
+
+        This records a FACT, never a finding — the judgement is the repo-wide
+        divergence comparison in verify.py. Recording unconditionally (masked
+        paths too) is the point: the masked sites are the evidence that the
+        project intends to mask at all, and without them the rule has no oracle
+        and must stay silent.
+        """
+        for arg in prompt_args:
+            names = set(_names_in(arg))
+            croot = _chain_root(arg)
+            if croot:
+                names.add(croot)
+            hit = next((n for n in names if n in self.untrusted_provenance), None)
+            if not hit:
+                continue
+            # Strongest sanitizer on this path: bound to a name, or applied
+            # inline in the argument itself (`create(prompt=mask(doc))`).
+            san = next((self.sanitized[n] for n in names if n in self.sanitized), None)
+            inline = self._inline_sanitizer(arg)
+            if inline and (san is None or (san[0] != CONFIRMED and inline[0] == CONFIRMED)):
+                san = (inline[0], inline[1], getattr(node, "lineno", 0))
+            oline, oexpr = self.provenance.get(hit, (0, ""))
+            self.llm_egress.append({
+                "file": self.rel,
+                "line": getattr(node, "lineno", 0),
+                "sink": (_dotted(node.func) or "an LLM call") + "()",
+                "value": hit,
+                "origin_line": oline,
+                "origin_expr": oexpr,
+                "sanitized": san is not None,
+                "sanitizer_tier": san[0] if san else "",
+                "sanitizer": san[1] if san else "",
+                "sanitizer_line": san[2] if san else 0,
+            })
+            return   # one record per call site is enough
 
     @staticmethod
     def _inline_env_read(node: ast.AST) -> bool:
@@ -2444,7 +2697,16 @@ class _Analyzer(ast.NodeVisitor):
 
 
 def has_llm_usage(source: str) -> bool:
-    """True if the file actually constructs or calls an LLM (not just imports/mentions)."""
+    """True if the file actually constructs or calls an LLM (not just imports/mentions).
+
+    Includes a project's OWN model wrapper — a function that POSTs to a provider
+    host (`requests.post(f"https://generativelanguage.googleapis.com/…")`). A
+    production LangGraph RAG app whose only model call goes through such a helper
+    was being classified "not a deployed agent", which is the most misleading
+    thing this classifier can say: it downgrades governance to N/A on exactly the
+    software the gate exists for. Calling a provider's HTTP API is LLM usage
+    whether or not an SDK is involved.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -2453,7 +2715,8 @@ def has_llm_usage(source: str) -> bool:
     a.visit(tree)
     a.llm_signal = False
     a.visit(tree)  # second pass so assignments inform call classification
-    return a.llm_signal or bool(a.llm_vars)
+    a._find_llm_wrappers(tree)
+    return a.llm_signal or bool(a.llm_vars) or bool(a.llm_wrapper_funcs)
 
 
 # `return self.something(...)` — the only shape whose summary can depend on a
@@ -2575,12 +2838,18 @@ def _imported_summaries(a: "_Analyzer", rel: str,
 
 
 def analyze_python(source: str, rel: str,
-                   index: Optional[Dict[str, Dict[str, Tuple[str, int, str]]]] = None
+                   index: Optional[Dict[str, Dict[str, Tuple[str, int, str]]]] = None,
+                   egress: Optional[List[Dict[str, Any]]] = None,
                    ) -> List[Dict[str, Any]]:
     """Analyze one Python file. Returns findings; empty on parse failure.
 
     `index` is the optional project-wide summary map from build_project_index();
     with it, taint follows an imported helper's return across module boundaries.
+
+    `egress`, if given, is extended with this file's prompt-egress sites (see
+    _record_prompt_egress). They are facts, not findings: RG-PII-001 compares
+    them across the whole repo in verify.py, because the masked path and the
+    unmasked one are usually in different files.
     """
     try:
         tree = ast.parse(source)
@@ -2595,8 +2864,17 @@ def analyze_python(source: str, rel: str,
     # Whether this file is genuinely agent code (constructs/calls an LLM) — used
     # to keep dynamic-sink LOW nudges scoped to agent files, not generic Python.
     a.file_has_llm = a.llm_signal or bool(a.llm_vars)
+    a._find_llm_wrappers(tree)   # needs pass 1's llm_vars to resolve SDK calls
     a.findings.clear()
+    a.llm_egress.clear()      # pass 1's records would otherwise double every site
     a.visit(tree)
+    if egress is not None:
+        seen_eg: Set[Tuple[str, int]] = set()
+        for e in a.llm_egress:
+            k = (e["file"], e["line"])
+            if k not in seen_eg:
+                seen_eg.add(k)
+                egress.append(e)
     # de-dupe (two passes) by (title, line)
     seen: Set[Tuple[str, int]] = set()
     out: List[Dict[str, Any]] = []

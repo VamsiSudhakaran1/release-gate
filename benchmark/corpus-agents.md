@@ -184,3 +184,46 @@ no code-level gate — is architecture-level, not dataflow. That is the signal t
 build on for deployed agents.
 
 We publish the numbers that did not move, not just the ones that did.
+
+## 4. RAG / retrieval apps — "can we check what teams check by hand?"
+
+Added for RG-PII-001. 17 repos: `HKUDS/LightRAG · microsoft/graphrag ·
+onyx-dot-app/onyx · VectifyAI/PageIndex · pathwaycom/pathway ·
+unclecode/crawl4ai · bytedance/deer-flow · TauricResearch/TradingAgents ·
+AstrBotDevs/AstrBot · harry0703/MoneyPrinterTurbo · google/langextract ·
+zhayujie/CowAgent · sansan0/TrendRadar · ZhuLinsen/daily_stock_analysis ·
+hsliuping/TradingAgents-CN · shareAI-lab/learn-claude-code` plus a live
+LangGraph financial-RAG app whose maintainer described their manual pre-deploy
+checklist — one item of which ("regex masking before context reaches an external
+LLM endpoint") is what the rule was built from.
+
+**Result: 0 findings, and 0 egress sites at all** across ~9,500 files. Total
+findings across the corpus were identical before and after the change (111), so
+the new sink detection perturbed nothing else.
+
+Zero false positives is the easy half. The honest half is that there were no
+true positives either, and the reason is not the rule's design — it is that the
+*source* never reaches the sink:
+
+```
+retriever_node:  index.query(...) → context → return {"retrieved_chunks": …}
+                          ↓  framework-managed state dict, across node functions
+generator_node:  chunks = state.get("retrieved_chunks")   ← taint dies here
+                 context = "\n".join(...) → call_llm(system, f"…{context}…")
+```
+
+Two hops, and only one of them got closed. The **sink** side is now reached:
+`call_llm` is a project-defined wrapper POSTing to a Gemini URL, invisible to an
+SDK-shaped detector until we started matching provider *hosts*. The **source**
+side dies at a framework-managed, string-keyed state dictionary passed between
+node functions — the "data structure" boundary section 3 already named as open.
+
+That is a sharper target than "cross-module" was: a LangGraph state channel is an
+enumerable pattern (a node returns `{"k": tainted}`, another reads `state["k"]`),
+not a general type-inference problem. It is the next milestone, and it is now
+backed by a measurement rather than a hunch.
+
+What we will *not* do is loosen the rule to manufacture findings. RG-PII-001 fires
+only where a repo masks on one path and not another; a version that fires on "no
+masking found" would light up all 17 of these repos tomorrow and every one of
+those findings would be the ha-mcp mistake again.

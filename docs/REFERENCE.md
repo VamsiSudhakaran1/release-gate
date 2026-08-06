@@ -643,7 +643,15 @@ If `out=` points at a field that isn't in the response, the call fails loudly
 
 ### Trace Validator
 
-Feed your agent's execution trace (JSON or JSONL). Catches forbidden tool calls, retry storms, token budget overruns, and tool-call loops.
+Feed your agent's execution trace (JSON or JSONL). Catches forbidden tool calls,
+retry storms, token budget overruns, and an agent looping without progressing.
+
+**You probably already have the input.** Both `score --traces` and
+`verify --trace` accept a raw Langfuse / OpenTelemetry / Arize-Phoenix export
+directly — auto-detected and converted in place, with a note about anything that
+could not be mapped. See [`release-gate ingest`](#commands) and
+[`integrations/`](../integrations/) for per-platform setup. Native trace files
+are never routed through an adapter, so existing files behave exactly as before.
 
 ```json
 {
@@ -666,7 +674,18 @@ trace_policies:
   max_tool_calls: 10
   max_retries: 2
   max_tokens_per_run: 15000
+  max_identical_tool_calls: 3   # same tool + SAME args repeated = not progressing
 ```
+
+**The loop check keys on tool name *plus arguments*.** `search_docs("tax")`,
+`search_docs("gst")`, `search_docs("tds")` is multi-query retrieval doing its
+job; three calls with *identical* arguments return the same result, so the agent
+learned nothing between them. When the trace records tool input, identical calls
+are counted anywhere in the run — which also catches an agent oscillating
+`A→B→A→B→A`. When it doesn't (the common OpenTelemetry default, since the GenAI
+conventions treat tool input as sensitive), the check falls back to consecutive
+same-name calls and says so in the warning rather than implying it verified
+input it never saw.
 
 ### Evidence Pack
 
