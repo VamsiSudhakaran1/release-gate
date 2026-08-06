@@ -199,7 +199,7 @@ Commit `release-gate-baseline.json` once (`release-gate audit . --write-baseline
 |------|-------------|
 | `--evals <evals.yaml>` | Run YAML-defined behavior eval cases |
 | `--agent <spec>` | Run evals **live** against a real agent (`py:` / `cmd:` / `http(s)://`) |
-| `--traces <trace.json>` | Validate agent execution trace against declared policies |
+| `--traces <file>` | Validate agent execution trace against declared policies (OTLP / Langfuse / OpenInference / native) |
 | `--html-report <file.html>` | Write self-contained HTML evidence report |
 | `--output-evidence <file.json>` | Save full JSON readiness report |
 
@@ -209,7 +209,7 @@ Commit `release-gate-baseline.json` once (`release-gate audit . --write-baseline
 |------|-------------|
 | `--iteration N` | Current iteration number (default: 1) |
 | `--cost FLOAT` | Cumulative cost so far in USD (default: 0.0) |
-| `--trace <file.jsonl>` | Validate the current iteration's agent trace |
+| `--trace <file>` | Validate the current iteration's agent trace — OTLP/JSON, Langfuse, OpenInference, or native steps (auto-detected) |
 | `--evals <evals.yaml>` | Run eval quality checks on the current output |
 | `--output "text"` | Pass agent output text for eval assertion checks |
 | `--loop-id ID` | Group iterations into a named Loop Report |
@@ -281,7 +281,7 @@ free of violations):
 ```bash
 release-gate verify governance.yaml \
   --iteration 3 --cost 0.12 \
-  --trace trace.jsonl \
+  --trace otel-export.json \
   --evals evals.yaml \
   --loop-id my-loop-001 \
   --json
@@ -628,7 +628,30 @@ If `out=` points at a field that isn't in the response, the call fails loudly
 
 ### Trace Validator
 
-Feed your agent's execution trace (JSON or JSONL). Catches forbidden tool calls, retry storms, token budget overruns, and tool-call loops.
+Feed your agent's execution trace. Catches forbidden tool calls, retry storms,
+token budget overruns, and an agent looping without progressing.
+
+**You almost certainly already have the input.** The format is auto-detected, so
+`--trace`/`--traces` accepts the telemetry deployed agents already emit — no
+conversion step and no new instrumentation:
+
+| Format | Where it comes from |
+|---|---|
+| **OTLP / JSON** | any OpenTelemetry exporter (GenAI semantic conventions) |
+| **Langfuse** | an observations export (`GENERATION` / `SPAN`) |
+| **OpenInference** | LlamaIndex, Arize |
+| **native** | release-gate's own `steps` JSON/JSONL, below |
+
+Spans are grouped one trace per run and ordered by start time. Anything that
+isn't agent activity (an HTTP health check, a DB span) is dropped rather than
+guessed at, and a span carrying no token count contributes none — never a zero,
+which would read as free headroom against a declared ceiling.
+
+```bash
+release-gate verify governance.yaml --trace otel-export.json --iteration 3
+```
+
+The native shape, if you'd rather emit it directly:
 
 ```json
 {
@@ -651,7 +674,17 @@ trace_policies:
   max_tool_calls: 10
   max_retries: 2
   max_tokens_per_run: 15000
+  max_identical_tool_calls: 3   # same tool + SAME args repeated = not progressing
 ```
+
+**The loop check keys on tool name *plus arguments*.** `search_docs("tax")`,
+`search_docs("gst")`, `search_docs("tds")` is multi-query retrieval doing its
+job; three calls with *identical* arguments return the same result, so the agent
+learned nothing. When the exporter records tool input, identical calls are
+counted anywhere in the run (catching an agent oscillating `A→B→A→B→A`). When it
+doesn't — the common OTel default, since tool input is treated as sensitive —
+the check falls back to consecutive same-name calls and says so in the warning
+rather than implying it verified input it never saw.
 
 ### Evidence Pack
 

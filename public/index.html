@@ -1360,7 +1360,7 @@
     <div class="section-header">
       <p class="section-eyebrow">Agent Safety Scan</p>
       <h2 class="section-title">Scan your agent code for the risks SAST tools miss</h2>
-      <p class="section-subtitle">Point it at any GitHub repo running an LLM agent. It finds the failure modes that only exist once a model is in the loop &mdash; prompt-injection surfaces, exec sinks fed by model output, LLM calls with no token ceiling, and hardcoded keys. SonarQube won&rsquo;t flag these; this is the layer on top.</p>
+      <p class="section-subtitle">Point it at any GitHub repo running an LLM agent. It finds the failure modes that only exist once a model is in the loop &mdash; prompt-injection surfaces, exec sinks fed by model output, LLM calls with no token ceiling, hardcoded keys, and sensitive context that reaches the model <strong>unmasked on one path</strong> while an equivalent path redacts it. SonarQube won&rsquo;t flag these; this is the layer on top.</p>
     </div>
 
     <div style="max-width:720px;margin:0 auto">
@@ -1664,13 +1664,13 @@
         <div class="term-block">
 <span class="t-muted">$ release-gate verify governance.yaml \</span>
 <span class="t-muted">    --iteration 3 --cost 0.12 \</span>
-<span class="t-muted">    --trace trace.jsonl --json</span>
+<span class="t-muted">    --trace otel-export.json --json</span>
 &nbsp;
 <span class="t-green">{ "decision": "SHIP",</span>
 <span class="t-green">  "cost_remaining": 0.88 }</span>
 &nbsp;
 <span class="yaml-cmt"># exit 0=SHIP  10=CONTINUE  1=ROLLBACK</span></div>
-        <p class="cli-col-label">Works in any shell loop. No account needed.</p>
+        <p class="cli-col-label">Works in any shell loop. No account needed. <strong>Reads the traces you already emit</strong> &mdash; OpenTelemetry, Langfuse, OpenInference &mdash; so there&rsquo;s no bespoke file to write and no new instrumentation.</p>
       </div>
 
       <div class="cli-col">
