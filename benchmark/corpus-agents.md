@@ -66,7 +66,21 @@ became outreach material** — which is the point of the corpus:
    ha-mcp. **awslabs/mcp and google_workspace_mcp trip the same detection**, so
    the queued AWS issue would have been wrong in the same way.
 
-Six classes. Five were caught by reading source before sending; the sixth cost a
+7. **The canonical agent loop, graded HIGH 39 times.** `shareAI-lab/learn-claude-code`
+   (73k stars) returned 39 confirmed HIGHs, all `RG-LOOP-001` on `while True:` —
+   each with an EMPTY evidence field. Every one is the standard agent loop: it
+   exits when the model stops requesting tools and caps tokens per turn. We were
+   grading the defining pattern of our own domain as a confirmed defect. Now a
+   LOW advisory ("consider an iteration cap"); only a loop with NO exit path
+   stays HIGH.
+
+   The deeper failure was the invariant: it required provenance only for the
+   TAINT rules, so a HIGH with *no evidence at all* passed. Tightened to require
+   non-empty evidence on every HIGH — which immediately exposed the same flaw in
+   `RG-PROMPT-001` (Python and JS) and in every JS finding, because the JS
+   `_finding()` constructor had no evidence field. All fixed.
+
+Seven classes. Five were caught by reading source before sending; the sixth cost a
 public correction — and was the most valuable of the lot, because no labeled
 benchmark can encode "gated somewhere else in the repo". Verify before you send,
 and expect the population where this rule legitimately fires to be *immature*

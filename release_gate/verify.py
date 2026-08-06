@@ -1362,8 +1362,15 @@ def _scan_js_file(rel: str, text: str) -> List[Dict[str, Any]]:
 
 def _finding(severity: str, title: str, file: str, line: int, snippet: str,
              recommendation: str, confidence: str = "medium",
-             basis: str = "inferred", impact: str = "") -> Dict[str, Any]:
+             basis: str = "inferred", impact: str = "",
+             evidence: str = "") -> Dict[str, Any]:
     from release_gate.rules import rule_id_for_title
+    # Every finding must carry something a reader can check. For the line-based
+    # scanners the source line IS the evidence, so fall back to it rather than
+    # emitting a bare claim — a HIGH with nothing to verify is the failure mode
+    # the benchmark's high-tier invariant exists to catch.
+    if not evidence.strip():
+        evidence = f"{snippet.strip()}  ({file}:{line})" if snippet.strip() else f"{file}:{line}"
     return {
         "severity": severity,
         "title": title,
@@ -1374,6 +1381,7 @@ def _finding(severity: str, title: str, file: str, line: int, snippet: str,
         "confidence": confidence,
         "basis": basis,
         "impact": impact,
+        "evidence": evidence,
         # Stable, citable rule id (RG-EXEC-001) — the bridge from scanner to authority.
         "rule_id": rule_id_for_title(title),
     }

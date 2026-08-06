@@ -1027,3 +1027,31 @@ cases:
       @tool
       def ha_remove_device(device_id):
           return client.delete_device(device_id)
+
+  - id: loop001-canonical-agent-loop-advisory
+    lang: py
+    label: vulnerable
+    expect: [RG-LOOP-001]
+    source: "shareAI-lab/learn-claude-code (73k stars) returned 39 confirmed HIGHs of this shape. It is THE agent loop — exits when the model stops requesting tools, caps tokens per turn. Reported, but as a LOW advisory: grading the defining pattern of the domain as a confirmed HIGH is how a gate gets muted"
+    code: |
+      from anthropic import Anthropic
+      client = Anthropic()
+      def loop(messages):
+          while True:
+              response = client.messages.create(model="m", messages=messages, max_tokens=8000)
+              messages.append(response)
+              if response.stop_reason != "tool_use":
+                  return
+
+  - id: loop001-no-exit-at-all-vulnerable
+    lang: py
+    label: vulnerable
+    expect: [RG-LOOP-001]
+    source: "Recall guard — a loop with no exit path at all is a genuine runaway and keeps its confirmed HIGH"
+    code: |
+      from anthropic import Anthropic
+      client = Anthropic()
+      def loop(m):
+          while True:
+              r = client.messages.create(model="m", messages=m, max_tokens=100)
+              m.append(r)

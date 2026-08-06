@@ -67,6 +67,12 @@ def audit_high_tier(cases) -> list:
             rid, basis = f.get("rule_id"), f.get("basis")
             if basis != "confirmed":
                 violations.append((c["id"], rid, f"HIGH with basis={basis!r}"))
+            elif not (f.get("evidence") or "").strip():
+                # Added after RG-LOOP-001 emitted 39 confirmed HIGHs with an
+                # EMPTY evidence field on one repo. A HIGH a reader cannot check
+                # is exactly what this invariant exists to prevent, and keying
+                # only on the taint rules let it through.
+                violations.append((c["id"], rid, "HIGH with empty evidence"))
             elif rid in _TAINT_RULES and not f.get("provenance"):
                 violations.append((c["id"], rid, "HIGH with no provenance chain"))
     return violations

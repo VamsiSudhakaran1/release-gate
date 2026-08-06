@@ -1945,13 +1945,39 @@ class _Analyzer(ast.NodeVisitor):
                         break  # bounded by an enclosing for-loop → not a runaway
                     if self._has_bounded_break(node):
                         break  # counter/budget-guarded exit → bounded retry, not a runaway
+                    # THE canonical agent loop:
+                    #     while True:
+                    #         resp = client.messages.create(...)
+                    #         if resp.stop_reason != "tool_use": return
+                    # It exits when the model stops requesting tools. That is the
+                    # standard, correct shape every agent uses — an iteration cap
+                    # is a hardening improvement, not a defect, so it is a LOW
+                    # advisory. Grading the defining pattern of our own domain as
+                    # a confirmed HIGH is how a gate gets muted (39 of these in
+                    # one repo). Only a loop with NO exit path at all is a HIGH.
+                    exits = self._loop_has_exit(node)
                     self.findings.append(self._f(
-                        "high", "Unbounded loop around an LLM call", node,
-                        "An infinite loop wraps an LLM call with no iteration cap. "
-                        "If the stop condition is never met it spins forever, "
-                        "burning tokens and budget. Add an explicit max-iterations ceiling.",
-                        confidence="high", basis="confirmed",
-                        impact="Runaway cost / no termination guarantee.",
+                        "low" if exits else "high",
+                        "Unbounded loop around an LLM call", node,
+                        ("This agent loop exits on a model-driven stop condition "
+                         "rather than an iteration cap. That is the standard shape "
+                         "and usually fine; a max-iterations ceiling additionally "
+                         "bounds the case where the model keeps requesting tools."
+                         if exits else
+                         "An infinite loop wraps an LLM call with NO exit path. "
+                         "If the stop condition is never met it spins forever, "
+                         "burning tokens and budget. Add an explicit "
+                         "max-iterations ceiling."),
+                        evidence=("`while True` around an LLM call; exits on a "
+                                  "model-driven stop condition, no iteration cap"
+                                  if exits else
+                                  "`while True` around an LLM call with no "
+                                  "reachable exit"),
+                        confidence="medium" if exits else "high",
+                        basis=HEURISTIC if exits else CONFIRMED,
+                        impact=("Advisory: bounded by the model's stop condition, "
+                                "not by a cap." if exits else
+                                "Runaway cost / no termination guarantee."),
                     ))
                     break
         self.generic_visit(node)
@@ -2354,12 +2380,18 @@ class _Analyzer(ast.NodeVisitor):
                 modelish = any(_hint_match(n, MODEL_SOURCE_HINTS) or n in self.tainted
                                for n in names)
                 sev = "high" if strong else ("medium" if modelish else "low")
+                _interp = ", ".join(sorted(n for n in names
+                                           if _hint_match(n, SYSTEM_PROMPT_STRONG_HINTS)
+                                           or _hint_match(n, MODEL_SOURCE_HINTS)
+                                           or n in self.tainted)) or ", ".join(sorted(names))
                 self.findings.append(self._f(
                     sev,
                     "Interpolated system prompt (injection surface)", content_val,
                     "User/model-influenced text is interpolated into a system "
                     "prompt. Move untrusted input into a clearly-delimited user "
                     "turn so it can't override system instructions.",
+                    evidence=f"`{_interp}` interpolated into a role=\"system\" message "
+                             f"(L{getattr(content_val, 'lineno', 0)})",
                     confidence="high" if strong else "low",
                     basis="confirmed" if strong else "inferred",
                     impact="Prompt-injection surface: untrusted text can override "

@@ -1884,3 +1884,50 @@ def test_namespaced_read_verb_is_still_read_only():
         src = f"@tool\ndef {name}(x):\n    return c.do(x)\n"
         assert [f for f in analyze_python(src, "t.py")
                 if f["rule_id"] == "RG-GATE-001"], name
+
+
+def test_canonical_agent_loop_is_advisory_not_high():
+    """shareAI-lab/learn-claude-code (73k stars) returned 39 confirmed HIGHs,
+    every one this shape. It is THE agent loop: it exits when the model stops
+    requesting tools, and caps tokens per turn. Grading the defining pattern of
+    our own domain as a confirmed HIGH is how a gate gets muted."""
+    src = ("from anthropic import Anthropic\nclient = Anthropic()\n"
+           "def loop(messages):\n"
+           "    while True:\n"
+           "        response = client.messages.create(model='m', messages=messages, max_tokens=8000)\n"
+           "        messages.append(response)\n"
+           "        if response.stop_reason != 'tool_use':\n"
+           "            return\n")
+    hits = [f for f in analyze_python(src, "agent.py") if f["rule_id"] == "RG-LOOP-001"]
+    assert hits and hits[0]["severity"] == "low"
+    assert hits[0]["evidence"], "even an advisory must carry checkable evidence"
+
+
+def test_loop_with_no_exit_at_all_is_still_high():
+    # Recall guard: a genuine runaway keeps its HIGH.
+    src = ("from anthropic import Anthropic\nclient = Anthropic()\n"
+           "def loop(m):\n"
+           "    while True:\n"
+           "        r = client.messages.create(model='m', messages=m, max_tokens=100)\n"
+           "        m.append(r)\n")
+    hits = [f for f in analyze_python(src, "agent.py") if f["rule_id"] == "RG-LOOP-001"]
+    assert hits and hits[0]["severity"] == "high" and hits[0]["basis"] == "confirmed"
+    assert hits[0]["evidence"]
+
+
+def test_every_high_carries_evidence():
+    """The meta-fix: a HIGH with nothing to check is the failure the tier
+    contract exists to prevent. The invariant keyed only on taint rules, so
+    RG-LOOP-001 and RG-PROMPT-001 emitted evidence-free HIGHs for months."""
+    srcs = [
+        "import os\ndef h(request):\n    os.system(request.json['c'])\n",
+        'msg = {"role": "system", "content": f"Answer about {user_query}"}\n',
+        ("from anthropic import Anthropic\nclient = Anthropic()\n"
+         "def loop(m):\n    while True:\n"
+         "        r = client.messages.create(model='m', messages=m, max_tokens=9)\n"
+         "        m.append(r)\n"),
+    ]
+    for src in srcs:
+        for f in analyze_python(src, "x.py"):
+            if f["severity"] in ("high", "critical"):
+                assert (f.get("evidence") or "").strip(), f
