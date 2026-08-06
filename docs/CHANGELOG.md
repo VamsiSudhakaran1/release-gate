@@ -4,6 +4,54 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 📡 OTel / Langfuse trace adapter — the runtime gate stops asking for a file nobody has
+
+`TraceValidator` and `LoopVerifier` could already answer the questions
+practitioners run by hand: did the agent call a tool it shouldn't have, did it
+spin on the same tool, did it blow the token budget. They just demanded a
+bespoke JSONL nobody had — while every deployed agent was *already* emitting
+those facts through its tracer.
+
+`--trace` now auto-detects and ingests:
+
+- **OTLP/JSON** exports (`resourceSpans` → `scopeSpans` → `spans`), reading the
+  GenAI semantic conventions — `gen_ai.operation.name`, `gen_ai.tool.name`,
+  `gen_ai.usage.*` — including the **legacy `prompt_tokens`/`completion_tokens`
+  spellings**, because plenty of shipped instrumentation predates the rename and
+  reading only the current names would silently zero out real usage.
+- **Langfuse** observations (`GENERATION` / `SPAN`, `usage.input|output`).
+- **OpenInference** spans (`openinference.span.kind`, `llm.token_count.*`,
+  `tool.parameters`) as emitted by LlamaIndex and Arize.
+- The native step shapes, unchanged — existing files keep working.
+
+**The design rule is never to invent a fact.** A span with no token count
+produces no token count rather than a zero, because `TraceValidator` *sums*
+tokens against a declared ceiling and a fabricated zero reads as free headroom
+on a run we know nothing about — a clean report that is worse than no report.
+Spans that can't be classified are dropped, not defaulted into a `tool_call`: a
+phantom entry would corrupt the consecutive-repeat check. A retry requires an
+explicit signal (`retry.attempt`, a retry-named span), because inferring one
+from two similar spans would manufacture violations out of coincidence.
+
+Spans are grouped one-trace-per-run and **sorted by start time** — sequence is
+not cosmetic, since the check that detects a stuck agent is meaningless if the
+steps arrive out of order.
+
+Concretely, this makes the second practitioner's **#1 manual pre-deploy check**
+— *"fire 20-30 requests and watch whether it calls the same tool with the same
+args more than twice"* — answerable from telemetry the app already produces:
+
+```
+$ release-gate verify governance.yaml --trace otel-run.json --iteration 3
+decision: ROLLBACK
+violations: ['Forbidden tool called: shell',
+             'Token budget exceeded: 21,000 > 20,000']
+```
+
+18 new tests. Static → dynamic turned out to need an adapter, not another model:
+the verdict stays deterministic and reproducible, which is the whole basis of
+the positioning.
+
 ### 🎭 RG-PII-001 — sensitive context reaching the model unmasked on one path
 
 The structural half of a check practitioners already run by hand ("is PII masked

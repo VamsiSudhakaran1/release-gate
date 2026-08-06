@@ -921,6 +921,7 @@ def print_help():
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
     print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
+    print("  release-gate verify governance.yaml --trace otel.json  # …from OTel / Langfuse traces you already emit")
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("\nOptions for 'agent-score':")
@@ -1483,6 +1484,11 @@ def _run_verify_command():
 
     Examples:
       release-gate verify governance.yaml --iteration 3 --cost 0.12 --trace trace.jsonl
+
+    --trace accepts release-gate's own steps AND the formats deployed agents
+    already emit: OTLP/JSON exports, Langfuse observations, OpenInference
+    spans. Format is auto-detected; no conversion step, no instrumentation
+    work — if you run OpenTelemetry or Langfuse today, you have the input.
       release-gate verify governance.yaml --iteration 1 --output "Paris" --evals evals.yaml
     """
     import json as _json
@@ -1514,20 +1520,21 @@ def _run_verify_command():
             print(f"Error reading governance file: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    # Load trace
+    # Load trace. Accepts release-gate's own steps as well as OTel/OTLP,
+    # Langfuse and OpenInference exports — the formats deployed agents already
+    # emit — so nobody has to hand-write a trace file to use the runtime gate.
     trace = None
     if trace_path:
         try:
-            import json as _j
-            text = open(trace_path, encoding='utf-8').read().strip()
-            if trace_path.endswith('.jsonl'):
-                steps = [_j.loads(l) for l in text.splitlines() if l.strip()]
-                trace = {'steps': steps}
-            else:
-                obj = _j.loads(text)
-                trace = obj if isinstance(obj, dict) else {'steps': obj}
+            from release_gate.trace_adapters import load_trace
+            trace = load_trace(trace_path)
         except Exception as exc:
             print(f"Error reading trace file: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if trace is None:
+            print(f"Error: no agent activity found in {trace_path}. Expected "
+                  f"release-gate steps, an OTLP/JSON export, Langfuse "
+                  f"observations, or OpenInference spans.", file=sys.stderr)
             sys.exit(1)
 
     # Load evals
