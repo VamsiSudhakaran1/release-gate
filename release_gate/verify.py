@@ -509,7 +509,14 @@ MAX_SCAN_FILES = 25_000
 _GATE_LAYER_RE = re.compile(
     r"read[_-]?only[_-]?mode|READ_ONLY_MODE|ReadOnly(?:Middleware|ToolsTransform)|"
     r"(?:tool|security)[_-]?polic(?:y|ies)|ToolPolicy|PolicyMiddleware|"
-    r"readOnlyHint|destructiveHint|"
+    # MCP tool annotations are how a server DECLARES blast radius so the client
+    # can gate. The TypeScript SDK spells them camelCase, the Python SDK
+    # snake_case — matching only camelCase made every correctly-annotated Python
+    # MCP server look ungated. jeff-nasseri/mikrotik-mcp annotates all 28 of its
+    # destructive tools `DESTRUCTIVE`; we were about to tell them to add what
+    # they already had.
+    r"readOnlyHint|destructiveHint|read_only_hint|destructive_hint|"
+    r"ToolAnnotations|"
     r"require[_-]?(?:confirm|confirmation|approval)|"
     r"confirmation[_-]?(?:required|middleware)|approval[_-]?(?:required|middleware)")
 # A gate layer only counts when it is ENFORCED, not merely mentioned — a README
@@ -517,7 +524,12 @@ _GATE_LAYER_RE = re.compile(
 _GATE_ENFORCE_RE = re.compile(
     r"class\s+\w*(?:ReadOnly|Policy|Approval|Confirm)\w*|"
     r"def\s+\w*(?:read_only|policy|approval|confirm)\w*|"
-    r"add_middleware|middleware\s*=|\.use\(|transform\s*=")
+    r"add_middleware|middleware\s*=|\.use\(|transform\s*=|"
+    # Structured MCP tool annotations count as enforcement-grade declaration:
+    # under the MCP spec the SERVER declares destructive_hint and the CLIENT
+    # prompts. That IS the architecture's gate, split across the boundary, and
+    # it is not a docstring mention — it's metadata a client acts on.
+    r"annotations\s*=|ToolAnnotations\s*\(")
 
 _SUMMARY_MARKER_RE = re.compile(
     r"\b(?:openai|anthropic|cohere|litellm|ollama|groq|mistralai|together|"
