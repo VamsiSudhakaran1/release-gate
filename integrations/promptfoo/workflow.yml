@@ -1,0 +1,67 @@
+# release-gate × Promptfoo — run the eval suite, then gate the merge on it.
+#
+# Copy to .github/workflows/release-gate-promptfoo.yml
+#
+# Secrets required: whatever your promptfoo providers need (e.g. OPENAI_API_KEY).
+
+name: release-gate (Promptfoo)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          npm install -g promptfoo
+          pip install release-gate
+
+      - name: Run the eval suite
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        # `|| true` on purpose: promptfoo exits non-zero when any case fails, but
+        # a failing case is not automatically a failed release — that is exactly
+        # the judgement this pipeline delegates to release-gate. Losing the
+        # results file here would throw away the evidence the gate needs.
+        run: promptfoo eval -c promptfooconfig.yaml -o promptfoo-results.json || true
+
+      - name: Gate on the results
+        # release-gate reads promptfoo's verdict and never re-grades it. The
+        # decision weighs WHICH cases failed (severity), not how many.
+        run: |
+          release-gate score governance.yaml \
+            --eval-results promptfoo-results.json \
+            --output-evidence release-gate-report.json \
+            --full
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: |
+            promptfoo-results.json
+            release-gate-report.json
+
+# Want traces in the same verdict? Add --traces alongside --eval-results:
+#
+#   release-gate score governance.yaml \
+#     --eval-results promptfoo-results.json \
+#     --traces       langfuse-traces.json

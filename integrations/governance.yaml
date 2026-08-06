@@ -1,0 +1,93 @@
+# Shared demo release policy for the integration examples.
+#
+# Every example under integrations/ gates against THIS file, so you can see the
+# same policy render different verdicts depending on which evidence you feed it.
+#
+#   release-gate score integrations/governance.yaml --traces integrations/langfuse/example-trace.json
+#
+# The trace_policies block is the part the ingest adapters feed. It is written
+# the way a real support-agent policy would be: the agent may look things up and
+# issue a refund, but it may not email outside the company or delete data, and a
+# single run has a token ceiling.
+
+project:
+  name: refund-agent
+  description: "Customer-support refund agent — demo policy for the integration examples"
+
+agent:
+  model: gpt-4o
+  daily_requests: 2000
+  avg_input_tokens: 1800
+  avg_output_tokens: 400
+
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+  warn_on:
+    - IDENTITY_BOUNDARY
+    - INPUT_CONTRACT
+
+# ── What the ingest adapters feed ────────────────────────────────────────────
+# Traces converted from Langfuse / OpenTelemetry / Arize are validated here.
+trace_policies:
+  allowed_tools:
+    - get_order
+    - search_docs
+    - issue_refund
+    - lookup_customer
+    - retrieve_policy_docs
+    - policy_docs          # the Arize RETRIEVER span, by its span name
+  forbidden_tools:
+    - send_email_external
+    - delete_database
+    - charge_card
+  max_tool_calls: 10
+  max_retries: 2
+  max_tokens_per_run: 12000
+  require_fallback_step: false
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 250
+
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: "feature-flag"
+      location: "config/kill-switches/refund-agent"
+    fallback_mode: "escalate-to-human"
+    team_owner: "support-platform"
+    runbook_url: "https://wiki.example.com/runbooks/refund-agent"
+
+  identity_boundary:
+    enabled: true
+    authentication:
+      required: true
+      type: "oauth2"
+    rate_limit:
+      requests_per_minute: 30
+      burst_allowed: false
+    data_isolation:
+      - "customer_id isolation"
+
+  input_contract:
+    enabled: true
+    schema:
+      type: "object"
+      required:
+        - "customer_id"
+        - "order_id"
+      properties:
+        customer_id:
+          type: "string"
+        order_id:
+          type: "string"
+    samples:
+      valid:
+        - customer_id: "55021"
+          order_id: "9912"
+      invalid:
+        - customer_id: ""
+          order_id: "9912"

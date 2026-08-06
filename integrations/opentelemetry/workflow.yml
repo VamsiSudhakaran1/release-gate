@@ -1,0 +1,67 @@
+# release-gate × OpenTelemetry — gate a deploy on GenAI spans.
+#
+# Copy to .github/workflows/release-gate-otel.yml
+#
+# This example pulls a trace from Grafana Tempo. Any backend that returns
+# OTLP/JSON works the same way — Honeycomb, Jaeger, or a collector file exporter
+# whose output you upload as an artifact.
+
+name: release-gate (OpenTelemetry)
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install release-gate
+        run: pip install release-gate
+
+      - name: Fetch spans
+        env:
+          TEMPO_URL: ${{ secrets.TEMPO_URL }}
+          TEMPO_TOKEN: ${{ secrets.TEMPO_TOKEN }}
+          TRACE_ID: ${{ vars.AGENT_TRACE_ID }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $TEMPO_TOKEN" \
+            "$TEMPO_URL/api/traces/$TRACE_ID" \
+            -o otel-spans.json
+
+          # Alternative: if your collector writes a file exporter output that a
+          # previous job uploaded, download it instead:
+          #   - uses: actions/download-artifact@v4
+          #     with: { name: otel-spans }
+
+      - name: Show what release-gate read
+        # Prints mapped vs skipped. Non-GenAI spans (HTTP, DB) are dropped on
+        # purpose — see integrations/opentelemetry/README.md.
+        run: release-gate ingest otel-spans.json --from otel
+
+      - name: Gate on the spans
+        run: |
+          release-gate score governance.yaml \
+            --traces otel-spans.json \
+            --output-evidence release-gate-report.json \
+            --full
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: release-gate-report.json

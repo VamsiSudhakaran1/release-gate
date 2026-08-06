@@ -1,0 +1,88 @@
+{
+  "id": "trace-refund-agent-4471",
+  "name": "refund-agent-run",
+  "timestamp": "2026-02-11T09:14:02.113Z",
+  "projectId": "proj-support-agents",
+  "sessionId": "session-8812",
+  "userId": "customer-55021",
+  "htmlPath": "/project/proj-support-agents/traces/trace-refund-agent-4471",
+  "latency": 8.42,
+  "totalCost": 0.0391,
+  "observations": [
+    {
+      "id": "obs-001",
+      "traceId": "trace-refund-agent-4471",
+      "parentObservationId": null,
+      "type": "SPAN",
+      "name": "refund-agent",
+      "startTime": "2026-02-11T09:14:02.120Z",
+      "endTime": "2026-02-11T09:14:10.540Z",
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs-002",
+      "traceId": "trace-refund-agent-4471",
+      "parentObservationId": "obs-001",
+      "type": "GENERATION",
+      "name": "plan-refund",
+      "model": "gpt-4o",
+      "modelParameters": { "temperature": 0.2, "max_tokens": 1024 },
+      "input": [{ "role": "user", "content": "Customer 55021 wants a refund on order 9912." }],
+      "output": { "role": "assistant", "content": "I will look up the order, then issue the refund." },
+      "usage": { "input": 1840, "output": 260, "total": 2100, "unit": "TOKENS" },
+      "startTime": "2026-02-11T09:14:02.200Z",
+      "endTime": "2026-02-11T09:14:04.010Z",
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs-003",
+      "traceId": "trace-refund-agent-4471",
+      "parentObservationId": "obs-001",
+      "type": "SPAN",
+      "name": "get_order",
+      "input": { "order_id": "9912" },
+      "output": { "status": "delivered", "total": "412.00" },
+      "startTime": "2026-02-11T09:14:04.100Z",
+      "endTime": "2026-02-11T09:14:04.380Z",
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs-004",
+      "traceId": "trace-refund-agent-4471",
+      "parentObservationId": "obs-001",
+      "type": "SPAN",
+      "name": "issue_refund",
+      "input": { "order_id": "9912", "amount": "412.00" },
+      "output": { "refund_id": "rf-2201" },
+      "startTime": "2026-02-11T09:14:04.500Z",
+      "endTime": "2026-02-11T09:14:05.020Z",
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs-005",
+      "traceId": "trace-refund-agent-4471",
+      "parentObservationId": "obs-001",
+      "type": "SPAN",
+      "name": "send_email_external",
+      "input": { "to": "customer55021@example.com", "body": "Your refund of $412.00 is processed." },
+      "output": { "sent": true },
+      "startTime": "2026-02-11T09:14:05.200Z",
+      "endTime": "2026-02-11T09:14:05.900Z",
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs-006",
+      "traceId": "trace-refund-agent-4471",
+      "parentObservationId": "obs-001",
+      "type": "GENERATION",
+      "name": "confirm-to-customer",
+      "model": "gpt-4o",
+      "input": [{ "role": "user", "content": "Draft the confirmation." }],
+      "output": { "role": "assistant", "content": "Your refund has been processed." },
+      "usage": { "input": 15200, "output": 900, "total": 16100, "unit": "TOKENS" },
+      "startTime": "2026-02-11T09:14:06.000Z",
+      "endTime": "2026-02-11T09:14:10.400Z",
+      "level": "DEFAULT"
+    }
+  ]
+}

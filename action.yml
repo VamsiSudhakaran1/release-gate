@@ -36,7 +36,11 @@ inputs:
     required: false
     default: ""
   traces:
-    description: "Path to an agent execution trace JSON/JSONL to validate (score / evidence-pack)"
+    description: "Path to an agent execution trace to validate (score / evidence-pack). Accepts release-gate's native format OR a raw Langfuse / OpenTelemetry / Arize-Phoenix export — the platform is auto-detected and converted."
+    required: false
+    default: ""
+  eval-results:
+    description: "Path to eval results that ALREADY ran — e.g. `promptfoo eval -o results.json`. release-gate rules on their verdict and never re-grades it. Mutually exclusive with 'evals'."
     required: false
     default: ""
   html-report:
@@ -211,6 +215,9 @@ runs:
         fi
         if [ -n "${{ inputs.traces }}" ]; then
           EXTRA_FLAGS="$EXTRA_FLAGS --traces ${{ inputs.traces }}"
+        fi
+        if [ -n "${{ inputs.eval-results }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --eval-results ${{ inputs.eval-results }}"
         fi
         if [ -n "${{ inputs.html-report }}" ]; then
           EXTRA_FLAGS="$EXTRA_FLAGS --html-report ${{ inputs.html-report }}"

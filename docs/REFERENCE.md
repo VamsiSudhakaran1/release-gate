@@ -109,6 +109,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 | `release-gate audit . --badge` | **README badge** — shields.io snippet for your Agent Code Safety (+ optional Governance) score |
 | `release-gate audit . --markdown` | **CI job summary** — GitHub-flavored report, auto-written to `$GITHUB_STEP_SUMMARY` |
 | `release-gate score <config.yaml>` | **0–100 readiness score** — evaluates 6 dimensions, returns PROMOTE / HOLD / BLOCK |
+| `release-gate ingest <export.json>` | **Ingest platform evidence** — convert a Langfuse / Promptfoo / OpenTelemetry / Arize-Phoenix export into release-gate's native format. Auto-detects the platform and reports what it could **not** map. |
 | `release-gate compare <baseline.json> <candidate.json>` | **Regression gate** — blocks if any dimension drops >10 pts vs baseline |
 | `release-gate evidence-pack <config.yaml>` | **Audit artefacts** — generates JSON report, Markdown summary, HTML dashboard |
 | `release-gate impact <config.yaml>` | **Impact Simulator** — normal vs runaway cost, governance gaps |
@@ -198,10 +199,24 @@ Commit `release-gate-baseline.json` once (`release-gate audit . --write-baseline
 | Flag | Description |
 |------|-------------|
 | `--evals <evals.yaml>` | Run YAML-defined behavior eval cases |
+| `--eval-results <file.json>` | Ingest eval results that **already ran** (e.g. `promptfoo eval -o`). release-gate rules on their verdict and never re-grades it. Mutually exclusive with `--evals`. |
 | `--agent <spec>` | Run evals **live** against a real agent (`py:` / `cmd:` / `http(s)://`) |
-| `--traces <trace.json>` | Validate agent execution trace against declared policies |
+| `--traces <trace.json>` | Validate agent execution trace against declared policies. Accepts the native format **or** a raw Langfuse / OpenTelemetry / Arize-Phoenix export (auto-detected and converted in place). |
 | `--html-report <file.html>` | Write self-contained HTML evidence report |
 | `--output-evidence <file.json>` | Save full JSON readiness report |
+
+### Flags for `ingest`
+
+| Flag | Description |
+|------|-------------|
+| `--from <platform>` | `langfuse` \| `promptfoo` \| `otel` \| `arize` (default: `auto`). Aliases: `phoenix`, `openinference`, `opentelemetry`, `otlp`. |
+| `-o, --output <file.json>` | Write the converted evidence (native traces, or an eval-results aggregate) |
+| `--json` | Full machine-readable result including the coverage record |
+| `--default-severity <level>` | Severity for eval cases that declare none (default: `medium`). Undeclared severity is **never** promoted to `critical`. |
+
+Auto-detection refuses rather than guesses: below 50% confidence it errors and
+asks for an explicit `--from`, so a gate never rules on a misread export. Full
+per-platform mapping tables live in **[`integrations/`](../integrations/)**.
 
 ### Flags for `verify`
 

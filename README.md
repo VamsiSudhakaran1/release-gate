@@ -315,6 +315,78 @@ Drop it into GitHub Actions — either the raw CLI:
 
 ---
 
+## Works with what you already run — the integrations
+
+release-gate does not build observability and does not build quality evals. Those
+layers are mature and well served. It **consumes** them and answers the question
+neither one asks: *should this ship?*
+
+> Observability answers **"what happened?"** · Evaluation answers **"was the output good?"**
+> Neither answers **"should this ship?"**
+
+| Integration | You already have | release-gate turns it into |
+|---|---|---|
+| **[Langfuse](integrations/langfuse/)** | Traces of what your agent did | A trace-policy verdict: forbidden tools, token ceilings, retry storms |
+| **[Promptfoo](integrations/promptfoo/)** | A graded eval suite | A verdict weighing *which* evals failed, not how many |
+| **[OpenTelemetry](integrations/opentelemetry/)** | GenAI-semconv spans, any backend | The same verdict, vendor-neutral |
+| **[Arize / Phoenix](integrations/arize/)** | OpenInference spans | The same verdict, from AX or Phoenix |
+| **[GitHub Actions](integrations/github-actions/)** | A CI pipeline | All of the above, blocking a merge |
+
+There is no conversion step to run first — `--traces` and `--eval-results`
+auto-detect the platform and convert in place:
+
+```bash
+release-gate score governance.yaml --traces langfuse-export.json
+release-gate score governance.yaml --eval-results promptfoo-results.json
+
+# Or combine them — one verdict over both kinds of evidence:
+release-gate score governance.yaml \
+  --traces langfuse-export.json --eval-results promptfoo-results.json
+```
+
+Run it right now against the shipped examples:
+
+```bash
+release-gate score integrations/governance.yaml \
+  --traces integrations/langfuse/example-trace.json --full
+```
+
+```
+Ingested traces from Langfuse (5/6 span(s) mapped).
+
+  Traces checked   1  (2 violations)
+  Score            91 / 100   confidence: medium
+
+  Critical failures:
+    ✗ unauthorized_tool_call [trace] — Unauthorized tool called: send_email_external
+
+  Decision:  ✗  BLOCK  (score 91/100)
+```
+
+**91/100 and blocked** — that's the design, not a bug. Nothing in that trace
+errored; every span is green in the Langfuse UI. But the agent called a tool the
+release policy forbids, and critical failures are **non-compensatory**: a score is
+an average, and averages let strength in one dimension buy down catastrophe in
+another.
+
+Three rules every adapter follows, which are what make them safe in front of a deploy:
+
+1. **No new dependencies.** Adapters parse exported JSON; they never import a
+   vendor SDK. `pip install release-gate` stays a three-library install whether
+   you use one integration or all five.
+2. **Never invent a step.** A span that can't be mapped with evidence is skipped,
+   not guessed. A gate that cries wolf gets disabled, and a disabled gate protects
+   nothing.
+3. **Report the gap.** Every conversion states what it could not map and why, so
+   *"meets the declared policy, with these gaps not assessed"* stays literally
+   true instead of merely well-intentioned.
+
+Details, CI workflows, and per-platform mapping tables:
+**[`integrations/`](integrations/)**. Background on why this layer exists:
+**["Why AI observability isn't enough"](docs/articles/why-observability-isnt-enough.md)**.
+
+---
+
 ## Full command & feature reference
 
 The sections above are the whole story a new visitor needs: the problem, one
