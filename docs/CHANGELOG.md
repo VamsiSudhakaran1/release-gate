@@ -52,6 +52,28 @@ violations: ['Forbidden tool called: shell',
 the verdict stays deterministic and reproducible, which is the whole basis of
 the positioning.
 
+### 🔁 The loop check now keys on tool name **plus arguments**
+
+Keying on the tool name alone cannot tell a stuck agent from a working one.
+`search_docs("tax")`, `search_docs("gst")`, `search_docs("tds")` is multi-query
+retrieval doing exactly its job, and it was being reported as a loop — the same
+false-positive shape as grading the canonical agent loop a HIGH. Identical
+*arguments* are what make a repeat non-progress: the call returns the same
+result, so the agent learned nothing.
+
+How hard the check looks now scales with the evidence in the trace:
+
+- **Arguments recorded** → identical calls are counted anywhere in the run, not
+  just consecutively. This also catches an agent oscillating `A→B→A→B→A`, which
+  consecutive name-matching missed entirely.
+- **Arguments absent** (the usual OTel default — the conventions treat tool
+  input as sensitive) → falls back to consecutive same-name calls and *says so*
+  in the message, rather than implying it verified something it could not.
+
+Two unknowns are never treated as equal, so missing telemetry can't fabricate a
+loop. Argument key order is normalised. Threshold is configurable via
+`trace_policies: max_identical_tool_calls`. 10 new tests; 756 pass.
+
 ### 🎭 RG-PII-001 — sensitive context reaching the model unmasked on one path
 
 The structural half of a check practitioners already run by hand ("is PII masked

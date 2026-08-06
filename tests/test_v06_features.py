@@ -280,6 +280,73 @@ class TestTraceValidator:
         r = self._validate(steps)
         assert any("loop" in w.lower() or "3+" in w for w in r.get("warnings", []))
 
+    # ── Non-progress: identical ARGUMENTS, not just an identical name ───────
+
+    def _tools(self, pairs):
+        return [{"type": "tool_call", "tool": t, "args": a} for t, a in pairs]
+
+    def test_same_tool_same_args_is_a_loop(self):
+        r = self._validate(self._tools([("search", {"q": "tax"})] * 3))
+        assert any("identical arguments" in w for w in r["warnings"])
+
+    def test_same_tool_different_args_is_progress_not_a_loop(self):
+        """THE false positive this check used to produce. Multi-query retrieval
+        calls one tool repeatedly by design; keying on the tool NAME cannot tell
+        a stuck agent from one doing exactly its job."""
+        r = self._validate(self._tools([
+            ("search", {"q": "tax"}), ("search", {"q": "gst"}), ("search", {"q": "tds"}),
+        ]))
+        assert r["warnings"] == []
+        assert r["status"] == "PASS"
+
+    def test_oscillation_between_two_tools_is_caught(self):
+        """A→B→A→B→A never repeats consecutively, so name-only consecutive
+        matching missed it entirely — yet nothing new is learned on any call."""
+        r = self._validate(self._tools([
+            ("search", {"q": "x"}), ("calc", {"n": 1}),
+            ("search", {"q": "x"}), ("calc", {"n": 1}), ("search", {"q": "x"}),
+        ]))
+        assert any("identical arguments" in w for w in r["warnings"])
+
+    def test_argument_key_order_does_not_matter(self):
+        r = self._validate(self._tools([
+            ("s", {"a": 1, "b": 2}), ("s", {"b": 2, "a": 1}), ("s", {"a": 1, "b": 2}),
+        ]))
+        assert any("identical arguments" in w for w in r["warnings"])
+
+    def test_unrecorded_args_fall_back_and_say_so(self):
+        """Most OTel exporters omit tool input by design. Without arguments we
+        cannot separate repetition from iteration, so the weaker consecutive
+        check runs and the message states the limitation instead of implying
+        we checked something we did not."""
+        r = self._validate(self._tools([("search", {})] * 3))
+        w = " ".join(r["warnings"])
+        assert "arguments were not recorded" in w
+        assert "identical arguments" not in w
+
+    def test_unrecorded_args_below_threshold_stays_quiet(self):
+        r = self._validate(self._tools([("search", {}), ("search", {}), ("other", {})]))
+        assert r["warnings"] == []
+
+    def test_unknown_args_do_not_match_each_other(self):
+        """Two calls whose arguments are unknown are not evidence of a repeat.
+        Treating unknown as equal-to-unknown would fabricate loops out of
+        missing telemetry — non-consecutively, where iteration is normal."""
+        r = self._validate(self._tools([
+            ("search", {}), ("calc", {}), ("search", {}), ("calc", {}), ("search", {}),
+        ]))
+        assert r["warnings"] == []
+
+    def test_identical_call_limit_is_configurable(self):
+        pairs = [("search", {"q": "x"})] * 2
+        assert self._validate(self._tools(pairs))["warnings"] == []
+        r = self._validate(self._tools(pairs), {"max_identical_tool_calls": 2})
+        assert any("identical arguments" in w for w in r["warnings"])
+
+    def test_unserializable_args_do_not_crash(self):
+        r = self._validate(self._tools([("s", {"when": object()})] * 3))
+        assert isinstance(r["warnings"], list)
+
     def test_validate_file_json(self, tmp_path):
         trace = {"trace_id": "t1", "steps": [
             {"type": "tool_call", "tool": "search_docs", "args": {}}

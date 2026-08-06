@@ -233,10 +233,31 @@ def test_otlp_export_drives_real_policy_violations():
         })
     assert res["status"] == "FAIL"
     assert any("send_email" in v for v in res["violations"])
-    # The practitioner's #1 manual check — "same tool 3+ times without
-    # progressing" — now answered from telemetry the app already emits.
-    assert any("called 3+ times consecutively" in w for w in res["warnings"])
+    # The practitioner's #1 manual check — "same tool repeatedly without
+    # progressing" — now answered from telemetry the app already emits. These
+    # spans carry no tool arguments (the usual OTel default), so the warning
+    # correctly makes the hedged claim rather than asserting identical input.
+    warn = " ".join(res["warnings"])
+    assert "arguments were not recorded" in warn
     assert res["per_trace"][0]["total_tokens"] == 2048
+
+
+def test_otlp_with_tool_arguments_distinguishes_stuck_from_iterating():
+    """When the exporter DOES capture tool input, the adapter carries it through
+    and the loop check can separate a stuck agent from multi-query retrieval."""
+    def call(t, q):
+        return _span(f"execute_tool search", t, {
+            "gen_ai.tool.name": _S("search"),
+            "gen_ai.tool.call.arguments": _S(json.dumps({"q": q}))})
+
+    def warns(*queries):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "r.json")
+            p.write_text(json.dumps(_otlp(*[call(i, q) for i, q in enumerate(queries)])))
+            return TraceValidator().validate_file(str(p), {})["warnings"]
+
+    assert any("identical arguments" in w for w in warns("tax", "tax", "tax"))
+    assert warns("tax", "gst", "tds") == []
 
 
 def test_empty_and_unparseable_files_report_clearly():
