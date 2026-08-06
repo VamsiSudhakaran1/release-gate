@@ -2697,7 +2697,16 @@ class _Analyzer(ast.NodeVisitor):
 
 
 def has_llm_usage(source: str) -> bool:
-    """True if the file actually constructs or calls an LLM (not just imports/mentions)."""
+    """True if the file actually constructs or calls an LLM (not just imports/mentions).
+
+    Includes a project's OWN model wrapper — a function that POSTs to a provider
+    host (`requests.post(f"https://generativelanguage.googleapis.com/…")`). A
+    production LangGraph RAG app whose only model call goes through such a helper
+    was being classified "not a deployed agent", which is the most misleading
+    thing this classifier can say: it downgrades governance to N/A on exactly the
+    software the gate exists for. Calling a provider's HTTP API is LLM usage
+    whether or not an SDK is involved.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -2706,7 +2715,8 @@ def has_llm_usage(source: str) -> bool:
     a.visit(tree)
     a.llm_signal = False
     a.visit(tree)  # second pass so assignments inform call classification
-    return a.llm_signal or bool(a.llm_vars)
+    a._find_llm_wrappers(tree)
+    return a.llm_signal or bool(a.llm_vars) or bool(a.llm_wrapper_funcs)
 
 
 # `return self.something(...)` — the only shape whose summary can depend on a
