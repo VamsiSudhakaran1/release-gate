@@ -4,6 +4,14 @@
 > north star, not a commitment: each frontier item ships only when a **real
 > user's pain** validates it — not on our hypothesis.
 
+> **Architecture track (design only, not shipped):** the evolution of release-gate
+> from a pre-deploy gate into a universal autonomous assurance endpoint — an
+> `AssuranceCase` root, an admission plane and a decision plane — is specified in
+> [`docs/specs/universal-assurance-architecture.md`](docs/specs/universal-assurance-architecture.md)
+> and [`docs/specs/assurance-data-model.md`](docs/specs/assurance-data-model.md).
+> It preserves every capability described below; the frontier items here become
+> evidence producers within it rather than standalone features.
+
 ## The principle: armor the engine, not the wings
 
 Wald's WWII bombers: you reinforce where the planes that *didn't* come back

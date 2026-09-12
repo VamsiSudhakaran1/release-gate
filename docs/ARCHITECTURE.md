@@ -111,3 +111,24 @@ is what lets "why did this block my release?" resolve to a URL, not a code dive.
   pyproject / package / API / Action pins.
 - `.github/workflows/release-gate-pr.yml` dogfoods the `pr` gate on every PR to
   this repo.
+
+## Where this is going — the universal assurance architecture
+
+Everything above describes the **admission** plane: one question (*may this agent
+version ship?*) with the repo audit at the centre. The designed next step keeps all
+of it and changes what sits at the centre: the root object becomes an
+**AssuranceCase** — a proposition a named human is about to authorise — and the
+audit becomes one evidence producer feeding it, alongside traces, evals, behavioural
+probes, the AIBOM lock, formal verification and human review.
+
+That adds a second first-class plane, **decision** assurance (*is there enough
+evidence for a human to authorise this exact machine-generated result or action?*),
+on the same evidence substrate, and with it a human attention set: the smallest
+number of things a person must inspect before accepting responsibility.
+
+- Design and rationale: [`docs/specs/universal-assurance-architecture.md`](specs/universal-assurance-architecture.md)
+- Data model, wire protocol, binding algorithm: [`docs/specs/assurance-data-model.md`](specs/assurance-data-model.md)
+
+Both are **specifications, not shipped code**. Nothing in this document has changed
+yet; the migration plan in the spec keeps every command, JSON key, SARIF field,
+Action output and exit code on this page working unchanged.
