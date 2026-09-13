@@ -28,7 +28,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping, Sequence
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 #: Every digest this package emits carries its algorithm inline.
 DIGEST_PREFIX = "sha256:"
@@ -88,6 +89,39 @@ def canonical_json(obj: Any) -> str:
 
 def canonical_bytes(obj: Any) -> bytes:
     return canonical_json(obj).encode("utf-8")
+
+
+def freeze_value(value: Any, path: str = "value") -> Any:
+    """Deep-freeze caller data so a digested structure cannot drift out from under it.
+
+    Mapping keys must be strings: canonical JSON sorts keys, and mixed-type keys
+    are not orderable — which would make a digest depend on insertion order.
+    """
+    if isinstance(value, Mapping):
+        frozen: Dict[str, Any] = {}
+        for key, val in value.items():
+            if not isinstance(key, str):
+                raise CanonicalisationError(
+                    f"{path} keys must be strings (got {type(key).__name__}); "
+                    "non-string keys have no canonical ordering")
+            frozen[key] = freeze_value(val, f"{path}.{key}")
+        return MappingProxyType(frozen)
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_value(v, f"{path}[]") for v in value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    raise CanonicalisationError(
+        f"{path} may only contain JSON values (str/int/float/bool/None/list/dict), "
+        f"got {type(value).__name__}")
+
+
+def thaw_value(value: Any) -> Any:
+    """Inverse of `freeze_value`, for serialisation."""
+    if isinstance(value, Mapping):
+        return {k: thaw_value(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [thaw_value(v) for v in value]
+    return value
 
 
 def sha256_hex(data: bytes) -> str:
@@ -204,6 +238,58 @@ def merkle_root(leaf_digests: Sequence[str], ordered: bool = False) -> str:
 def digest_items(items: Iterable[Any], ordered: bool = False) -> str:
     """Digest a collection of JSON-able items via their Merkle root."""
     return merkle_root([digest_object(item) for item in items], ordered=ordered)
+
+
+# ── multiset commitment ─────────────────────────────────────────────────────
+#
+# A case can hold millions of records, which rules out both "sort them all" and
+# "keep them all in memory" for the purpose of digesting. What is needed is a
+# fold that is commutative (any ingest order, serial or parallel, gives the same
+# answer), associative (partial folds can be merged), and constant-memory.
+#
+# MSet-Add-Hash does exactly that: sum the record digests as integers modulo
+# 2^256, then commit to the sum together with the cardinality. Two honest
+# limitations, stated because a commitment whose limits are not stated will be
+# mistaken for a Merkle tree:
+#
+#   * It commits to a MULTISET, not a sequence. Order is not recoverable, and
+#     adding the same record twice is a different multiset — at-least-once
+#     delivery must be deduplicated by the caller, not by this fold.
+#   * It supports no inclusion proofs. Use a Merkle root where a member needs to
+#     be proven present (that is what `merkle_root` is for).
+
+MULTISET_ALGO = "rg-mset-1"
+_MULTISET_MODULUS = 1 << 256
+
+
+def multiset_add(accumulator: int, digest: str) -> int:
+    """Fold one record digest into a multiset accumulator. Order-independent."""
+    value = int(content_id_hex(digest)[:DIGEST_HEX_LEN].rjust(DIGEST_HEX_LEN, "0"), 16)
+    return (accumulator + value) % _MULTISET_MODULUS
+
+
+def multiset_merge(left: int, right: int) -> int:
+    """Merge two partial accumulators — the associativity that makes parallel ingest safe."""
+    return (left + right) % _MULTISET_MODULUS
+
+
+def multiset_digest(accumulator: int, count: int) -> str:
+    """Commit to an accumulator and its cardinality.
+
+    The count is folded in so that a differently-sized multiset cannot present
+    the same commitment as a smaller one that happens to sum alike.
+    """
+    if count < 0:
+        raise CanonicalisationError("multiset cardinality cannot be negative")
+    payload = f"{MULTISET_ALGO}|{count}|{accumulator:064x}".encode("ascii")
+    return digest_bytes(payload)
+
+
+def content_id_hex(value: str) -> str:
+    """The hex body of a content identifier, whichever namespace it is in."""
+    require_content_id(value)
+    prefix = DIGEST_PREFIX if value.startswith(DIGEST_PREFIX) else GIT_PREFIX
+    return value[len(prefix):]
 
 
 def short_id(prefix: str, digest: str, length: int = 16) -> str:

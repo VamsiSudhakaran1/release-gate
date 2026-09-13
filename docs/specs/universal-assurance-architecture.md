@@ -317,40 +317,58 @@ do), `Verdict` (the output, not the object).
 
 ### 3.2 `AssuranceCase`
 
+> **Implemented** — `release_gate/assurance/case.py`, `records.py`. Field-level
+> rules: [`assurance-data-model.md` §3.0](assurance-data-model.md).
+
 ```text
 AssuranceCase
-  case_id                 stable id (content-derived; see docs/specs/assurance-data-model.md)
-  case_version            monotonically increasing per subject revision
-  plane                   ADMISSION | DECISION
-  proposition             one sentence: what the human is asked to authorise
-  subject                 AssuranceSubject                      (mandatory)
-  consequence             Consequence                           (mandatory)
-  methodology_ref         methodology_id@version | NONE         (mandatory field, NONE is a legal, reported value)
-  evidence                EvidenceGraph                         (mandatory, may be sparse)
-  execution               ExecutionGraph | ABSENT               (optional — Invariant 14)
-  claims                  ClaimGraph | ABSENT                   (optional)
-  artifacts               ArtifactGraph | ABSENT                (optional)
-  verification            VerificationGraph | ABSENT            (optional)
-  analyses                AnalysisResult[]                      (deterministic engine output)
-  coverage                CoverageMatrix                        (mandatory — a case without it is invalid)
-  verdict                 PROMOTE | HOLD | BLOCK + fired rule ids + reasons
-  attention               HumanAttentionSet
-  required_evidence       RequiredEvidence[]                    (populated on HOLD)
-  binding                 CaseBinding                           (digest of everything above)
-  approvals               BoundApproval[]
-  engine                  {version, ruleset_version, methodology_version}
-  produced_at
+  case_id                 derived from the QUESTION (case type, objective,
+                          requested decision, subject identity) — stable while
+                          evidence accumulates and across versions
+  case_version            revision counter; supersedes links to the previous one
+  case_type               DEPLOYMENT | AUTONOMOUS_ACTION | RESEARCH_RESULT |
+                          CODE_CHANGE | DATA_CHANGE | FINANCIAL_ACTION |
+                          INFRASTRUCTURE_CHANGE | GENERAL_DECISION | CUSTOM
+  objective               what the work was trying to achieve
+  requested_decision      what the human is being asked to decide
+  subject                 AssuranceSubject                       (mandatory)
+  methodology             MethodologyRef | NONE (legal, and reported)
+  state                   DRAFT | SEALED | APPROVED | SUPERSEDED | INVALIDATED
+  created_at / updated_at excluded from every digest
+
+  collections             twelve, each ABSENT until supplied (Invariant 14):
+                            evidence · claims · artifacts · executions ·
+                            verification · contradictions · assumptions ·
+                            counterexamples · coverage · attention_items ·
+                            required_evidence · approvals
+
+  verdict                 CaseVerdict | None — renderable only on a SEALED case
+                          that carries coverage (Invariant 9)
+
+  subject_digest          the subject's state digest
+  evidence_digest         fold over the eight evidentiary collections
+  case_digest             everything an approval binds to, minus approvals
 ```
 
-Two structural rules:
+Three structural rules:
 
-* **The case is mandatory; the overlays are not.** A database-migration case may
-  carry an `ArtifactGraph` of one node, no `ClaimGraph` and no `ExecutionGraph`.
-  Absent is a first-class value and appears in coverage as `NOT_ASSESSED`, never
-  as "clean" (Invariants 3 and 14).
-* **The case is immutable once bound.** New evidence produces `case_version + 1`
-  with an explicit `supersedes` link. Approvals attach to a version, never to a
-  subject in the abstract.
+* **The case is mandatory; every collection is optional.** A migration case
+  populates two of the twelve. `ABSENT` (nobody supplied it) and `PRESENT` but
+  empty (we looked and found none) are different states with different digests —
+  collapsing them is how "we did not look" becomes "there was nothing there".
+* **Counted is not dropped.** Each collection folds *every* record it sees into a
+  commitment, whether or not the record is materialised, and reports held against
+  total. That is what lets one object serve a single migration and a case built
+  from millions of calls without the digest quietly becoming a statement about a
+  subset.
+* **The case is immutable.** Every transition returns a new instance; new
+  evidence means a revision, which opens as a DRAFT with no verdict and no
+  inherited approvals.
+
+**`case_type` selects no behaviour anywhere in the core.** What a class of
+decision requires is a methodology question, and methodologies are data supplied
+from outside. A case type that changed the engine's behaviour would be a domain
+assumption compiled into the one object that has to stay neutral.
 
 ### 3.3 `AssuranceSubject`
 

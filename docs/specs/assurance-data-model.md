@@ -78,6 +78,18 @@ Reversibility        REVERSIBLE | COSTLY_TO_REVERSE | IRREVERSIBLE | UNKNOWN
 
 Verdict              PROMOTE | HOLD | BLOCK
 ApprovalStatus       VALID | STALE | INVALIDATED | SUPERSEDED
+
+CaseType             DEPLOYMENT | AUTONOMOUS_ACTION | RESEARCH_RESULT | CODE_CHANGE |
+                     DATA_CHANGE | FINANCIAL_ACTION | INFRASTRUCTURE_CHANGE |
+                     GENERAL_DECISION | CUSTOM
+                     (a different axis from SubjectType, and never validated
+                      against it: a DOCUMENT subject may be argued as a
+                      RESEARCH_RESULT case or a GENERAL_DECISION one)
+
+CaseState            DRAFT | SEALED | APPROVED | SUPERSEDED | INVALIDATED
+Presence             ABSENT | PRESENT
+MaterialisationBasis COMPLETE | RELEVANCE_DIRECTED | SAMPLED | CAPPED | SUMMARY_ONLY
+DedupeBasis          ALL_RECORDS | MATERIALISED_ONLY | NONE
 ```
 
 Two enum notes that carry design weight:
@@ -91,6 +103,98 @@ Two enum notes that carry design weight:
 ---
 
 ## 3. Core records
+
+### 3.0 `AssuranceCase` and its collections
+
+Implemented in `release_gate/assurance/case.py` and `records.py`.
+
+```json
+{
+  "record_type": "assurance_case",
+  "case_id": "case_3af429f2a411d15f",
+  "case_version": 1,
+  "case_type": "DATA_CHANGE",
+  "state": "SEALED",
+  "objective": "add an index to orders without taking write downtime",
+  "requested_decision": "authorise applying this migration to prod-eu",
+  "subject": { "…AssuranceSubject…": "" },
+  "methodology": {"methodology_id": "production-database-change", "version": "1.0.0"},
+  "collections": {
+    "executions": {
+      "kind": "executions",
+      "presence": "PRESENT",
+      "total_count": 4120884,
+      "materialised_count": 12431,
+      "not_materialised": 4108453,
+      "basis": "RELEVANCE_DIRECTED",
+      "dedupe_basis": "MATERIALISED_ONLY",
+      "fold_algo": "rg-mset-1",
+      "fold_digest": "sha256:…",
+      "notes": [],
+      "records": []
+    }
+  },
+  "verdict": {"decision": "HOLD", "fired_rules": ["RG-DECIDE-014"], "reasons": ["…"]},
+  "subject_digest": "sha256:…",
+  "evidence_digest": "sha256:…",
+  "case_digest": "sha256:…"
+}
+```
+
+**Three digests, each answering a different question.**
+
+| Digest | Covers | Question it answers |
+|---|---|---|
+| `subject_digest` | the subject's state | Is this still the thing? |
+| `evidence_digest` | the eight evidentiary collections' folds | Has the body of evidence changed? |
+| `case_digest` | identity, subject state, methodology, all collections except approvals, verdict, metadata | Is this the exact page the human saw? |
+
+`case_id`, by contrast, derives from the *question* — case type, custom type,
+objective, requested decision and subject id — so it survives new evidence and
+new versions. Re-running a case yields the same `case_id`, a higher
+`case_version`, and a different `case_digest`.
+
+Approvals are excluded from `case_digest` by construction: an approval binds to
+that digest, so folding it back in would make the digest depend on the thing that
+depends on it. Timestamps are excluded too — `created_at`, `updated_at` and a
+verdict's `decided_at`. A verdict's `reasons` *are* included, because the stated
+reasons are what a person relied on.
+
+**Presence and materialisation.** Every collection carries:
+
+```text
+presence        ABSENT (never supplied) | PRESENT (supplied, possibly empty)
+total_count     records SEEN
+materialised    records HELD  (len() reports this; total_count reports the other)
+basis           COMPLETE | RELEVANCE_DIRECTED | SAMPLED | CAPPED | SUMMARY_ONLY
+dedupe_basis    ALL_RECORDS | MATERIALISED_ONLY | NONE
+fold_digest     multiset commitment over every record seen
+```
+
+A collection whose records were dropped cannot describe itself as `COMPLETE`; the
+builder downgrades the basis rather than let the label outrun the contents. A
+collection is always truthy regardless of how many records it holds — presence is
+a field, not truthiness.
+
+**The fold** is `rg-mset-1`, an additive multiset commitment: sum record digests
+modulo 2^256, then commit to the sum with the cardinality. Commutative,
+associative and constant-memory, so parallel shards can fold independently and
+merge to the same value. Two limits, stated because a commitment whose limits are
+unstated gets mistaken for a Merkle tree: it commits to a multiset (order is not
+recoverable, and a record added twice is a different multiset, so at-least-once
+delivery must be deduplicated by the caller), and it supports no inclusion proofs
+(`merkle_root` is what proves membership).
+
+Measured: 500,000 execution records fold in ~6s at ~20 MB peak RSS, with 25
+materialised.
+
+**Lifecycle.** `DRAFT → SEALED → APPROVED`, with `SUPERSEDED` and `INVALIDATED`
+reachable and terminal. Every other edge is refused, including every backward
+one: a reviewer's "I looked at the sealed case" must keep meaning what it said. A
+verdict may be rendered only on a SEALED case that carries coverage — that is the
+enforcement point for Invariant 9. (The architecture spec placed that check in
+the verdict constructor; it lives on the case instead, because that is where the
+coverage data is. Same guarantee, right seam.)
 
 ### 3.1 `AssuranceSubject`
 

@@ -44,7 +44,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from release_gate.assurance.canonical import (
@@ -57,11 +56,13 @@ from release_gate.assurance.canonical import (
     digest_file,
     digest_items,
     digest_object,
+    freeze_value,
     is_digest,
     is_git_object_id,
     require_content_id,
     require_digest,
     short_id,
+    thaw_value,
 )
 
 SUBJECT_MODEL_VERSION = 1
@@ -175,36 +176,15 @@ def _utc_now() -> str:
 
 
 def _freeze(value: Any, path: str = "metadata") -> Any:
-    """Deep-freeze caller data so a subject cannot drift out from under its digest.
-
-    Mapping keys must be strings: canonical JSON sorts keys, and mixed-type keys
-    are not orderable — which would make the digest depend on insertion order.
-    """
-    if isinstance(value, Mapping):
-        frozen: Dict[str, Any] = {}
-        for key, val in value.items():
-            if not isinstance(key, str):
-                raise SubjectValidationError(
-                    f"{path} keys must be strings (got {type(key).__name__}); "
-                    "non-string keys have no canonical ordering")
-            frozen[key] = _freeze(val, f"{path}.{key}")
-        return MappingProxyType(frozen)
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze(v, f"{path}[]") for v in value)
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    raise SubjectValidationError(
-        f"{path} may only contain JSON values (str/int/float/bool/None/list/dict), "
-        f"got {type(value).__name__}")
+    """Deep-freeze, re-raising as a subject error so callers catch one type."""
+    try:
+        return freeze_value(value, path)
+    except CanonicalisationError as exc:
+        raise SubjectValidationError(str(exc)) from exc
 
 
 def _thaw(value: Any) -> Any:
-    """Inverse of `_freeze`, for serialisation."""
-    if isinstance(value, Mapping):
-        return {k: _thaw(v) for k, v in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw(v) for v in value]
-    return value
+    return thaw_value(value)
 
 
 @dataclass(frozen=True)
