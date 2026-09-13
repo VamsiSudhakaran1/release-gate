@@ -414,50 +414,72 @@ looks populated (Invariant 3).
 
 ### 3.4 `AssuranceMethodology`
 
+> **Implemented** — `release_gate/assurance/methodology.py` (types, predicates,
+> registry, assessment) and `methodologies.py` (the shipped ones, as data).
+> Field-level rules: [`assurance-data-model.md` §3.2](assurance-data-model.md).
+
 The concept that stops the engine from either fabricating domain standards or
 being useless without configuration.
 
 ```text
 AssuranceMethodology
-  methodology_id          e.g. software-change-v1, research-mathematics-v1
-  version
+  methodology_id / version        versioned; MAJOR.MINOR.PATCH so "latest" is orderable
+  digest                          content digest — proves the definition has not moved
   domain
-  case_types              subject types this methodology may rule on
-  requirements            Requirement[]
-  criticality_rules       how consequence weight is assigned to claims/artifacts
-  accepted_verification_types   VerificationMethod[] admissible as "verified" here
-  minimum_evidence_expectations what must exist before PROMOTE is even reachable
-  independence_requirements     where independent corroboration is mandatory
-  coverage_expectations         expected sources/manifests → real denominators (Invariant 9)
-  override_rules                what a human may waive, and how it is recorded
-  non_overridable_conditions    what no human may waive within this methodology
-  provenance              builtin | plugin | api | organization
+  case_types                      explicit; there is no implicit "applies to everything"
+  requirements                    typed predicates that evaluate themselves
+  criticality_rules               how consequence weight is assigned to records
+  accepted_verification_types     what this decision class credits (Invariant 8)
+  minimum_evidence_expectations   floors, compiled into ordinary requirements
+  independence_requirements       where corroboration must be independent (Invariant 6)
+  coverage_expectations           which dimensions must be stated, and their denominators
+  override_rules                  what may be waived, by whom, on what terms
+  non_overridable_conditions      what no waiver can satisfy
+  provenance / derived_from       builtin | plugin | api | organization, and its parent
   metadata
 ```
 
-A `Requirement` is a deterministic predicate over the case — "every claim with
-consequence weight ≥ HIGH must have at least one verification of a type in
-`accepted_verification_types`, produced by a group structurally independent of the
-claim's author" — plus the verdict effect when unmet (BLOCK / HOLD / advisory).
+**It is code-first, not a file format.** Requirements are a closed algebra of
+typed predicates — `CollectionSupplied`, `MinimumRecords`, `SubjectIdentified`,
+`VerificationPresent`, `IndependenceThreshold`, `NoUnresolved`,
+`RecordFieldRequired`, `CoverageDimensionDeclared` — each of which evaluates
+itself against a case and reports what it actually saw. Closed on purpose: a
+requirement holding an arbitrary callable could not be serialised, sent to an API
+client, or shown to the person whose release it held. `from_dict` exists for JSON
+transport; nothing in the module imports a YAML parser and no file is required
+anywhere.
 
-Four properties matter:
+**Honest under partial data.** A predicate that cannot see enough of the case
+returns `NOT_ASSESSED`, and `NOT_ASSESSED` is explicitly not met. Where a
+collection is partly materialised the reasoning is monotone: an at-least check
+that passes on held records stands, because unheld records cannot un-satisfy it;
+one that fails is `NOT_ASSESSED`, because a requirement must not fail on evidence
+nobody looked at. A none-of-these check inverts — a violation found is
+definitive, finding none means something only when everything was inspected.
 
-* **It is not `governance.yaml`.** Governance declares *what a team promises about
-  a deployed agent*; a methodology declares *what evidence a class of decision
-  requires*. Governance is evidence; methodology is the yardstick. They live in
-  different files with different schemas and different lifecycles.
-* **Built-ins ship with the tool** — `software-change-v1`,
-  `production-database-change-v1`, `general-agent-action-v1`, and
-  `research-mathematics-v1` as the worked frontier example.
-* **Absence is reportable, not fatal.** With no methodology the engine still runs
-  every structural analysis (provenance, contradiction, drift, independence,
-  integrity) and emits `METHODOLOGY_REQUIRED` for the *sufficiency* question. It
-  reports what it found and refuses to call it sufficient. Structural assurance
-  without domain sufficiency is a real, useful, honest product state.
-* **It is versioned and recorded in the binding.** A case approved under
-  `research-mathematics-v1` does not silently inherit `v2`'s bar.
+**It cannot change underneath a case.** `id@version` identifies a methodology and
+a sha256 over its content proves it. The registry refuses to register different
+content under an existing version; a case records the digest inside
+`case_digest`; and resolving a case's reference re-checks it. Resolving a bare id
+is refused outright, because implicit "latest" resolution is how an existing case
+silently acquires a different bar.
 
----
+**Extension means at least as strict.** `extend()` inherits every requirement and
+non-overridable condition, may add more, and may narrow `accepted_verification_types`
+but never widen them. Without that rule, "extends the regulated methodology"
+would be a claim anyone could make while removing the parts they disliked. An
+organisation wanting a looser bar writes its own methodology and owns that fact.
+
+**Absence is reportable, not fatal.** With no methodology, `assess()` returns
+`METHODOLOGY_REQUIRED`: the structural analyses still have plenty to say, and
+sufficiency is a question only a stated yardstick can answer. A methodology
+built for another case type returns `CASE_TYPE_NOT_COVERED` rather than ruling
+anyway.
+
+Four ship as data — `general-agent-action-v1`, `software-change-v1`,
+`production-database-change-v1`, and `research-mathematics-v1` as a worked domain
+example. Nothing in the engine branches on a methodology id; deleting them all
+would leave a working system where every case reports `METHODOLOGY_REQUIRED`.
 
 ## 4. The evidence model
 

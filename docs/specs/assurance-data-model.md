@@ -196,6 +196,87 @@ enforcement point for Invariant 9. (The architecture spec placed that check in
 the verdict constructor; it lives on the case instead, because that is where the
 coverage data is. Same guarantee, right seam.)
 
+### 3.2 `AssuranceMethodology`
+
+Implemented in `release_gate/assurance/methodology.py`.
+
+```json
+{
+  "record_type": "assurance_methodology",
+  "methodology_id": "production-database-change",
+  "version": "1.0.0",
+  "digest": "sha256:d59f5059498b5…",
+  "domain": "data",
+  "case_types": ["DATA_CHANGE", "INFRASTRUCTURE_CHANGE"],
+  "requirements": [
+    {
+      "requirement_id": "verification.rehearsal",
+      "description": "the change was rehearsed before being proposed",
+      "predicate": {"kind": "verification_present",
+                    "methods": ["SIMULATION", "EXPERIMENT", "TEST_SUITE"], "minimum": 1,
+                    "collection": "verification"},
+      "expects": "at least 1 verification(s) of type: SIMULATION, EXPERIMENT, TEST_SUITE",
+      "effect": "BLOCK",
+      "remedy": "run the change against a representative snapshot and record the result",
+      "rationale": "A migration nobody has ever run is a plan, not a change."
+    }
+  ],
+  "accepted_verification_types": ["SIMULATION", "EXPERIMENT", "TEST_SUITE", "HUMAN_REVIEW"],
+  "non_overridable_conditions": ["subject.identified.recheckable", "verification.rehearsal"],
+  "provenance": "builtin",
+  "derived_from": null
+}
+```
+
+Enumerations:
+
+```text
+RequirementEffect   BLOCK | HOLD | ADVISORY
+RequirementOutcome  SATISFIED | UNSATISFIED | NOT_APPLICABLE | NOT_ASSESSED | UNKNOWN
+AssessmentStatus    ASSESSED | METHODOLOGY_REQUIRED | CASE_TYPE_NOT_COVERED
+Criticality         CRITICAL | HIGH | MEDIUM | LOW
+Provenance          builtin | plugin | api | organization
+```
+
+**Predicate algebra** (closed; `predicate_from_dict` refuses an unknown kind
+rather than ignoring it):
+
+| kind | asks |
+|---|---|
+| `collection_supplied` | was this part of the argument supplied at all |
+| `minimum_records` | at least N records exist (counts, answerable at any scale) |
+| `subject_identified` | the subject has a digest, optionally a re-checkable one |
+| `verification_present` | at least N verifications of admissible type |
+| `independence_threshold` | support spans at least N independent groups |
+| `no_unresolved` | nothing in this collection is left open |
+| `record_field_required` | every record carries a named field |
+| `coverage_dimension_declared` | coverage states a named dimension |
+
+**Outcome rules.** `SATISFIED` and `NOT_APPLICABLE` are met; `UNSATISFIED`,
+`NOT_ASSESSED` and `UNKNOWN` are not. Under partial materialisation the
+reasoning is monotone in both directions:
+
+| check shape | passes on held records | fails on held records |
+|---|---|---|
+| at least N | `SATISFIED` — unheld records cannot un-satisfy it | `NOT_ASSESSED` if any were withheld, else `UNSATISFIED` |
+| none of these | `SATISFIED` only if everything was inspected | `UNSATISFIED` — a violation found is definitive |
+
+Two refusals worth naming. A record claiming verification without a
+`verification_method` yields `NOT_ASSESSED`, never a credit — an untyped
+verification is not a verification (Invariant 8). Records with no
+`independence_group` yield `NOT_ASSESSED` rather than being assumed independent
+*or* assumed identical (Invariant 6).
+
+**Requirement field names** read from records — `verification_method`,
+`epistemic_status`, `independence_group`, `resolved`, `dimension` — are declared
+as constants in `methodology.py` so the evidence and claim types defined later
+land on the same names.
+
+**Expectations compile to requirements.** `minimum_evidence_expectations`,
+`independence_requirements` and `coverage_expectations` are sugar that produces
+ordinary requirements, so there is exactly one kind of thing to evaluate, cite
+and override rather than two parallel mechanisms.
+
 ### 3.1 `AssuranceSubject`
 
 Implemented in `release_gate/assurance/subject.py`.

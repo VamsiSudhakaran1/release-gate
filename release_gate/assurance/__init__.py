@@ -3,8 +3,9 @@
 The evidence and authorisation model described in
 `docs/specs/universal-assurance-architecture.md`. Built incrementally; this
 package currently provides the central case object, the exact subject a human is
-asked to authorise, the record collections a case is built from, and the
-canonical digest machinery they rest on.
+asked to authorise, the record collections a case is built from, the
+methodology a case is argued against, and the canonical digest machinery they
+all rest on.
 
 Nothing here imports an LLM client, makes a network call, or executes ingested
 content. The authoritative assurance path is deterministic, and these are its
@@ -41,6 +42,32 @@ from release_gate.assurance.case import (
     MethodologyRef,
     default_case_type,
 )
+from release_gate.assurance.methodologies import (
+    BUILTIN_METHODOLOGIES,
+    default_registry,
+)
+from release_gate.assurance.methodology import (
+    ALL_CASE_TYPES,
+    AssessmentStatus,
+    AssuranceMethodology,
+    CoverageExpectation,
+    Criticality,
+    CriticalityRule,
+    EvidenceExpectation,
+    IndependenceRequirement,
+    MethodologyAssessment,
+    MethodologyDriftError,
+    MethodologyError,
+    MethodologyRegistry,
+    OverrideRule,
+    Requirement,
+    RequirementEffect,
+    RequirementOutcome,
+    RequirementResult,
+    assess,
+    assess_case,
+    predicate_from_dict,
+)
 from release_gate.assurance.records import (
     CaseRecord,
     DedupeBasis,
@@ -69,12 +96,16 @@ from release_gate.assurance.subject import (
 )
 
 __all__ = [
-    "CASE_BINDING_ALGO",
-    "COLLECTION_KINDS",
-    "EVIDENCE_KINDS",
+    "ALL_CASE_TYPES",
+    "AssessmentStatus",
     "AssuranceCase",
     "AssuranceCaseBuilder",
+    "AssuranceMethodology",
     "AssuranceSubject",
+    "BUILTIN_METHODOLOGIES",
+    "CASE_BINDING_ALGO",
+    "COLLECTION_KINDS",
+    "CanonicalisationError",
     "CaseIntegrityError",
     "CaseRecord",
     "CaseState",
@@ -82,29 +113,45 @@ __all__ = [
     "CaseType",
     "CaseValidationError",
     "CaseVerdict",
-    "DedupeBasis",
+    "ContentReference",
+    "CoverageExpectation",
+    "Criticality",
+    "CriticalityRule",
     "Decision",
+    "DedupeBasis",
+    "DigestMethod",
+    "DigestStatus",
+    "EVIDENCE_KINDS",
+    "EvidenceExpectation",
+    "IndependenceRequirement",
     "MaterialisationBasis",
+    "MethodologyAssessment",
+    "MethodologyDriftError",
+    "MethodologyError",
     "MethodologyRef",
+    "MethodologyRegistry",
+    "MutationCheck",
+    "MutationStatus",
+    "OverrideRule",
     "Presence",
     "RecordCollection",
     "RecordCollectionBuilder",
     "RecordError",
-    "SimpleRecord",
-    "default_case_type",
-    "record_digest",
-    "CanonicalisationError",
-    "ContentReference",
-    "DigestMethod",
-    "DigestStatus",
-    "MutationCheck",
-    "MutationStatus",
     "ReferenceKind",
+    "Requirement",
+    "RequirementEffect",
+    "RequirementOutcome",
+    "RequirementResult",
+    "SimpleRecord",
     "SubjectIntegrityError",
     "SubjectType",
     "SubjectValidationError",
     "VersionBasis",
+    "assess",
+    "assess_case",
     "canonical_json",
+    "default_case_type",
+    "default_registry",
     "describe_supersession",
     "digest_bytes",
     "digest_file",
@@ -115,4 +162,6 @@ __all__ = [
     "is_digest",
     "is_git_object_id",
     "merkle_root",
+    "predicate_from_dict",
+    "record_digest",
 ]

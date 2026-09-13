@@ -145,14 +145,16 @@ class MethodologyRef:
     """Which yardstick the case is argued against.
 
     A reference, not the methodology itself: methodologies are data, resolved and
-    evaluated elsewhere. What matters here is that the id and version travel
-    inside the case digest, so tightening a methodology invalidates prior
-    approvals instead of silently re-grading them.
+    evaluated elsewhere. What matters here is that the id, version AND content
+    digest travel inside the case digest. The version says which yardstick was
+    used; the digest proves it is still the same one, which is what catches an
+    organisation editing a methodology in place without renaming it.
     """
 
     methodology_id: str
     version: str
     provenance: str = "builtin"   # builtin | plugin | api | organization
+    digest: Optional[str] = None  # content digest of the methodology definition
 
     def __post_init__(self) -> None:
         for name in ("methodology_id", "version"):
@@ -167,14 +169,15 @@ class MethodologyRef:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"methodology_id": self.methodology_id, "version": self.version,
-                "provenance": self.provenance}
+                "provenance": self.provenance, "digest": self.digest}
 
     @classmethod
     def from_dict(cls, data: Optional[Mapping[str, Any]]) -> Optional["MethodologyRef"]:
         if not data:
             return None
         return cls(methodology_id=data["methodology_id"], version=data["version"],
-                   provenance=data.get("provenance", "builtin"))
+                   provenance=data.get("provenance", "builtin"),
+                   digest=data.get("digest"))
 
 
 @dataclass(frozen=True)
@@ -361,7 +364,7 @@ class AssuranceCase:
             "case_version": self.case_version,
             "identity": self.identity(),
             "subject_state": self.subject.binding_state(),
-            "methodology": self.methodology.ref if self.methodology else "NONE",
+            "methodology": (self.methodology.to_dict() if self.methodology else "NONE"),
             "evidence_digest": self.evidence_digest,
             "collections": {kind: self.collection(kind).digest_component()
                             for kind in COLLECTION_KINDS if kind != "approvals"},
@@ -439,6 +442,7 @@ class AssuranceCase:
             "subject_digest": self.subject_digest,
             "subject_mutation_detectable": self.subject.mutation_detectable,
             "methodology": self.methodology.ref if self.methodology else "NONE",
+            "methodology_digest": self.methodology.digest if self.methodology else None,
             "evidence_digest": self.evidence_digest,
             "case_digest": self.case_digest,
             "verdict": self.verdict.to_dict() if self.verdict else None,
