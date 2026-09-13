@@ -385,52 +385,109 @@ automated at 3am.
 
 ### 3.3 `EvidenceRecord`
 
+Implemented in `release_gate/assurance/evidence.py`. Schema version 1.
+
 ```json
 {
   "record_type": "evidence",
+  "schema_version": 1,
   "evidence_id": "ev_4d1e77a2b3c4d5e6",
-  "kind": "SIMULATION",
+  "evidence_type": "SIMULATION_RESULT",
+  "source": "github-actions",
+  "source_identity": "github-oidc",
+  "producer": {"producer_id": "ci://github/acme/api/run/8821", "kind": "tool",
+               "identity_basis": "github-oidc", "model": null, "version": "2.1.0"},
+  "timestamp": "2026-09-12T09:31:04Z",
   "epistemic_status": "VERIFIED",
   "verification_method": "SIMULATION",
-  "producer": {
-    "producer_id": "ci://github/acme/api/run/8821",
-    "kind": "tool",
-    "identity_basis": "github-oidc",
-    "version": "staging-dryrun@2.1.0",
-    "attested_by": null
-  },
-  "produced_at": "2026-09-12T09:31:04Z",
-  "subject_ref": {"kind": "claim", "id": "cl_3311aabbccddeeff"},
-  "polarity": "SUPPORTS",
   "applies_to_digest": "sha256:9f2c4a1b…ef01",
-  "content": {
-    "summary": "Dry-run applied cleanly to a 14-day-old staging snapshot",
-    "duration_s": 412,
-    "rows_affected": 0
-  },
-  "provenance": {
-    "input_digests": ["sha256:9f2c4a1b…ef01", "sha256:5522ee…snapshot"],
-    "transform": "postgres dry-run in a disposable container",
-    "chain": ["ci://github/acme/api/run/8821"]
-  },
-  "integrity": {"mode": "DIGEST_ONLY"},
-  "coverage_note": "Covers schema application only; application query compatibility not exercised.",
+  "digest": "sha256:51ab…",
+  "content_reference": {"kind": "FILE", "locator": "artifacts/dryrun.log",
+                        "detail": {"byte_length": 41233}},
+  "parent_evidence": [],
+  "supports_claims": ["cl_3311aabbccddeeff"],
+  "contradicts_claims": [],
+  "provenance_status": "ATTRIBUTED",
+  "trust_status": "NOT_ESTABLISHED",
+  "trust": null,
+  "coverage_status": "PARTIAL",
+  "coverage_note": "schema application only; query compatibility untested",
+  "independence_group": "sha256:6af9…",
+  "independence_basis": "authenticated",
+  "content": {"rows_affected": 0},
   "metadata": {}
 }
 ```
 
-Field rules an implementer must enforce at ingest:
+**Four status axes, never merged.** The temptation is one confidence number; four
+fields exist because they answer four different questions.
 
-| Field | Rule |
-|---|---|
-| `epistemic_status` | **Assigned by the ingest boundary, never by the producer.** A producer-supplied value is moved into `content.producer_claimed_status` and ignored for computation. |
-| `verification_method` | Required iff status is `VERIFIED` or `REFUTED`. Missing → the record is rejected, not downgraded silently. |
-| `applies_to_digest` | Required for `VERIFIED`/`REFUTED`. Mismatch with the current subject digest invalidates the verification and raises a drift finding. |
-| `polarity` | Required. `REFUTES` records are retained forever and are never filtered by relevance. |
-| `provenance.input_digests` | Empty is legal for a direct observation; empty on a `DERIVED` record is a provenance finding. |
-| `coverage_note` | Required on every `VERIFIED` record. If a producer cannot say what its verification does *not* cover, the verification is not well-formed. |
+| Axis | Question | Values |
+|---|---|---|
+| `epistemic_status` | How was this established? | OBSERVED · DECLARED · DERIVED · VERIFIED · DISPUTED · REFUTED · UNKNOWN · NOT_ASSESSED |
+| `provenance_status` | Where did it come from? | SIGNED · CHAIN_VERIFIED · ATTRIBUTED · SELF_ATTESTED · UNATTRIBUTED · BROKEN |
+| `trust_status` | What authority does that source carry? | NOT_ESTABLISHED · ACCEPTED · PROVISIONAL · REVOKED · REJECTED |
+| `coverage_status` | How much does it cover? | COMPLETE · PARTIAL · UNKNOWN · NOT_APPLICABLE |
 
-### 3.4 `Claim`
+Provenance and trust are never interchangeable (Invariant 11). A signed record
+from a verifier nobody has vetted has strong provenance and no established
+trust; a trusted vendor's unattributed assertion is the reverse. One number
+loses both facts.
+
+**The ingest boundary.** `EvidenceRecord.from_producer()` is where an untrusted
+payload becomes a record. Any `epistemic_status`, `trust_status`,
+`provenance_status`, `coverage_status`, `evidence_id` or `verified` in the
+payload is moved to `content.producer_claimed_*` and plays no part in anything.
+The status is chosen by the adapter — release-gate's own code — not by the thing
+being ingested, and `OBSERVED`/`DERIVED` are refused for foreign payloads
+entirely, since those describe release-gate's own work.
+
+**Trust is never self-asserted.** `trust_status` starts at `NOT_ESTABLISHED` and
+moves only through `with_trust()`, which requires a basis and a decider. Trust is
+not part of the record's identity, so a trust ruling does not change its
+`evidence_id`.
+
+**Verification rules** (Invariant 8). `VERIFIED` and `REFUTED` each require a
+`verification_method`, an `applies_to_digest`, and a `coverage_note`. A producer
+that cannot say what its verification does *not* cover has not described a
+verification. A `verification_method` on a non-verification status is refused
+outright, since it implies a verification that did not happen. `REFUTED` is the
+same record type held to the same rigour — a failed proof attempt is evidence
+(Invariant 7).
+
+**`applies_to_digest`** is what makes FORMALLY_VERIFIED ≠ APPLICABLE TO THE
+CURRENT ARTIFACT mechanical: `applies_to(digest)` is a comparison, so a
+verification whose subject moved on stops counting without anyone having to
+notice.
+
+**Large content is referenced.** Three attachment helpers — `file_content()`
+streams and references, `inline_content()` embeds below 64 KB and references
+above it, `external_content()` points at content that cannot be hashed from here
+and records that honestly. A 40 MB trace is never copied into an evidence pack
+to prove it existed.
+
+**Identity includes the timestamp**, unlike a subject's creation time: when a
+verification ran is part of what it establishes, so the same suite passing today
+and last March are two pieces of evidence.
+
+**Schema versioning.** Every record carries `schema_version`. A record from a
+newer schema is refused rather than partially read — a reader that silently
+ignores fields it does not recognise is a reader that drops evidence.
+
+**Claims.** `supports_claims` and `contradicts_claims` are separate lists, so one
+record can support one claim and refute another. A record naming the same claim
+in both is refused. Unattached evidence is legal: in a case with no declared
+claims everything is unattached, which is what the claim-coverage row should say.
+
+**Independence attribution.** `independence_group` is a digest over source,
+producer, model, prompt digest and environment; `independence_basis` says
+whether the producer identity was `authenticated` or merely `asserted`. Rather
+than tolerate unattributable evidence, the constructor makes it impossible:
+`source` and `producer_id` are both mandatory. Deeper lineage closure — two
+differently-named agents descended from one derivation — is the independence
+analyser's job, and it uses `parent_evidence`.
+
+### 3.4 `Claim`### 3.4 `Claim`
 
 ```json
 {

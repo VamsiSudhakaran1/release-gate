@@ -485,6 +485,13 @@ would leave a working system where every case reports `METHODOLOGY_REQUIRED`.
 
 ### 4.1 `EvidenceRecord` — the atom
 
+> **Implemented** — `release_gate/assurance/evidence.py`. Field-level rules:
+> [`assurance-data-model.md` §3.3](assurance-data-model.md). The shipped record
+> splits the single `epistemic_status` sketched below into four orthogonal axes
+> (epistemic, provenance, trust, coverage) and the single `polarity` field into
+> `supports_claims` / `contradicts_claims`, so one record can support one claim
+> while refuting another.
+
 Every producer in the system — the AST scanner, a safeguard check, an OTel span,
 a promptfoo case, a theorem prover, a human reviewer, a replication run — emits
 the same record type.
