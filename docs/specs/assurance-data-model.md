@@ -33,8 +33,21 @@
 ```text
 Plane                ADMISSION | DECISION
 
-SubjectType          code_change | agent_version | artifact | action_batch |
-                     result | plan | message_set | dataset | model_config | other
+SubjectType          DEPLOYMENT | CODE_CHANGE | AUTONOMOUS_ACTION | RESEARCH_RESULT |
+                     DATA_CHANGE | FINANCIAL_ACTION | INFRASTRUCTURE_CHANGE | DOCUMENT |
+                     MODEL_CHANGE | CONFIG_CHANGE | GENERAL_RESULT | CUSTOM
+                     (CUSTOM requires a custom_type label — an unlabelled custom
+                      subject cannot be matched to a methodology or explained)
+
+ReferenceKind        FILE | DIRECTORY | INLINE | ITEM_SET | GIT_COMMIT | GIT_RANGE |
+                     OBJECT_STORE | URL | EXTERNAL
+
+DigestMethod         SHA256_CONTENT | SHA256_MANIFEST | MERKLE_UNORDERED |
+                     MERKLE_ORDERED | GIT_OBJECT | EXTERNAL_ATTESTED | NONE
+
+DigestStatus         OBSERVED | DECLARED | UNKNOWN
+VersionBasis         DECLARED | GIT_COMMIT | EXTERNAL | DERIVED | UNKNOWN
+MutationStatus       UNCHANGED | MUTATED | UNVERIFIABLE
 
 EpistemicStatus      OBSERVED | DECLARED | DERIVED | VERIFIED |
                      DISPUTED | REFUTED | UNKNOWN | NOT_ASSESSED
@@ -81,31 +94,93 @@ Two enum notes that carry design weight:
 
 ### 3.1 `AssuranceSubject`
 
+Implemented in `release_gate/assurance/subject.py`.
+
 ```json
 {
+  "record_type": "subject",
+  "model_version": 1,
   "subject_id": "subj_9f2c4a1b8e3d5c70",
-  "subject_type": "artifact",
+  "state_digest": "sha256:08aa296b…d520",
+  "subject_type": "DATA_CHANGE",
+  "custom_type": null,
   "version": "3",
-  "digest": "sha256:9f2c4a1b8e3d5c70a1b2c3d4e5f60718293a4b5c6d7e8f9012345678abcdef01",
+  "version_basis": "DECLARED",
+  "digest": "sha256:9f2c4a1b…ef01",
+  "digest_method": "SHA256_CONTENT",
+  "digest_status": "OBSERVED",
+  "digest_basis": "sha256 over the bytes of 2026_09_12_add_index.sql",
+  "digest_attested_by": null,
   "content_reference": {
-    "kind": "file",
-    "path": "migrations/2026_09_12_add_index.sql"
+    "kind": "FILE",
+    "locator": "migrations/2026_09_12_add_index.sql",
+    "detail": {}
   },
   "requested_action": "Apply this migration to prod-eu",
-  "created_at": "2026-09-12T09:14:00Z",
   "supersedes": "subj_71ab33c9d0e1f2a3",
+  "created_at": "2026-09-12T09:14:00Z",
+  "mutation_detectable": true,
   "metadata": {}
 }
 ```
 
-Rules:
+**Two digests, not one.** `subject_id` is derived from *identity* — subject type,
+custom type, version and its basis, digest and its method/status/attestor,
+content reference, requested action, and `supersedes`. `state_digest` covers
+identity **plus** `digest_basis` and `metadata`: everything a human would have
+seen on the page. A `BoundApproval` binds to `state_digest`.
 
-* `digest` is mandatory and is over the exact bytes or, for a set, the Merkle root
-  of the canonicalised item list (§6.3).
-* `requested_action` is mandatory prose naming the verb. Construction fails
-  without it — a human's name may never be bound to a noun with no action.
-* `content_reference.kind` ∈ `file | git_commit | object_store | batch_manifest |
-  inline | external`.
+The split exists because re-tagging a subject does not change what it is, but it
+does change what was on the page, and only the second of those may invalidate an
+approval.
+
+**`created_at` is in neither digest.** Identity is content, not clock: the same
+bytes submitted twice are one subject. Without this, every re-run would
+manufacture a new thing to approve and deduplication would be impossible. This
+refines the record-timestamp rule in §6.2 — an evidence record's timestamp *is*
+part of what was approved (when a verification ran matters); a subject's creation
+time is not.
+
+**`supersedes` is part of identity on purpose.** "v2 of X" and "a standalone
+artifact with identical bytes" are different things to authorise. Conflating them
+is precisely how an approval would carry over silently.
+
+Rules enforced at construction:
+
+| Rule | Why |
+|---|---|
+| `requested_action` is mandatory, non-empty prose | Approval authorises an action, not a blob. A subject with no verb cannot be bound to a human's name. |
+| `digest` is cryptographic wherever content is hashable | File, directory, inline and item-set subjects are hashed by release-gate, never declared. |
+| A digest we did not compute is `DECLARED`, never `OBSERVED` | Invariant 1. An object store's digest is that store's claim. |
+| A `DECLARED` digest must name `digest_attested_by` | Invariant 11 — provenance is part of the claim. |
+| No digest → `digest_method: NONE`, `digest_status: UNKNOWN` | Invariant 3. A large or remote subject may be unhashable; the field is never populated with a fabricated value. |
+| A version is never invented | `version: null` with `version_basis: UNKNOWN` is the honest answer; a supplied version must say where it came from. |
+| Abbreviated git ids are refused | A 7-character prefix is ambiguous by design, and an ambiguous subject is the one thing an approval cannot bind to. |
+| `subject_id` / `state_digest` are recomputed on load | A stored id that disagrees with its content means the record was edited; that is a hard error, not a repair. |
+
+**Content identifiers carry their algorithm.** `sha256:<64 hex>` for digests
+release-gate or a peer computed; `git:<40 or 64 hex>` for a git object id. A
+sha-1 git id padded into a `sha256:` field would misstate which algorithm
+identified the content, so the two namespaces stay distinct.
+
+**Item sets** (the 8,214 refunds case) digest through a Merkle root that is
+order-independent by default — the same refunds in a different order are the same
+batch — and order-sensitive when sequence is part of the meaning. Leaves and
+interior nodes are domain-separated, odd nodes are promoted rather than
+duplicated, and the leaf count is folded into the root.
+
+**Mutation detection** is `recheck()` returning `UNCHANGED` / `MUTATED` /
+`UNVERIFIABLE`. File, directory and inline subjects are re-checkable offline;
+everything else needs a resolver or an attestation, and says so through
+`mutation_detectable: false`. A subject whose content has vanished is
+`UNVERIFIABLE`, never `UNCHANGED`: "I could not tell" must not read as "fine".
+
+**Supersession** produces a new `subject_id` by construction, so no code path can
+match an approval of the old subject to the new one.
+`describe_supersession(previous, current)` names what changed and returns
+`approval_carryover_permitted: false` unconditionally. That field is not a policy
+knob — a knob that could be true would eventually be set true by something
+automated at 3am.
 
 ### 3.2 `Consequence`
 
@@ -382,7 +457,9 @@ rendering fields (colours, emoji, terminal widths)
 ```
 
 Record-level timestamps *are* included: when a verification ran is part of what
-was approved.
+was approved. The one exception is `AssuranceSubject.created_at`, excluded from
+both subject digests so that identical content is one subject rather than a new
+one per run — see §3.1.
 
 ### 6.3 Set digests
 

@@ -354,18 +354,26 @@ Two structural rules:
 
 ### 3.3 `AssuranceSubject`
 
+> **Implemented** — `release_gate/assurance/subject.py`. Field-level rules and
+> rationale: [`assurance-data-model.md` §3.1](assurance-data-model.md).
+
 ```text
 AssuranceSubject
-  subject_id
-  subject_type            code_change | agent_version | artifact | action_batch |
-                          result | plan | message_set | dataset | model_config | other
-  version
-  digest                  content digest of the exact bytes/manifest under authorisation
-  content_reference       where it lives (commit sha, file path, object store key, batch manifest ref)
+  subject_id              derived from identity; stable across annotation
+  state_digest            identity + metadata — what a BoundApproval binds to
+  subject_type            DEPLOYMENT | CODE_CHANGE | AUTONOMOUS_ACTION | RESEARCH_RESULT |
+                          DATA_CHANGE | FINANCIAL_ACTION | INFRASTRUCTURE_CHANGE | DOCUMENT |
+                          MODEL_CHANGE | CONFIG_CHANGE | GENERAL_RESULT | CUSTOM
+  custom_type             required label when subject_type is CUSTOM
+  version / version_basis explicit where possible; never invented
+  digest                  sha256:<hex> or git:<hex>; None where content is unhashable
+  digest_method           how it was produced (content, manifest, Merkle, git, attested, none)
+  digest_status           OBSERVED (we computed it) | DECLARED (someone asserts it) | UNKNOWN
+  digest_attested_by      required whenever the digest is DECLARED
+  content_reference       kind + locator (file, directory, inline, item set, git, store, url)
   requested_action        what approval permits — the verb, not the noun
-                          ("apply this migration to prod-eu", "execute these 8,214 refunds")
-  created_at
-  supersedes              subject_id of the revision this replaces
+  created_at              excluded from both digests: identity is content, not clock
+  supersedes              subject_id of the revision this replaces (part of identity)
   metadata
 ```
 
@@ -378,6 +386,13 @@ model + prompts + governance + tool config.
 **`requested_action` is mandatory and is prose.** Approval authorises an action,
 not a blob. A subject without a stated action is rejected at construction — you
 cannot bind a human's name to "this artifact" with no verb.
+
+**Where content cannot be hashed**, the subject is still valid: `digest: None`,
+`digest_status: UNKNOWN`, `mutation_detectable: false`. That is an honest subject
+with a stated limitation, and it belongs on the packet next to the verdict — an
+approval over content nobody can re-verify is a weaker thing than one over
+content anybody can. What is never permitted is inventing a digest so the field
+looks populated (Invariant 3).
 
 ### 3.4 `AssuranceMethodology`
 
