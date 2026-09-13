@@ -128,6 +128,7 @@ number of things a person must inspect before accepting responsibility.
 
 - Design and rationale: [`docs/specs/universal-assurance-architecture.md`](specs/universal-assurance-architecture.md)
 - Data model, wire protocol, binding algorithm: [`docs/specs/assurance-data-model.md`](specs/assurance-data-model.md)
+- Hosted endpoint — intake, idempotency, concurrency, versioning: [`docs/specs/assurance-protocol.md`](specs/assurance-protocol.md)
 
 Both are **specifications, not shipped code**. Nothing in this document has changed
 yet; the migration plan in the spec keeps every command, JSON key, SARIF field,

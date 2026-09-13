@@ -1226,12 +1226,18 @@ artifact lineage. CI supplies test evidence. What cannot be derived is reported 
 * **CLI** — §15.2.
 * **GitHub Action** — new optional inputs (`methodology`, `case-output`) and
   outputs (`case-digest`, `attention-count`); existing ones untouched.
-* **Hosted API** — `POST /api/cases`, `GET /api/cases/{id}`,
-  `POST /api/cases/{id}/approve`, `GET /api/approvals/{id}/status`. Existing
-  endpoints unchanged.
+* **Hosted API** — **superseded by `docs/specs/assurance-protocol.md`.** The
+  four-endpoint sketch that stood here was written before the case model existed
+  and does not survive contact with streaming, out-of-order and concurrent intake.
+  The protocol spec is the design; in summary, the surface is
+  `/api/v1/assurance/cases…`, intake is an append-only content-addressed ledger
+  with an order-independent fold, and no decision is available before an explicit
+  `finalize`. Existing endpoints unchanged.
 * **MCP** — read-only `build_assurance_case`, `explain_attention_item`. An agent
   may inspect its own case; it can never approve one. That asymmetry is the whole
-  point of the product and is enforced at the tool boundary, not by convention.
+  point of the product and is enforced at the tool boundary, not by convention —
+  concretely, by scope: the MCP server never requests `assurance:decide` or
+  `assurance:approve` (protocol spec §13).
 
 ---
 

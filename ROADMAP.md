@@ -7,8 +7,9 @@
 > **Architecture track (design only, not shipped):** the evolution of release-gate
 > from a pre-deploy gate into a universal autonomous assurance endpoint — an
 > `AssuranceCase` root, an admission plane and a decision plane — is specified in
-> [`docs/specs/universal-assurance-architecture.md`](docs/specs/universal-assurance-architecture.md)
-> and [`docs/specs/assurance-data-model.md`](docs/specs/assurance-data-model.md).
+> [`docs/specs/universal-assurance-architecture.md`](docs/specs/universal-assurance-architecture.md),
+> [`docs/specs/assurance-data-model.md`](docs/specs/assurance-data-model.md) and
+> [`docs/specs/assurance-protocol.md`](docs/specs/assurance-protocol.md).
 > It preserves every capability described below; the frontier items here become
 > evidence producers within it rather than standalone features.
 

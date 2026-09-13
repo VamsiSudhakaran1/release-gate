@@ -760,9 +760,24 @@ Mixed record types in one file are expected.
 
 A producer must supply: `record_type`, a stable id, a `producer`, and for evidence
 a `polarity` and a `subject_ref`. A producer must **not** supply: any
-`epistemic_status`, any computed claim field, any verdict. Supplying them is an
-ingest error with a named reason, because silently ignoring them would let a
-producer believe it had influenced the verdict.
+`epistemic_status`, any computed claim field, any verdict.
+
+Supplying one is **relocated and reported**, not rejected. `from_producer()` moves
+the field to `content.producer_claimed_<name>`, where it plays no part in anything,
+and the ingest response carries a `PRODUCER_CLAIMED_STATUS` warning naming the
+field. Rejecting the record instead would destroy evidence over a stray key, and
+evidence omission is a threat (Invariant 13); reporting it is what stops a producer
+believing it influenced the verdict, which is the property this rule protects.
+
+One case is a hard refusal rather than a relocation: a non-release-gate producer
+cannot be ingested as `OBSERVED` or `DERIVED`. Those statuses describe
+release-gate's own observation and computation, so there is no honest field to
+relocate the claim into — the payload is asking to be recorded as something the
+engine did.
+
+> Earlier revisions of this section called any such field "an ingest error". That
+> wording predates the implementation and is superseded by the paragraphs above.
+> See `assurance-protocol.md` §3.6.
 
 ### 7.3 Signed envelopes
 
