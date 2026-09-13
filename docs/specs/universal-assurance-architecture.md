@@ -609,10 +609,37 @@ One chokepoint, one place to audit, one place to test. Rules:
 
 ### 5.1 `EvidenceGraph` (mandatory)
 
-Nodes are `EvidenceRecord`s and the things they are about; edges are
-`SUPPORTS` / `REFUTES` / `QUALIFIES` / `DERIVED_FROM` / `DEPENDS_ON` /
-`DUPLICATES`. Every other graph is an overlay that borrows these nodes. A
-minimal case is a star: subject in the middle, a handful of evidence records
+> **Implemented** — `release_gate/assurance/evidence_graph.py`.
+
+Nodes are evidence records, the sources that produced them, the action under
+authorisation, and **opaque references** to claims. Edges are `SUPPORTS`,
+`CONTRADICTS`, `DERIVED_FROM`, `VERIFIES`, `INVALIDATES`, `REPLICATES`,
+`ATTESTS`, `SUPERSEDES`, `DEPENDS_ON`, plus the structural `PRODUCED_BY` that
+forms the last hop of every trace.
+
+**The boundary with the ClaimGraph is the point.** A claim appears here as an id
+and a label and nothing else: the graph records that evidence supports `cl_887`
+and says nothing about what `cl_887` means or what it logically rests on. Keeping
+that sharp is what lets a reviewer ask "what is the evidentiary basis for this?"
+without the answer turning into "what does this follow from?".
+
+**The trace** is `explain_verdict()`: verdict → unresolved condition → claim or
+action → evidence → source, arriving at a named producer with its identity basis
+and trust status. The lower three levels come from the graph; the top two are
+supplied by the caller's verdict and methodology assessment, because a graph of
+evidence should not store what a policy engine decided. A condition that names no
+claim descends to the action, which is the honest shape for a case with no
+declared claims.
+
+**Nothing is removed.** Superseded and invalidated evidence stays, marked
+(Invariant 7), and a reference the case cannot resolve becomes an explicit
+`MISSING` node with a dangling-reference anomaly rather than vanishing. Cycles in
+the derivation relations are reported as anomalies rather than raised, because
+evidence arrives from the wild and a graph that refuses to build tells a reviewer
+nothing. Traversals are iterative, so a deep lineage chain cannot exhaust the
+stack.
+
+A minimal case is a star: the action in the middle, a handful of evidence records
 around it. That is a legitimate, complete `EvidenceGraph`.
 
 ### 5.2 `ExecutionGraph` (optional)
