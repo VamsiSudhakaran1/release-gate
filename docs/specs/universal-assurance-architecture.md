@@ -644,14 +644,48 @@ around it. That is a legitimate, complete `EvidenceGraph`.
 
 ### 5.2 `ExecutionGraph` (optional)
 
-Who did what, in what order, caused by what. Nodes: agent turn, model call, tool
-call, verifier run, human intervention, retry, fallback, branch start/abandon.
-Edges: causal, temporal, parent/child, spawned-by.
+> **Implemented** — `release_gate/assurance/execution_graph.py`.
 
-Compatibility note that matters: **today's trace format is the degenerate case.**
-`{trace_id, steps[]}` is an `ExecutionGraph` with one root and a linear spine.
-OTel spans already carry parent ids, so the existing adapters can populate a real
-DAG with no new parsing — a second projection over the same code.
+Who did what, caused by what. Nodes: `AGENT`, `TASK`, `TOOL`, `ACTION`,
+`MODEL_CALL`, `ARTIFACT`, `EXTERNAL_SYSTEM`, `HUMAN`, `VERIFIER`, plus
+`UNOBSERVED` for anything referenced that never arrived. Edges: `SPAWNED`,
+`DELEGATED`, `CALLED`, `PRODUCED`, `CONSUMED`, `MODIFIED`, `VERIFIED`,
+`REJECTED`, `AUTHORIZED`, `DERIVED_FROM`.
+
+**Nothing registers.** Agents, tools, verifiers and artifacts are inferred from
+span and resource attributes through a documented classification table, and every
+node records which rule fired so a reviewer can disagree with a call rather than
+wonder about it. Anything unrecognised becomes a `TASK` — a wrong `AGENT` node
+would distort every delegation and independence question asked afterwards.
+
+The same OTLP export the trace adapter reads becomes a richer object here:
+`adapters/otel.py` skips `invoke_agent` spans as structural because a trace policy
+gates on behaviour, and this graph wants exactly that structure. Same input,
+different projection, one parser — `adapters/common.py` is reused, not
+reimplemented. The native `{trace_id, steps[]}` format is the linear degenerate
+case and keeps working unchanged.
+
+**The skeleton is kept, the leaves collapse.** Agents, tasks, tools, artifacts,
+humans and verifiers are always materialised; model calls fold into per-agent
+aggregates past a budget. Measured: 410,000 spans from 10,000 agents build in
+~4s, keeping all 10,001 agents and 10,000 spawn edges while representing 400,000
+model calls as counts.
+
+**Completeness is never claimed.** The status vocabulary has no `COMPLETE` value.
+A graph with nothing visibly missing reports `UNKNOWN`, because absence of
+observed gaps is not evidence of completeness (Invariant 13). A source manifest or
+a sequence range turns that into something checkable, and what arrived is compared
+against it; even then the answer is `MATCHES_DECLARATION`, since the manifest is a
+claim by the producing system.
+
+**Arrival order cannot change the graph.** Parent references are resolved once at
+build time, so an exporter that emits children before parents produces the same
+digest. An unresolved reference becomes an `UNOBSERVED` node rather than a
+silently reparented orphan, which would make the run look shallower than it was.
+
+The graph is optional: a case with no execution telemetry gets `None`, not an
+empty graph, because a case with no telemetry has not been shown to have done
+nothing (Invariant 14).
 
 ### 5.3 `ClaimGraph` (optional)
 
