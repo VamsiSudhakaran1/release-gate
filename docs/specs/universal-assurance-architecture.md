@@ -731,11 +731,40 @@ The graph is optional: a transactional case gets `None`, because an empty claim
 graph would read as "nothing is asserted" rather than "claims were not part of
 this case" (Invariant 14).
 
-### 5.4 `ArtifactGraph` (optional)
+### 5.4 `ArtifactGraph`
 
-Content-addressed artifacts and their lineage: `DERIVED_FROM`, `SUPERSEDES`,
-`SIGNED_BY`, `INPUT_TO`. `lockfile.py::collect_components()` already emits
-path + sha256 pairs; that is this graph for the ADMISSION plane, unchanged.
+> **Implemented** — `release_gate/assurance/artifacts.py`.
+
+Six questions, and the API is those six: what created this, what inputs
+contributed, what modified it, what verified it, what decision depends on it, and
+**has it changed since verification**.
+
+**Two identities, and the difference between them is the design.** An artifact's
+*content identity* is its digest, and that is what a verification attaches to.
+Its *logical identity* is the handle successive versions share. Without the
+split, a revised file is simply a different artifact and the sixth question has
+no answer; with it, "verified at v1, now at v3" is a comparison rather than a
+judgement. This is what makes FORMALLY_VERIFIED ≠ APPLICABLE TO THE CURRENT
+ARTIFACT mechanical (Invariant 2) and how an approval decays instead of carrying
+over (Invariant 5).
+
+`verification_currency()` returns `VERIFIED_CURRENT`, `VERIFIED_STALE`,
+`NEVER_VERIFIED` or `UNVERIFIABLE`, and only the first is truthy — code asking
+"is this still fine?" must not read "I cannot tell" as yes. A forked history
+(more than one version nothing revises) is reported as ambiguous rather than
+resolved by picking a head, and counts as current only when every branch is
+verified.
+
+**Digests where possible, honesty where not.** Hashed here is `OBSERVED`; attested
+by a store is `DECLARED` and must name the attestor; unhashable carries no digest
+and reports `UNVERIFIABLE`. A missing digest is never an unchanged one
+(Invariant 3).
+
+It reads artifacts the `ExecutionGraph` already extracted rather than parsing
+telemetry a second time, and rolls up to decisions through the `ClaimGraph`:
+artifact → the evidence verifying it → the claims that evidence supports. Every
+hop is a link someone recorded; nothing is inferred about meaning. The subject is
+always in the graph, which is where provenance meets the decision.
 
 ### 5.5 `VerificationGraph` (optional)
 

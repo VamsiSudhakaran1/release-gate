@@ -14,6 +14,19 @@ foundations.
 
 from __future__ import annotations
 
+from release_gate.assurance.artifacts import (
+    ARTIFACT_SCHEMA_VERSION,
+    Artifact,
+    ArtifactEdge,
+    ArtifactEdgeType,
+    ArtifactError,
+    ArtifactGraph,
+    ArtifactGraphBuilder,
+    ArtifactKind,
+    ArtifactNodeKind,
+    CurrencyStatus,
+    VerificationCurrency,
+)
 from release_gate.assurance.canonical import (
     CanonicalisationError,
     canonical_json,
@@ -156,8 +169,17 @@ from release_gate.assurance.subject import (
 
 __all__ = [
     "ALL_CASE_TYPES",
+    "ARTIFACT_SCHEMA_VERSION",
     "Anomaly",
     "AnomalyKind",
+    "Artifact",
+    "ArtifactEdge",
+    "ArtifactEdgeType",
+    "ArtifactError",
+    "ArtifactGraph",
+    "ArtifactGraphBuilder",
+    "ArtifactKind",
+    "ArtifactNodeKind",
     "AssessmentStatus",
     "AssuranceCase",
     "AssuranceCaseBuilder",
@@ -191,6 +213,7 @@ __all__ = [
     "CoverageStatus",
     "Criticality",
     "CriticalityRule",
+    "CurrencyStatus",
     "Decision",
     "DedupeBasis",
     "DigestMethod",
@@ -251,6 +274,7 @@ __all__ = [
     "TrustDecision",
     "TrustStatus",
     "VerificationAttempt",
+    "VerificationCurrency",
     "VerificationMethod",
     "VersionBasis",
     "assess",
