@@ -999,17 +999,32 @@ copywriting decision.
 
 ## 10. Zero-config behaviour
 
+> **Implemented.** `release_gate/assurance/ingest.py`, `analysis.py`,
+> `attention.py`, `zero_config.py`, and the `release-gate assure` command.
+> The verb is `assure`, not `decide`: `decide` named the output, and what the
+> command actually does is assemble and examine a case, which is a different and
+> smaller claim.
+
 Non-negotiable: `release-gate` must stay a three-dependency CLI that does
 something useful in one command with no setup.
 
 * `release-gate audit .` — unchanged, byte for byte.
-* `release-gate decide <artifact> --action "apply this migration to prod-eu"` —
-  builds a DECISION case from what is present: the artifact and its digest, git
-  history, any trace file passed, CI outputs if pointed at them. With no
-  methodology it runs every structural analysis and reports
-  `METHODOLOGY_REQUIRED` for sufficiency. The engineer gets provenance, drift,
-  contradiction and integrity results plus an explicit statement of what was not
+* `release-gate assure <file>` — detects the format (OTLP, Langfuse, Arize,
+  promptfoo, a release-gate audit report, or an assurance envelope), hashes the
+  input, reconstructs execution, claims and artifacts, and runs every structural
+  analyser. With no methodology it reports `METHODOLOGY_REQUIRED` for sufficiency
+  and holds. The engineer gets provenance, drift, contradiction, verification
+  status and integrity results plus an explicit statement of what was not
   assessed. That is useful and honest on day zero.
+* **A file it cannot identify is not an error.** It is hashed, recorded as the
+  subject, and reported as `RG-COV-001` with a named remedy. Refusing to run
+  would give a user with an unusual export nothing at all; pretending to
+  understand it would be worse.
+* **The asymmetry that makes this safe:** with no methodology the command can
+  return BLOCK and can return HOLD, and **cannot return PROMOTE** — asserted in
+  `decide()`, not merely intended. A refutation is a fact about the evidence;
+  sufficiency is a claim about a domain nobody has described. Refusal needs less
+  authority than permission.
 * Progressive assurance (Invariant 14): each structure a team adds — declared
   claims, a verifier manifest, signed evidence — populates more of the case and
   moves rows of the coverage matrix from `NOT_ASSESSED` toward `OBSERVED`. Nothing

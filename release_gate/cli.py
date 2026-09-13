@@ -1119,6 +1119,15 @@ def print_help():
     print("  release-gate verify governance.yaml --trace otel.json  # …from OTel / Langfuse traces you already emit")
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
+    print("  release-gate assure <file>              # Zero-config structural assurance from one file")
+    print("      No config, no YAML. Auto-detects OTLP / Langfuse / Arize / promptfoo /")
+    print("      audit reports / assurance envelopes; hashes the input; reconstructs execution,")
+    print("      claims and artifacts; reports contradictions, failed verification, drift and gaps.")
+    print("      Emits a Human Attention set (hardest first, deduplicated by what you'd open)")
+    print("      and the evidence that would resolve each hold. Exit 0 PROMOTE · 10 HOLD · 1 BLOCK.")
+    print("      Without --methodology it reports METHODOLOGY_REQUIRED and HOLDs: structure is")
+    print("      assessable without config, domain sufficiency is not, and it will not invent one.")
+    print("  release-gate assure --list-methodologies  # Built-in methodologies you can pass")
     print("\nOptions for 'agent-score':")
     print("  --full                                  Show the full breakdown (per-dimension bars, tiers, top issues)")
     print("                                          Default output is a concise summary; the full report lives online")
@@ -1682,10 +1691,109 @@ def main():
     elif command == 'agent-score':
         _run_agent_score_command()
 
+    elif command == 'assure':
+        _run_assure_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
         sys.exit(1)
+
+
+def _run_assure_command():
+    """release-gate assure — structural assurance from one file, no configuration.
+
+    Usage:
+      release-gate assure <file> [--json] [--full]
+                                 [--methodology REF|FILE]
+                                 [--case-output FILE]
+      release-gate assure --list-methodologies
+
+    Exit: 0 PROMOTE · 10 HOLD · 1 BLOCK.
+
+    With no methodology the run reports METHODOLOGY_REQUIRED and holds. That is
+    not a missing feature — structural analysis can show what the evidence is and
+    is not, but "enough for this decision" is a domain question, and release-gate
+    does not ship a universal answer to it.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from release_gate.assurance.methodologies import BUILTIN_METHODOLOGIES, default_registry
+    from release_gate.assurance.methodology import AssuranceMethodology
+    from release_gate.assurance.zero_config import assure, render_text
+    from release_gate.assurance.ingest import IngestError
+
+    argv = sys.argv
+
+    if '--list-methodologies' in argv:
+        print("\nBuilt-in methodologies (pass one with --methodology):\n")
+        for methodology in BUILTIN_METHODOLOGIES:
+            print(f"  {methodology.ref_string}")
+            print(f"      {methodology.description}")
+            print(f"      {len(methodology.requirements)} requirement(s), "
+                  f"digest {methodology.digest[:23]}…")
+        print("\n  None of these is a universal standard. Each states what ONE kind of")
+        print("  decision requires; picking the wrong one gives a confident wrong answer.\n")
+        sys.exit(0)
+
+    target = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
+    if not target:
+        print("Usage: release-gate assure <file> [--json] [--full] "
+              "[--methodology REF] [--case-output FILE]")
+        print("       release-gate assure --list-methodologies")
+        sys.exit(1)
+
+    methodology = None
+    ref = _flag(argv, '--methodology')
+    if ref:
+        path = _Path(ref)
+        if path.is_file():
+            try:
+                methodology = AssuranceMethodology.from_dict(_json.loads(
+                    path.read_text(encoding='utf-8')))
+            except Exception as exc:
+                print(f"Error: {ref} is not a readable methodology: {exc}")
+                sys.exit(1)
+        else:
+            registry = default_registry()
+            # An exact `id@version` pins the yardstick; a bare id takes the latest
+            # and says so, because a methodology that changed under an existing
+            # case is the failure the version is there to prevent.
+            for lookup in (registry.resolve, registry.latest):
+                try:
+                    methodology = lookup(ref)
+                    break
+                except Exception:
+                    methodology = None
+            if methodology is not None and '@' not in ref:
+                print(f"  Using {methodology.ref_string} (latest for {ref!r}).")
+            if methodology is None:
+                print(f"Error: unknown methodology {ref!r}.")
+                print("Run `release-gate assure --list-methodologies` to see the built-ins,")
+                print("or pass a path to a JSON methodology.")
+                sys.exit(1)
+
+    try:
+        outcome = assure(target, methodology=methodology)
+    except IngestError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+
+    case_output = _flag(argv, '--case-output')
+    if case_output:
+        _Path(case_output).write_text(
+            _json.dumps(outcome.case.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding='utf-8')
+
+    if '--json' in argv:
+        print(_json.dumps(outcome.to_dict(), indent=2, sort_keys=True))
+    else:
+        print(render_text(outcome, full='--full' in argv))
+        if case_output:
+            print(f"  Case written to {case_output}")
+
+    sys.exit(outcome.exit_code)
 
 
 def _run_verify_command():

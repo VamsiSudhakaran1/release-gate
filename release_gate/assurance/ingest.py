@@ -1,0 +1,667 @@
+"""Zero-config ingestion — turn a file into assurance records without being told what it is.
+
+The premise of `release-gate assure trace.json` is that a person with one file
+and no configuration should still get real structural assurance. That is only
+honest if three rules hold, and this module is where all three live.
+
+**Detection is evidence, not a guess.** Every `Detection` carries the basis on
+which it was made and the alternatives it beat. A file we cannot identify is not
+an error — it is a case with an unrecognised subject, a computed digest, and a
+coverage gap naming what would resolve it.
+
+**The boundary is here.** Epistemic status is assigned in this module and
+nowhere downstream. A digest release-gate computed over bytes it read is
+`OBSERVED`. Everything the document *says* — that a span ran, that a tool
+succeeded, that an eval passed — is `DECLARED`, because we did not watch it
+happen and a file is not a witness. Conflating those two would let any producer
+promote its own assertions to observations by writing them down.
+
+**Nothing is invented.** A record we cannot map is counted and reported, never
+approximated into the case. Zero configuration reduces what a user must supply;
+it does not reduce what release-gate must be able to show.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from release_gate.assurance.artifacts import Artifact, ArtifactKind
+from release_gate.assurance.canonical import digest_object
+from release_gate.assurance.claims import (
+    AttemptOutcome, Claim, ClaimProvenance, ClaimType, VerificationAttempt,
+)
+from release_gate.assurance.evidence import (
+    EpistemicStatus, EvidenceRecord, EvidenceType, Producer, ProducerKind,
+    VerificationMethod, file_content, inline_content,
+)
+from release_gate.assurance.execution_graph import ExecutionGraph
+from release_gate.assurance.subject import (
+    ContentReference, DigestMethod, DigestStatus, ReferenceKind, SubjectType,
+)
+
+__all__ = [
+    "Detection",
+    "IngestError",
+    "InputKind",
+    "Normalisation",
+    "detect_document",
+    "ingest_path",
+    "load_input",
+    "normalise",
+    "subject_type_for",
+]
+
+# Below this, detection does not commit. The adapters use the same floor for the
+# same reason: a gate resting on a guessed format is a gate resting on a guess.
+DETECT_FLOOR = 50
+
+ENVELOPE_RECORD_TYPES = frozenset(
+    {"claim", "evidence", "artifact", "execution", "edge", "completeness"})
+
+
+class IngestError(ValueError):
+    """An input could not be read at all. Not knowing what a file *is* is not this."""
+
+
+class InputKind(str, Enum):
+    """What a document turned out to be."""
+
+    OTLP_TRACE = "OTLP_TRACE"
+    NATIVE_TRACE = "NATIVE_TRACE"
+    LANGFUSE_EXPORT = "LANGFUSE_EXPORT"
+    ARIZE_EXPORT = "ARIZE_EXPORT"
+    PROMPTFOO_EVAL = "PROMPTFOO_EVAL"
+    ASSURANCE_ENVELOPE = "ASSURANCE_ENVELOPE"
+    AUDIT_REPORT = "AUDIT_REPORT"
+    UNRECOGNISED = "UNRECOGNISED"
+
+
+_ADAPTER_KIND = {
+    "otel": InputKind.OTLP_TRACE,
+    "langfuse": InputKind.LANGFUSE_EXPORT,
+    "arize": InputKind.ARIZE_EXPORT,
+    "promptfoo": InputKind.PROMPTFOO_EVAL,
+}
+
+# What kind of thing a human is being asked about, per input kind. A trace is a
+# record of an autonomous action; an eval run is a result; an audit report is a
+# deployment question. None of these is a domain judgement — it is the shape of
+# the subject, which is all the file can tell us.
+_SUBJECT_TYPE = {
+    InputKind.OTLP_TRACE: SubjectType.AUTONOMOUS_ACTION,
+    InputKind.NATIVE_TRACE: SubjectType.AUTONOMOUS_ACTION,
+    InputKind.LANGFUSE_EXPORT: SubjectType.AUTONOMOUS_ACTION,
+    InputKind.ARIZE_EXPORT: SubjectType.AUTONOMOUS_ACTION,
+    InputKind.PROMPTFOO_EVAL: SubjectType.GENERAL_RESULT,
+    InputKind.ASSURANCE_ENVELOPE: SubjectType.GENERAL_RESULT,
+    InputKind.AUDIT_REPORT: SubjectType.DEPLOYMENT,
+    InputKind.UNRECOGNISED: SubjectType.GENERAL_RESULT,
+}
+
+
+def subject_type_for(kind: InputKind) -> SubjectType:
+    return _SUBJECT_TYPE.get(kind, SubjectType.GENERAL_RESULT)
+
+
+@dataclass(frozen=True)
+class Detection:
+    """What we decided a document is, and what that decision rests on."""
+
+    kind: InputKind
+    confidence: int
+    basis: str
+    alternatives: Tuple[Tuple[str, int], ...] = ()
+    adapter: Optional[str] = None
+
+    @property
+    def recognised(self) -> bool:
+        return self.kind is not InputKind.UNRECOGNISED
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"kind": self.kind.value, "confidence": self.confidence,
+                "basis": self.basis, "adapter": self.adapter,
+                "alternatives": [{"name": n, "confidence": c} for n, c in self.alternatives]}
+
+
+@dataclass(frozen=True)
+class Normalisation:
+    """Everything one file yielded, plus an account of what it did not."""
+
+    detection: Detection
+    source: str
+    evidence: Tuple[EvidenceRecord, ...] = ()
+    claims: Tuple[Claim, ...] = ()
+    artifacts: Tuple[Artifact, ...] = ()
+    execution: Optional[ExecutionGraph] = None
+    records_seen: int = 0
+    records_mapped: int = 0
+    skipped: Mapping[str, int] = field(default_factory=dict)
+    notes: Tuple[str, ...] = ()
+
+    @property
+    def skipped_total(self) -> int:
+        return sum(self.skipped.values())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"detection": self.detection.to_dict(), "source": self.source,
+                "evidence": len(self.evidence), "claims": len(self.claims),
+                "artifacts": len(self.artifacts),
+                "execution_nodes": len(self.execution.nodes) if self.execution else 0,
+                "records_seen": self.records_seen, "records_mapped": self.records_mapped,
+                "records_skipped": self.skipped_total,
+                "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
+
+
+# ── loading ──────────────────────────────────────────────────────────────────
+
+def load_input(path: str | Path) -> Any:
+    """Read a JSON or JSONL file. The only thing that is allowed to be fatal."""
+    from release_gate.adapters.common import load_document
+    try:
+        return load_document(str(path))
+    except FileNotFoundError as exc:
+        raise IngestError(str(exc)) from exc
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise IngestError(
+            f"{path}: not readable as JSON or JSONL ({exc}). Zero-config assurance "
+            "reads structured evidence; convert the file or point at an export.") from exc
+
+
+# ── detection ────────────────────────────────────────────────────────────────
+
+def _looks_like_envelope(doc: Any) -> int:
+    if not isinstance(doc, list) or not doc:
+        return 0
+    typed = sum(1 for r in doc[:200]
+                if isinstance(r, Mapping) and r.get("record_type") in ENVELOPE_RECORD_TYPES)
+    sample = min(len(doc), 200)
+    return int(100 * typed / sample) if sample else 0
+
+
+def _looks_like_audit_report(doc: Any) -> int:
+    if not isinstance(doc, Mapping):
+        return 0
+    markers = sum(1 for k in ("code_findings", "safeguards", "score", "decision",
+                              "frameworks", "readiness") if k in doc)
+    return min(100, markers * 22) if markers >= 2 else 0
+
+
+def _looks_like_native_trace(doc: Any) -> int:
+    traces = doc.get("traces") if isinstance(doc, Mapping) else (
+        doc if isinstance(doc, list) else None)
+    if not isinstance(traces, list) or not traces:
+        return 0
+    shaped = sum(1 for t in traces[:100]
+                 if isinstance(t, Mapping) and isinstance(t.get("steps"), list))
+    sample = min(len(traces), 100)
+    return int(95 * shaped / sample) if sample else 0
+
+
+def detect_document(doc: Any, *, filename: str = "") -> Detection:
+    """Identify a document, or say plainly that we could not.
+
+    Native release-gate shapes are checked before the platform adapters, because
+    they are exact structural matches rather than heuristics. Below `DETECT_FLOOR`
+    nothing is committed to: an unrecognised file still yields a case, and a
+    wrongly-recognised one would yield a confident lie.
+    """
+    native: List[Tuple[InputKind, int, str]] = []
+    score = _looks_like_envelope(doc)
+    if score:
+        native.append((InputKind.ASSURANCE_ENVELOPE, score,
+                       f"{score}% of sampled lines carry a known assurance record_type"))
+    score = _looks_like_audit_report(doc)
+    if score:
+        native.append((InputKind.AUDIT_REPORT, score,
+                       "top-level keys match a release-gate audit report"))
+    score = _looks_like_native_trace(doc)
+    if score:
+        native.append((InputKind.NATIVE_TRACE, score,
+                       "objects carrying trace steps in release-gate's native shape"))
+
+    try:
+        from release_gate.adapters import detect as adapter_detect
+        adapter_scores = [(n, c) for n, c in adapter_detect(doc)]
+    except Exception:
+        adapter_scores = []
+
+    ranked: List[Tuple[str, int, str, Optional[str], InputKind]] = [
+        (k.value, c, basis, None, k) for k, c, basis in native
+    ] + [
+        (n, c, f"matched the {n} adapter at {c}% confidence", n,
+         _ADAPTER_KIND.get(n, InputKind.UNRECOGNISED))
+        for n, c in adapter_scores
+    ]
+    ranked.sort(key=lambda row: (-row[1], row[0]))
+
+    alternatives = tuple((row[0], row[1]) for row in ranked[1:4])
+    if not ranked or ranked[0][1] < DETECT_FLOOR:
+        best = f" Closest was {ranked[0][0]} at {ranked[0][1]}%." if ranked else ""
+        name = f"{filename}: " if filename else ""
+        return Detection(
+            kind=InputKind.UNRECOGNISED, confidence=ranked[0][1] if ranked else 0,
+            basis=(f"{name}no known format matched above {DETECT_FLOOR}% confidence.{best}"),
+            alternatives=alternatives)
+
+    top = ranked[0]
+    return Detection(kind=top[4], confidence=top[1], basis=top[2],
+                     alternatives=alternatives, adapter=top[3])
+
+
+# ── producers ────────────────────────────────────────────────────────────────
+
+def _record_producer(row: Mapping[str, Any], fallback: Producer) -> Producer:
+    """The producer a single envelope record names, falling back to the document's.
+
+    Per-record producers are what make independence analysis mean anything: a file
+    is a container, not an author, and forty records from four systems are not four
+    records from one. `identity_basis` stays `unauthenticated` regardless — the
+    record asserting its own producer is not the same as that producer being
+    established (Invariant 11).
+    """
+    raw = row.get("producer")
+    if isinstance(raw, Mapping):
+        producer_id = str(raw.get("producer_id") or "").strip()
+        if producer_id:
+            kind = _enum_or(ProducerKind, raw.get("kind"), ProducerKind.EXTERNAL)
+            # A payload cannot declare itself release-gate's own work.
+            if kind is ProducerKind.RELEASE_GATE:
+                kind = ProducerKind.EXTERNAL
+            return Producer(producer_id=producer_id, kind=kind,
+                            identity_basis="unauthenticated",
+                            model=str(raw["model"]) if raw.get("model") else None,
+                            version=str(raw["version"]) if raw.get("version") else None)
+    if isinstance(raw, str) and raw.strip():
+        return Producer(producer_id=raw.strip(), kind=ProducerKind.EXTERNAL,
+                        identity_basis="unauthenticated")
+    return fallback
+
+
+def _document_producer(doc: Any, detection: Detection, source: str) -> Producer:
+    """Who the document says made it.
+
+    A file on disk carries no authenticated identity, so `identity_basis` is
+    `unauthenticated` whatever the document claims about itself. That is not a
+    formality: it is what makes RG-PROV-002 fire, and what stops an unsigned
+    export from being weighed as though someone had vouched for it.
+    """
+    named = None
+    if isinstance(doc, Mapping):
+        for key in ("service_name", "serviceName", "producer", "generated_by", "tool"):
+            value = doc.get(key)
+            if isinstance(value, str) and value.strip():
+                named = value.strip()
+                break
+    if named is None and detection.adapter:
+        named = f"{detection.adapter}-export"
+    return Producer(
+        producer_id=named or f"file://{Path(source).name}",
+        kind=ProducerKind.EXTERNAL, identity_basis="unauthenticated")
+
+
+def _release_gate_producer() -> Producer:
+    return Producer.release_gate("assurance/ingest")
+
+
+# ── normalisation ────────────────────────────────────────────────────────────
+
+def _file_artifact(path: str | Path) -> Tuple[Artifact, EvidenceRecord, ContentReference, str]:
+    """The input file itself: hashed by us, so the digest is OBSERVED."""
+    reference, digest = file_content(path)
+    name = Path(path).name
+    artifact = Artifact(
+        logical_id=f"file:{name}", artifact_kind=ArtifactKind.OTHER, digest=digest,
+        digest_method=DigestMethod.SHA256_CONTENT, digest_status=DigestStatus.OBSERVED,
+        content_reference=reference, byte_length=Path(path).stat().st_size,
+        metadata={"role": "assurance-input"})
+    record = EvidenceRecord.observed(
+        EvidenceType.EXTERNAL_REFERENCE, source=str(path),
+        producer=_release_gate_producer(), content_reference=reference, digest=digest,
+        applies_to_digest=digest,
+        coverage_note="the input file's bytes, hashed by release-gate",
+        content={"role": "assurance-input", "filename": name})
+    return artifact, record, reference, digest
+
+
+def _execution_from(doc: Any, detection: Detection) -> Tuple[Optional[ExecutionGraph], List[str]]:
+    notes: List[str] = []
+    try:
+        if detection.kind is InputKind.OTLP_TRACE:
+            return ExecutionGraph.from_otlp(doc), notes
+        if detection.kind is InputKind.NATIVE_TRACE:
+            traces = doc.get("traces") if isinstance(doc, Mapping) else doc
+            graphs = [ExecutionGraph.from_native_trace(t)
+                      for t in traces if isinstance(t, Mapping)]
+            if not graphs:
+                return None, notes
+            if len(graphs) == 1:
+                return graphs[0], notes
+            notes.append(f"{len(graphs)} traces in one file; the first was reconstructed "
+                         "and the rest counted as execution evidence")
+            return graphs[0], notes
+        if detection.kind in (InputKind.LANGFUSE_EXPORT, InputKind.ARIZE_EXPORT):
+            from release_gate.adapters import convert
+            converted = convert(doc, source=detection.adapter)
+            traces = (converted.get("payload") or {}).get("traces") or []
+            if traces:
+                return ExecutionGraph.from_native_trace(traces[0]), notes
+    except Exception as exc:  # a malformed export must not crash the run
+        notes.append(f"execution reconstruction did not complete: {exc}")
+    return None, notes
+
+
+def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
+                      ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
+                                 int, Dict[str, int], List[str]]:
+    evidence: List[EvidenceRecord] = []
+    claims: List[Claim] = []
+    artifacts: List[Artifact] = []
+    skipped: Dict[str, int] = {}
+    notes: List[str] = []
+    mapped = 0
+
+    def skip(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+    # Evidence first, so claims can be linked to the records they cite. An
+    # evidence_id is derived from content at the boundary, never accepted from a
+    # producer, so the envelope's own id would otherwise dangle — and a claim whose
+    # support cannot be found counts as unsupported, which would be a false gap
+    # manufactured by the ingest rather than found in the evidence.
+    id_map: Dict[str, str] = {}
+    claim_rows: List[Tuple[Mapping[str, Any], Producer]] = []
+
+    for row in doc:
+        if not isinstance(row, Mapping):
+            skip("record is not an object")
+            continue
+        record_type = row.get("record_type")
+        producer = _record_producer(row, fallback)
+        try:
+            if record_type == "evidence":
+                payload = dict(row)
+                payload.pop("record_type", None)
+                declared_id = str(payload.get("evidence_id") or "").strip()
+                record = EvidenceRecord.from_producer(
+                    payload, evidence_type=_evidence_type_of(payload),
+                    source=source, producer=producer,
+                    status=EpistemicStatus.DECLARED,
+                    supports_claims=tuple(_as_ids(payload.get("supports_claims"))),
+                    contradicts_claims=tuple(_as_ids(payload.get("contradicts_claims"))),
+                    coverage_note=str(payload.get("coverage_note") or ""))
+                evidence.append(record)
+                if declared_id:
+                    if declared_id in id_map:
+                        notes.append(
+                            f"evidence id {declared_id!r} was declared more than once; "
+                            "references to it resolve to the first record")
+                    else:
+                        id_map[declared_id] = record.evidence_id
+                mapped += 1
+            elif record_type == "claim":
+                claim_rows.append((row, producer))
+            elif record_type == "artifact":
+                artifacts.append(_artifact_from(row, producer))
+                mapped += 1
+            elif record_type in ENVELOPE_RECORD_TYPES:
+                skip(f"{record_type} records are not folded by the zero-config path")
+            else:
+                skip(f"unknown record_type {record_type!r}")
+        except Exception as exc:
+            skip(f"record rejected: {type(exc).__name__}")
+            notes.append(f"a {record_type} record was rejected: {exc}")
+
+    for row, producer in claim_rows:
+        try:
+            claims.append(_claim_from(row, producer, id_map))
+            mapped += 1
+        except Exception as exc:
+            skip("record rejected: " + type(exc).__name__)
+            notes.append(f"a claim record was rejected: {exc}")
+
+    return evidence, claims, artifacts, mapped, skipped, notes
+
+
+def _as_ids(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if isinstance(v, (str, int))]
+    return []
+
+
+def _evidence_type_of(payload: Mapping[str, Any]) -> EvidenceType:
+    raw = str(payload.get("kind") or payload.get("evidence_type") or "").upper()
+    try:
+        return EvidenceType(raw)
+    except ValueError:
+        return EvidenceType.OTHER
+
+
+def _claim_from(row: Mapping[str, Any], producer: Producer,
+                id_map: Optional[Mapping[str, str]] = None) -> Claim:
+    resolve = (lambda i: (id_map or {}).get(i, i))
+    attempts: List[VerificationAttempt] = []
+    for raw in row.get("verification_attempts") or ():
+        if not isinstance(raw, Mapping):
+            continue
+        # `evidence_id` is what the attempt is recorded against. An envelope that
+        # names no evidence still records the attempt — a check nobody can open is
+        # weaker evidence, not absent evidence — and says so in the detail rather
+        # than inventing an id that would resolve to nothing.
+        performed_by = str(raw.get("performed_by") or "").strip()
+        detail = str(raw.get("detail") or "")
+        if performed_by:
+            detail = f"performed by {performed_by}{'; ' + detail if detail else ''}"
+        try:
+            attempts.append(VerificationAttempt(
+                evidence_id=resolve(str(raw.get("evidence_id") or "").strip()),
+                method=VerificationMethod(str(raw.get("method", "OTHER")).upper()),
+                outcome=AttemptOutcome(str(raw.get("outcome", "INCONCLUSIVE")).upper()),
+                detail=detail))
+        except ValueError:
+            continue
+    extracted_by = row.get("extracted_by_model")
+    return Claim(
+        claim_id=str(row.get("claim_id") or row.get("id") or ""),
+        statement=str(row.get("proposition") or row.get("statement") or ""),
+        claim_type=_enum_or(ClaimType, row.get("claim_type"), ClaimType.ASSERTION),
+        producer=producer,
+        # A model-extracted claim is DERIVED however the envelope labels it; the
+        # engine does not let a producer upgrade its own provenance.
+        provenance=(ClaimProvenance.DERIVED if extracted_by
+                    else _enum_or(ClaimProvenance, row.get("provenance"),
+                                  ClaimProvenance.DECLARED)),
+        parents=tuple(_as_ids(row.get("depends_on") or row.get("parents"))),
+        supporting_evidence=tuple(resolve(i) for i in _as_ids(row.get("supporting_evidence"))),
+        contradicting_evidence=tuple(
+            resolve(i) for i in _as_ids(row.get("contradicting_evidence"))),
+        verification_attempts=tuple(attempts),
+        criticality=(str(row.get("consequence_weight")) if row.get("consequence_weight")
+                     else None),
+        is_root=bool(row.get("is_root")),
+        extracted_by_model=str(extracted_by) if extracted_by else None)
+
+
+def _artifact_from(row: Mapping[str, Any], producer: Producer) -> Artifact:
+    digest = row.get("digest")
+    return Artifact(
+        logical_id=str(row.get("artifact_id") or row.get("logical_id") or "artifact"),
+        artifact_kind=_enum_or(ArtifactKind, row.get("kind"), ArtifactKind.OTHER),
+        digest=str(digest) if digest else None,
+        # We did not hash this — the envelope asserted it — so the digest is
+        # DECLARED and must name who asserted it. Without an attestor a declared
+        # digest is a number with nobody behind it.
+        digest_method=DigestMethod.SHA256_CONTENT if digest else DigestMethod.NONE,
+        digest_status=DigestStatus.DECLARED if digest else DigestStatus.UNKNOWN,
+        digest_attested_by=producer.producer_id if digest else None,
+        created_by=str(row["created_by"]) if row.get("created_by") else None,
+        inputs=tuple(_as_ids(row.get("inputs"))),
+        revises=str(row["revises"]) if row.get("revises") else None)
+
+
+def _enum_or(enum_cls, value: Any, default):
+    if value is None:
+        return default
+    try:
+        return enum_cls(str(value).upper())
+    except ValueError:
+        return default
+
+
+def _eval_records(doc: Any, source: str, producer: Producer
+                  ) -> Tuple[List[EvidenceRecord], List[Claim], int, Dict[str, int]]:
+    """promptfoo-shaped eval output: each case is a declared result, pass or fail."""
+    from release_gate.adapters import convert
+    skipped: Dict[str, int] = {}
+    evidence: List[EvidenceRecord] = []
+    claims: List[Claim] = []
+    try:
+        converted = convert(doc, source="promptfoo")
+    except Exception as exc:
+        return [], [], 0, {f"eval conversion failed: {type(exc).__name__}": 1}
+
+    # The adapter's own coverage is folded in rather than discarded: rows it could
+    # not map are gaps in this case too, and losing them here would be the exact
+    # silent shortfall the adapter counted them to prevent.
+    adapter_coverage = converted.get("coverage") or {}
+    for reason, count in (adapter_coverage.get("skipped_by_reason") or {}).items():
+        skipped[f"promptfoo: {reason}"] = skipped.get(f"promptfoo: {reason}", 0) + count
+
+    cases = (converted.get("payload") or {}).get("results") or []
+    for index, case in enumerate(cases):
+        if not isinstance(case, Mapping):
+            skipped["eval case is not an object"] = skipped.get("eval case is not an object", 0) + 1
+            continue
+        name = str(case.get("name") or case.get("id") or f"eval-{index}")
+        passed = bool(case.get("passed", case.get("pass", False)))
+        claim_id = f"cl_eval_{index}"
+        claims.append(Claim(
+            claim_id=claim_id, statement=f"eval case {name!r} passes",
+            claim_type=ClaimType.ASSERTION, producer=producer,
+            provenance=ClaimProvenance.DECLARED,
+            verification_attempts=(VerificationAttempt(
+                evidence_id="",  # filled in below, once the record exists
+                method=VerificationMethod.TEST_SUITE,
+                outcome=AttemptOutcome.PASSED if passed else AttemptOutcome.FAILED,
+                detail=(f"reported by {producer.producer_id} in "
+                        f"{Path(source).name}")),)))
+        reference, _ = inline_content(json.dumps(dict(case), sort_keys=True), label=name)
+        record = EvidenceRecord.from_producer(
+            dict(case), evidence_type=EvidenceType.EVAL_RESULT, source=source,
+            producer=producer, status=EpistemicStatus.DECLARED,
+            content_reference=reference,
+            supports_claims=(claim_id,) if passed else (),
+            contradicts_claims=() if passed else (claim_id,),
+            coverage_note="eval outcome as reported by the run; release-gate did not re-run it")
+        evidence.append(record)
+        # The attempt is rewritten now that the record has a content-derived id.
+        # A verification nobody can open is weaker evidence than one they can.
+        claims[-1] = dataclasses.replace(claims[-1], verification_attempts=(
+            dataclasses.replace(claims[-1].verification_attempts[0],
+                                evidence_id=record.evidence_id),))
+    return evidence, claims, len(cases), skipped
+
+
+def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
+    """Fold one document into records. Never raises on unmappable content."""
+    producer = _document_producer(doc, detection, source)
+    evidence: List[EvidenceRecord] = []
+    claims: List[Claim] = []
+    artifacts: List[Artifact] = []
+    skipped: Dict[str, int] = {}
+    notes: List[str] = []
+    seen = 0
+    mapped = 0
+
+    artifact, file_record, _reference, file_digest = _file_artifact(source)
+    artifacts.append(artifact)
+    evidence.append(file_record)
+
+    execution, exec_notes = _execution_from(doc, detection)
+    notes.extend(exec_notes)
+
+    if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
+        seen = len(doc)
+        ev, cl, art, mapped, skipped, env_notes = _envelope_records(doc, source, producer)
+        evidence.extend(ev)
+        claims.extend(cl)
+        artifacts.extend(art)
+        notes.extend(env_notes)
+
+    elif detection.kind is InputKind.PROMPTFOO_EVAL:
+        ev, cl, seen, skipped = _eval_records(doc, source, producer)
+        evidence.extend(ev)
+        claims.extend(cl)
+        mapped = len(ev)
+
+    elif execution is not None:
+        seen = len(execution.nodes)
+        mapped = seen
+        # The spans are the producer's account of what happened. release-gate read
+        # the file; it did not witness the run, so this is DECLARED (Invariant 1).
+        evidence.append(EvidenceRecord.from_producer(
+            {"nodes": len(execution.nodes), "edges": len(execution.edges),
+             "completeness": execution.completeness.status.value},
+            evidence_type=EvidenceType.TRACE, source=source, producer=producer,
+            status=EpistemicStatus.DECLARED, applies_to_digest=file_digest,
+            coverage_note=("execution as reported by the emitting system; release-gate "
+                           "reconstructed the graph but did not observe the run")))
+
+    elif detection.kind is InputKind.AUDIT_REPORT and isinstance(doc, Mapping):
+        seen, mapped, extra = _audit_records(doc, source, evidence, file_digest)
+        skipped.update(extra)
+
+    else:
+        notes.append(
+            "the file was hashed and recorded, but nothing in it could be mapped to "
+            "evidence, claims or execution")
+
+    return Normalisation(
+        detection=detection, source=source, evidence=tuple(evidence),
+        claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
+        records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
+        notes=tuple(notes))
+
+
+def _audit_records(doc: Mapping[str, Any], source: str,
+                   evidence: List[EvidenceRecord], applies_to: str
+                   ) -> Tuple[int, int, Dict[str, int]]:
+    """release-gate's own audit output, folded back in as its own evidence."""
+    producer = Producer.release_gate("audit")
+    findings = [f for f in (doc.get("code_findings") or []) if isinstance(f, Mapping)]
+    for finding in findings:
+        evidence.append(EvidenceRecord.derived(
+            EvidenceType.STATIC_FINDING, source=source, producer=producer,
+            verification_method=VerificationMethod.STATIC_ANALYSIS,
+            applies_to_digest=applies_to,
+            content={k: finding.get(k) for k in ("rule", "file", "line", "severity", "basis")
+                     if k in finding},
+            coverage_note=f"static analysis, basis={finding.get('basis', 'unstated')}"))
+    safeguards = doc.get("safeguards") or {}
+    declared = 0
+    if isinstance(safeguards, Mapping):
+        for name, present in safeguards.items():
+            if not present:
+                continue
+            declared += 1
+            evidence.append(EvidenceRecord.from_producer(
+                {"safeguard": name}, evidence_type=EvidenceType.OTHER, source=source,
+                producer=producer, status=EpistemicStatus.DECLARED,
+                applies_to_digest=applies_to,
+                coverage_note="declared safeguard; a declaration is not a runtime guarantee"))
+    return len(findings) + declared, len(findings) + declared, {}
+
+
+# ── the one-call path ────────────────────────────────────────────────────────
+
+def ingest_path(path: str | Path) -> Normalisation:
+    """Read, identify and fold one file. The whole zero-config front door."""
+    doc = load_input(path)
+    detection = detect_document(doc, filename=Path(path).name)
+    return normalise(doc, detection, source=str(path))
