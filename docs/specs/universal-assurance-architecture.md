@@ -689,16 +689,47 @@ nothing (Invariant 14).
 
 ### 5.3 `ClaimGraph` (optional)
 
-Nodes are `Claim`s (proposition + `direct_status` + `effective_status` +
-consequence weight + `assumption` flag). Edges are `SUPPORTS`, `REFUTES`,
-`DEPENDS_ON`, `DERIVED_FROM`, `DUPLICATES`. The root claim *is* the case
-proposition.
+> **Implemented** — `release_gate/assurance/claims.py`.
 
-Claims are **declared**, not inferred (see §19.1). An `Assumption` is a claim node
-with `assumption=true`; **load-bearing** is computed, not asserted — an assumption
-is load-bearing when removing it changes the `effective_status` of the root claim.
-That is a graph cut, entirely deterministic, and it is what feeds attention
-ranking (Invariant 12).
+Nodes are `Claim`s; edges are `DEPENDS_ON`, `SUPPORTS`, `CONTRADICTS`,
+`DERIVED_FROM`, `SUPERSEDES` and declared `EQUIVALENT_TO`. Statuses are
+`UNKNOWN`, `UNVERIFIED`, `PARTIALLY_VERIFIED`, `VERIFIED`, `DISPUTED`, `REFUTED`
+and `SUPERSEDED`.
+
+**Status is computed on every build, never carried in the document.** A
+producer-supplied status is ignored; the calculus reads the evidence actually
+present. Each claim gets a `direct_status` from its own evidence and an
+`inherited_ceiling` that is the weakest status among everything it `DEPENDS_ON`,
+and the effective status is the lower of the two. A machine-checked proof resting
+on an unproven lemma is `UNKNOWN`, capped by the lemma — expressed as a minimum
+rather than a warning, so it cannot be lost. `SUPPORTS` corroborates without
+capping; the producer chooses the edge and the choice is visible.
+
+**Contradictions and failed attempts move status.** An unresolved contradiction
+with no support refutes; alongside support it disputes, because only resolving a
+contradiction resolves it. A verification attempt that ran and rejected is a
+refutation; one that could not tell leaves the claim `PARTIALLY_VERIFIED`
+alongside passes. Every attempt stays on the claim whatever its outcome
+(Invariant 7).
+
+**No model is in the authoritative path** (Invariant 4). Claims match by explicit
+id — no fuzzy matching, no semantic clustering. Model-assisted extraction is
+supported, must name its model, carries `DERIVED` provenance and is listed
+separately; equivalence a model-derived claim asserts is recorded but **not
+applied** unless explicitly asked for. A model may propose that two statements
+mean the same thing; it may not make them the same thing in a computation that
+gates a release.
+
+**Load-bearing is computed, not declared.** `load_bearing()` is the dependency
+closure of the root; `binding_constraints()` narrows that to the claims whose
+status is what actually caps it — the difference between "these 3,114 lemmas
+matter" and "these 118 are why the result is not verified". `counterfactual()`
+says what settling one claim would change, which is the raw material of attention
+ranking (Invariant 12). Measured: 3,115 claims resolve in ~0.1s.
+
+The graph is optional: a transactional case gets `None`, because an empty claim
+graph would read as "nothing is asserted" rather than "claims were not part of
+this case" (Invariant 14).
 
 ### 5.4 `ArtifactGraph` (optional)
 
