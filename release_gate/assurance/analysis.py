@@ -35,6 +35,9 @@ from release_gate.assurance.contradiction import (
 from release_gate.assurance.counterexample import (
     CounterexampleLedger, CounterexampleResult, counterexamples_from_evidence,
 )
+from release_gate.assurance.failed_branches import (
+    FailedBranchLedger, FailedBranchRecorder, branches_from_verification,
+)
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
 from release_gate.assurance.independence import (
     IndependenceProfile, LineageConcentration, analyse_independence,
@@ -63,6 +66,7 @@ class AnalysisDomain(str, Enum):
     INDEPENDENCE = "INDEPENDENCE"
     ASSUMPTION = "ASSUMPTION"
     COUNTEREXAMPLE = "COUNTEREXAMPLE"
+    FAILED_BRANCH = "FAILED_BRANCH"
     PROVENANCE = "PROVENANCE"
     CONTRADICTION = "CONTRADICTION"
     VERIFICATION = "VERIFICATION"
@@ -121,6 +125,7 @@ class AnalysisResult:
     contradictions: Optional[ContradictionLedger] = None
     assumptions: Optional[AssumptionGraph] = None
     counterexamples: Optional[CounterexampleLedger] = None
+    failed_branches: Optional[FailedBranchLedger] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -520,6 +525,69 @@ def _analyse_counterexamples(ledger: Optional[CounterexampleLedger],
             observed={"searched_without_finding": len(empty),
                       "unbounded": sum(1 for a in empty if not a.searched.strip()),
                       "absence_proven": False}))
+    return findings
+
+
+# ── failed branches (RG-BRANCH-*) ────────────────────────────────────────────
+
+def _analyse_failed_branches(ledger: Optional[FailedBranchLedger]) -> List[Finding]:
+    """What was tried and did not work. Reported, and never treated as waste.
+
+    Nothing here blocks. A run with failures is a run where somebody looked, and
+    penalising that would teach producers to stop recording them — which is the
+    outcome this whole area is designed against.
+    """
+    findings: List[Finding] = []
+    if ledger is None or not ledger.observed:
+        return findings
+
+    recurring = ledger.recurring()
+    if recurring:
+        findings.append(Finding(
+            rule_id="RG-BRANCH-001", domain=AnalysisDomain.FAILED_BRANCH,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(recurring)} failure point(s) stopped more than one attempt",
+            detail="; ".join(
+                f"{point.count:,} attempt(s) failed at {point.key}"
+                + (f", deepest reaching {point.deepest}" if point.deepest is not None
+                   else "")
+                for point in recurring[:5])[:700]
+                   + ". Where many attempts die in the same place, that place is "
+                     "usually the real obstacle.",
+            remedy="none required; the recurring point is where a reviewer's attention "
+                   "is likely to be worth most",
+            refs=tuple(point.key for point in recurring[:12]),
+            observed={"recurring": len(recurring),
+                      "points": [{"key": p.key, "count": p.count}
+                                 for p in recurring[:8]]}))
+
+    if ledger.dropped:
+        findings.append(Finding(
+            rule_id="RG-BRANCH-002", domain=AnalysisDomain.FAILED_BRANCH,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{ledger.dropped:,} failed branch(es) were counted but not retained",
+            detail=(f"Retention basis is {ledger.basis.value}. Failure points and their "
+                    "counts are exact; what was dropped is examples, not the aggregate. "
+                    "A branch that is not retained cannot be reopened from this case."),
+            remedy="raise the retention cap, or reference the branches externally so "
+                   "they stay reachable",
+            observed={"observed": ledger.observed, "retained": ledger.retained,
+                      "dropped": ledger.dropped, "basis": ledger.basis.value}))
+
+    unreachable = ledger.unreachable()
+    if unreachable:
+        findings.append(Finding(
+            rule_id="RG-BRANCH-003", domain=AnalysisDomain.FAILED_BRANCH,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(unreachable)} retained branch(es) carry no reference back "
+                    "to the attempt itself",
+            detail="These are recorded as structure — outcome, locus, depth — with "
+                   "nothing that would let a reviewer open the original. That is a "
+                   "deliberate trade against retaining transcripts, and it is stated "
+                   "rather than hidden.",
+            remedy="record a content reference or an evidence id alongside each branch",
+            refs=tuple(b.branch_id for b in unreachable[:12]),
+            observed={"unreachable": len(unreachable)}))
     return findings
 
 
@@ -1066,6 +1134,14 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     # evidence already in the case. Both paths matter: only the envelope can say a
     # search came back empty, and only the lift picks up producers that never
     # thought to call their finding a counterexample.
+    # Declared branches, plus every failed verification attempt already in the
+    # case — a check that ran and did not pass is an attempt that did not work
+    # out, so this costs a producer nothing.
+    branch_recorder = FailedBranchRecorder()
+    branch_recorder.extend(getattr(normalisation, "failed_branches", ()) or ())
+    branch_recorder.extend(branches_from_verification(verification_graph))
+    failed_branches = branch_recorder.build()
+
     declared_attempts = tuple(getattr(normalisation, "counterexamples", ()) or ())
     counterexamples = CounterexampleLedger(
         declared_attempts + counterexamples_from_evidence(records))
@@ -1087,6 +1163,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_contradiction(claim_graph, records, ledger))
     findings.extend(_analyse_assumptions(assumption_graph))
     findings.extend(_analyse_counterexamples(counterexamples, critical))
+    findings.extend(_analyse_failed_branches(failed_branches))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
@@ -1101,4 +1178,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           capabilities=capabilities, consequence=consequence,
                           independence=independence, contradictions=ledger,
                           assumptions=assumption_graph,
-                          counterexamples=counterexamples)
+                          counterexamples=counterexamples,
+                          failed_branches=failed_branches)

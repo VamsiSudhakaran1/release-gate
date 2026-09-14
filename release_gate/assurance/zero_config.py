@@ -51,6 +51,7 @@ from release_gate.assurance.methodology import (
 from release_gate.assurance.assumptions import AssumptionGraph
 from release_gate.assurance.contradiction import Contradiction, ContradictionLedger
 from release_gate.assurance.counterexample import CounterexampleLedger
+from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -107,6 +108,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def failed_branches(self) -> FailedBranchLedger:
+        """What was tried and did not work, as structure rather than transcript."""
+        return self.analysis.failed_branches or FailedBranchLedger()
+
+    @property
     def counterexamples(self) -> CounterexampleLedger:
         """Attempts to break the claims, and what each came back with."""
         return self.analysis.counterexamples or CounterexampleLedger()
@@ -157,6 +163,7 @@ class AssuranceOutcome:
             "contradictions": self.contradictions.to_dict(),
             "assumptions": self.assumptions.to_dict(),
             "counterexamples": self.counterexamples.to_dict(),
+            "failed_branches": self.failed_branches.to_dict(),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -185,7 +192,8 @@ def _ingest_coverage(normalisation: Normalisation,
                      independence: Optional[IndependenceProfile],
                      contradictions: Optional[ContradictionLedger] = None,
                      assumptions: Optional[AssumptionGraph] = None,
-                     counterexamples: Optional[CounterexampleLedger] = None
+                     counterexamples: Optional[CounterexampleLedger] = None,
+                     failed_branches: Optional[FailedBranchLedger] = None
                      ) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
@@ -211,6 +219,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _contradiction_coverage(contradictions),
         _assumption_coverage(assumptions),
         _counterexample_coverage(counterexamples),
+        _failed_branch_coverage(failed_branches),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -258,6 +267,33 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         declared_only=len(surface.declared_only), unknown=len(surface.unknown),
         bounded=surface.bounded, observation_possible=surface.can_observe,
         surface_digest=surface.digest())
+
+
+def _failed_branch_coverage(ledger: Optional[FailedBranchLedger]) -> SimpleRecord:
+    """Coverage for the exploration record.
+
+    Never ASSESSED on the strength of an empty ledger. A case with no failed
+    branches is either a run where nothing failed or a run where the failures were
+    dropped before they reached here, and release-gate cannot tell which — so it
+    says so rather than reading silence as a clean sweep.
+    """
+    if ledger is None or not ledger.observed:
+        return _coverage_row(
+            "failed_branches", False,
+            "no failed branches are recorded; that is either a run where nothing "
+            "failed or one where the failures never reached this case, and nothing "
+            "here distinguishes them")
+    summary = ledger.summary()
+    return _coverage_row(
+        "failed_branches", ledger.complete,
+        (f"{summary['observed']:,} branch(es) failed across "
+         f"{summary['failure_points']} failure point(s); {summary['retained']} retained "
+         f"as examples under {summary['basis']}. Counts are exact; retention drops "
+         "examples, never the aggregate"),
+        observed=summary["observed"], retained=summary["retained"],
+        dropped=summary["dropped"], basis=summary["basis"],
+        failure_points=summary["failure_points"], recurring=summary["recurring"],
+        ledger_digest=summary["digest"])
 
 
 def _counterexample_coverage(ledger: Optional[CounterexampleLedger]) -> SimpleRecord:
@@ -468,6 +504,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 contradictions: Optional[ContradictionLedger] = None,
                 assumptions: Optional[AssumptionGraph] = None,
                 counterexamples: Optional[CounterexampleLedger] = None,
+                failed_branches: Optional[FailedBranchLedger] = None,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -512,6 +549,18 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
             record_type="execution", record_id=normalisation.execution.digest(),
             payload=normalisation.execution.summary()))
 
+    # CAPPED where retention dropped examples: the collection says how it came to
+    # hold what it holds, rather than implying it holds everything.
+    builder.collection(
+        "failed_branches",
+        basis=(failed_branches.basis if failed_branches
+               else MaterialisationBasis.COMPLETE))
+    builder.declare_present(
+        "failed_branches",
+        "attempts that did not work out, declared or lifted from failed verification")
+    builder.extend("failed_branches",
+                   list(failed_branches) if failed_branches else [])
+
     builder.declare_present(
         "counterexamples",
         "attempts to break the claims in this case, found here or lifted from "
@@ -535,7 +584,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
                                                 verification, independence,
                                                 contradictions, assumptions,
-                                                counterexamples))
+                                                counterexamples, failed_branches))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -732,6 +781,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
+        failed_branches=analysis.failed_branches,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -749,6 +799,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
+        failed_branches=analysis.failed_branches,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -832,6 +883,13 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+
+    branches = outcome.failed_branches
+    if branches.observed:
+        add("")
+        add(f"  WHAT DID NOT WORK ({branches.observed:,} failed branch(es))")
+        for line in branches.render().splitlines():
+            add(f"    {line}")
 
     breaking = outcome.counterexamples
     if len(breaking):

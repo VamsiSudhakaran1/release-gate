@@ -40,6 +40,9 @@ from release_gate.assurance.counterexample import (
     CounterexampleAttempt, CounterexampleError, CounterexampleResult,
     CounterexampleStatus,
 )
+from release_gate.assurance.failed_branches import (
+    MAX_INLINE_DETAIL, BranchOutcome, FailedBranch, FailureLocus,
+)
 from release_gate.assurance.claims import Claim, ClaimProvenance, ClaimType
 from release_gate.assurance.verification import (
     VerificationAttempt, VerificationError, VerificationStatus,
@@ -71,7 +74,7 @@ DETECT_FLOOR = 50
 
 ENVELOPE_RECORD_TYPES = frozenset(
     {"claim", "evidence", "artifact", "execution", "edge", "completeness",
-     "counterexample"})
+     "counterexample", "failed_branch"})
 
 
 class IngestError(ValueError):
@@ -151,6 +154,7 @@ class Normalisation:
     capabilities: Optional[CapabilitySurface] = None
     declared_consequence: Tuple[ConsequenceDescriptor, ...] = ()
     counterexamples: Tuple[CounterexampleAttempt, ...] = ()
+    failed_branches: Tuple[FailedBranch, ...] = ()
     records_seen: int = 0
     records_mapped: int = 0
     skipped: Mapping[str, int] = field(default_factory=dict)
@@ -169,6 +173,7 @@ class Normalisation:
                                  else None),
                 "declared_consequence": [d.to_dict() for d in self.declared_consequence],
                 "counterexamples": len(self.counterexamples),
+                "failed_branches": len(self.failed_branches),
                 "records_seen": self.records_seen, "records_mapped": self.records_mapped,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
@@ -474,12 +479,13 @@ def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
 
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
-                                 List[CounterexampleAttempt], int, Dict[str, int],
-                                 List[str]]:
+                                 List[CounterexampleAttempt], List[FailedBranch],
+                                 int, Dict[str, int], List[str]]:
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
     artifacts: List[Artifact] = []
     counterexamples: List[CounterexampleAttempt] = []
+    branches: List[FailedBranch] = []
     skipped: Dict[str, int] = {}
     notes: List[str] = []
     mapped = 0
@@ -512,6 +518,9 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                 mapped += 1
             elif record_type == "counterexample":
                 counterexamples.append(_counterexample_from(row, producer))
+                mapped += 1
+            elif record_type == "failed_branch":
+                branches.append(_failed_branch_from(row, producer))
                 mapped += 1
             elif record_type in ENVELOPE_RECORD_TYPES:
                 skip(f"{record_type} records are not folded by the zero-config path")
@@ -557,7 +566,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
             skip("record rejected: " + type(exc).__name__)
             notes.append(f"a claim record was rejected: {exc}")
 
-    return evidence, claims, artifacts, counterexamples, mapped, skipped, notes
+    return (evidence, claims, artifacts, counterexamples, branches, mapped,
+            skipped, notes)
 
 
 def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
@@ -781,6 +791,40 @@ def _counterexample_from(row: Mapping[str, Any],
         detail=str(row.get("detail") or ""))
 
 
+def _failed_branch_from(row: Mapping[str, Any], producer: Producer) -> FailedBranch:
+    """A declared attempt that did not work out.
+
+    `detail` is truncated rather than rejected: a producer that pasted a
+    transcript into a field meant for a sentence should still have its failure
+    recorded, and the note it carries points at where the full record belongs.
+    """
+    detail = str(row.get("detail") or "")
+    if len(detail) > MAX_INLINE_DETAIL:
+        detail = (detail[:MAX_INLINE_DETAIL - 80].rstrip()
+                  + " …[truncated; put the full record behind `reference`]")
+    reference = None
+    locator = row.get("reference") or row.get("locator")
+    if isinstance(locator, Mapping):
+        reference = ContentReference.from_dict(locator)
+    elif isinstance(locator, str) and locator.strip():
+        reference = ContentReference(kind=ReferenceKind.EXTERNAL, locator=locator.strip())
+    locus = row.get("locus") if isinstance(row.get("locus"), Mapping) else {}
+    ordinal = locus.get("ordinal", row.get("ordinal"))
+    return FailedBranch(
+        outcome=_enum_or(BranchOutcome, row.get("outcome"), BranchOutcome.OTHER),
+        locus=FailureLocus(
+            step=str(locus.get("step") or row.get("step") or ""),
+            ordinal=int(ordinal) if isinstance(ordinal, int) else None,
+            invariant=str(locus.get("invariant") or row.get("invariant") or "")),
+        produced_by=str(row.get("produced_by") or producer.producer_id),
+        bears_on_claims=tuple(_as_ids(row.get("bears_on_claims"))),
+        evidence=tuple(_as_ids(row.get("evidence"))),
+        reference=reference,
+        digest=str(row["digest"]) if row.get("digest") else None,
+        depth=int(row["depth"]) if isinstance(row.get("depth"), int) else None,
+        detail=detail)
+
+
 def _artifact_from(row: Mapping[str, Any], producer: Producer) -> Artifact:
     digest = row.get("digest")
     return Artifact(
@@ -869,6 +913,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     claims: List[Claim] = []
     artifacts: List[Artifact] = []
     counterexamples: List[CounterexampleAttempt] = []
+    failed_branches: List[FailedBranch] = []
     skipped: Dict[str, int] = {}
     notes: List[str] = []
     seen = 0
@@ -885,12 +930,12 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     notes.extend(cap_notes)
 
     declared_consequence = _consequence_from(doc, source)
-    counterexamples: List[CounterexampleAttempt] = []
 
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
-        ev, cl, art, cex, mapped, skipped, env_notes = _envelope_records(
+        ev, cl, art, cex, fbr, mapped, skipped, env_notes = _envelope_records(
             doc, source, producer)
+        failed_branches.extend(fbr)
         evidence.extend(ev)
         claims.extend(cl)
         artifacts.extend(art)
@@ -930,6 +975,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
         capabilities=capabilities, declared_consequence=tuple(declared_consequence),
         counterexamples=tuple(counterexamples),
+        failed_branches=tuple(failed_branches),
         records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
         notes=tuple(notes))
 

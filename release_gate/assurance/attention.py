@@ -57,6 +57,8 @@ _FOCUS_KIND = {
     "RG-ASSUME-001": "assumption", "RG-ASSUME-002": "assumption",
     "RG-CEX-001": "counterexample", "RG-CEX-002": "counterexample",
     "RG-CEX-003": "counterexample",
+    "RG-BRANCH-001": "failure_point", "RG-BRANCH-002": "case",
+    "RG-BRANCH-003": "case",
     "RG-DRIFT-001": "subject", "RG-DRIFT-002": "subject",
     "RG-DRIFT-003": "artifact", "RG-DRIFT-004": "artifact", "RG-DRIFT-005": "evidence",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
@@ -87,6 +89,7 @@ class AttentionReason(str, Enum):
     UNRESOLVED_DISAGREEMENT = "UNRESOLVED_DISAGREEMENT"
     UNEXAMINED_ASSUMPTION = "UNEXAMINED_ASSUMPTION"
     LIVE_COUNTEREXAMPLE = "LIVE_COUNTEREXAMPLE"
+    RECURRING_FAILURE = "RECURRING_FAILURE"
     METHODOLOGY_ABSENT = "METHODOLOGY_ABSENT"
     REQUIREMENT_UNMET = "REQUIREMENT_UNMET"
 
@@ -101,6 +104,7 @@ _DOMAIN_REASON = {
     AnalysisDomain.CONSEQUENCE: AttentionReason.CONSEQUENCE_UNSTATED,
     AnalysisDomain.ASSUMPTION: AttentionReason.UNEXAMINED_ASSUMPTION,
     AnalysisDomain.COUNTEREXAMPLE: AttentionReason.LIVE_COUNTEREXAMPLE,
+    AnalysisDomain.FAILED_BRANCH: AttentionReason.RECURRING_FAILURE,
 }
 
 _RULE_REASON = {
@@ -240,7 +244,7 @@ class RequiredEvidenceSet:
 # evidence record, so pointing a reviewer at an arbitrary id would waste the trip.
 _WHOLE_CASE_KINDS = frozenset({"case", "input", "subject", "execution", "producer",
                                "manifest", "tools", "stakes", "contradiction",
-                               "assumption"})
+                               "assumption", "failure_point"})
 
 
 def _focus_of(finding: Finding) -> Tuple[str, str]:

@@ -67,6 +67,9 @@ COLLECTION_KINDS: Tuple[str, ...] = (
     "contradictions",
     "assumptions",
     "counterexamples",
+    # Attempts that did not work out. Evidence, not waste: a case that records
+    # only its successes looks exactly like its best branch (Invariant 7).
+    "failed_branches",
     "coverage",
     "attention_items",
     "required_evidence",
@@ -78,7 +81,7 @@ COLLECTION_KINDS: Tuple[str, ...] = (
 #: approval binds TO this digest, so folding it back in would be circular.
 EVIDENCE_KINDS: Tuple[str, ...] = (
     "evidence", "claims", "artifacts", "executions", "verification",
-    "contradictions", "assumptions", "counterexamples",
+    "contradictions", "assumptions", "counterexamples", "failed_branches",
 )
 
 

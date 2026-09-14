@@ -867,6 +867,56 @@ refutation was never answered (Invariant 7). Resolution is explicit: a
 contradiction is closed only by a record that answers it (a later verification, a
 human ruling), never by a newer successful branch existing.
 
+### 6.3 Failed branches (`RG-BRANCH-*`)
+
+> **Implemented.** `release_gate/assurance/failed_branches.py`, plus the
+> `failed_branches` collection.
+
+A case that records only its successes looks exactly like its best branch. Five
+hundred approaches that failed and one that worked reads, in the final report,
+identically to one approach that worked first time — and those are very different
+situations for whoever is signing (Invariant 7).
+
+So failures are retained, but **not every token**. A frontier run produces
+millions of dead ends, and hoarding transcripts would make the case unreadable and
+unstorable while adding nothing anyone can act on. What is kept is the *structure*
+of each failure — outcome, locus, depth — plus a reference to wherever the full
+record lives.
+
+```text
+8,054 branch(es) failed; 7 retained as examples (CAPPED)
+  7,993 at lemma 48, deepest 51
+  60 at simulation / X, deepest 59
+  7,989 branch(es) counted but not retained; their failure points are above
+```
+
+**The aggregate is never sampled.** Retention drops *branches*; it never drops
+*failure points*. If 7,992 proof attempts died at lemma 48, the ledger says so
+whether it kept three of them or none — losing a branch costs a reviewer an
+example, losing the count would cost them the finding.
+
+**The policy is stated and bounded.** `MaterialisationBasis` is reused rather than
+invented, so the collection says how it came to hold what it holds, and `observed`
+versus `retained` is always reported. Retention is a bounded priority queue per
+failure point: claim-bearing branches outrank others, deeper attempts outrank
+shallower. An earlier design kept a branch whenever it beat the deepest so far,
+which meant a run whose depth merely increased retained everything — the cap never
+bound, and at frontier scale that is the transcript-hoarding this section exists
+to prevent.
+
+**The inline-detail cap is enforced, not advised.** A branch whose detail exceeds
+it is refused with a message pointing at the reference; the ingest truncates
+instead, so a producer that pasted a transcript still gets its failure recorded.
+
+Failed verification attempts are lifted automatically — a check that ran and did
+not pass *is* an attempt that did not work out, and it is already in the case, so
+the exploration record is honest by default rather than by discipline. Nothing in
+`RG-BRANCH-*` blocks or holds: penalising a run for recording its failures would
+teach producers to stop recording them, which is the outcome this whole area is
+designed against.
+
+---
+
 ### 6.3a Assumptions (`RG-ASSUME-*`)
 
 > **Implemented.** `release_gate/assurance/assumptions.py`, plus the
