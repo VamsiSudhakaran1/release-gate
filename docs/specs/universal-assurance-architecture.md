@@ -869,23 +869,55 @@ human ruling), never by a newer successful branch existing.
 
 ### 6.4 Independence (`RG-INDEP-*`)
 
-The mechanism behind Invariant 6. Each evidence record gets a **provenance
-fingerprint**: model family, prompt template digest, tool identity, input artifact
-closure, producer lineage, execution environment, seed source. Records sharing a
-designated dimension land in the same `IndependenceGroup`.
+> **Implemented.** `release_gate/assurance/independence.py`, plus the
+> `AncestryIndependence` methodology predicate.
 
-Output is always a pair, never a single number:
+The mechanism behind Invariant 6. Ten thousand verifier agents deriving from one
+upstream artifact are not ten thousand independent validations — they are one
+validation observed ten thousand times, and a system that counts them as ten
+thousand has turned a single point of failure into apparent overwhelming
+consensus.
+
+Independence is **derived, not asked**. Evidence records carry `parent_evidence`;
+following those chains to their roots says where support actually comes from,
+whatever a producer claims about itself. That is a different question from the one
+`IndependenceThreshold` asks — which reads a *declared* `independence_group` — and
+both are kept, for the same reason DECLARED and OBSERVED capability are kept
+apart.
 
 ```text
-agreeing_records: 8,214
-independent_groups: 2
-independence_basis: structural
-not_assessed: latent correlation (shared pre-training, shared upstream corpus)
+Supporting contributors: 8,437
+Independent evidence roots: 7
+Largest shared lineage: 7,993 contributors (94.7%)
+Result: HIGH lineage concentration
 ```
 
-Ten thousand descendants of one root collapse to one group. The final clause is
-mandatory and non-removable: structural independence is what we can see, and we
-say so rather than implying more (Invariant 10).
+Three rules constrain it.
+
+**No probability of truth.** The module emits structure — roots, cluster sizes,
+the share of contributors in the largest lineage — and no confidence, likelihood
+or trust score. Seven independent roots do not make a claim 7/8ths true, and
+concentration is not an error rate. A structural measure dressed as a probability
+would be the most persuasive wrong number this system could produce, so a test
+asserts the serialised profile contains no such field.
+
+**Concentration is reported, never penalised.** Many parties legitimately relying
+on one authoritative source is a normal and often correct workflow. Every
+`RG-INDEP-*` finding is ADVISORY, and their remedies say *none required*. Only a
+methodology that actually needs independent evidence can turn concentration into
+a verdict, through `AncestryIndependence(minimum_roots=…, maximum_concentration=…)`.
+
+**The band refuses itself when the ranking is undetermined.** Contributors whose
+every record is isolated — no parents, no dependents — have unrecorded ancestry,
+and when that group is at least as large as the biggest known cluster it could
+*be* the biggest cluster, so no band is honest and the answer is `UNKNOWN`. That
+threshold is structural rather than tuned. A record others derive from is a
+*demonstrated* origin and is not counted as unknown: otherwise every case with
+several real lineages would report as undeterminable purely for having roots.
+
+Latent correlation — shared pre-training, a shared upstream corpus — remains
+outside what ancestry can see, and the coverage row says so rather than implying
+more (Invariant 10).
 
 ### 6.5 Change / drift (`RG-DRIFT-*`)
 

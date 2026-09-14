@@ -29,6 +29,9 @@ from release_gate.assurance.consequence import (
 )
 from release_gate.assurance.claims import ClaimGraph, ClaimStatus
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
+from release_gate.assurance.independence import (
+    IndependenceProfile, LineageConcentration, analyse_independence,
+)
 from release_gate.assurance.execution_graph import CompletenessStatus, ExecutionGraph
 from release_gate.assurance.methodology import RequirementEffect
 from release_gate.assurance.records import Presence
@@ -50,6 +53,7 @@ ANALYSIS_RULESET_VERSION = "rg-structural-1"
 class AnalysisDomain(str, Enum):
     CAPABILITY = "CAPABILITY"
     CONSEQUENCE = "CONSEQUENCE"
+    INDEPENDENCE = "INDEPENDENCE"
     PROVENANCE = "PROVENANCE"
     CONTRADICTION = "CONTRADICTION"
     VERIFICATION = "VERIFICATION"
@@ -104,6 +108,7 @@ class AnalysisResult:
     verification_graph: Optional[VerificationGraph] = None
     capabilities: Optional[CapabilitySurface] = None
     consequence: Optional[ConsequenceProfile] = None
+    independence: Optional[IndependenceProfile] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -312,6 +317,81 @@ def _analyse_verification_graph(graph: Optional[VerificationGraph]) -> List[Find
             remedy="run them, or withdraw the expectation",
             refs=tuple(a.verification_id for a in not_run[:12]),
             observed={"not_run": len(not_run)}))
+    return findings
+
+
+# ── independence (RG-INDEP-*) ────────────────────────────────────────────────
+
+def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Finding]:
+    """Where support actually comes from — reported, never penalised.
+
+    Every finding here is ADVISORY, deliberately. Many parties legitimately
+    relying on one authoritative source is a normal and often correct workflow,
+    and a gate that docked it would be punishing good practice. Concentration
+    becomes blocking only where a methodology says it needs independence, through
+    `AncestryIndependence`.
+    """
+    findings: List[Finding] = []
+    if profile is None or not profile.contributors:
+        return findings
+
+    if profile.concentration is LineageConcentration.HIGH:
+        largest = profile.clusters[0] if profile.clusters else None
+        findings.append(Finding(
+            rule_id="RG-INDEP-001", domain=AnalysisDomain.INDEPENDENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{profile.largest_ancestry_cluster:,} of {profile.contributors:,} "
+                     f"contributor(s) share one evidence lineage"),
+            detail=(f"Support traces to {profile.independent_roots} distinct lineage(s). "
+                    "Agreement among parties that derive from one source is one "
+                    "validation observed many times, not many validations. This is "
+                    "reported, not penalised — relying on one authoritative source is "
+                    "often exactly right."),
+            remedy=("none required; obtain support from an independent lineage only if "
+                    "the decision needs corroboration rather than a single source"),
+            refs=(largest.cluster_id,) if largest else (),
+            observed=profile.summary()))
+
+    if profile.independent_roots == 1 and profile.contributors > 1:
+        findings.append(Finding(
+            rule_id="RG-INDEP-002", domain=AnalysisDomain.INDEPENDENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"all {profile.contributors:,} contributor(s) trace to a single "
+                    "evidence root",
+            detail="There is exactly one lineage here. However many parties agree, a "
+                   "fault in that root is invisible to all of them.",
+            remedy="none required; add an independently-rooted check if a single point "
+                   "of failure is unacceptable for this decision",
+            observed={"contributors": profile.contributors, "roots": 1}))
+
+    if profile.unknown_ancestry:
+        findings.append(Finding(
+            rule_id="RG-INDEP-003", domain=AnalysisDomain.INDEPENDENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{profile.unknown_ancestry:,} contributor(s) record no ancestry",
+            detail=("Their evidence cites no parents, so whether it is original or "
+                    "derived is unknown. Such contributors are neither assumed "
+                    "independent nor assumed identical" +
+                    ("; and here they are numerous enough that the lineage ranking "
+                     "itself is undetermined." if not profile.determinable else ".")),
+            remedy="record parent_evidence on derived records, so ancestry can be traced "
+                   "rather than guessed",
+            observed={"unknown_ancestry": profile.unknown_ancestry,
+                      "contributors": profile.contributors,
+                      "determinable": profile.determinable}))
+
+    if profile.cycles_detected:
+        findings.append(Finding(
+            rule_id="RG-INDEP-004", domain=AnalysisDomain.INDEPENDENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(profile.cycles_detected)} evidence record(s) sit in a "
+                    "derivation cycle",
+            detail="These records are reachable from themselves through "
+                   "parent_evidence. Each was treated as its own root rather than the "
+                   "loop being followed, so their true ancestry is unresolved.",
+            remedy="correct the parent_evidence chain so derivation is acyclic",
+            refs=profile.cycles_detected[:12],
+            observed={"cycles": len(profile.cycles_detected)}))
     return findings
 
 
@@ -824,7 +904,9 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
         verification_graph = None
 
     findings: List[Finding] = []
+    independence = analyse_independence(records)
     findings.extend(_analyse_provenance(case, records))
+    findings.extend(_analyse_independence(independence))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
     findings.extend(_analyse_contradiction(claim_graph, records))
@@ -839,4 +921,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     return AnalysisResult(findings=tuple(findings), claim_graph=claim_graph,
                           artifact_graph=artifact_graph, execution_graph=execution,
                           verification_graph=verification_graph,
-                          capabilities=capabilities, consequence=consequence)
+                          capabilities=capabilities, consequence=consequence,
+                          independence=independence)

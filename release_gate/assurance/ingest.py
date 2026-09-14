@@ -28,7 +28,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from release_gate.assurance.artifacts import Artifact, ArtifactKind
 from release_gate.assurance.canonical import digest_object
@@ -485,6 +485,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
     # manufactured by the ingest rather than found in the evidence.
     id_map: Dict[str, str] = {}
     claim_rows: List[Tuple[Mapping[str, Any], Producer]] = []
+    evidence_rows: List[Tuple[Mapping[str, Any], Producer]] = []
 
     for row in doc:
         if not isinstance(row, Mapping):
@@ -494,25 +495,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
         producer = _record_producer(row, fallback)
         try:
             if record_type == "evidence":
-                payload = dict(row)
-                payload.pop("record_type", None)
-                declared_id = str(payload.get("evidence_id") or "").strip()
-                record = EvidenceRecord.from_producer(
-                    payload, evidence_type=_evidence_type_of(payload),
-                    source=source, producer=producer,
-                    status=EpistemicStatus.DECLARED,
-                    supports_claims=tuple(_as_ids(payload.get("supports_claims"))),
-                    contradicts_claims=tuple(_as_ids(payload.get("contradicts_claims"))),
-                    coverage_note=str(payload.get("coverage_note") or ""))
-                evidence.append(record)
-                if declared_id:
-                    if declared_id in id_map:
-                        notes.append(
-                            f"evidence id {declared_id!r} was declared more than once; "
-                            "references to it resolve to the first record")
-                    else:
-                        id_map[declared_id] = record.evidence_id
-                mapped += 1
+                evidence_rows.append((row, producer))
             elif record_type == "claim":
                 claim_rows.append((row, producer))
             elif record_type == "artifact":
@@ -526,6 +509,37 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
             skip(f"record rejected: {type(exc).__name__}")
             notes.append(f"a {record_type} record was rejected: {exc}")
 
+    for row, producer, declared_parents in _ordered_evidence(evidence_rows, notes):
+        # Resolved here, not at sort time: the ordering guarantees every parent has
+        # already been built and entered in the map by the time its child is.
+        resolved_parents = tuple(id_map[p] for p in declared_parents if p in id_map)
+        payload = dict(row)
+        payload.pop("record_type", None)
+        payload.pop("parent_evidence", None)
+        declared_id = str(payload.get("evidence_id") or "").strip()
+        try:
+            record = EvidenceRecord.from_producer(
+                payload, evidence_type=_evidence_type_of(payload),
+                source=source, producer=producer,
+                status=EpistemicStatus.DECLARED,
+                parent_evidence=resolved_parents,
+                supports_claims=tuple(_as_ids(payload.get("supports_claims"))),
+                contradicts_claims=tuple(_as_ids(payload.get("contradicts_claims"))),
+                coverage_note=str(payload.get("coverage_note") or ""))
+        except Exception as exc:
+            skip(f"record rejected: {type(exc).__name__}")
+            notes.append(f"an evidence record was rejected: {exc}")
+            continue
+        evidence.append(record)
+        if declared_id:
+            if declared_id in id_map:
+                notes.append(
+                    f"evidence id {declared_id!r} was declared more than once; "
+                    "references to it resolve to the first record")
+            else:
+                id_map[declared_id] = record.evidence_id
+        mapped += 1
+
     for row, producer in claim_rows:
         try:
             claims.append(_claim_from(row, producer, id_map))
@@ -535,6 +549,66 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
             notes.append(f"a claim record was rejected: {exc}")
 
     return evidence, claims, artifacts, mapped, skipped, notes
+
+
+def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],
+                      notes: List[str]
+                      ) -> List[Tuple[Mapping[str, Any], Producer, Tuple[str, ...]]]:
+    """Evidence rows in ancestry order, with parent references resolved.
+
+    An `evidence_id` is derived from content at the boundary, and content includes
+    `parent_evidence`, so a record's id depends on its parents' ids. Parents must
+    therefore be built first. Emitting rows in file order would leave every
+    `parent_evidence` pointing at an envelope id that resolves to nothing, and the
+    whole population would read as unrelated roots — ten thousand agents deriving
+    from one artifact would look like ten thousand independent validations, which
+    is precisely the error independence analysis exists to catch.
+
+    Kahn's algorithm over the declared references. A reference to a row that is not
+    present is left as-is and simply will not match any held record, which is the
+    honest outcome: we can see the record derives from something we do not hold.
+    Rows left over after the sort are in a declaration cycle and are emitted in
+    file order with a note, rather than being dropped.
+    """
+    indexed = {}
+    for position, (row, producer) in enumerate(rows):
+        declared = str(row.get("evidence_id") or "").strip()
+        indexed[declared or f"__row_{position}"] = (position, row, producer)
+
+    pending = {key: [p for p in _as_ids(row.get("parent_evidence")) if p in indexed]
+               for key, (_pos, row, _prod) in indexed.items()}
+    dependents: Dict[str, List[str]] = {key: [] for key in indexed}
+    for key, parents in pending.items():
+        for parent in parents:
+            dependents[parent].append(key)
+
+    import heapq
+    ready = [indexed[k][0] for k, parents in pending.items() if not parents]
+    heapq.heapify(ready)
+    by_position = {position: key for key, (position, _r, _p) in indexed.items()}
+    remaining = {k: len(v) for k, v in pending.items()}
+
+    ordered: List[Tuple[Mapping[str, Any], Producer, Tuple[str, ...]]] = []
+    emitted: Set[str] = set()
+    while ready:
+        key = by_position[heapq.heappop(ready)]
+        _position, row, producer = indexed[key]
+        emitted.add(key)
+        ordered.append((row, producer, tuple(_as_ids(row.get("parent_evidence")))))
+        for dependent in dependents[key]:
+            remaining[dependent] -= 1
+            if remaining[dependent] == 0:
+                heapq.heappush(ready, indexed[dependent][0])
+
+    leftover = [k for k in indexed if k not in emitted]
+    if leftover:
+        notes.append(
+            f"{len(leftover)} evidence record(s) declare a parent cycle; their ancestry "
+            "could not be ordered and their parent references may not resolve")
+        for key in sorted(leftover, key=lambda k: indexed[k][0]):
+            _position, row, producer = indexed[key]
+            ordered.append((row, producer, tuple(_as_ids(row.get("parent_evidence")))))
+    return ordered
 
 
 def _as_ids(value: Any) -> List[str]:

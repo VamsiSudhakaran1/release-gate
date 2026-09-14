@@ -165,6 +165,7 @@ from release_gate.assurance.methodologies import (
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
     AssessmentStatus,
+    AncestryIndependence,
     AssuranceMethodology,
     ConsequenceDeclared,
     CoverageExpectation,
@@ -212,6 +213,13 @@ from release_gate.assurance.subject import (
     directory_manifest_digest,
 )
 
+from release_gate.assurance.independence import (
+    INDEPENDENCE_SCHEMA_VERSION,
+    AncestryCluster,
+    IndependenceProfile,
+    LineageConcentration,
+    analyse_independence,
+)
 from release_gate.assurance.ingest import (
     Detection,
     IngestError,
@@ -250,6 +258,8 @@ __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
     "AnalysisDomain",
     "AnalysisResult",
+    "AncestryCluster",
+    "AncestryIndependence",
     "Anomaly",
     "AnomalyKind",
     "Applicability",
@@ -347,9 +357,12 @@ __all__ = [
     "GraphError",
     "GraphNode",
     "HumanAttentionSet",
+    "INDEPENDENCE_SCHEMA_VERSION",
+    "IndependenceProfile",
     "IndependenceRequirement",
     "IngestError",
     "InputKind",
+    "LineageConcentration",
     "MaterialisationBasis",
     "MethodologyAssessment",
     "MethodologyDriftError",
@@ -400,6 +413,7 @@ __all__ = [
     "ZERO_CONFIG_RULESET_VERSION",
     "ZeroConfigError",
     "analyse",
+    "analyse_independence",
     "assess",
     "assess_case",
     "assure",

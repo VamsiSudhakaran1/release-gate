@@ -48,6 +48,7 @@ from release_gate.assurance.methodology import (
     AssessmentStatus, AssuranceMethodology, MethodologyAssessment, RequirementEffect,
     assess,
 )
+from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
     Applicability, VerificationGraph, VerificationStatus,
@@ -103,6 +104,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def independence(self) -> Optional[IndependenceProfile]:
+        """Where the support actually comes from. Structure, never a probability."""
+        return self.analysis.independence
+
+    @property
     def verification(self) -> Optional[VerificationGraph]:
         """Every check on every target, with whether each still applies."""
         return self.analysis.verification_graph
@@ -128,6 +134,8 @@ class AssuranceOutcome:
             "consequence": self.consequence.to_dict(),
             "verification": (self.verification.to_dict() if self.verification
                              else None),
+            "independence": (self.independence.to_dict() if self.independence
+                             else None),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -152,7 +160,8 @@ def _coverage_row(dimension: str, assessed: bool, note: str,
 
 def _ingest_coverage(normalisation: Normalisation,
                      consequence: ConsequenceProfile,
-                     verification: Optional[VerificationGraph]) -> List[SimpleRecord]:
+                     verification: Optional[VerificationGraph],
+                     independence: Optional[IndependenceProfile]) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
         _coverage_row("input_identification", detection.recognised,
@@ -173,6 +182,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _capability_coverage(normalisation.capabilities),
         _consequence_coverage(consequence),
         _verification_coverage(verification),
+        _independence_coverage(independence),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -220,6 +230,31 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         declared_only=len(surface.declared_only), unknown=len(surface.unknown),
         bounded=surface.bounded, observation_possible=surface.can_observe,
         surface_digest=surface.digest())
+
+
+def _independence_coverage(profile: Optional[IndependenceProfile]) -> SimpleRecord:
+    """Coverage for independence, keyed on whether ancestry could be derived at all.
+
+    ASSESSED only when the lineage ranking is determined. A concentration figure
+    computed over a minority of contributors whose ancestry happens to be recorded
+    is not an assessment of independence — it is a measurement of the subset that
+    bothered to say.
+    """
+    if profile is None or not profile.contributors:
+        return _coverage_row("independence", False,
+                             "no contributing evidence, so independence cannot be "
+                             "assessed")
+    return _coverage_row(
+        "independence", profile.determinable,
+        (f"{profile.contributors:,} contributor(s) across "
+         f"{profile.independent_roots} lineage(s); {profile.basis}"),
+        contributors=profile.contributors,
+        root_evidence_count=profile.root_evidence_count,
+        largest_ancestry_cluster=profile.largest_ancestry_cluster,
+        shared_ancestry_concentration=profile.shared_ancestry_concentration,
+        unknown_ancestry=profile.unknown_ancestry,
+        concentration=profile.concentration.value,
+        profile_digest=profile.digest())
 
 
 def _verification_coverage(graph: Optional[VerificationGraph]) -> SimpleRecord:
@@ -323,6 +358,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 methodology: Optional[AssuranceMethodology],
                 consequence: ConsequenceProfile,
                 verification: Optional[VerificationGraph] = None,
+                independence: Optional[IndependenceProfile] = None,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -349,6 +385,10 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     # record_type. A profile of all-UNKNOWNs is still added — "nobody stated the
     # stakes" is a fact the case should carry, not an empty slot.
     builder.add("evidence", consequence)
+    if independence is not None:
+        # Same reasoning as the consequence profile: one object, already a record,
+        # and the predicate finds it here by record_type.
+        builder.add("evidence", independence)
 
     # Present-but-empty is not the same as never supplied. The ingest looked for
     # claims and artifacts, so the collections are declared present either way.
@@ -372,7 +412,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
 
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
-                                                verification))
+                                                verification, independence))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -549,6 +589,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
+        independence=analysis.independence,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -564,6 +605,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
+        independence=analysis.independence,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -632,6 +674,16 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+
+    lineage = outcome.independence
+    if lineage is not None and lineage.contributors:
+        add("")
+        add("  WHERE THE SUPPORT COMES FROM")
+        for line in lineage.render().splitlines():
+            add(f"    {line}")
+        if lineage.concentration is LineageConcentration.HIGH:
+            add("    Reported, not penalised: relying on one authoritative source is")
+            add("    often exactly right. Only a methodology can make this a verdict.")
 
     graph = outcome.verification
     if graph is not None and graph.attempts:

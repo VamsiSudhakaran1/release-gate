@@ -539,6 +539,80 @@ class ConsequenceDeclared(Predicate):
                         "every required consequence dimension is stated", observed)
 
 
+@_predicate
+@dataclass(frozen=True)
+class AncestryIndependence(Predicate):
+    """Support must rest on N distinct evidence lineages, derived not declared.
+
+    The counterpart to `IndependenceThreshold`, and a different question.
+    `IndependenceThreshold` reads the `independence_group` a producer *declared*;
+    this reads the lineage its evidence *turned out* to have, traced through
+    `parent_evidence` to roots. Ten thousand agents that all declare distinct
+    groups still collapse to one root here, which is the whole point.
+
+    This is also the only place concentration becomes blocking. The analyser
+    reports it and never penalises it, because many parties legitimately relying
+    on one authoritative source is a normal workflow — so a methodology has to
+    say it needs independence before a shortfall costs anything.
+    """
+
+    KIND = "ancestry_independence"
+    minimum_roots: int = 2
+    maximum_concentration: Optional[float] = None
+    collection: str = "evidence"
+
+    def describe(self) -> str:
+        parts = [f"support rests on at least {self.minimum_roots} distinct evidence lineage(s)"]
+        if self.maximum_concentration is not None:
+            parts.append(f"with no more than {self.maximum_concentration:.0%} of "
+                         "contributors in one lineage")
+        return ", ".join(parts)
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        profiles = [r for r in records if r.get("record_type") == "independence"]
+        if not profiles:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no independence profile is recorded on this case, so the ancestry of "
+                "its support has not been derived",
+                {"profiles": 0, "materialisation_incomplete": incomplete})
+
+        profile = profiles[0]
+        roots = int(profile.get("independent_roots") or 0)
+        concentration = profile.get("shared_ancestry_concentration")
+        observed = {"independent_roots": roots, "minimum_roots": self.minimum_roots,
+                    "shared_ancestry_concentration": concentration,
+                    "maximum_concentration": self.maximum_concentration,
+                    "unknown_ancestry": profile.get("unknown_ancestry"),
+                    "concentration_band": profile.get("concentration")}
+
+        if not profile.get("determinable", False):
+            # Ancestry nobody recorded cannot be assumed independent, and must not
+            # be assumed identical either (Invariant 6).
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                f"ancestry is not determinable: {profile.get('basis', '')}", observed)
+
+        if roots < self.minimum_roots:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"support rests on {roots} distinct lineage(s), {self.minimum_roots} "
+                "required; agreement without established independence is not "
+                "corroboration (Invariant 6)",
+                observed)
+        if (self.maximum_concentration is not None and concentration is not None
+                and concentration > self.maximum_concentration):
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{concentration:.1%} of contributors sit in one lineage, above the "
+                f"{self.maximum_concentration:.0%} this methodology allows",
+                observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"support rests on {roots} distinct lineage(s)", observed)
+
+
 def predicate_from_dict(data: Mapping[str, Any]) -> Predicate:
     kind = data.get("kind")
     cls = _PREDICATE_TYPES.get(kind)
