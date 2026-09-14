@@ -1044,6 +1044,76 @@ wrote down, and the dangerous ones are usually the ones nobody thought to mentio
 
 ---
 
+### 6.2a Criticality (`RG-CRIT-*`)
+
+> **Implemented.** `release_gate/assurance/criticality.py`, plus the
+> `CriticalClaimsIdentified` methodology predicate.
+
+A claim is critical when the decision being asked for depends on it. That is the
+whole definition, and everything difficult follows from what it excludes.
+
+**Volume is never an input.** Not the number of agents that mentioned a claim,
+not how many messages discussed it, not how much evidence piled up behind it, not
+how central it looks in a drawing of the graph. A claim four hundred agents argued
+about that the decision does not rest on is not critical. A claim one agent
+emitted once, five links down a chain, is critical if the conclusion falls
+without it (Invariant 12). The record states this at the point of measurement and
+the predicate restates it at the point of judgement:
+`volume_affects_criticality: false`.
+
+**Depth is not a discount.** In `Decision -> A -> B -> C`, claim C is
+load-bearing exactly as much as A. Nothing decays with distance and no threshold
+stops the propagation. Distance is reported because a reader wants it, and is
+never a weight.
+
+**A label is not a dependency.** The `criticality` a producer sets on a claim is
+read, kept, and compared against the graph — but a producer calling their own
+claim critical does not make the decision rest on it (Invariant 1). Where the two
+disagree, `RG-CRIT-003` holds and says so without resolving it: either the label
+is wrong or a dependency edge is missing, and a graph cannot settle which.
+
+**An empty critical set is not "nothing is critical".** This is the sharpest
+refusal here, because the failure is silent. Every critical-claim guard in the
+system — `RG-CEX-001`, `RG-ADV-001`, `RG-REPL-001`, and the contradiction
+`render_verdict` may not omit — asks whether a claim is critical. A case whose
+criticality could not be derived answers *no* to all of them and comes out clean
+for the worst possible reason. So `determinable` is carried explicitly,
+`is_critical()` returns `None` rather than a bare `False`, the coverage row reads
+NOT_ASSESSED with "every critical-claim guard was inactive", and `RG-CRIT-001`
+holds.
+
+`analysis.py` no longer computes criticality inline. One derived set is built
+once and read by every guard, because three approximations of the same question
+would eventually disagree about the same case.
+
+**Propagation** is a single multi-source breadth-first walk from the decision's
+claims over `depends_on`, which already unifies declared parents with declared
+assumptions — an assumption the conclusion rests on is load-bearing in exactly
+this sense. Each claim records one predecessor rather than its full chain, and
+paths are reconstructed on demand: storing every claim's chain costs the square
+of the chain length, and a ten-thousand-link chain is a legitimate input. The
+walk is iterative, cycle-safe, and linear.
+
+The decision's own claims come from `is_root` where a producer declared it, and
+from the graph's sinks where nobody did. Where neither exists — every claim
+depends on another, which means a cycle — the answer is `NONE` and criticality is
+undetermined rather than guessed. Sinks the decision cannot reach are reported by
+`RG-CRIT-004`: a second conclusion nobody linked up puts everything beneath it
+outside every guard.
+
+`LoadBearing` has four values — `LOAD_BEARING`, `SUPPORTING`, `ISOLATED`,
+`UNKNOWN` — and **`AssumptionCriticality` is now an alias of it**. An assumption
+the decision rests on and a claim the decision rests on are the same fact about
+the same graph; two vocabularies for it would eventually disagree.
+
+`RG-CRIT-005` reports load-bearing claims resting on a single producer. It is
+advisory, and it exists so a reviewer sees how thinly the decision is supported —
+not so the system can dock it. That is the prompt's example stated as a rule: a
+claim one agent generated may be load-bearing, and its thinness is a fact to show
+a human rather than a reason to weigh it less.
+
+---
+
 ### 6.3c Counterexamples (`RG-CEX-*`)
 
 > **Implemented.** `release_gate/assurance/counterexample.py`.
@@ -1729,6 +1799,7 @@ release_gate/assurance/
     provenance.py  coverage.py  contradiction.py  independence.py  drift.py  completeness.py
     replication.py       paths to a result, copies collapsed
     adversarial.py       verifiers that set out to disprove the candidate
+    criticality.py       what the decision rests on, by dependency
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
   packet.py              ApprovalPacket rendering (json / markdown / html)
@@ -2024,7 +2095,7 @@ repo: deterministic, fast, no network.
 | 9 | Coverage accompanies every verdict | `Verdict` constructor + §8.2 rule | A verdict lacks coverage, or a ratio has no real denominator |
 | 10 | No universal truth claims | Packet rendering spec + banned-language test | A surface asserts safe/correct/true |
 | 11 | Provenance ≠ trust | `analyzers/provenance.py` reports origin only | Origin and authority are merged into one score |
-| 12 | Dependency criticality beats volume | `attention.py` leverage computation (§7) | Ranking keys on counts or generic severity |
+| 12 | Dependency criticality beats volume | `criticality.py` reachability from the decision (§6.2a), then `attention.py` leverage (§7) | Criticality or ranking keys on counts, producers, depth or generic severity |
 | 13 | Evidence omission is a threat | `analyzers/completeness.py` (§6.6) | "Not observed" is rendered as "did not happen" |
 | 14 | Not every graph is mandatory | Optional overlays in `case.py` (§3.2) | A small case is forced to populate a claim graph |
 | 15 | Approval is authorisation, not truth | `BoundApproval.statement` + rendering spec | A packet implies certification |

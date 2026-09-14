@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+from release_gate.assurance.criticality import LoadBearing
 from release_gate.assurance.canonical import digest_object
 from release_gate.assurance.claims import Claim, ClaimGraph, ClaimProvenance, ClaimStatus
 
@@ -37,6 +38,7 @@ __all__ = [
     "ASSUMPTION_SCHEMA_VERSION",
     "Assumption",
     "AssumptionCriticality",
+    "LoadBearing",
     "AssumptionGraph",
     "AssumptionSource",
     "CollapseSet",
@@ -45,17 +47,11 @@ __all__ = [
 ASSUMPTION_SCHEMA_VERSION = 1
 
 
-class AssumptionCriticality(str, Enum):
-    """What an assumption holds up — derived from its collapse set, never declared.
-
-    This is deliberately not a severity scale. "Load-bearing" is a fact about the
-    graph: the conclusion the case is about falls if this assumption does.
-    """
-
-    LOAD_BEARING = "LOAD_BEARING"  # a root conclusion collapses with it
-    SUPPORTING = "SUPPORTING"      # other claims collapse, but no conclusion
-    ISOLATED = "ISOLATED"          # nothing in this case rests on it
-    UNKNOWN = "UNKNOWN"            # the graph cannot say
+#: An assumption the decision rests on and a claim the decision rests on are the
+#: same fact about the same graph, so they use the same four values rather than
+#: two vocabularies that would eventually disagree. This name is kept because it
+#: reads correctly at the call sites, and `LoadBearing` carries the definition.
+AssumptionCriticality = LoadBearing
 
 
 @dataclass(frozen=True)

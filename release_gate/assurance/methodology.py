@@ -615,6 +615,117 @@ class AncestryIndependence(Predicate):
 
 @_predicate
 @dataclass(frozen=True)
+class CriticalClaimsIdentified(Predicate):
+    """What this decision rests on must be established before it can be taken.
+
+    The sufficiency layer over `RG-CRIT-001`, and the only predicate whose
+    absence disables other predicates. Every critical-claim guard in the analysis
+    — unresolved counterexamples, adversarial argument defects, divergent
+    replication, the contradiction a verdict may not omit — asks whether a claim
+    is critical. Where criticality could not be derived they all answer no, and
+    the case comes out clean because nothing was checked. A methodology for any
+    consequential decision should say that is not acceptable.
+
+    `require_supported` additionally asks that nothing load-bearing is left
+    resting on nothing at all. It is off by default: a case can legitimately
+    rest on a claim whose support is still arriving, and that is a hold for the
+    coverage analysers to report rather than a malformed methodology.
+    """
+
+    KIND = "critical_claims_identified"
+    require_determinable: bool = True
+    require_supported: bool = False
+    forbid_broken_chains: bool = True
+    maximum_declared_disagreements: Optional[int] = 0
+    collection: str = "evidence"
+
+    def describe(self) -> str:
+        parts = []
+        if self.require_determinable:
+            parts.append("what this decision rests on is derivable from the claim graph")
+        if self.forbid_broken_chains:
+            parts.append("no load-bearing claim depends on a claim the case does not hold")
+        if self.maximum_declared_disagreements is not None:
+            parts.append(f"at most {self.maximum_declared_disagreements} claim(s) "
+                         "declared critical that nothing the decision rests on needs")
+        if self.require_supported:
+            parts.append("every load-bearing claim cites some support")
+        return ", ".join(parts) or "criticality is recorded"
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        sets = [r for r in records if r.get("record_type") == "criticality"]
+        if not sets:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no criticality analysis is recorded on this case, so what the "
+                "decision rests on has not been derived",
+                {"materialisation_incomplete": incomplete})
+
+        derived = sets[0]
+        observed = {"determinable": derived.get("determinable"),
+                    "link": derived.get("link"),
+                    "claims": derived.get("claims_examined"),
+                    "critical": derived.get("critical"),
+                    "max_depth": derived.get("max_depth"),
+                    "broken_chains": derived.get("broken_chains"),
+                    "disagreements": derived.get("disagreements"),
+                    "thin_critical": derived.get("thin_critical"),
+                    # Restated at the point of judgement, not only at the point of
+                    # measurement: nothing in this predicate reads a volume either.
+                    "volume_affects_criticality": False,
+                    "materialisation_incomplete": incomplete}
+
+        if self.require_determinable and not derived.get("determinable"):
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                "what this decision rests on could not be established, so no claim is "
+                "known to be critical and every critical-claim guard was inactive; "
+                "a clean result here would mean nothing was checked",
+                observed)
+
+        if self.forbid_broken_chains and int(derived.get("broken_chains") or 0):
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{derived.get('broken_chains')} load-bearing claim(s) depend on "
+                "claims this case does not hold, so part of what the decision rests "
+                "on is outside the case entirely",
+                observed)
+
+        limit = self.maximum_declared_disagreements
+        if limit is not None and int(derived.get("disagreements") or 0) > limit:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{derived.get('disagreements')} claim(s) are declared critical that "
+                "nothing the decision rests on depends on; either the labels are "
+                "wrong or dependency edges are missing, and this methodology does "
+                "not accept the ambiguity",
+                observed)
+
+        if self.require_supported:
+            unsupported = [e.get("claim_id") for e in (derived.get("entries") or ())
+                           if e.get("critical") and not e.get("supporting_records")]
+            if unsupported or int(derived.get("entries_truncated") or 0):
+                observed["unsupported_critical"] = unsupported[:12]
+                return _Finding(
+                    RequirementOutcome.UNSATISFIED,
+                    f"{len(unsupported)} load-bearing claim(s) cite no supporting "
+                    "evidence: " + ", ".join(str(c) for c in unsupported[:4]),
+                    observed)
+
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"the decision rests on {derived.get('critical')} of "
+            f"{derived.get('claims')} claim(s), reached through up to "
+            f"{derived.get('max_depth')} dependency link(s)" +
+            (f"; {derived.get('thin_critical')} of them rest on a single producer, "
+             "which this predicate reports and does not penalise"
+             if int(derived.get("thin_critical") or 0) else ""),
+            observed)
+
+
+@_predicate
+@dataclass(frozen=True)
 class AdversarialReviewRequired(Predicate):
     """Something must have set out to disprove this, and got a fair hearing.
 

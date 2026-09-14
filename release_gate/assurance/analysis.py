@@ -39,6 +39,8 @@ from release_gate.assurance.failed_branches import (
     FailedBranchLedger, FailedBranchRecorder, branches_from_verification,
 )
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
+from release_gate.assurance.criticality import (
+    CriticalitySet, DecisionLink, LoadBearing, analyse_criticality)
 from release_gate.assurance.adversarial import (
     AdversarialOutcome, AdversarialReview, AdversarialStance, analyse_adversarial)
 from release_gate.assurance.replication import (
@@ -70,6 +72,7 @@ class AnalysisDomain(str, Enum):
     INDEPENDENCE = "INDEPENDENCE"
     REPLICATION = "REPLICATION"
     ADVERSARIAL = "ADVERSARIAL"
+    CRITICALITY = "CRITICALITY"
     ASSUMPTION = "ASSUMPTION"
     COUNTEREXAMPLE = "COUNTEREXAMPLE"
     FAILED_BRANCH = "FAILED_BRANCH"
@@ -130,6 +133,7 @@ class AnalysisResult:
     independence: Optional[IndependenceProfile] = None
     replication: Optional[ReplicationProfile] = None
     adversarial: Optional[AdversarialReview] = None
+    criticality: Optional[CriticalitySet] = None
     contradictions: Optional[ContradictionLedger] = None
     assumptions: Optional[AssumptionGraph] = None
     counterexamples: Optional[CounterexampleLedger] = None
@@ -417,6 +421,111 @@ def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Findin
             remedy="correct the parent_evidence chain so derivation is acyclic",
             refs=profile.cycles_detected[:12],
             observed={"cycles": len(profile.cycles_detected)}))
+    return findings
+
+
+# ── criticality (RG-CRIT-*) ──────────────────────────────────────────────────
+
+def _analyse_criticality(criticality: Optional[CriticalitySet]) -> List[Finding]:
+    """What the decision rests on, and whether that could be established.
+
+    `RG-CRIT-001` is the one that matters. Every critical-claim guard in this
+    system — unresolved counterexamples, adversarial argument defects, divergent
+    replication, the contradiction a verdict may not omit — asks whether a claim
+    is critical. A case whose criticality could not be derived answers "no" to all
+    of them and comes out looking clean for the worst possible reason. So the gap
+    is reported loudly rather than allowed to pass as an absence of problems.
+    """
+    findings: List[Finding] = []
+    if criticality is None or not criticality.claims_examined:
+        return findings
+
+    if not criticality.determinable:
+        findings.append(Finding(
+            rule_id="RG-CRIT-001", domain=AnalysisDomain.CRITICALITY,
+            effect=RequirementEffect.HOLD,
+            summary="what this decision rests on could not be established, so no "
+                    "claim is known to be critical",
+            detail=(criticality.basis +
+                    ". Every critical-claim guard in this analysis asks whether a "
+                    "claim is critical, and with criticality undetermined they all "
+                    "answer no — so a clean result here means nothing was checked, "
+                    "not that nothing was found."),
+            remedy="mark the claim this decision is being asked about with is_root, "
+                   "or record the dependency edges that connect the conclusion to "
+                   "what it rests on",
+            observed={"claims": criticality.claims_examined,
+                      "determinable": False, "link": criticality.link.value}))
+        return findings
+
+    broken = criticality.broken_chains()
+    if broken:
+        missing = sorted({m for e in broken for m in e.missing_dependencies})
+        findings.append(Finding(
+            rule_id="RG-CRIT-002", domain=AnalysisDomain.CRITICALITY,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(broken)} load-bearing claim(s) depend on "
+                    f"{len(missing)} claim(s) this case does not hold",
+            detail="; ".join(f"{e.claim_id} rests on "
+                             + ", ".join(e.missing_dependencies[:3])
+                             for e in broken[:4])[:600]
+                   + ". The decision rests on these through the broken link, so part "
+                     "of what it rests on is outside this case entirely.",
+            remedy="supply the missing claims, or correct the dependency edges that "
+                   "name them",
+            refs=tuple(missing[:12]),
+            observed={"broken_chains": len(broken), "missing": missing[:12]}))
+
+    disagreements = criticality.disagreements()
+    if disagreements:
+        findings.append(Finding(
+            rule_id="RG-CRIT-003", domain=AnalysisDomain.CRITICALITY,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(disagreements)} claim(s) are declared critical but nothing "
+                    "the decision rests on depends on them",
+            detail="; ".join(f"{e.claim_id} (declared {e.declared}) is "
+                             f"{e.standing.value}" for e in disagreements[:5])[:600]
+                   + ". A producer calling a claim critical does not make the "
+                     "decision rest on it, and this is not resolved either way: "
+                     "either the label is wrong or a dependency edge is missing, and "
+                     "a graph cannot settle which.",
+            remedy="record the dependency that makes the claim load-bearing, or drop "
+                   "the criticality label",
+            refs=tuple(e.claim_id for e in disagreements[:12]),
+            observed={"disagreements": len(disagreements)}))
+
+    if criticality.unreachable_conclusions:
+        findings.append(Finding(
+            rule_id="RG-CRIT-004", domain=AnalysisDomain.CRITICALITY,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(criticality.unreachable_conclusions)} conclusion(s) are not "
+                    "reachable from what this decision is about",
+            detail="Nothing depends on these and the decision does not reach them, so "
+                   "they are a second conclusion nobody linked up. Everything under "
+                   "them sits outside every critical-claim guard.",
+            remedy="link them to the decision, or record that they are incidental",
+            refs=criticality.unreachable_conclusions[:12],
+            observed={"unreachable": len(criticality.unreachable_conclusions),
+                      "decision_claims": list(criticality.decision_claims[:8])}))
+
+    thin = criticality.thin()
+    if thin:
+        findings.append(Finding(
+            rule_id="RG-CRIT-005", domain=AnalysisDomain.CRITICALITY,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(thin)} load-bearing claim(s) rest on a single producer",
+            detail="; ".join(f"{e.claim_id} at depth {e.depth}" for e in thin[:6])[:500]
+                   + ". Reported so a reviewer sees how thinly the decision is "
+                     "supported — not as a discount. A claim one agent emitted once "
+                     "is exactly as load-bearing as one four hundred agents "
+                     "discussed, and nothing here weighs criticality by volume "
+                     "(Invariant 12).",
+            remedy="none required; obtain support from a second producer only if this "
+                   "decision needs corroboration on the claims it rests on",
+            refs=tuple(e.claim_id for e in thin[:12]),
+            observed={"thin_critical": len(thin),
+                      "max_depth": criticality.max_depth,
+                      "volume_affects_criticality": False}))
     return findings
 
 
@@ -1419,15 +1528,17 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                                      verification_graph=verification_graph)
     assumption_graph = AssumptionGraph.from_claim_graph(claim_graph)
 
-    # Which claims a refutation would actually matter to: the proposition the case
-    # is about, and anything else rests on. Structural, as everywhere else.
-    critical: Set[str] = set()
-    if claim_graph is not None:
-        critical |= {c.claim_id for c in claim_graph.roots()}
-        try:
-            critical |= set(claim_graph.load_bearing())
-        except Exception:
-            pass
+    # Which claims a refutation would actually matter to. One derived definition,
+    # read by every guard below, rather than a set computed inline here: an
+    # unresolved counterexample, an adversarial argument defect, divergent
+    # replication and the contradiction a verdict may not omit all turn on this
+    # answer, and three approximations of it would eventually disagree about the
+    # same case. Criticality is reachability from what the decision is being asked
+    # about — never volume, never depth-weighted (Invariant 12).
+    criticality = analyse_criticality(
+        claim_graph,
+        evidence_producers={r.evidence_id: r.producer.producer_id for r in records})
+    critical: Set[str] = set(criticality.critical_ids)
 
     # Declared attempts from the envelope, plus any lifted from counterexample
     # evidence already in the case. Both paths matter: only the envelope can say a
@@ -1501,6 +1612,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_provenance(case, records))
     findings.extend(_analyse_independence(independence))
     findings.extend(_analyse_replication(replication, critical))
+    findings.extend(_analyse_criticality(criticality))
     findings.extend(_analyse_adversarial(adversarial, critical))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
@@ -1522,6 +1634,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           capabilities=capabilities, consequence=consequence,
                           independence=independence, replication=replication,
                           adversarial=adversarial,
+                          criticality=criticality,
                           contradictions=ledger,
                           assumptions=assumption_graph,
                           counterexamples=counterexamples,

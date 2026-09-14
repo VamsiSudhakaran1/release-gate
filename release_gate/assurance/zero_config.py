@@ -54,6 +54,7 @@ from release_gate.assurance.counterexample import CounterexampleLedger
 from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.adversarial import AdversarialReview
+from release_gate.assurance.criticality import CriticalitySet
 from release_gate.assurance.replication import ReplicationOutcome, ReplicationProfile
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -135,6 +136,11 @@ class AssuranceOutcome:
         return self.analysis.independence
 
     @property
+    def criticality(self) -> Optional[CriticalitySet]:
+        """What the decision rests on. Reachability, never volume."""
+        return self.analysis.criticality
+
+    @property
     def adversarial(self) -> Optional[AdversarialReview]:
         """Verifiers that set out to disprove this. Absent is normal, not a gap."""
         return self.analysis.adversarial
@@ -176,6 +182,8 @@ class AssuranceOutcome:
                             if self.replication is not None else None),
             "adversarial": (self.adversarial.to_dict()
                             if self.adversarial is not None else None),
+            "criticality": (self.criticality.to_dict()
+                            if self.criticality is not None else None),
             "contradictions": self.contradictions.to_dict(),
             "assumptions": self.assumptions.to_dict(),
             "counterexamples": self.counterexamples.to_dict(),
@@ -208,6 +216,7 @@ def _ingest_coverage(normalisation: Normalisation,
                      independence: Optional[IndependenceProfile],
                      replication: Optional[ReplicationProfile] = None,
                      adversarial: Optional[AdversarialReview] = None,
+                     criticality: Optional[CriticalitySet] = None,
                      contradictions: Optional[ContradictionLedger] = None,
                      assumptions: Optional[AssumptionGraph] = None,
                      counterexamples: Optional[CounterexampleLedger] = None,
@@ -236,6 +245,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _independence_coverage(independence),
         _replication_coverage(replication),
         _adversarial_coverage(adversarial),
+        _criticality_coverage(criticality),
         _contradiction_coverage(contradictions),
         _assumption_coverage(assumptions),
         _counterexample_coverage(counterexamples),
@@ -413,6 +423,44 @@ def _independence_coverage(profile: Optional[IndependenceProfile]) -> SimpleReco
         profile_digest=profile.digest())
 
 
+def _criticality_coverage(criticality: Optional[CriticalitySet]) -> SimpleRecord:
+    """Coverage for criticality, which gates every other critical-claim guard.
+
+    This row exists because the failure it reports is otherwise invisible. A case
+    whose criticality could not be derived produces no critical claims, so every
+    guard that asks "is this claim critical?" answers no and the case reads clean.
+    NOT_ASSESSED here says the guards did not run — a different fact from their
+    having run and found nothing.
+    """
+    if criticality is None or not criticality.claims_examined:
+        return _coverage_row("criticality", False,
+                             "this case declares no claims, so there is no dependency "
+                             "structure in which criticality could be derived")
+    if not criticality.determinable:
+        return _coverage_row(
+            "criticality", False,
+            ("what this decision rests on could not be established, so every "
+             "critical-claim guard in this analysis was inactive. " +
+             criticality.basis),
+            claims=criticality.claims_examined, critical=0, determinable=False,
+            link=criticality.link.value)
+    return _coverage_row(
+        "criticality", True,
+        (f"the decision rests on {len(criticality.critical())} of "
+         f"{criticality.claims_examined} claim(s), reached through up to "
+         f"{criticality.max_depth} dependency link(s) from "
+         f"{len(criticality.decision_claims)} conclusion(s) identified by "
+         f"{criticality.link.value.lower().replace('_', ' ')}"),
+        claims=criticality.claims_examined,
+        critical=len(criticality.critical()),
+        determinable=True, link=criticality.link.value,
+        max_depth=criticality.max_depth,
+        thin_critical=len(criticality.thin()),
+        disagreements=len(criticality.disagreements()),
+        broken_chains=len(criticality.broken_chains()),
+        volume_affects_criticality=False)
+
+
 def _adversarial_coverage(review: Optional[AdversarialReview]) -> SimpleRecord:
     """Coverage for adversarial review, which is NOT_ASSESSED by default.
 
@@ -583,6 +631,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 independence: Optional[IndependenceProfile] = None,
                 replication: Optional[ReplicationProfile] = None,
                 adversarial: Optional[AdversarialReview] = None,
+                criticality: Optional[CriticalitySet] = None,
                 contradictions: Optional[ContradictionLedger] = None,
                 assumptions: Optional[AssumptionGraph] = None,
                 counterexamples: Optional[CounterexampleLedger] = None,
@@ -617,6 +666,13 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         # Same reasoning as the consequence profile: one object, already a record,
         # and the predicate finds it here by record_type.
         builder.add("evidence", independence)
+    if criticality is not None and criticality.claims_examined:
+        # Stored even when undeterminable, unlike the reviews above. "We could not
+        # establish what this decision rests on" is the finding, not an absence of
+        # one, and a predicate reading NOT_ASSESSED off a missing record could not
+        # tell that apart from a case with no claims at all.
+        builder.add("evidence", criticality)
+
     if adversarial is not None and adversarial.present:
         # Only when adversaries actually attacked something. An empty review is
         # left out rather than stored as a zero: `AdversarialReviewRequired`
@@ -682,7 +738,8 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
                                                 verification, independence, replication,
-                                                adversarial, contradictions, assumptions,
+                                                adversarial, criticality,
+                                                contradictions, assumptions,
                                                 counterexamples, failed_branches))
 
     for kind, records in (extra or {}).items():
@@ -879,7 +936,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, replication=analysis.replication,
-        adversarial=analysis.adversarial,
+        adversarial=analysis.adversarial, criticality=analysis.criticality,
         contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         failed_branches=analysis.failed_branches,
@@ -899,7 +956,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, replication=analysis.replication,
-        adversarial=analysis.adversarial,
+        adversarial=analysis.adversarial, criticality=analysis.criticality,
         contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         failed_branches=analysis.failed_branches,
