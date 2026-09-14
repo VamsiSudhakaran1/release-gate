@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.artifacts import ArtifactGraph, CurrencyStatus
+from release_gate.assurance.assumptions import AssumptionGraph
 from release_gate.assurance.capabilities import CapabilitySurface, CapabilityStatus
 from release_gate.assurance.case import AssuranceCase
 from release_gate.assurance.consequence import (
@@ -57,6 +58,7 @@ class AnalysisDomain(str, Enum):
     CAPABILITY = "CAPABILITY"
     CONSEQUENCE = "CONSEQUENCE"
     INDEPENDENCE = "INDEPENDENCE"
+    ASSUMPTION = "ASSUMPTION"
     PROVENANCE = "PROVENANCE"
     CONTRADICTION = "CONTRADICTION"
     VERIFICATION = "VERIFICATION"
@@ -113,6 +115,7 @@ class AnalysisResult:
     consequence: Optional[ConsequenceProfile] = None
     independence: Optional[IndependenceProfile] = None
     contradictions: Optional[ContradictionLedger] = None
+    assumptions: Optional[AssumptionGraph] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -399,6 +402,56 @@ def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Findin
     return findings
 
 
+# ── assumptions (RG-ASSUME-*) ────────────────────────────────────────────────
+
+def _analyse_assumptions(graph: Optional[AssumptionGraph]) -> List[Finding]:
+    """What the argument takes for granted, and what would fall with it.
+
+    Two findings, both about not knowing. An assumption that holds up the
+    conclusion and that nothing has examined is the case this whole module exists
+    for; an assumption named by a claim and described nowhere is worse, because
+    nobody can even begin to evaluate it.
+    """
+    findings: List[Finding] = []
+    if graph is None or not len(graph):
+        return findings
+
+    unexamined = graph.unexamined()
+    if unexamined:
+        findings.append(Finding(
+            rule_id="RG-ASSUME-001", domain=AnalysisDomain.ASSUMPTION,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(unexamined)} load-bearing assumption(s) have nothing bearing "
+                    "on whether they hold",
+            detail="; ".join(
+                f"{a.assumption_id}"
+                + (f" (\"{a.statement}\")" if a.statement else "")
+                + f" — if it fails, {a.collapse.size} claim(s) collapse including "
+                + ", ".join(a.collapse.roots_affected)
+                for a in unexamined[:4])[:700],
+            remedy="supply evidence or a verification for these assumptions, or record "
+                   "why they are safe to take for granted",
+            refs=tuple(a.assumption_id for a in unexamined[:12]),
+            observed={"unexamined": len(unexamined),
+                      "assumption_ids": [a.assumption_id for a in unexamined[:12]]}))
+
+    unstated = graph.unstated()
+    if unstated:
+        findings.append(Finding(
+            rule_id="RG-ASSUME-002", domain=AnalysisDomain.ASSUMPTION,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(unstated)} assumption(s) are referenced but never stated",
+            detail="; ".join(
+                f"{a.assumption_id} is named by {', '.join(a.referenced_by)} and "
+                "described nowhere" for a in unstated[:4])[:700]
+                   + ". An assumption nobody wrote down cannot be evaluated, agreed "
+                     "with, or argued against.",
+            remedy="state what each of these assumptions actually asserts",
+            refs=tuple(a.assumption_id for a in unstated[:12]),
+            observed={"unstated": len(unstated)}))
+    return findings
+
+
 # ── contradiction (RG-CONTRA-*) ──────────────────────────────────────────────
 
 def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
@@ -596,8 +649,11 @@ def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
             c.claim_id for c in claim_graph.claims
             if not c.supporting_evidence and not c.verification_attempts)
         if unsupported:
-            load_bearing = {c.claim_id for c in claim_graph.load_bearing()} \
-                if callable(getattr(claim_graph, "load_bearing", None)) else set()
+            # `load_bearing()` returns claim ids, not Claim objects. The defensive
+            # getattr here was hiding that: the branch only runs when the graph has
+            # both an unsupported claim and a load-bearing one, so the mistake sat
+            # latent until an assumption chain produced both at once.
+            load_bearing = set(claim_graph.load_bearing())
             critical = sorted(set(unsupported) & load_bearing) or unsupported
             findings.append(Finding(
                 rule_id="RG-COV-003", domain=AnalysisDomain.COVERAGE,
@@ -923,6 +979,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     independence = analyse_independence(records)
     ledger = detect_contradictions(claim_graph=claim_graph, evidence=records,
                                    verification_graph=verification_graph)
+    assumption_graph = AssumptionGraph.from_claim_graph(claim_graph)
 
     findings: List[Finding] = []
     findings.extend(_analyse_provenance(case, records))
@@ -930,6 +987,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
     findings.extend(_analyse_contradiction(claim_graph, records, ledger))
+    findings.extend(_analyse_assumptions(assumption_graph))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
@@ -942,4 +1000,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           artifact_graph=artifact_graph, execution_graph=execution,
                           verification_graph=verification_graph,
                           capabilities=capabilities, consequence=consequence,
-                          independence=independence, contradictions=ledger)
+                          independence=independence, contradictions=ledger,
+                          assumptions=assumption_graph)

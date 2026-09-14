@@ -54,6 +54,7 @@ _FOCUS_KIND = {
     "RG-CONTRA-001": "evidence", "RG-CONTRA-002": "claim",
     "RG-CONTRA-003": "claim", "RG-CONTRA-004": "claim",
     "RG-CONTRA-005": "contradiction",
+    "RG-ASSUME-001": "assumption", "RG-ASSUME-002": "assumption",
     "RG-DRIFT-001": "subject", "RG-DRIFT-002": "subject",
     "RG-DRIFT-003": "artifact", "RG-DRIFT-004": "artifact", "RG-DRIFT-005": "evidence",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
@@ -82,6 +83,7 @@ class AttentionReason(str, Enum):
     CONSEQUENCE_UNSTATED = "CONSEQUENCE_UNSTATED"
     CONSEQUENCE_DISPUTED = "CONSEQUENCE_DISPUTED"
     UNRESOLVED_DISAGREEMENT = "UNRESOLVED_DISAGREEMENT"
+    UNEXAMINED_ASSUMPTION = "UNEXAMINED_ASSUMPTION"
     METHODOLOGY_ABSENT = "METHODOLOGY_ABSENT"
     REQUIREMENT_UNMET = "REQUIREMENT_UNMET"
 
@@ -94,6 +96,7 @@ _DOMAIN_REASON = {
     AnalysisDomain.COVERAGE: AttentionReason.COVERAGE_GAP,
     AnalysisDomain.CAPABILITY: AttentionReason.UNDECLARED_CAPABILITY,
     AnalysisDomain.CONSEQUENCE: AttentionReason.CONSEQUENCE_UNSTATED,
+    AnalysisDomain.ASSUMPTION: AttentionReason.UNEXAMINED_ASSUMPTION,
 }
 
 _RULE_REASON = {
@@ -232,7 +235,8 @@ class RequiredEvidenceSet:
 # revealed it. "All your evidence has one producer" is not fixed by opening one
 # evidence record, so pointing a reviewer at an arbitrary id would waste the trip.
 _WHOLE_CASE_KINDS = frozenset({"case", "input", "subject", "execution", "producer",
-                               "manifest", "tools", "stakes", "contradiction"})
+                               "manifest", "tools", "stakes", "contradiction",
+                               "assumption"})
 
 
 def _focus_of(finding: Finding) -> Tuple[str, str]:

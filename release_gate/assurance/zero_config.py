@@ -48,6 +48,7 @@ from release_gate.assurance.methodology import (
     AssessmentStatus, AssuranceMethodology, MethodologyAssessment, RequirementEffect,
     assess,
 )
+from release_gate.assurance.assumptions import AssumptionGraph
 from release_gate.assurance.contradiction import Contradiction, ContradictionLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
@@ -105,6 +106,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def assumptions(self) -> AssumptionGraph:
+        """What the argument takes for granted, and what falls with each."""
+        return self.analysis.assumptions or AssumptionGraph()
+
+    @property
     def contradictions(self) -> ContradictionLedger:
         """Every disagreement found, and what became of each."""
         return self.analysis.contradictions or ContradictionLedger()
@@ -143,6 +149,7 @@ class AssuranceOutcome:
             "independence": (self.independence.to_dict() if self.independence
                              else None),
             "contradictions": self.contradictions.to_dict(),
+            "assumptions": self.assumptions.to_dict(),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -169,7 +176,8 @@ def _ingest_coverage(normalisation: Normalisation,
                      consequence: ConsequenceProfile,
                      verification: Optional[VerificationGraph],
                      independence: Optional[IndependenceProfile],
-                     contradictions: Optional[ContradictionLedger] = None
+                     contradictions: Optional[ContradictionLedger] = None,
+                     assumptions: Optional[AssumptionGraph] = None
                      ) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
@@ -193,6 +201,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _verification_coverage(verification),
         _independence_coverage(independence),
         _contradiction_coverage(contradictions),
+        _assumption_coverage(assumptions),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -240,6 +249,31 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         declared_only=len(surface.declared_only), unknown=len(surface.unknown),
         bounded=surface.bounded, observation_possible=surface.can_observe,
         surface_digest=surface.digest())
+
+
+def _assumption_coverage(graph: Optional[AssumptionGraph]) -> SimpleRecord:
+    """Coverage for assumptions, and a refusal to imply the list is complete.
+
+    ASSESSED means every load-bearing assumption is stated and something bears on
+    it. It never means the argument makes no other assumptions: these are the ones
+    somebody *wrote down*, and the dangerous ones are usually the ones nobody
+    thought to mention.
+    """
+    if graph is None or not len(graph):
+        return _coverage_row(
+            "assumptions", False,
+            "no assumptions are recorded; an argument that declares none is not an "
+            "argument that makes none")
+    summary = graph.summary()
+    settled = summary["unstated"] == 0 and summary["unexamined"] == 0
+    return _coverage_row(
+        "assumptions", settled,
+        (f"{summary['total']} assumption(s) recorded, {summary['load_bearing']} "
+         f"load-bearing, {summary['unstated']} never stated, {summary['unexamined']} "
+         "load-bearing and unexamined; only declared assumptions are visible here"),
+        total=summary["total"], load_bearing=summary["load_bearing"],
+        unstated=summary["unstated"], unexamined=summary["unexamined"],
+        graph_digest=summary["digest"])
 
 
 def _contradiction_coverage(ledger: Optional[ContradictionLedger]) -> SimpleRecord:
@@ -398,6 +432,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 verification: Optional[VerificationGraph] = None,
                 independence: Optional[IndependenceProfile] = None,
                 contradictions: Optional[ContradictionLedger] = None,
+                assumptions: Optional[AssumptionGraph] = None,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -442,6 +477,11 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
             record_type="execution", record_id=normalisation.execution.digest(),
             payload=normalisation.execution.summary()))
 
+    builder.declare_present(
+        "assumptions",
+        "derived from what the claims in this case declare they rest on")
+    builder.extend("assumptions", list(assumptions) if assumptions else [])
+
     verifications = [r for r in normalisation.evidence if r.is_verification]
     builder.declare_present(
         "verification",
@@ -452,7 +492,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
                                                 verification, independence,
-                                                contradictions))
+                                                contradictions, assumptions))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -648,6 +688,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, contradictions=analysis.contradictions,
+        assumptions=analysis.assumptions,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -664,6 +705,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, contradictions=analysis.contradictions,
+        assumptions=analysis.assumptions,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -747,6 +789,13 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+
+    assumptions = outcome.assumptions
+    if len(assumptions):
+        add("")
+        add(f"  WHAT THIS RESTS ON ({len(assumptions)} assumption(s))")
+        for line in assumptions.explain().splitlines():
+            add(f"    {line}")
 
     ledger = outcome.contradictions
     if len(ledger):

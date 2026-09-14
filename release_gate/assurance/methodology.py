@@ -613,6 +613,59 @@ class AncestryIndependence(Predicate):
             f"support rests on {roots} distinct lineage(s)", observed)
 
 
+@_predicate
+@dataclass(frozen=True)
+class AssumptionsExamined(Predicate):
+    """Load-bearing assumptions must be stated, and something must bear on them.
+
+    The methodology hook for "if this assumption fails, what collapses?". The
+    analyser reports unexamined assumptions; only a methodology can decide that a
+    decision of this kind may not be taken while a conclusion rests on something
+    nobody looked at.
+    """
+
+    KIND = "assumptions_examined"
+    require_stated: bool = True
+    require_checked: bool = True
+    collection: str = "assumptions"
+
+    def describe(self) -> str:
+        wants = []
+        if self.require_stated:
+            wants.append("stated")
+        if self.require_checked:
+            wants.append("supported by evidence or verification")
+        return "load-bearing assumptions are " + " and ".join(wants or ["present"])
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        coll = case.collection(self.collection)
+        if coll.presence is not Presence.PRESENT:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                f"{self.collection} was never supplied; absence of recorded "
+                "assumptions is not evidence that an argument makes none",
+                {"presence": coll.presence.value})
+        records, incomplete, total = _records(case, self.collection)
+        load_bearing = [r for r in records if r.get("criticality") == "LOAD_BEARING"]
+        unstated = [r for r in load_bearing if not r.get("stated", True)]
+        unchecked = [r for r in load_bearing if not r.get("checked", False)]
+        observed = {"records_held": len(records), "total_count": total,
+                    "load_bearing": len(load_bearing), "unstated": len(unstated),
+                    "unchecked": len(unchecked)}
+
+        problems: List[str] = []
+        if self.require_stated and unstated:
+            problems.append(f"{len(unstated)} load-bearing assumption(s) are never stated")
+        if self.require_checked and unchecked:
+            problems.append(f"{len(unchecked)} load-bearing assumption(s) have nothing "
+                            "bearing on whether they hold")
+        return _absence_outcome(
+            problems, incomplete,
+            clean_detail=(f"all {len(load_bearing)} load-bearing assumption(s) are "
+                          "stated and examined"),
+            violation_detail="; ".join(problems), observed=observed)
+
+
 def predicate_from_dict(data: Mapping[str, Any]) -> Predicate:
     kind = data.get("kind")
     cls = _PREDICATE_TYPES.get(kind)

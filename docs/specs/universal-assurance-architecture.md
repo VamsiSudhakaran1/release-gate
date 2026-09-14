@@ -867,6 +867,55 @@ refutation was never answered (Invariant 7). Resolution is explicit: a
 contradiction is closed only by a record that answers it (a later verification, a
 human ruling), never by a newer successful branch existing.
 
+### 6.3a Assumptions (`RG-ASSUME-*`)
+
+> **Implemented.** `release_gate/assurance/assumptions.py`, plus the
+> `AssumptionsExamined` methodology predicate.
+
+Every argument rests on things nobody checked. The danger is not that assumptions
+exist — it is that they are invisible, so a reviewer approving a conclusion
+cannot ask the only question that matters about them:
+
+> If this assumption fails, what conclusions collapse?
+
+Answered by computation. An assumption's **criticality is its collapse set**:
+`LOAD_BEARING` means a root conclusion falls with it, `SUPPORTING` means other
+claims do, `ISOLATED` means nothing does. Derived from the graph, not a severity
+scale someone invented — which is the only way it means the same thing twice.
+
+```text
+as_clock  [UNKNOWN]  LOAD_BEARING
+    "the replica clock is within 50ms of primary"
+    nothing bears on whether this holds
+    If it fails, 3 claim(s) collapse:
+      directly:     cl_ordering
+      and then:     cl_noloss, cl_root
+      THE CONCLUSION FALLS: cl_root
+```
+
+**Not a new record type.** `ClaimType.ASSUMPTION` already existed and
+`Claim.depends_on` already folds `assumptions` in beside `parents`, so status
+already propagated through them — a conclusion cannot outrank the assumption it
+rests on. What was missing was the *view*: which claims rest on each, and what
+happens to them if it gives way. `AssumptionGraph` is a projection over the claim
+graph, not a parallel store.
+
+**The case it cares most about is the one the claim graph could not see.** A claim
+that says "this rests on X" where X is nowhere described yields an `Assumption`
+with `stated=False`, because an assumption nobody wrote down is the hardest to
+evaluate and the easiest to miss.
+
+**Collapse is not second-guessed.** A claim that names an assumption declared that
+it depends on it, so it collapses, and so does anything depending on it. Whether a
+claim might survive its assumption failing is a domain judgement; where a
+collapsing claim carries its own verification it is *flagged for that judgement*
+rather than quietly excused.
+
+Coverage never implies the list is complete: these are the assumptions somebody
+wrote down, and the dangerous ones are usually the ones nobody thought to mention.
+
+---
+
 ### 6.3b Contradiction preservation
 
 > **Implemented.** `release_gate/assurance/contradiction.py`, plus the refusal in

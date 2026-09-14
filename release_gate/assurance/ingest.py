@@ -724,6 +724,11 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
                     else _enum_or(ClaimProvenance, row.get("provenance"),
                                   ClaimProvenance.DECLARED)),
         parents=tuple(_as_ids(row.get("depends_on") or row.get("parents"))),
+        # `assumptions` is a dependency edge like `parents`, and dropping it would
+        # make every assumption look isolated — the assumption graph would report
+        # that nothing rests on things the argument explicitly rests on.
+        assumptions=tuple(_as_ids(row.get("assumptions"))),
+        supports=tuple(_as_ids(row.get("supports"))),
         supporting_evidence=tuple(resolve(i) for i in _as_ids(row.get("supporting_evidence"))),
         contradicting_evidence=tuple(
             resolve(i) for i in _as_ids(row.get("contradicting_evidence"))),
