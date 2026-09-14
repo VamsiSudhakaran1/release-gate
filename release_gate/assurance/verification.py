@@ -62,7 +62,7 @@ __all__ = [
     "VerificationTarget",
 ]
 
-VERIFICATION_SCHEMA_VERSION = 1
+VERIFICATION_SCHEMA_VERSION = 2
 
 
 class VerificationError(ValueError):
@@ -231,6 +231,13 @@ class VerificationAttempt:
 
         `target_digest` is in here, so the same check re-run against changed
         content is a different attempt rather than an update of the old one.
+
+        `independence_lineage` is in here too, at schema version 2. Two checks
+        that differ only in what they rest on are two attempts — that is the
+        entire difference between corroboration and an echo — and while it was
+        absent, two labs reporting the same outcome collided into one record and
+        a case could not hold both. Ids from version 1 do not survive the change;
+        the version in the digest makes that explicit rather than silent.
         """
         return {
             "schema_version": VERIFICATION_SCHEMA_VERSION,
@@ -239,6 +246,7 @@ class VerificationAttempt:
             "verifier": self.verifier,
             "target_digest": self.target_digest,
             "input_state": self.input_state,
+            "independence_lineage": list(self.independence_lineage),
             "status": self.status.value,
             "timestamp": self.timestamp,
             "evidence": list(self.evidence),

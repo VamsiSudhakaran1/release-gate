@@ -615,6 +615,134 @@ class AncestryIndependence(Predicate):
 
 @_predicate
 @dataclass(frozen=True)
+class ReplicationEstablished(Predicate):
+    """A result must have been reproduced by paths that could fail differently.
+
+    The methodology hook for "independently reproduced". Everything the analyser
+    reports about replication is advisory, because a workflow that rests on one
+    path is normal and often correct; this is where a decision that genuinely
+    needs reproduction says so and a shortfall costs something.
+
+    `required_axes` is what makes the examples distinguishable. "Same result via
+    a different proof strategy" is `METHOD`; "same simulation via an independent
+    implementation" is `IMPLEMENTATION`; "same experiment via an independent run"
+    is `INPUT` or `LINEAGE`. Naming none of them accepts any axis.
+
+    Paths are counted after copies collapse and unattributed paths are set aside,
+    so there is no arrangement of self-declared replications that satisfies this
+    without something recorded to derive independence from.
+    """
+
+    KIND = "replication_established"
+    minimum_paths: int = 2
+    required_axes: Tuple[str, ...] = ()
+    require_result_equivalence: bool = False
+    collection: str = "evidence"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "required_axes",
+                           tuple(sorted({str(a).upper() for a in self.required_axes})))
+        if self.minimum_paths < 1:
+            raise MethodologyError(
+                "minimum_paths must be at least 1; a requirement for zero "
+                "independent paths is not a requirement")
+
+    def describe(self) -> str:
+        parts = [f"the result is reproduced by at least {self.minimum_paths} "
+                 "independently established path(s)"]
+        if self.required_axes:
+            parts.append("differing in " + ", ".join(a.lower()
+                                                     for a in self.required_axes))
+        if self.require_result_equivalence:
+            parts.append("agreeing on the result, not only on the verdict")
+        return ", ".join(parts)
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        profiles = [r for r in records if r.get("record_type") == "replication"]
+        if not profiles:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no replication profile is recorded on this case, so whether anything "
+                "was independently reproduced has not been derived",
+                {"profiles": 0, "materialisation_incomplete": incomplete})
+
+        profile = profiles[0]
+        targets = profile.get("by_target") or []
+        if not targets:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no verification attempt names a target, so there is nothing whose "
+                "reproduction could be assessed",
+                {"targets": 0, "materialisation_incomplete": incomplete})
+
+        # The weakest target decides. A methodology that asks for reproduction is
+        # asking about the result the decision rests on, and satisfying it with the
+        # best-reproduced target would be exactly the "looks like its best branch"
+        # failure the case model exists to prevent (Invariant 7).
+        divergent = [t for t in targets if t.get("outcome") == "DIVERGENT"]
+        if divergent:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(divergent)} target(s) have paths that disagree; a result whose "
+                "reproductions contradict each other has not been reproduced, and the "
+                "paths that agree do not settle it",
+                {"divergent": len(divergent),
+                 "targets": [t.get("target", {}).get("target_id") for t in divergent[:8]]})
+
+        weakest = min(targets, key=lambda t: int(t.get("established_paths") or 0))
+        paths = int(weakest.get("established_paths") or 0)
+        observed = {"established_paths": paths, "minimum_paths": self.minimum_paths,
+                    "target": weakest.get("target", {}).get("target_id"),
+                    "outcome": weakest.get("outcome"),
+                    "unattributed_paths": weakest.get("unattributed_paths"),
+                    "copies_collapsed": weakest.get("copies_collapsed"),
+                    "axes_established": weakest.get("axes_established"),
+                    "required_axes": list(self.required_axes),
+                    "equivalence": weakest.get("equivalence"),
+                    "materialisation_incomplete": incomplete}
+
+        if paths < self.minimum_paths:
+            unattributed = int(weakest.get("unattributed_paths") or 0)
+            extra = (f"; {unattributed} further path(s) record nothing that could "
+                     "establish their independence" if unattributed else "")
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{observed['target']} rests on {paths} established path(s), "
+                f"{self.minimum_paths} required{extra}. Copies do not count as "
+                "replication (Invariant 6)",
+                observed)
+
+        if self.required_axes:
+            established = set(weakest.get("axes_established") or ())
+            missing = sorted(set(self.required_axes) - established)
+            if missing:
+                return _Finding(
+                    RequirementOutcome.UNSATISFIED,
+                    f"the paths on {observed['target']} are not shown to differ in "
+                    + ", ".join(a.lower() for a in missing) +
+                    "; an axis nobody recorded is not an axis that differs",
+                    observed)
+
+        if self.require_result_equivalence:
+            equivalence = str(weakest.get("equivalence") or "UNDETERMINED")
+            if equivalence in ("VERDICT_ONLY", "UNDETERMINED", "DIVERGENT"):
+                return _Finding(
+                    RequirementOutcome.UNSATISFIED,
+                    f"the paths on {observed['target']} agree on the verdict but their "
+                    f"results are {equivalence}; this methodology requires the results "
+                    "themselves to agree, and equivalence has to be declared because "
+                    "release-gate cannot decide it",
+                    observed)
+
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"{observed['target']} is reproduced by {paths} established path(s)",
+            observed)
+
+
+@_predicate
+@dataclass(frozen=True)
 class AssumptionsExamined(Predicate):
     """Load-bearing assumptions must be stated, and something must bear on them.
 

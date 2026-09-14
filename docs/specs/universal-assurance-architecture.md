@@ -1175,6 +1175,95 @@ Latent correlation — shared pre-training, a shared upstream corpus — remains
 outside what ancestry can see, and the coverage row says so rather than implying
 more (Invariant 10).
 
+### 6.4a Replication (`RG-REPL-*`)
+
+> **Implemented.** `release_gate/assurance/replication.py`, plus the
+> `ReplicationEstablished` methodology predicate.
+
+Independence asks where evidence came from. Replication asks the question one
+level up: **could this second answer have been wrong differently from the
+first?** A copy could not, so it adds nothing however many times it appears.
+
+Replication is a *relation between verification attempts*, not a new record.
+`VerificationAttempt` already carries what the question needs — method,
+implementation, input state, lineage, cited evidence, result — so this is a
+projection over the `verification` collection, the way `VerificationGraph` is,
+and no producer gets a new field to certify themselves with.
+
+**Copies collapse, and the collapse says why.** Attempts merge into one path
+when they share a signature, a declared lineage element, or an evidence root,
+recorded as `IDENTICAL_SIGNATURE`, `SHARED_LINEAGE`, `SHARED_EVIDENCE_ROOT`. The
+merging is three hash-indexed union passes, not a pairwise sweep, so ten thousand
+attempts on one target cost ten thousand unions rather than fifty million
+comparisons — and `SINGLE_PATH` is the default reading of mass agreement.
+
+**A label is not a path.** `VerificationMethod.INDEPENDENT_REPLICATION` is what a
+producer called their own work. It earns nothing: an attempt declaring itself an
+independent replication, resting on the lineage it claims to replicate, collapses
+into that lineage like anything else (Invariant 1).
+
+**Timestamps are deliberately not in the signature.** A cron job re-running one
+script hourly is not twenty-four replications a day. A second run with nothing
+recorded to distinguish it — no seed, no sample, no separate lineage — is not an
+established second path, and the remedy says to record what differed rather than
+crediting the repetition.
+
+Five axes, never summed and never scored:
+
+| axis | what it asks | source |
+|---|---|---|
+| `METHOD` | a different strategy — another proof, another test shape | `method` |
+| `IMPLEMENTATION` | a different tool or codebase did the work | `verifier` |
+| `INPUT` | a different input state was used | `input_state` |
+| `LINEAGE` | disjoint declared independence lineage | `independence_lineage` |
+| `PRODUCER` | different parties produced the cited evidence | derived from the records |
+
+**An unrecorded axis is `UNDETERMINED`, never a difference.** Two attempts that
+both recorded no input state have not been shown to use different inputs. This is
+the rule a naive implementation gets wrong, and it is the one that matters: the
+cheapest way to look independent is to record nothing, and a system that read
+silence as difference would hand its highest rating to whoever documented least.
+`INDEPENDENT` additionally requires `LINEAGE` to be determinable and disjoint —
+not because lineage outranks the rest, but because it is the axis that catches
+the echo.
+
+Axes are compared as *sets over each path's members*, never via a representative
+attempt: a path of four hundred attempts has no canonical member, and picking one
+would make the reported comparison depend on a sort order rather than on the
+evidence.
+
+**Disagreement is never outvoted.** Nine confirming paths and one divergent one
+is not ninety percent replicated. It is `DIVERGENT`, it becomes an open
+`Contradiction` under `VERIFICATION_CONFLICT` so final synthesis cannot present
+it as clean, and `RG-REPL-001` blocks where the claim is one the decision rests
+on. There is no majority rule anywhere in this module.
+
+**Same verdict is not the same result.** Two independent implementations agreeing
+that something passes have not been shown to have computed the same thing.
+`ResultEquivalence` records the basis: `IDENTICAL` (matching content), `DECLARED`
+or `TOLERANCE` (a producer stated one, and said so), `VERDICT_ONLY`, or
+`UNDETERMINED`. Release-Gate cannot decide whether two numbers are the same
+number — tolerance is domain knowledge, and inferring it would be a universal
+truth claim about somebody else's field (Invariant 10).
+
+`replications` is a count of established paths beyond the first. It is not a
+probability and nothing scales with agreement: five paths do not make a claim
+five times more likely to be true (Invariants 6 and 10). Every finding except
+divergence is ADVISORY, because a workflow that rests on one path is normal and
+often correct; only `ReplicationEstablished` turns a shortfall into a verdict,
+and its `required_axes` is what distinguishes "a different proof strategy"
+(`METHOD`) from "an independent implementation" (`IMPLEMENTATION`) from "an
+independent run" (`INPUT`, `LINEAGE`).
+
+**Schema change.** `VerificationAttempt.identity()` gained
+`independence_lineage` at `VERIFICATION_SCHEMA_VERSION = 2`. Two checks that
+differ only in what they rest on are two attempts — that is the whole difference
+between corroboration and an echo — and while lineage was absent from the
+identity, two labs reporting the same outcome collided into one record and a case
+could not hold both. Version-1 `verification_id` values do not survive the
+change; the version sits inside the digest, so the break is explicit rather than
+silent.
+
 ### 6.5 Change / drift (`RG-DRIFT-*`)
 
 Verified-then-modified artifacts; subject digest changes since the last case
@@ -1564,6 +1653,7 @@ release_gate/assurance/
                          checkers, type checkers, compilers, test frameworks) -> attempts
   analyzers/
     provenance.py  coverage.py  contradiction.py  independence.py  drift.py  completeness.py
+    replication.py       paths to a result, copies collapsed
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
   packet.py              ApprovalPacket rendering (json / markdown / html)

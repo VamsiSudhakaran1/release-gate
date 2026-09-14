@@ -39,6 +39,8 @@ from release_gate.assurance.failed_branches import (
     FailedBranchLedger, FailedBranchRecorder, branches_from_verification,
 )
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
+from release_gate.assurance.replication import (
+    ReplicationOutcome, ReplicationProfile, ResultEquivalence, analyse_replication)
 from release_gate.assurance.independence import (
     IndependenceProfile, LineageConcentration, analyse_independence,
 )
@@ -64,6 +66,7 @@ class AnalysisDomain(str, Enum):
     CAPABILITY = "CAPABILITY"
     CONSEQUENCE = "CONSEQUENCE"
     INDEPENDENCE = "INDEPENDENCE"
+    REPLICATION = "REPLICATION"
     ASSUMPTION = "ASSUMPTION"
     COUNTEREXAMPLE = "COUNTEREXAMPLE"
     FAILED_BRANCH = "FAILED_BRANCH"
@@ -122,6 +125,7 @@ class AnalysisResult:
     capabilities: Optional[CapabilitySurface] = None
     consequence: Optional[ConsequenceProfile] = None
     independence: Optional[IndependenceProfile] = None
+    replication: Optional[ReplicationProfile] = None
     contradictions: Optional[ContradictionLedger] = None
     assumptions: Optional[AssumptionGraph] = None
     counterexamples: Optional[CounterexampleLedger] = None
@@ -409,6 +413,138 @@ def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Findin
             remedy="correct the parent_evidence chain so derivation is acyclic",
             refs=profile.cycles_detected[:12],
             observed={"cycles": len(profile.cycles_detected)}))
+    return findings
+
+
+# ── replication (RG-REPL-*) ──────────────────────────────────────────────────
+
+def _analyse_replication(profile: Optional[ReplicationProfile],
+                         critical: Set[str]) -> List[Finding]:
+    """What has actually been reproduced, once copies have collapsed.
+
+    The asymmetry between the two outcomes is deliberate. Divergence holds the
+    decision: paths that disagree are a disagreement, and the ones that agree do
+    not settle it however many there are. Everything else is advisory, because a
+    workflow that legitimately rests on one path is normal and a gate that docked
+    it would punish good practice — only a methodology that says it needs
+    independent reproduction can turn a single path into a verdict, through
+    `ReplicationEstablished`.
+    """
+    findings: List[Finding] = []
+    if profile is None or not profile.targets:
+        return findings
+
+    divergent = profile.divergent
+    against_critical = [t for t in divergent
+                        if t.target.kind is TargetKind.CLAIM
+                        and t.target.target_id in critical]
+    if against_critical:
+        findings.append(Finding(
+            rule_id="RG-REPL-001", domain=AnalysisDomain.REPLICATION,
+            effect=RequirementEffect.BLOCK,
+            summary=f"{len(against_critical)} critical target(s) have replications that "
+                    "disagree with each other",
+            detail="; ".join(
+                f"{t.target.target_id}: {t.established_paths} established path(s) "
+                f"reached {' and '.join(t.divergent_verdicts)}"
+                for t in against_critical[:4])[:700]
+                   + ". This is a disagreement, not a majority: the paths that agree "
+                     "do not settle it, and averaging them would erase the one that "
+                     "did not.",
+            remedy="find out why the paths differ and record what settles it, or "
+                   "withdraw the result until they agree",
+            refs=tuple(t.target.target_id for t in against_critical[:12]),
+            observed={"divergent_critical": len(against_critical)}))
+
+    other = [t for t in divergent if t not in against_critical]
+    if other:
+        findings.append(Finding(
+            rule_id="RG-REPL-002", domain=AnalysisDomain.REPLICATION,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(other)} target(s) have replications that disagree",
+            detail="; ".join(f"{t.target.target_id} reached "
+                             f"{' and '.join(t.divergent_verdicts)} on different paths"
+                             for t in other[:6])[:500],
+            remedy="reconcile the paths or record why the difference does not bear on "
+                   "the decision",
+            refs=tuple(t.target.target_id for t in other[:12]),
+            observed={"divergent": len(other)}))
+
+    echoed = [t for t in profile.single_path if t.attempts_examined > 1]
+    if echoed:
+        findings.append(Finding(
+            rule_id="RG-REPL-003", domain=AnalysisDomain.REPLICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(echoed)} target(s) have agreeing attempts that all collapse "
+                    "to one path",
+            detail="; ".join(f"{t.target.target_id}: {t.attempts_examined:,} attempt(s) "
+                             f"-> 1 path ({t.copies_collapsed:,} collapsed)"
+                             for t in echoed[:4])[:600]
+                   + ". Agreement among attempts that share a lineage, an "
+                     "implementation and an input is one result observed many times. "
+                     "This is reported, not penalised — resting on one authoritative "
+                     "path is often exactly right.",
+            remedy="none required; obtain a result from a path that could fail "
+                   "differently only if this decision needs reproduction rather than "
+                   "repetition",
+            refs=tuple(t.target.target_id for t in echoed[:12]),
+            observed={"single_path_targets": len(echoed),
+                      "attempts": sum(t.attempts_examined for t in echoed),
+                      "copies_collapsed": sum(t.copies_collapsed for t in echoed)}))
+
+    unachieved = profile.not_achieved
+    if unachieved:
+        findings.append(Finding(
+            rule_id="RG-REPL-004", domain=AnalysisDomain.REPLICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(unachieved)} target(s) had a reproduction attempted that "
+                    "reached no verdict",
+            detail="; ".join(f"{t.target.target_id}: {len(t.not_achieved)} "
+                             "inconclusive attempt(s)" for t in unachieved[:4])[:500]
+                   + ". Kept as evidence about the attempt, credited with nothing "
+                     "about the result (Invariant 7).",
+            remedy="none required; record why the reproduction could not complete if a "
+                   "reviewer needs to know what was in the way",
+            refs=tuple(t.target.target_id for t in unachieved[:12]),
+            observed={"not_achieved": len(unachieved)}))
+
+    verdict_only = [t for t in profile.confirmed
+                    if t.equivalence in (ResultEquivalence.VERDICT_ONLY,
+                                         ResultEquivalence.UNDETERMINED)]
+    if verdict_only:
+        findings.append(Finding(
+            rule_id="RG-REPL-005", domain=AnalysisDomain.REPLICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(verdict_only)} reproduced target(s) agree on the verdict but "
+                    "not demonstrably on the result",
+            detail="; ".join(f"{t.target.target_id}: {t.equivalence.value}"
+                             for t in verdict_only[:6])[:500]
+                   + ". The paths reached the same pass or fail; whether they computed "
+                     "the same thing is not established, and release-gate cannot "
+                     "decide that — tolerance is domain knowledge and has to be "
+                     "declared.",
+            remedy="declare an equivalence basis on the results (and a tolerance where "
+                   "one applies) so agreement on the value is recorded rather than "
+                   "inferred",
+            refs=tuple(t.target.target_id for t in verdict_only[:12]),
+            observed={"verdict_only": len(verdict_only)}))
+
+    unattributed = [t for t in profile.targets if t.unattributed_paths]
+    if unattributed:
+        findings.append(Finding(
+            rule_id="RG-REPL-006", domain=AnalysisDomain.REPLICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{sum(t.unattributed_paths for t in unattributed)} path(s) record "
+                    "no lineage and cite no evidence",
+            detail="They are counted apart rather than credited: a second opinion that "
+                   "says nothing about where it came from cannot be shown to rest on "
+                   "anything different from the first.",
+            remedy="record independence_lineage on verification attempts, or cite the "
+                   "evidence they rest on, so reproduction can be derived rather than "
+                   "assumed",
+            refs=tuple(t.target.target_id for t in unattributed[:12]),
+            observed={"unattributed_paths": sum(t.unattributed_paths
+                                                for t in unattributed)}))
     return findings
 
 
@@ -1142,6 +1278,12 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     branch_recorder.extend(branches_from_verification(verification_graph))
     failed_branches = branch_recorder.build()
 
+    # Replication reads the same attempts the verification graph holds, so the two
+    # can never disagree about what ran; what it adds is which of them are copies.
+    replication = analyse_replication(
+        verification_graph.attempts if verification_graph is not None else (),
+        records=records)
+
     declared_attempts = tuple(getattr(normalisation, "counterexamples", ()) or ())
     counterexamples = CounterexampleLedger(
         declared_attempts + counterexamples_from_evidence(records))
@@ -1153,11 +1295,21 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                for c in contradiction.target_claims}
     lifted = tuple(c for c in counterexamples.to_contradictions(critical_claims=critical)
                    if not set(c.target_claims) & already)
-    ledger = ContradictionLedger(tuple(detected.contradictions) + lifted)
+    # Paths that disagree become a disagreement the verdict cannot omit. Filed
+    # under VERIFICATION_CONFLICT like any other check that contradicts another,
+    # and skipped where the contradiction detector already filed the same clash
+    # from the attempts themselves, so one disagreement gets one id.
+    seen_conflicts = {c for contradiction in tuple(detected.contradictions) + lifted
+                      if contradiction.kind is ContradictionKind.VERIFICATION_CONFLICT
+                      for c in contradiction.target_claims}
+    diverged = tuple(c for c in replication.to_contradictions(critical_claims=critical)
+                     if not set(c.target_claims) & seen_conflicts)
+    ledger = ContradictionLedger(tuple(detected.contradictions) + lifted + diverged)
 
     findings: List[Finding] = []
     findings.extend(_analyse_provenance(case, records))
     findings.extend(_analyse_independence(independence))
+    findings.extend(_analyse_replication(replication, critical))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
     findings.extend(_analyse_contradiction(claim_graph, records, ledger))
@@ -1176,7 +1328,8 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           artifact_graph=artifact_graph, execution_graph=execution,
                           verification_graph=verification_graph,
                           capabilities=capabilities, consequence=consequence,
-                          independence=independence, contradictions=ledger,
+                          independence=independence, replication=replication,
+                          contradictions=ledger,
                           assumptions=assumption_graph,
                           counterexamples=counterexamples,
                           failed_branches=failed_branches)

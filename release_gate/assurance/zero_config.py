@@ -53,6 +53,7 @@ from release_gate.assurance.contradiction import Contradiction, ContradictionLed
 from release_gate.assurance.counterexample import CounterexampleLedger
 from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
+from release_gate.assurance.replication import ReplicationOutcome, ReplicationProfile
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
     Applicability, VerificationGraph, VerificationStatus,
@@ -133,6 +134,11 @@ class AssuranceOutcome:
         return self.analysis.independence
 
     @property
+    def replication(self) -> Optional[ReplicationProfile]:
+        """What has actually been reproduced, once copies have collapsed."""
+        return self.analysis.replication
+
+    @property
     def verification(self) -> Optional[VerificationGraph]:
         """Every check on every target, with whether each still applies."""
         return self.analysis.verification_graph
@@ -160,6 +166,8 @@ class AssuranceOutcome:
                              else None),
             "independence": (self.independence.to_dict() if self.independence
                              else None),
+            "replication": (self.replication.to_dict()
+                            if self.replication is not None else None),
             "contradictions": self.contradictions.to_dict(),
             "assumptions": self.assumptions.to_dict(),
             "counterexamples": self.counterexamples.to_dict(),
@@ -190,6 +198,7 @@ def _ingest_coverage(normalisation: Normalisation,
                      consequence: ConsequenceProfile,
                      verification: Optional[VerificationGraph],
                      independence: Optional[IndependenceProfile],
+                     replication: Optional[ReplicationProfile] = None,
                      contradictions: Optional[ContradictionLedger] = None,
                      assumptions: Optional[AssumptionGraph] = None,
                      counterexamples: Optional[CounterexampleLedger] = None,
@@ -216,6 +225,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _consequence_coverage(consequence),
         _verification_coverage(verification),
         _independence_coverage(independence),
+        _replication_coverage(replication),
         _contradiction_coverage(contradictions),
         _assumption_coverage(assumptions),
         _counterexample_coverage(counterexamples),
@@ -393,6 +403,34 @@ def _independence_coverage(profile: Optional[IndependenceProfile]) -> SimpleReco
         profile_digest=profile.digest())
 
 
+def _replication_coverage(profile: Optional[ReplicationProfile]) -> SimpleRecord:
+    """Coverage for replication, keyed on whether any second path exists at all.
+
+    A case whose every target sits on one path has not had replication assessed
+    as insufficient — it has had nothing to assess. That distinction is the point
+    of the row: `SINGLE_PATH` everywhere reports as not-assessed rather than as a
+    failure, because resting on one path is a normal workflow and this row is not
+    where that becomes a verdict.
+    """
+    if profile is None or not profile.targets:
+        return _coverage_row("replication", False,
+                             "no verification attempt names a target, so nothing here "
+                             "could be reproduced or compared")
+    reproduced = len(profile.confirmed) + len(profile.divergent)
+    return _coverage_row(
+        "replication", reproduced > 0,
+        (f"{len(profile.targets)} target(s); {len(profile.confirmed)} reproduced, "
+         f"{len(profile.divergent)} divergent, {len(profile.single_path)} on a single "
+         f"path. {profile.basis}"),
+        targets=len(profile.targets),
+        confirmed=len(profile.confirmed),
+        divergent=len(profile.divergent),
+        single_path=len(profile.single_path),
+        not_achieved=len(profile.not_achieved),
+        max_replications=max((t.replications for t in profile.targets), default=0),
+        attempts_examined=profile.attempts_examined)
+
+
 def _verification_coverage(graph: Optional[VerificationGraph]) -> SimpleRecord:
     """Coverage for verification, keyed on whether applicability is computable.
 
@@ -501,6 +539,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 consequence: ConsequenceProfile,
                 verification: Optional[VerificationGraph] = None,
                 independence: Optional[IndependenceProfile] = None,
+                replication: Optional[ReplicationProfile] = None,
                 contradictions: Optional[ContradictionLedger] = None,
                 assumptions: Optional[AssumptionGraph] = None,
                 counterexamples: Optional[CounterexampleLedger] = None,
@@ -535,6 +574,11 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         # Same reasoning as the consequence profile: one object, already a record,
         # and the predicate finds it here by record_type.
         builder.add("evidence", independence)
+    if replication is not None and replication.targets:
+        # Same again. Empty is left out rather than stored: a profile over no
+        # targets says nothing, and `ReplicationEstablished` reports NOT_ASSESSED
+        # on its absence, which is the honest reading of "nothing was compared".
+        builder.add("evidence", replication)
 
     # Present-but-empty is not the same as never supplied. The ingest looked for
     # claims and artifacts, so the collections are declared present either way.
@@ -586,7 +630,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
 
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
-                                                verification, independence,
+                                                verification, independence, replication,
                                                 contradictions, assumptions,
                                                 counterexamples, failed_branches))
 
@@ -783,7 +827,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
-        independence=analysis.independence, contradictions=analysis.contradictions,
+        independence=analysis.independence, replication=analysis.replication,
+        contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         failed_branches=analysis.failed_branches,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
@@ -801,7 +846,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
-        independence=analysis.independence, contradictions=analysis.contradictions,
+        independence=analysis.independence, replication=analysis.replication,
+        contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         failed_branches=analysis.failed_branches,
         extra={"contradictions": contradictions,
