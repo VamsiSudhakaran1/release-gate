@@ -29,6 +29,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.analysis import AnalysisDomain, AnalysisResult, Finding
 from release_gate.assurance.case import AssuranceCase
+from release_gate.assurance.required_evidence import (
+    EvidenceRequirement, EvidenceRequirementKind, acceptance_for,
+    requirement_kind_for, requirement_kind_for_predicate, target_kind_for_focus)
+from release_gate.assurance.verification import TargetKind, VerificationTarget
 from release_gate.assurance.methodology import (
     AssessmentStatus, MethodologyAssessment, RequirementEffect, RequirementOutcome,
 )
@@ -41,6 +45,8 @@ __all__ = [
     "ConsequenceWeight",
     "RequirementPressure",
     "HumanAttentionSet",
+    "EvidenceRequirement",
+    "EvidenceRequirementKind",
     "RequiredEvidenceItem",
     "RequiredEvidenceSet",
     "build_attention",
@@ -54,6 +60,7 @@ _EFFECT_RANK = {RequirementEffect.BLOCK: 0, RequirementEffect.HOLD: 1,
 # Which rules point at a thing worth inspecting, and what kind of thing it is.
 _FOCUS_KIND = {
     "RG-PROV-001": "producer", "RG-PROV-002": "producer",
+    "RG-PROV-003": "evidence",
     "RG-VERIF-001": "case", "RG-VERIF-002": "claim", "RG-VERIF-003": "claim",
     "RG-CONTRA-001": "evidence", "RG-CONTRA-002": "claim",
     "RG-CONTRA-003": "claim", "RG-CONTRA-004": "claim",
@@ -474,10 +481,22 @@ class RequiredEvidenceItem:
     effect: RequirementEffect
     resolves: Tuple[str, ...] = ()
     monotone: bool = True
+    #: The machine-readable form. Present on every item, so a consumer never has
+    #: to parse `what` — which is prose for a person and was never a contract.
+    requirement: Optional[EvidenceRequirement] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", RequirementEffect(self.effect))
         object.__setattr__(self, "resolves", tuple(self.resolves))
+
+    @property
+    def target(self) -> str:
+        return self.requirement.target.reference if self.requirement else "case:this"
+
+    @property
+    def kind(self) -> EvidenceRequirementKind:
+        return (self.requirement.requirement if self.requirement
+                else EvidenceRequirementKind.UNSPECIFIED)
 
     @property
     def record_type(self) -> str:
@@ -488,9 +507,17 @@ class RequiredEvidenceItem:
         return self.requirement_id
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"record_type": "required_evidence", "record_id": self.requirement_id,
-                "what": self.what, "why": self.why, "effect": self.effect.value,
-                "resolves": list(self.resolves), "monotone": self.monotone}
+        payload = {"record_type": "required_evidence",
+                   "record_id": self.requirement_id,
+                   "what": self.what, "why": self.why, "effect": self.effect.value,
+                   "resolves": list(self.resolves), "monotone": self.monotone}
+        if self.requirement is not None:
+            protocol = self.requirement.to_dict()
+            # The wire form wins on the three protocol keys; the prose stays
+            # under its own names for the reader.
+            payload.update({k: v for k, v in protocol.items()
+                            if k not in ("record_type", "record_id")})
+        return payload
 
 
 @dataclass(frozen=True)
@@ -500,6 +527,7 @@ class RequiredEvidenceSet:
     items: Tuple[RequiredEvidenceItem, ...] = ()
     methodology_required: bool = False
     note: str = ""
+    targets_truncated: int = 0
 
     def __iter__(self):
         return iter(self.items)
@@ -507,9 +535,55 @@ class RequiredEvidenceSet:
     def __len__(self) -> int:
         return len(self.items)
 
+    @property
+    def dispatchable(self) -> Tuple[RequiredEvidenceItem, ...]:
+        """Requirements an external system can switch on and act upon."""
+        return tuple(i for i in self.items
+                     if i.requirement is not None and i.requirement.dispatchable)
+
+    @property
+    def unspecified(self) -> Tuple[RequiredEvidenceItem, ...]:
+        """Gaps release-gate can see and cannot name a closer for.
+
+        Reported as their own group rather than mixed in: a consumer that cannot
+        dispatch on one should be told so, not handed a plausible wrong type.
+        """
+        return tuple(i for i in self.items if i not in self.dispatchable)
+
+    def for_target(self, reference: str) -> Tuple[RequiredEvidenceItem, ...]:
+        return tuple(i for i in self.items if i.target == reference)
+
+    def protocol(self) -> Dict[str, Any]:
+        """The machine-readable form an external system consumes.
+
+        Deliberately contains no assignee, priority, deadline, schedule or
+        callback. Release-Gate says what would resolve what, addressed to nobody;
+        who does the work, in what order, and whether at all, is somebody else's
+        authority. `satisfies_decision` is False for the same reason it is False
+        everywhere: closing every gap release-gate can see is not the same as
+        being sufficient, and a protocol whose completion implied authorisation
+        would invert the boundary this system exists to hold.
+        """
+        return {
+            "schema_version": 1,
+            "required_evidence": [i.requirement.to_dict() for i in self.items
+                                  if i.requirement is not None],
+            "count": len(self.items),
+            "dispatchable": len(self.dispatchable),
+            "unspecified": len(self.unspecified),
+            "targets_truncated": self.targets_truncated,
+            "methodology_required": self.methodology_required,
+            "satisfies_decision": False,
+            "note": self.note,
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         return {"count": len(self.items),
                 "methodology_required": self.methodology_required,
+                "dispatchable": len(self.dispatchable),
+                "unspecified": len(self.unspecified),
+                "targets_truncated": self.targets_truncated,
+                "satisfies_decision": False,
                 "note": self.note, "items": [i.to_dict() for i in self.items]}
 
 
@@ -792,6 +866,12 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
 
 # Requirements of the at-least shape stay satisfied as evidence arrives. The rest
 # can flip back, and a caller that treats them as monotone will be wrong later.
+#: How many targets one rule may expand into before the rest are counted rather
+#: than listed. Three hundred load-bearing claims resting on one producer really
+#: are three hundred requirements; what they are not is an unbounded payload, so
+#: the remainder is declared through `targets_truncated` rather than dropped.
+_TARGETS_PER_RULE = 200
+
 _NON_MONOTONE_RULES = frozenset({
     "RG-CONTRA-001", "RG-CONTRA-002", "RG-CONTRA-003", "RG-CONTRA-004",
     "RG-VERIF-002", "RG-VERIF-003", "RG-DRIFT-001", "RG-DRIFT-003", "RG-DRIFT-005",
@@ -821,43 +901,103 @@ def build_required_evidence(case: AssuranceCase, analysis: AnalysisResult,
     one errand. Every item says what it would resolve and whether supplying it can
     be undone by later evidence.
     """
-    by_remedy: Dict[str, List[Finding]] = {}
+    # Grouped by (target, kind), not by the text of a remedy. Two claims that
+    # both need independent verification are two requirements: a verifier can act
+    # on one and not the other, and collapsing them into "verify the claims" is a
+    # sentence nobody can dispatch. The old dedupe-by-remedy did exactly that.
+    groups: Dict[Tuple[str, str], List[Finding]] = {}
+    targets: Dict[Tuple[str, str], VerificationTarget] = {}
+    truncated: Dict[str, int] = {}
     for finding in analysis.findings:
         if finding.effect is RequirementEffect.ADVISORY or not finding.remedy:
             continue
-        by_remedy.setdefault(finding.remedy, []).append(finding)
+        kind = requirement_kind_for(finding.rule_id)
+        # The same focus the attention engine computes, so a requirement and the
+        # inspection it corresponds to always name the same object.
+        focus, focus_kind = _focus_of(finding)
+        target_kind = target_kind_for_focus(focus_kind)
+        if target_kind is TargetKind.CASE or not finding.refs:
+            refs: Sequence[str] = (finding.rule_id,)
+            target_kind = TargetKind.CASE
+        else:
+            refs = finding.refs[:_TARGETS_PER_RULE]
+            if len(finding.refs) > _TARGETS_PER_RULE:
+                truncated[finding.rule_id] = len(finding.refs) - _TARGETS_PER_RULE
+        for ref in refs:
+            target = VerificationTarget(kind=target_kind, target_id=str(ref))
+            key = (target.reference, kind.value)
+            targets.setdefault(key, target)
+            groups.setdefault(key, []).append(finding)
 
     items: List[RequiredEvidenceItem] = []
-    for remedy in sorted(by_remedy):
-        findings = sorted(by_remedy[remedy], key=lambda f: f.rule_id)
+    for key in sorted(groups):
+        findings = sorted(groups[key], key=lambda f: f.rule_id)
         effect = min((f.effect for f in findings), key=lambda e: _EFFECT_RANK[e])
-        rule_ids = tuple(f.rule_id for f in findings)
+        rule_ids = tuple(sorted({f.rule_id for f in findings}))
+        kind = EvidenceRequirementKind(key[1])
+        reason = "; ".join(dict.fromkeys(f.summary for f in findings))[:300]
+        requirement = EvidenceRequirement(
+            target=targets[key], requirement=kind, reason=reason, effect=effect,
+            constraints=_constraints_for(findings, analysis),
+            acceptance=acceptance_for(kind), resolves=rule_ids,
+            monotone=not any(r in _NON_MONOTONE_RULES for r in rule_ids),
+            detail="; ".join(dict.fromkeys(f.remedy for f in findings))[:400])
         items.append(RequiredEvidenceItem(
-            requirement_id=f"req_{findings[0].rule_id}",
-            what=remedy,
-            why="; ".join(sorted({f.summary for f in findings}))[:400],
+            requirement_id=requirement.requirement_id,
+            what=requirement.detail or reason, why=reason,
             effect=effect, resolves=rule_ids,
-            monotone=not any(r in _NON_MONOTONE_RULES for r in rule_ids)))
+            monotone=requirement.monotone, requirement=requirement))
 
     methodology_required = (assessment is not None
                             and assessment.status is AssessmentStatus.METHODOLOGY_REQUIRED)
     if methodology_required:
+        methodology = EvidenceRequirement(
+            target=VerificationTarget(kind=TargetKind.METHODOLOGY,
+                                      target_id="this-decision"),
+            requirement=EvidenceRequirementKind.METHODOLOGY_DECLARATION,
+            reason="no methodology states what evidence this decision requires",
+            effect=RequirementEffect.HOLD,
+            acceptance=acceptance_for(EvidenceRequirementKind.METHODOLOGY_DECLARATION),
+            resolves=("RG-ZC-001",), monotone=True,
+            detail="state a methodology and re-run")
         items.insert(0, RequiredEvidenceItem(
-            requirement_id="req_methodology",
+            requirement_id=methodology.requirement_id,
             what="a methodology stating what evidence this decision requires",
             why=("structural assurance is complete as far as it goes; sufficiency for "
                  "this domain is unanswerable without a stated yardstick"),
-            effect=RequirementEffect.HOLD, resolves=("RG-ZC-001",), monotone=True))
+            effect=RequirementEffect.HOLD, resolves=("RG-ZC-001",), monotone=True,
+            requirement=methodology))
     elif assessment is not None:
         for result in assessment.unmet():
             if result.effect is RequirementEffect.ADVISORY:
                 continue
+            # A methodology requirement names a yardstick, not a thing in the
+            # case, so its target is the requirement itself. Its kind is
+            # `unspecified` unless the requirement says otherwise: guessing what
+            # would satisfy somebody else's yardstick is exactly the invention
+            # this system refuses.
+            # The predicate says what would satisfy it. An organisation's own
+            # predicate, arriving through the API with no mapping, degrades to
+            # `unspecified` with its prose intact rather than to a nearby kind
+            # chosen to look tidy.
+            kind = requirement_kind_for_predicate(result.predicate_kind)
+            requirement = EvidenceRequirement(
+                target=VerificationTarget(kind=TargetKind.METHODOLOGY,
+                                          target_id=result.requirement_id),
+                requirement=kind,
+                reason=result.description, effect=result.effect,
+                constraints=_methodology_constraints(result),
+                acceptance=result.remedy or acceptance_for(kind),
+                resolves=(result.requirement_id,),
+                monotone=result.outcome is not RequirementOutcome.UNKNOWN,
+                detail=result.detail or result.description)
             items.append(RequiredEvidenceItem(
-                requirement_id=f"req_{result.requirement_id}",
+                requirement_id=requirement.requirement_id,
                 what=result.remedy or result.description,
                 why=result.detail or result.description, effect=result.effect,
                 resolves=(result.requirement_id,),
-                monotone=result.outcome is not RequirementOutcome.UNKNOWN))
+                monotone=result.outcome is not RequirementOutcome.UNKNOWN,
+                requirement=requirement))
 
     note = ("This is what would resolve the gaps release-gate can see. It is not a "
             "list that, once satisfied, yields PROMOTE — no methodology has stated "
@@ -866,4 +1006,67 @@ def build_required_evidence(case: AssuranceCase, analysis: AnalysisResult,
             "Supplying these resolves the named gaps; the methodology decides whether "
             "what remains is sufficient.")
     return RequiredEvidenceSet(items=tuple(items),
-                               methodology_required=methodology_required, note=note)
+                               methodology_required=methodology_required, note=note,
+                               targets_truncated=sum(truncated.values()))
+
+
+def _constraints_for(findings: Sequence[Finding], analysis: AnalysisResult
+                     ) -> Dict[str, Any]:
+    """What new evidence would have to satisfy, in terms a machine can check.
+
+    Read only from what the case actually establishes. A constraint invented to
+    look precise — a lineage nobody recorded, a digest nobody computed — would
+    send a verifier to produce evidence against a condition that was never true,
+    which is worse than saying nothing.
+    """
+    constraints: Dict[str, Any] = {}
+    observed: Dict[str, Any] = {}
+    for finding in findings:
+        observed.update(finding.observed or {})
+
+    # Which lineages the new evidence must not rest on. Derived from the
+    # independence profile rather than from any producer's account of itself.
+    profile = getattr(analysis, "independence", None)
+    if profile is not None and profile.clusters:
+        largest = profile.clusters[0]
+        if largest.contributors:
+            constraints["independent_of"] = list(largest.contributors[:8])
+
+    # Which state the check must apply to. Without it a re-verification can be
+    # produced against yesterday's content and look current.
+    subject = getattr(getattr(analysis, "artifact_graph", None), "artifacts", None)
+    case_digest = observed.get("current_digest") or observed.get("subject_digest")
+    if isinstance(case_digest, str) and case_digest:
+        constraints["against_digest"] = case_digest
+
+    for key, out in (("critical_claims", "affects_claims"),
+                     ("known_missing_ids", "missing_ids"),
+                     ("named", "missing_ids"),
+                     ("missing", "missing_ids"),
+                     ("dimensions", "dimensions"),
+                     ("requirements", "answers_requirements")):
+        value = observed.get(key)
+        if isinstance(value, (list, tuple)) and value:
+            constraints.setdefault(out, sorted({str(x) for x in value})[:12])
+
+    expected = observed.get("expected")
+    if isinstance(expected, int):
+        constraints["expected_total"] = expected
+    if observed.get("self_certified"):
+        constraints["independent_of_producer"] = True
+    return constraints
+
+
+def _methodology_constraints(result: Any) -> Dict[str, Any]:
+    """What an unmet methodology requirement is actually waiting on.
+
+    Taken from what the predicate observed, so the numbers a verifier is asked to
+    reach are the ones the predicate will check against — not a restatement that
+    could drift from them.
+    """
+    observed = dict(getattr(result, "observed", None) or {})
+    wanted = ("minimum_roots", "minimum_paths", "minimum_attacks", "minimum_coverage",
+              "required_axes", "required_roles", "dimension", "expected",
+              "independent_roots", "established_paths", "attacks", "target")
+    return {k: observed[k] for k in wanted
+            if k in observed and observed[k] not in (None, (), [], "")}

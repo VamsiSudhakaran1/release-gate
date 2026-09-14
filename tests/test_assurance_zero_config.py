@@ -423,21 +423,31 @@ class TestRequiredEvidence:
     def test_a_methodology_is_the_first_thing_required(self, clean_file):
         required = assure(clean_file).required_evidence
         assert required.methodology_required
-        assert list(required)[0].requirement_id == "req_methodology"
+        first = list(required)[0]
+        # Ids are content-derived now, so the return leg can cite a stable one;
+        # what identifies this requirement is its target and kind.
+        assert first.target == "methodology:this-decision"
+        assert first.kind.value == "methodology_declaration"
 
     def test_it_never_promises_that_supplying_them_yields_promote(self, clean_file):
         note = assure(clean_file).required_evidence.note
         assert "not a list that, once satisfied, yields PROMOTE" in note
 
-    def test_two_findings_with_one_remedy_are_one_errand(self, tmp_path):
+    def test_two_claims_needing_the_same_thing_are_two_requirements(self, tmp_path):
+        # Deliberately the reverse of the old dedupe-by-remedy: a verifier can act
+        # on one claim and not the other, so collapsing them into one errand
+        # produces a sentence nobody can dispatch.
         path = _write(tmp_path, "two.jsonl", [
             {"record_type": "claim", "claim_id": "cl_a", "proposition": "a",
              "producer": {"producer_id": "agent://x", "kind": "agent"}},
             {"record_type": "claim", "claim_id": "cl_b", "proposition": "b",
              "producer": {"producer_id": "agent://x", "kind": "agent"}}])
         required = assure(path).required_evidence
-        whats = [i.what for i in required]
-        assert len(whats) == len(set(whats))
+        targets = {i.target for i in required}
+        assert "claim:cl_a" in targets and "claim:cl_b" in targets
+        # But no requirement is ever duplicated: one (target, kind) is one ask.
+        ids = [i.requirement_id for i in required]
+        assert len(ids) == len(set(ids))
 
     def test_non_monotone_items_are_flagged(self, refuted_file):
         required = assure(refuted_file).required_evidence
@@ -448,7 +458,7 @@ class TestRequiredEvidence:
     def test_at_least_checks_are_monotone(self, clean_file):
         required = assure(clean_file).required_evidence
         assert next(i for i in required
-                    if i.requirement_id == "req_methodology").monotone is True
+                    if i.target == "methodology:this-decision").monotone is True
 
 
 # ── the case that comes out ──────────────────────────────────────────────────

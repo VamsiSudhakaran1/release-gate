@@ -259,6 +259,15 @@ from release_gate.assurance.expectation import (
     ExpectationSourceKind,
     ExpectationStanding,
 )
+from release_gate.assurance.required_evidence import (
+    REQUIRED_EVIDENCE_SCHEMA_VERSION,
+    EvidenceRequirement,
+    EvidenceRequirementKind,
+    acceptance_for,
+    requirement_kind_for,
+    requirement_kind_for_predicate,
+    target_kind_for_focus,
+)
 from release_gate.assurance.criticality import (
     CRITICALITY_SCHEMA_VERSION,
     ClaimCriticality,
@@ -489,6 +498,8 @@ __all__ = [
     "EvidenceGraphBuilder",
     "EvidenceIntegrityError",
     "EvidenceRecord",
+    "EvidenceRequirement",
+    "EvidenceRequirementKind",
     "EvidenceSchemaError",
     "EvidenceType",
     "ExecutionCompleteness",
@@ -545,6 +556,7 @@ __all__ = [
     "ProvenanceStatus",
     "QueryPolarity",
     "REPLICATION_SCHEMA_VERSION",
+    "REQUIRED_EVIDENCE_SCHEMA_VERSION",
     "RecordCollection",
     "RecordCollectionBuilder",
     "RecordError",
@@ -598,6 +610,7 @@ __all__ = [
     "VersionBasis",
     "ZERO_CONFIG_RULESET_VERSION",
     "ZeroConfigError",
+    "acceptance_for",
     "analyse",
     "analyse_adversarial",
     "analyse_criticality",
@@ -642,5 +655,8 @@ __all__ = [
     "predicate_from_dict",
     "record_digest",
     "render_text",
+    "requirement_kind_for",
+    "requirement_kind_for_predicate",
+    "target_kind_for_focus",
     "values_for",
 ]

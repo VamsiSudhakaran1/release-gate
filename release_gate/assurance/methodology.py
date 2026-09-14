@@ -1209,13 +1209,15 @@ class Requirement:
     def evaluate(self, case: AssuranceCase) -> "RequirementResult":
         if not self.applies_to(case):
             return RequirementResult(
-                requirement_id=self.requirement_id, outcome=RequirementOutcome.NOT_APPLICABLE,
+                requirement_id=self.requirement_id, predicate_kind=self.predicate.KIND,
+                outcome=RequirementOutcome.NOT_APPLICABLE,
                 effect=self.effect, description=self.description,
                 detail="does not apply to this case type or subject type",
                 observed={}, remedy="")
         finding = self.predicate.evaluate(case)
         return RequirementResult(
-            requirement_id=self.requirement_id, outcome=finding.outcome, effect=self.effect,
+            requirement_id=self.requirement_id, predicate_kind=self.predicate.KIND,
+            outcome=finding.outcome, effect=self.effect,
             description=self.description, detail=finding.detail, observed=dict(finding.observed),
             remedy=("" if finding.outcome is RequirementOutcome.SATISFIED else self.remedy))
 
@@ -1254,6 +1256,11 @@ class RequirementResult:
     detail: str
     observed: Mapping[str, Any] = field(default_factory=dict)
     remedy: str = ""
+    #: The predicate that produced this. Carried so an unmet requirement can say
+    #: what *kind* of evidence would satisfy it: a methodology names a standard,
+    #: and a machine reading a HOLD needs the standard to be dispatchable rather
+    #: than a sentence it has to parse.
+    predicate_kind: str = ""
 
     @property
     def is_met(self) -> bool:

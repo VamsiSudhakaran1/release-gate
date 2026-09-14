@@ -1610,11 +1610,72 @@ criticality state the claims in `observed["critical_claims"]` — without it, a
 finding whose own summary read "against a critical claim" ranked `OFF_PATH`, and
 an off-path item is droppable.
 
+### 7.1 The required-evidence protocol
+
+> **Implemented.** `release_gate/assurance/required_evidence.py`, plus the
+> protocol form on `RequiredEvidenceSet.protocol()`.
+
 **`RequiredEvidence`** is the HOLD counterpart: for each condition blocking
 PROMOTE, what specific evidence would resolve it — "an independent replication of
 claim C by a producer not descended from agent A, against digest D". This is what
-makes HOLD actionable instead of a shrug, and it is derived directly from the
-unmet methodology requirements.
+makes HOLD actionable instead of a shrug.
+
+Prose is actionable by a person and not by a machine, so three things are typed:
+
+```json
+{"status": "HOLD",
+ "required_evidence": [
+   {"target": "claim:C-184",
+    "requirement": "independent_verification",
+    "reason": "critical single-lineage dependency",
+    "constraints": {"independent_of": ["agent-A"]}}]}
+```
+
+**What to act on** is addressable. Requirements are grouped by *(target, kind)*,
+not by the text of a remedy: two claims both needing independent verification are
+two requirements, because a verifier can act on one and not the other, and
+collapsing them into "verify the claims" is a sentence nobody can dispatch. The
+target kind is derived from `attention._FOCUS_KIND` rather than a second table —
+one source of truth, already tested for completeness, so a requirement and the
+inspection it corresponds to always name the same object. A finding about the
+whole case targets `case:`, exactly as attention refuses to point a reviewer at
+an arbitrary record.
+
+**What kind of evidence is wanted** is a closed vocabulary a consumer can switch
+on, and it covers methodology HOLDs too: a `RequirementResult` now carries its
+`predicate_kind`, so "this decision requires independent ancestry" reads off as
+`independent_verification` with `{"minimum_roots": 2, "independent_roots": 1}`
+rather than as a sentence to parse. A methodology HOLD is the most common HOLD
+there is, so it should be the most dispatchable.
+
+**What would count** travels as `constraints` and `acceptance`, read only from
+what the case establishes. A constraint invented to look precise — a lineage
+nobody recorded, a digest nobody computed — would send a verifier to produce
+evidence against a condition that was never true.
+
+Where nothing in the vocabulary names what would close a gap, the answer is
+`unspecified` with the prose intact, and `dispatchable` is false. An
+organisation's own predicate arriving through the API degrades the same way:
+guessing what satisfies somebody else's yardstick is exactly the invention this
+system refuses (Invariant 3).
+
+**Release-Gate does not orchestrate.** There is no assignee, priority, deadline,
+schedule, callback or agent selection anywhere in the protocol, and a test
+asserts the serialised payload contains none of those keys, so the boundary
+survives its author. Release-Gate says what would resolve what, addressed to
+nobody; who does the work, in what order, and whether at all, is somebody else's
+authority.
+
+**Satisfying every requirement does not yield PROMOTE.** `satisfies_decision` is
+`False` unconditionally in the payload. A protocol whose completion implied
+authorisation would let an external system grind out evidence until the gate
+opened, which is the exact inversion of an assurance boundary (Invariant 15).
+
+**The return leg is recorded, not laundered.** Evidence submitted with
+`in_response_to` was produced by a party told exactly what would close the gate.
+That does not make it false and does not make it dependent — but it is a motive,
+and motive is provenance, so `RG-PROV-003` reports it as advisory. It is the loop
+working, and it is not a reason to weigh the evidence less (Invariants 1 and 11).
 
 ---
 
@@ -1889,6 +1950,7 @@ release_gate/assurance/
     adversarial.py       verifiers that set out to disprove the candidate
     criticality.py       what the decision rests on, by dependency
     expectation.py       denominators: what was expected, what arrived
+    required_evidence.py the outbound protocol: typed, targeted, dispatchable
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
   packet.py              ApprovalPacket rendering (json / markdown / html)

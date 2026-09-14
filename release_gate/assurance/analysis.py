@@ -218,6 +218,38 @@ def _analyse_provenance(case: AssuranceCase, records: Sequence[EvidenceRecord]
 
 # ── verification (RG-VERIF-*) ────────────────────────────────────────────────
 
+def _analyse_solicited(records: Sequence[EvidenceRecord]) -> List[Finding]:
+    """Evidence produced because release-gate asked for it.
+
+    Not a fault and not a discount: answering a stated requirement is the loop
+    working. What it is, is a fact about why the evidence exists — a party told
+    exactly what would close a gate produced exactly that — and a reviewer
+    weighing corroboration should be able to see it rather than have it look
+    like evidence that arrived on its own (Invariants 1 and 11).
+    """
+    solicited = [r for r in records if (r.metadata or {}).get("solicited_by")]
+    if not solicited:
+        return []
+    return [Finding(
+        rule_id="RG-PROV-003", domain=AnalysisDomain.PROVENANCE,
+        effect=RequirementEffect.ADVISORY,
+        summary=f"{len(solicited)} evidence record(s) were produced in response to a "
+                "stated requirement",
+        detail="; ".join(f"{r.evidence_id} from {r.producer.producer_id} answers "
+                         f"{r.metadata['solicited_by']}"
+                         for r in solicited[:4])[:600]
+               + ". Recorded because it bears on how the evidence came to exist: a "
+                 "producer told exactly what would close a gate produced exactly "
+                 "that. This is the required-evidence loop working, and it is not a "
+                 "reason to weigh the evidence less.",
+        remedy="none required; the solicitation is recorded so corroboration is not "
+               "read as spontaneous agreement",
+        refs=tuple(r.evidence_id for r in solicited[:12]),
+        observed={"solicited": len(solicited),
+                  "requirements": sorted({str(r.metadata["solicited_by"])
+                                          for r in solicited})[:12]})]
+
+
 def _analyse_verification(case: AssuranceCase, records: Sequence[EvidenceRecord],
                           claim_graph: Optional[ClaimGraph]) -> List[Finding]:
     findings: List[Finding] = []
@@ -1770,6 +1802,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
 
     findings: List[Finding] = []
     findings.extend(_analyse_provenance(case, records))
+    findings.extend(_analyse_solicited(records))
     findings.extend(_analyse_independence(independence))
     findings.extend(_analyse_replication(replication, critical))
     findings.extend(_analyse_criticality(criticality))

@@ -102,11 +102,31 @@ class Applicability(str, Enum):
 
 
 class TargetKind(str, Enum):
+    """What kind of thing is being pointed at.
+
+    Shared with the required-evidence protocol, which addresses the same things
+    from the other direction: a verification attempt names what it checked, and a
+    requirement names what still needs checking. One vocabulary rather than two
+    that would drift.
+    """
+
     CLAIM = "CLAIM"
     ARTIFACT = "ARTIFACT"
     SUBJECT = "SUBJECT"
     EVIDENCE = "EVIDENCE"
     EXECUTION = "EXECUTION"
+    # Addressable by a requirement though never by a verification attempt: you
+    # cannot verify a producer, but you can require an attestation about one.
+    PRODUCER = "PRODUCER"
+    CAPABILITY = "CAPABILITY"
+    VERIFICATION = "VERIFICATION"
+    COUNTEREXAMPLE = "COUNTEREXAMPLE"
+    ADVERSARIAL_FINDING = "ADVERSARIAL_FINDING"
+    ASSUMPTION = "ASSUMPTION"
+    CONTRADICTION = "CONTRADICTION"
+    COVERAGE_DIMENSION = "COVERAGE_DIMENSION"
+    METHODOLOGY = "METHODOLOGY"
+    CASE = "CASE"
     OTHER = "OTHER"
 
 
@@ -171,6 +191,28 @@ class VerificationTarget:
     @classmethod
     def claim(cls, claim_id: str) -> "VerificationTarget":
         return cls(kind=TargetKind.CLAIM, target_id=claim_id)
+
+    @property
+    def reference(self) -> str:
+        """`claim:C-184` — the addressable form the protocol speaks."""
+        return f"{self.kind.value.lower()}:{self.target_id}"
+
+    @classmethod
+    def parse(cls, reference: str) -> "VerificationTarget":
+        """Read `claim:C-184` back. Unknown prefixes become OTHER, not an error.
+
+        A consumer that invents a target kind has said something about a thing
+        this case does not model, and refusing to read it back would lose the id
+        it named.
+        """
+        head, _, rest = str(reference or "").partition(":")
+        if not rest:
+            return cls(kind=TargetKind.OTHER, target_id=str(reference or "").strip())
+        try:
+            kind = TargetKind(head.strip().upper())
+        except ValueError:
+            kind = TargetKind.OTHER
+        return cls(kind=kind, target_id=rest.strip())
 
     @classmethod
     def artifact(cls, logical_id: str) -> "VerificationTarget":

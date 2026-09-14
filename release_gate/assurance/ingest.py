@@ -625,13 +625,20 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
     producer, so the contradiction that falls out of them shows one participant on
     each side — which is the honest picture of what arrived.
     """
+    # Evidence produced in answer to a required-evidence requirement was produced
+    # by a party told exactly what would close the gate. That does not make it
+    # false and does not make it dependent — but it is a motive, and motive is
+    # provenance, so it is recorded rather than laundered out (Invariants 1, 11).
+    solicited = str(payload.get("in_response_to") or "").strip()
+    metadata = {"solicited_by": solicited} if solicited else {}
+
     overlap = tuple(sorted(set(supports) & set(contradicts)))
     if not overlap:
         return [EvidenceRecord.from_producer(
             payload, evidence_type=_evidence_type_of(payload), source=source,
             producer=producer, status=EpistemicStatus.DECLARED,
             parent_evidence=parents, supports_claims=supports,
-            contradicts_claims=contradicts,
+            contradicts_claims=contradicts, metadata=metadata,
             coverage_note=str(payload.get("coverage_note") or ""))]
 
     notes.append(
@@ -655,7 +662,7 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
             parent_evidence=parents,
             supports_claims=mine if label == "supports" else theirs,
             contradicts_claims=mine if label == "contradicts" else theirs,
-            content={**marker, "split_side": label},
+            content={**marker, "split_side": label}, metadata=metadata,
             coverage_note=(f"{note} (split half: {label})" if note
                            else f"split half: {label}")))
     return halves
