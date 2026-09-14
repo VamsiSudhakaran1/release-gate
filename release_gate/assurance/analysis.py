@@ -24,6 +24,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from release_gate.assurance.artifacts import ArtifactGraph, CurrencyStatus
 from release_gate.assurance.capabilities import CapabilitySurface, CapabilityStatus
 from release_gate.assurance.case import AssuranceCase
+from release_gate.assurance.consequence import (
+    ConsequenceBasis, ConsequenceDimension, ConsequenceProfile,
+)
 from release_gate.assurance.claims import ClaimGraph, ClaimStatus
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
 from release_gate.assurance.execution_graph import CompletenessStatus, ExecutionGraph
@@ -43,6 +46,7 @@ ANALYSIS_RULESET_VERSION = "rg-structural-1"
 
 class AnalysisDomain(str, Enum):
     CAPABILITY = "CAPABILITY"
+    CONSEQUENCE = "CONSEQUENCE"
     PROVENANCE = "PROVENANCE"
     CONTRADICTION = "CONTRADICTION"
     VERIFICATION = "VERIFICATION"
@@ -95,6 +99,7 @@ class AnalysisResult:
     artifact_graph: Optional[ArtifactGraph] = None
     execution_graph: Optional[ExecutionGraph] = None
     capabilities: Optional[CapabilitySurface] = None
+    consequence: Optional[ConsequenceProfile] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -584,13 +589,111 @@ def _analyse_capabilities(surface: Optional[CapabilitySurface]) -> List[Finding]
     return findings
 
 
+# ── consequence (RG-CONS-*) ──────────────────────────────────────────────────
+
+def _analyse_consequence(profile: Optional[ConsequenceProfile],
+                         surface: Optional[CapabilitySurface]) -> List[Finding]:
+    """What is at stake — reported, never invented.
+
+    Nothing here decides that an irreversible change needs a second approver; a
+    methodology does that through `ConsequenceDeclared`. These findings say only
+    what was stated, what was not, and where two sources disagree.
+    """
+    findings: List[Finding] = []
+    if profile is None:
+        return findings
+
+    if profile.fully_unknown:
+        findings.append(Finding(
+            rule_id="RG-CONS-001", domain=AnalysisDomain.CONSEQUENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary="nothing is known about what this action would do",
+            detail="Every consequence dimension is UNKNOWN. release-gate does not "
+                   "guess at reversibility, cost or legality, so the authorization "
+                   "boundary here rests on the reviewer's own knowledge of the stakes "
+                   "rather than on anything in the case.",
+            remedy="declare the consequence dimensions that bear on this decision, or "
+                   "supply a domain model that derives them",
+            observed={"known": 0, "dimensions": len(ConsequenceDimension)}))
+
+    # A declaration the evidence disagrees with. Sharper than a plain conflict:
+    # somebody stated the stakes and the trace shows otherwise.
+    contradicted = [c for c in profile.conflicts
+                    if c.rejected.basis is ConsequenceBasis.DERIVED
+                    and c.kept.basis is ConsequenceBasis.DECLARED]
+    if contradicted:
+        findings.append(Finding(
+            rule_id="RG-CONS-003", domain=AnalysisDomain.CONSEQUENCE,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(contradicted)} declared consequence value(s) are "
+                    "contradicted by the evidence",
+            detail="; ".join(
+                f"{c.dimension.value} was declared {c.kept.value!r} by "
+                f"{c.kept.source} but the evidence derives {c.rejected.value!r} "
+                f"({c.rejected.note})" for c in contradicted)[:700],
+            remedy="reconcile the declaration with the evidence, or record why the "
+                   "declaration holds despite it",
+            refs=tuple(c.dimension.value for c in contradicted),
+            observed={"dimensions": [c.dimension.value for c in contradicted]}))
+
+    peer = [c for c in profile.conflicts if c not in contradicted]
+    if peer:
+        findings.append(Finding(
+            rule_id="RG-CONS-002", domain=AnalysisDomain.CONSEQUENCE,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(peer)} consequence dimension(s) have disagreeing sources",
+            detail="; ".join(f"{c.dimension.value}: {c.kept.value!r} "
+                             f"({c.kept.source}) vs {c.rejected.value!r} "
+                             f"({c.rejected.source})" for c in peer)[:700],
+            remedy="establish which source is authoritative for these dimensions",
+            refs=tuple(c.dimension.value for c in peer),
+            observed={"dimensions": [c.dimension.value for c in peer]}))
+
+    elevated = profile.elevated()
+    if elevated:
+        findings.append(Finding(
+            rule_id="RG-CONS-004", domain=AnalysisDomain.CONSEQUENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(elevated)} consequence dimension(s) are at their most "
+                    "consequential stated value",
+            detail=", ".join(f"{d.dimension.value}={d.value} ({d.basis.value})"
+                             for d in elevated)
+                   + ". Reported so a reviewer sees the stakes; whether these require "
+                     "more than one signature is a methodology's decision, not this "
+                     "analyser's.",
+            remedy="none required; a methodology decides what these stakes demand",
+            refs=tuple(d.dimension.value for d in elevated),
+            observed={"dimensions": [d.dimension.value for d in elevated]}))
+
+    # The specific gap that matters most: the system did something that leaves the
+    # boundary and changes state, and nobody said whether it can be undone.
+    if surface is not None and profile.value(ConsequenceDimension.REVERSIBILITY) == "UNKNOWN":
+        irreversible_risk = surface.mutating_external
+        if irreversible_risk:
+            findings.append(Finding(
+                rule_id="RG-CONS-005", domain=AnalysisDomain.CONSEQUENCE,
+                effect=RequirementEffect.HOLD,
+                summary="reversibility is unstated for an action with effects outside "
+                        "the system",
+                detail=", ".join(sorted(r.capability.value for r in irreversible_risk))
+                       + " changed state that release-gate cannot see and cannot undo, "
+                         "and nothing says whether anyone else can. A person is being "
+                         "asked to authorise without being told if it is recoverable.",
+                remedy="declare REVERSIBILITY for this action",
+                refs=tuple(sorted(r.capability.value for r in irreversible_risk)),
+                observed={"capabilities": sorted(r.capability.value
+                                                 for r in irreversible_risk)}))
+    return findings
+
+
 # ── the entry point ──────────────────────────────────────────────────────────
 
 def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
             claim_graph: Optional[ClaimGraph] = None,
             artifact_graph: Optional[ArtifactGraph] = None,
             execution: Optional[ExecutionGraph] = None,
-            capabilities: Optional[CapabilitySurface] = None) -> AnalysisResult:
+            capabilities: Optional[CapabilitySurface] = None,
+            consequence: Optional[ConsequenceProfile] = None) -> AnalysisResult:
     """Run every config-free analyser over a case.
 
     Graphs are read from the case when not supplied. Order of findings is stable:
@@ -630,8 +733,9 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     if capabilities is None and normalisation is not None:
         capabilities = getattr(normalisation, "capabilities", None)
     findings.extend(_analyse_capabilities(capabilities))
+    findings.extend(_analyse_consequence(consequence, capabilities))
 
     findings.sort(key=lambda f: (f.domain.value, f.rule_id, f.refs[0] if f.refs else ""))
     return AnalysisResult(findings=tuple(findings), claim_graph=claim_graph,
                           artifact_graph=artifact_graph, execution_graph=execution,
-                          capabilities=capabilities)
+                          capabilities=capabilities, consequence=consequence)

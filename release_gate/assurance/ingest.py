@@ -33,6 +33,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from release_gate.assurance.artifacts import Artifact, ArtifactKind
 from release_gate.assurance.canonical import digest_object
 from release_gate.assurance.capabilities import CapabilitySurface, declared_from_document
+from release_gate.assurance.consequence import (
+    ConsequenceDescriptor, descriptors_from_mapping,
+)
 from release_gate.assurance.claims import (
     AttemptOutcome, Claim, ClaimProvenance, ClaimType, VerificationAttempt,
 )
@@ -140,6 +143,7 @@ class Normalisation:
     artifacts: Tuple[Artifact, ...] = ()
     execution: Optional[ExecutionGraph] = None
     capabilities: Optional[CapabilitySurface] = None
+    declared_consequence: Tuple[ConsequenceDescriptor, ...] = ()
     records_seen: int = 0
     records_mapped: int = 0
     skipped: Mapping[str, int] = field(default_factory=dict)
@@ -156,6 +160,7 @@ class Normalisation:
                 "execution_nodes": len(self.execution.nodes) if self.execution else 0,
                 "capabilities": (self.capabilities.summary() if self.capabilities
                                  else None),
+                "declared_consequence": [d.to_dict() for d in self.declared_consequence],
                 "records_seen": self.records_seen, "records_mapped": self.records_mapped,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
@@ -421,6 +426,44 @@ def _capabilities_from(doc: Any, detection: Detection,
     return None, notes
 
 
+#: Where a document tends to state what is at stake.
+_CONSEQUENCE_KEYS = ("consequence", "consequences", "impact", "stakes")
+
+
+def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
+    """Consequence someone stated in the document, if any.
+
+    Nothing is inferred here. A document that says nothing about stakes yields no
+    descriptors, and every dimension stays UNKNOWN — which is the correct answer,
+    not a gap to be filled in.
+
+    Unrecognised dimensions and values are skipped rather than guessed at: a
+    best-effort sweep of a document must not fail a run over a stray key, and it
+    must not silently coerce `"impact": "very bad"` into a vocabulary value.
+    """
+    found: List[ConsequenceDescriptor] = []
+    name = Path(source).name
+
+    def harvest(value: Any, origin: str) -> None:
+        if isinstance(value, Mapping):
+            found.extend(descriptors_from_mapping(value, source=origin))
+
+    if isinstance(doc, Mapping):
+        for key in _CONSEQUENCE_KEYS:
+            harvest(doc.get(key), f"document:{name}#{key}")
+    elif isinstance(doc, list):
+        for index, row in enumerate(doc):
+            if isinstance(row, Mapping) and row.get("record_type") == "consequence":
+                payload = {k: v for k, v in row.items()
+                           if k not in ("record_type", "record_id", "source")}
+                producer = str(row.get("source") or f"envelope:{name}#{index}")
+                found.extend(descriptors_from_mapping(payload, source=producer))
+
+    # One dimension, two different declared values, in one document: keep the
+    # first and let the registry record the disagreement rather than dropping it.
+    return found
+
+
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  int, Dict[str, int], List[str]]:
@@ -655,6 +698,8 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     capabilities, cap_notes = _capabilities_from(doc, detection, execution)
     notes.extend(cap_notes)
 
+    declared_consequence = _consequence_from(doc, source)
+
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
         ev, cl, art, mapped, skipped, env_notes = _envelope_records(doc, source, producer)
@@ -694,8 +739,9 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     return Normalisation(
         detection=detection, source=source, evidence=tuple(evidence),
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
-        capabilities=capabilities, records_seen=seen, records_mapped=mapped,
-        skipped=dict(skipped), notes=tuple(notes))
+        capabilities=capabilities, declared_consequence=tuple(declared_consequence),
+        records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
+        notes=tuple(notes))
 
 
 def _audit_records(doc: Mapping[str, Any], source: str,

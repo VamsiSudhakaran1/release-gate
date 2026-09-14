@@ -902,7 +902,62 @@ discovery is evidence, and is deliberately not the centre of the product.
 
 ---
 
-### 6.8 Determinism requirements
+### 6.8 Consequence (`RG-CONS-*`)
+
+> **Implemented.** `release_gate/assurance/consequence.py`, plus the
+> `ConsequenceDeclared` methodology predicate.
+
+The human authorization boundary depends partly on consequence: an irreversible
+production change and a scratch notebook deserve different amounts of a person's
+attention. So the engine needs somewhere to put that — and a hard rule against
+filling it in.
+
+Eleven generic dimensions (reversibility, externality, scope, user, financial,
+data, security, production, research, legal, and a catch-all for impacts the
+taxonomy has no dimension for). **Every one defaults to `UNKNOWN`, and `UNKNOWN`
+is a real answer.** A profile of eleven unknowns is valid and honest — it records
+that nobody stated the stakes, which is different from stating there are none.
+
+Four rules keep it from becoming a guess:
+
+* **Nothing is invented.** A value appears only when someone `DECLARED` it or it
+  follows structurally from evidence already in the case (`DERIVED`). Value and
+  basis are checked against each other in both directions: a known value must
+  name who established it, and an `UNKNOWN` cannot have been established by
+  anyone.
+* **Derivation reads only OBSERVED capabilities.** A capability inferred from a
+  tool's name is a guess, and a consequence derived from a guess is a guess
+  wearing a better coat. Only two dimensions are reachable structurally —
+  externality and data impact — and only from §6.7's observed set. Where the
+  capability surface is not an upper bound, even `CONTAINED` is unprovable and
+  the dimension stays `UNKNOWN`.
+* **`REVERSIBILITY` is never derived.** It is the dimension people most want and
+  the one no telemetry supports. A structural rule for it would be pure
+  invention.
+* **`UNKNOWN` never sorts as a middle value.** Its rank is `None`, not the
+  midpoint — the exact defect recorded against the legacy readiness scorer in
+  §18.1, not repeated here. There is also no total: no score, no level, no
+  aggregate, because collapsing eleven dimensions into one number would invent a
+  trade-off between money and legality that nobody stated.
+
+Precedence is declarations, then domain plugins, then structural derivation, and
+a lower tier never overwrites a higher one. Disagreement is recorded rather than
+resolved: a declaration contradicted by derived evidence is `RG-CONS-003` and
+HOLDs, because somebody stated the stakes and the trace says otherwise — but the
+declaration still stands, since a person is answerable for it and may know the
+call went to a sandbox. The engine's job is to put the disagreement in front of a
+human, not to adjudicate it.
+
+**Consequence never blocks, and never reorders attention.** Reordering would
+require a weight nobody supplied. It reaches the authorization boundary through
+the methodology instead: `ConsequenceDeclared(dimensions=…)` lets a methodology
+say which dimensions a decision of this kind cannot be taken without. That is how
+"irreversible changes need a second approver" becomes expressible without
+release-gate ever deciding it.
+
+---
+
+### 6.9 Determinism requirements
 
 * Pure functions; all inputs in the case; no wall-clock, no network, no model.
 * **Order-independent fold.** Ingesting the same records in any order, serially or

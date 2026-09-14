@@ -481,6 +481,64 @@ class CoverageDimensionDeclared(Predicate):
                       "total_count": total})
 
 
+@_predicate
+@dataclass(frozen=True)
+class ConsequenceDeclared(Predicate):
+    """Named consequence dimensions must not be UNKNOWN.
+
+    This is how consequence reaches the authorization boundary without
+    release-gate inventing a threshold. The engine never decides that an
+    irreversible change needs a second approver — a methodology does, by naming
+    the dimensions a decision of this kind cannot be taken without.
+
+    Reads the consequence profile folded into the case's evidence collection. A
+    case with no profile at all is UNSATISFIED rather than NOT_ASSESSED: the
+    requirement asks whether the stakes were stated, and "nobody stated them" is
+    a clear no.
+    """
+
+    KIND = "consequence_declared"
+    dimensions: Tuple[str, ...] = ()
+    collection: str = "evidence"
+
+    def describe(self) -> str:
+        named = ", ".join(self.dimensions) if self.dimensions else "any dimension"
+        return f"consequence is stated for: {named}"
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        profiles = [r for r in records if r.get("record_type") == "consequence"]
+        if not profiles:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                "no consequence profile is recorded on this case, so nothing is "
+                "stated about what this action would do",
+                {"profiles": 0, "records_held": len(records),
+                 "materialisation_incomplete": incomplete})
+
+        stated: Dict[str, str] = {}
+        for profile in profiles:
+            for name, descriptor in (profile.get("dimensions") or {}).items():
+                value = (descriptor or {}).get("value", "UNKNOWN")
+                if value != "UNKNOWN":
+                    stated[name] = value
+
+        wanted = tuple(d.upper() for d in self.dimensions) or tuple(stated)
+        missing = sorted(d for d in wanted if d not in stated)
+        observed = {"stated": {d: stated[d] for d in sorted(stated)},
+                    "required": list(wanted), "missing": missing}
+        if not wanted:
+            return _Finding(RequirementOutcome.UNSATISFIED,
+                            "a consequence profile exists but every dimension is "
+                            "UNKNOWN", observed)
+        if missing:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                "consequence is not stated for: " + ", ".join(missing), observed)
+        return _Finding(RequirementOutcome.SATISFIED,
+                        "every required consequence dimension is stated", observed)
+
+
 def predicate_from_dict(data: Mapping[str, Any]) -> Predicate:
     kind = data.get("kind")
     cls = _PREDICATE_TYPES.get(kind)

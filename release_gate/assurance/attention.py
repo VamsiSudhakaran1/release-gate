@@ -60,6 +60,8 @@ _FOCUS_KIND = {
     "RG-CAP-001": "manifest", "RG-CAP-002": "tools", "RG-CAP-003": "case",
     "RG-CAP-004": "case", "RG-CAP-005": "case", "RG-CAP-006": "capability",
     "RG-CAP-007": "capability",
+    "RG-CONS-001": "case", "RG-CONS-002": "stakes", "RG-CONS-003": "stakes",
+    "RG-CONS-004": "stakes", "RG-CONS-005": "stakes",
 }
 
 
@@ -76,6 +78,8 @@ class AttentionReason(str, Enum):
     COVERAGE_GAP = "COVERAGE_GAP"
     UNDECLARED_CAPABILITY = "UNDECLARED_CAPABILITY"
     UNIDENTIFIED_TOOL = "UNIDENTIFIED_TOOL"
+    CONSEQUENCE_UNSTATED = "CONSEQUENCE_UNSTATED"
+    CONSEQUENCE_DISPUTED = "CONSEQUENCE_DISPUTED"
     METHODOLOGY_ABSENT = "METHODOLOGY_ABSENT"
     REQUIREMENT_UNMET = "REQUIREMENT_UNMET"
 
@@ -87,6 +91,7 @@ _DOMAIN_REASON = {
     AnalysisDomain.DRIFT: AttentionReason.STALE_VERIFICATION,
     AnalysisDomain.COVERAGE: AttentionReason.COVERAGE_GAP,
     AnalysisDomain.CAPABILITY: AttentionReason.UNDECLARED_CAPABILITY,
+    AnalysisDomain.CONSEQUENCE: AttentionReason.CONSEQUENCE_UNSTATED,
 }
 
 _RULE_REASON = {
@@ -96,6 +101,8 @@ _RULE_REASON = {
     "RG-DRIFT-001": AttentionReason.SUBJECT_CHANGED,
     "RG-DRIFT-002": AttentionReason.SUBJECT_CHANGED,
     "RG-CAP-002": AttentionReason.UNIDENTIFIED_TOOL,
+    "RG-CONS-002": AttentionReason.CONSEQUENCE_DISPUTED,
+    "RG-CONS-003": AttentionReason.CONSEQUENCE_DISPUTED,
 }
 
 
@@ -222,7 +229,7 @@ class RequiredEvidenceSet:
 # revealed it. "All your evidence has one producer" is not fixed by opening one
 # evidence record, so pointing a reviewer at an arbitrary id would waste the trip.
 _WHOLE_CASE_KINDS = frozenset({"case", "input", "subject", "execution", "producer",
-                               "manifest", "tools"})
+                               "manifest", "tools", "stakes"})
 
 
 def _focus_of(finding: Finding) -> Tuple[str, str]:
@@ -311,6 +318,8 @@ _NON_MONOTONE_RULES = frozenset({
     # More evidence can reveal a capability that was exercised and undeclared, so
     # a clean capability comparison is never settled by arrival.
     "RG-CAP-001", "RG-CAP-002",
+    # A declared consequence can be contradicted by evidence that has not arrived.
+    "RG-CONS-002", "RG-CONS-003",
 })
 
 

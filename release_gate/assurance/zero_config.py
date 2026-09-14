@@ -23,7 +23,7 @@ the system already uses: `METHODOLOGY_REQUIRED`, `NOT_ASSESSED`, `HOLD`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -34,6 +34,9 @@ from release_gate.assurance.attention import (
     HumanAttentionSet, RequiredEvidenceSet, build_attention, build_required_evidence,
 )
 from release_gate.assurance.capabilities import CapabilitySurface
+from release_gate.assurance.consequence import (
+    ConsequenceProfile, ConsequenceRegistry, default_consequence_registry,
+)
 from release_gate.assurance.case import (
     AssuranceCase, AssuranceCaseBuilder, CaseVerdict, Decision, MethodologyRef,
     default_case_type,
@@ -86,6 +89,7 @@ class AssuranceOutcome:
     assessment: MethodologyAssessment
     attention: HumanAttentionSet
     required_evidence: RequiredEvidenceSet
+    consequence: ConsequenceProfile = field(default_factory=ConsequenceProfile)
 
     @property
     def decision(self) -> Decision:
@@ -113,6 +117,7 @@ class AssuranceOutcome:
             "assessment": self.assessment.to_dict(),
             "capabilities": (self.capabilities.to_dict() if self.capabilities
                              else None),
+            "consequence": self.consequence.to_dict(),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -135,7 +140,8 @@ def _coverage_row(dimension: str, assessed: bool, note: str,
                  "note": note, **observed})
 
 
-def _ingest_coverage(normalisation: Normalisation) -> List[SimpleRecord]:
+def _ingest_coverage(normalisation: Normalisation,
+                     consequence: ConsequenceProfile) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
         _coverage_row("input_identification", detection.recognised,
@@ -154,6 +160,7 @@ def _ingest_coverage(normalisation: Normalisation) -> List[SimpleRecord]:
                        if normalisation.execution is not None else
                        "no execution telemetry was present in this input")),
         _capability_coverage(normalisation.capabilities),
+        _consequence_coverage(consequence),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -203,6 +210,31 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         surface_digest=surface.digest())
 
 
+def _consequence_coverage(profile: ConsequenceProfile) -> SimpleRecord:
+    """Coverage for the stakes.
+
+    ASSESSED only when something is actually known. A profile of eleven UNKNOWNs
+    has not assessed consequence — it has recorded that nobody stated it, which is
+    a different and equally honest thing.
+    """
+    known = profile.known
+    if not known:
+        return _coverage_row(
+            "consequence", False,
+            "no consequence dimension is stated; release-gate does not guess at "
+            "reversibility, cost or legality",
+            known=0, unknown=len(profile.unknown))
+    return _coverage_row(
+        "consequence", True,
+        (f"{len(known)} of {len(profile.descriptors)} dimension(s) stated "
+         f"({len(profile.declared)} declared, {len(profile.derived)} derived); "
+         f"{len(profile.unknown)} remain UNKNOWN"),
+        known=len(known), unknown=len(profile.unknown),
+        declared=len(profile.declared), derived=len(profile.derived),
+        elevated=[d.dimension.value for d in profile.elevated()],
+        conflicts=len(profile.conflicts), profile_digest=profile.digest())
+
+
 def _capability_evidence(surface: Optional[CapabilitySurface],
                          applies_to: Optional[str]) -> List[EvidenceRecord]:
     """The capability surface as one DERIVED evidence record.
@@ -249,6 +281,7 @@ def _analysis_records(analysis: AnalysisResult) -> Tuple[List[Finding], List[Sim
 def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 objective: str, requested_decision: str,
                 methodology: Optional[AssuranceMethodology],
+                consequence: ConsequenceProfile,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -270,6 +303,11 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.extend("evidence", _capability_evidence(
         normalisation.capabilities,
         normalisation.evidence[0].digest if normalisation.evidence else None))
+    # The profile goes in whole rather than wrapped: it is one object, it already
+    # satisfies the record protocol, and `ConsequenceDeclared` finds it here by
+    # record_type. A profile of all-UNKNOWNs is still added — "nobody stated the
+    # stakes" is a fact the case should carry, not an empty slot.
+    builder.add("evidence", consequence)
 
     # Present-but-empty is not the same as never supplied. The ingest looked for
     # claims and artifacts, so the collections are declared present either way.
@@ -292,7 +330,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.extend("verification", verifications)
 
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
-    builder.extend("coverage", _ingest_coverage(normalisation))
+    builder.extend("coverage", _ingest_coverage(normalisation, consequence))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -418,7 +456,9 @@ def exit_code_for(decision: Decision) -> int:
 def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = None,
            objective: Optional[str] = None,
            requested_decision: Optional[str] = None,
-           requested_action: Optional[str] = None) -> AssuranceOutcome:
+           requested_action: Optional[str] = None,
+           consequence_registry: Optional[ConsequenceRegistry] = None,
+           declared_consequence: Optional[Any] = None) -> AssuranceOutcome:
     """Ingest, analyse, assess and decide — with nothing configured.
 
     Built in two passes. The first case carries the ingested records and is what
@@ -441,13 +481,20 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
 
     subject = _subject_for(source, normalisation, requested_action)
 
+    registry = consequence_registry or default_consequence_registry()
+    declared = list(normalisation.declared_consequence)
+    declared.extend(declared_consequence or ())
+    consequence = registry.build(None, capabilities=normalisation.capabilities,
+                                 declared=declared)
+
     provisional = _build_case(subject, normalisation, objective=objective,
                               requested_decision=requested_decision,
-                              methodology=methodology)
+                              methodology=methodology, consequence=consequence)
     analysis = analyse(provisional, normalisation=normalisation,
                        claim_graph=None, artifact_graph=None,
                        execution=normalisation.execution,
-                       capabilities=normalisation.capabilities)
+                       capabilities=normalisation.capabilities,
+                       consequence=consequence)
 
     # The analysed case: the ingest, plus what the analysers concluded about it.
     # This is what the methodology is held against — assessing the provisional
@@ -459,6 +506,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     analysed = _build_case(
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
+        consequence=consequence,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -473,6 +521,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     final = _build_case(
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
+        consequence=consequence,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -483,7 +532,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
 
     return AssuranceOutcome(case=decided, normalisation=normalisation,
                             analysis=analysis, assessment=assessment,
-                            attention=attention, required_evidence=required)
+                            attention=attention, required_evidence=required,
+                            consequence=consequence)
 
 
 # ── rendering ────────────────────────────────────────────────────────────────
@@ -522,6 +572,24 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         data = row.to_dict()
         mark = "assessed" if data.get("status") == "ASSESSED" else "NOT_ASSESSED"
         add(f"    [{mark:>12}]  {data.get('dimension')}: {data.get('note')}")
+
+    profile = outcome.consequence
+    add("")
+    add("  WHAT IS AT STAKE")
+    if profile.fully_unknown:
+        add("    Nothing is stated. release-gate does not guess at reversibility,")
+        add("    cost or legality — every dimension is UNKNOWN.")
+    else:
+        for descriptor in profile.known:
+            add(f"    {descriptor.dimension.value:<20} {descriptor.value:<28} "
+                f"({descriptor.basis.value} by {descriptor.source})")
+    unstated = [d.dimension.value for d in profile.unknown]
+    if unstated:
+        add(f"    UNKNOWN: {', '.join(unstated)}")
+    for conflict in profile.conflicts:
+        add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
+            f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
+            f"({conflict.rejected.source})")
 
     surface = outcome.capabilities
     if surface is not None and len(surface):
