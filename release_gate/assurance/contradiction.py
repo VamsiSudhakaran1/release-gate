@@ -420,18 +420,30 @@ def detect_contradictions(*, claim_graph: Any = None,
     by_id = {r.evidence_id: r for r in evidence}
     found: List[Contradiction] = []
 
+    # Evidence may name a claim from its own side, so both directions have to be
+    # read. Indexed once rather than rescanned per claim: the second form cost a
+    # full pass over every record for every claim, which is fine at a hundred
+    # claims and is ninety thousand passes over ninety thousand records at the
+    # scale this engine is built for.
+    supports_index: Dict[str, List[EvidenceRecord]] = {}
+    contradicts_index: Dict[str, List[EvidenceRecord]] = {}
+    for record in evidence:
+        for claim_id in record.supports_claims:
+            supports_index.setdefault(claim_id, []).append(record)
+        for claim_id in record.contradicts_claims:
+            contradicts_index.setdefault(claim_id, []).append(record)
+
     # One claim, evidence on both sides.
     if claim_graph is not None:
         for claim in sorted(claim_graph.claims, key=lambda c: c.claim_id):
             supporting = [by_id[e] for e in claim.supporting_evidence if e in by_id]
             against = [by_id[e] for e in claim.contradicting_evidence if e in by_id]
-            # Evidence may also name the claim from its own side.
-            supporting += [r for r in evidence
-                           if claim.claim_id in r.supports_claims
-                           and r.evidence_id not in {x.evidence_id for x in supporting}]
-            against += [r for r in evidence
-                        if claim.claim_id in r.contradicts_claims
-                        and r.evidence_id not in {x.evidence_id for x in against}]
+            held = {x.evidence_id for x in supporting}
+            supporting += [r for r in supports_index.get(claim.claim_id, ())
+                           if r.evidence_id not in held]
+            held = {x.evidence_id for x in against}
+            against += [r for r in contradicts_index.get(claim.claim_id, ())
+                        if r.evidence_id not in held]
             if not (supporting and against):
                 continue
             contradiction = Contradiction(

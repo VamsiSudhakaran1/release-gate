@@ -34,8 +34,12 @@ from release_gate.assurance.methodology import (
 )
 
 __all__ = [
+    "AttentionCriticality",
     "AttentionItem",
+    "AttentionRanking",
     "AttentionReason",
+    "ConsequenceWeight",
+    "RequirementPressure",
     "HumanAttentionSet",
     "RequiredEvidenceItem",
     "RequiredEvidenceSet",
@@ -75,6 +79,19 @@ _FOCUS_KIND = {
     "RG-ADV-001": "adversarial_finding", "RG-ADV-002": "adversarial_finding",
     "RG-ADV-003": "adversarial_finding", "RG-ADV-004": "adversarial_finding",
     "RG-ADV-005": "case", "RG-ADV-006": "case", "RG-ADV-007": "case",
+    # Every rule needs an entry. A rule with none falls through to "case", which
+    # is sometimes right and sometimes points a reviewer at the whole case when
+    # one claim was the problem — and eighteen rules were doing exactly that,
+    # including every criticality and expectation rule.
+    "RG-CRIT-001": "case", "RG-CRIT-002": "claim", "RG-CRIT-003": "claim",
+    "RG-CRIT-004": "claim", "RG-CRIT-005": "claim",
+    "RG-EXPECT-001": "coverage_dimension", "RG-EXPECT-002": "case",
+    "RG-EXPECT-003": "coverage_dimension", "RG-EXPECT-004": "coverage_dimension",
+    "RG-EXPECT-005": "coverage_dimension",
+    "RG-INDEP-001": "case", "RG-INDEP-002": "case", "RG-INDEP-003": "case",
+    "RG-INDEP-004": "evidence",
+    "RG-VERIF-004": "claim", "RG-VERIF-005": "verification",
+    "RG-VERIF-006": "verification", "RG-VERIF-007": "verification",
 }
 
 
@@ -103,9 +120,20 @@ class AttentionReason(str, Enum):
     ADVERSARIAL_FINDING = "ADVERSARIAL_FINDING"
     ACCEPTED_RISK = "ACCEPTED_RISK"
     SELF_CLEARED = "SELF_CLEARED"
+    APPROVAL_MISMATCH = "APPROVAL_MISMATCH"
+    UNKNOWN_PROVENANCE = "UNKNOWN_PROVENANCE"
+    # Evidence that was expected and did not arrive. Distinct from a coverage
+    # gap: nobody looking is not the same as looking and finding a hole where
+    # something was promised (Invariant 13).
+    EVIDENCE_KNOWN_MISSING = "EVIDENCE_KNOWN_MISSING"
+    SELECTIVE_EVIDENCE = "SELECTIVE_EVIDENCE"
+    CONSEQUENTIAL_ACTION = "CONSEQUENTIAL_ACTION"
+    CRITICALITY_UNDETERMINED = "CRITICALITY_UNDETERMINED"
 
 
 _DOMAIN_REASON = {
+    AnalysisDomain.CRITICALITY: AttentionReason.CRITICALITY_UNDETERMINED,
+    AnalysisDomain.EXPECTATION: AttentionReason.EVIDENCE_KNOWN_MISSING,
     AnalysisDomain.CONTRADICTION: AttentionReason.CONTRADICTION,
     AnalysisDomain.VERIFICATION: AttentionReason.FAILED_VERIFICATION,
     AnalysisDomain.PROVENANCE: AttentionReason.NOT_CORROBORATED,
@@ -138,21 +166,141 @@ _RULE_REASON = {
     # asks whether the answer came from a party entitled to give it.
     "RG-ADV-003": AttentionReason.ACCEPTED_RISK,
     "RG-ADV-004": AttentionReason.SELF_CLEARED,
+    "RG-CRIT-001": AttentionReason.CRITICALITY_UNDETERMINED,
+    "RG-CRIT-002": AttentionReason.CRITICALITY_UNDETERMINED,
+    "RG-CRIT-005": AttentionReason.NOT_CORROBORATED,
+    "RG-EXPECT-001": AttentionReason.EVIDENCE_KNOWN_MISSING,
+    "RG-EXPECT-003": AttentionReason.EVIDENCE_KNOWN_MISSING,
+    "RG-EXPECT-005": AttentionReason.SELECTIVE_EVIDENCE,
+    "RG-PROV-002": AttentionReason.UNKNOWN_PROVENANCE,
+    "RG-CONS-004": AttentionReason.CONSEQUENTIAL_ACTION,
+    "RG-CONS-005": AttentionReason.CONSEQUENTIAL_ACTION,
+    "RG-DRIFT-004": AttentionReason.APPROVAL_MISMATCH,
 }
+
+
+class AttentionCriticality(str, Enum):
+    """Whether the decision rests on what this item is about.
+
+    `UNDETERMINED` deliberately ranks *above* `OFF_PATH`. Not knowing whether
+    something bears on the decision is a reason to look at it, and the natural
+    implementation — sorting unknowns to the bottom with the unimportant — is how
+    a case whose criticality could not be derived comes to look calm
+    (Invariant 3).
+    """
+
+    ON_CRITICAL_PATH = "ON_CRITICAL_PATH"  # the decision rests on this
+    UNDETERMINED = "UNDETERMINED"          # whether it bears on the decision is unknown
+    SUPPORTING = "SUPPORTING"              # other claims rest on it; no conclusion does
+    OFF_PATH = "OFF_PATH"                  # nothing the decision needs touches it
+
+
+class RequirementPressure(str, Enum):
+    """Whether an unresolved assurance requirement turns on this item."""
+
+    BLOCKS = "BLOCKS"              # a requirement whose effect is BLOCK names it
+    HOLDS = "HOLDS"                # a requirement whose effect is HOLD names it
+    UNASSESSED = "UNASSESSED"      # a requirement could not be evaluated over it
+    NONE = "NONE"                  # no unresolved requirement names it
+
+
+class ConsequenceWeight(str, Enum):
+    """What is at stake in the action this case authorises.
+
+    `UNKNOWN` ranks above `BOUNDED` for the same reason `UNDETERMINED` does
+    above: nobody having stated the stakes is not evidence that the stakes are
+    low, and ordering it as though it were would make silence the safest thing a
+    producer could do (Invariant 3).
+    """
+
+    IRREVERSIBLE = "IRREVERSIBLE"  # the action cannot be undone
+    EXTERNAL = "EXTERNAL"          # effects land outside the system taking the action
+    UNKNOWN = "UNKNOWN"            # nobody stated the stakes
+    BOUNDED = "BOUNDED"            # stated, and contained
+
+
+#: Rank orders. Lower sorts first. These are compared as an ordered tuple and are
+#: never multiplied into a single number: a product is the "generic score alone"
+#: that hides why an item ranks where it does, and a reviewer who cannot see the
+#: reason cannot disagree with it.
+_CRITICALITY_RANK = {AttentionCriticality.ON_CRITICAL_PATH: 0,
+                     AttentionCriticality.UNDETERMINED: 1,
+                     AttentionCriticality.SUPPORTING: 2,
+                     AttentionCriticality.OFF_PATH: 3}
+_PRESSURE_RANK = {RequirementPressure.BLOCKS: 0, RequirementPressure.HOLDS: 1,
+                  RequirementPressure.UNASSESSED: 2, RequirementPressure.NONE: 3}
+_CONSEQUENCE_RANK = {ConsequenceWeight.IRREVERSIBLE: 0, ConsequenceWeight.EXTERNAL: 1,
+                     ConsequenceWeight.UNKNOWN: 2, ConsequenceWeight.BOUNDED: 3}
+
+
+@dataclass(frozen=True)
+class AttentionRanking:
+    """Why an item sits where it sits, component by component.
+
+    The ordering is lexicographic over the three factors the product cares
+    about, in the order it cares about them: what the decision rests on, what an
+    assurance requirement is waiting on, and what is at stake. Effect and
+    leverage break remaining ties and are deliberately last — a count of findings
+    is the weakest thing on this list and must never outrank a dependency
+    (Invariant 12).
+    """
+
+    criticality: AttentionCriticality = AttentionCriticality.UNDETERMINED
+    pressure: RequirementPressure = RequirementPressure.NONE
+    consequence: ConsequenceWeight = ConsequenceWeight.UNKNOWN
+    basis: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "criticality", AttentionCriticality(self.criticality))
+        object.__setattr__(self, "pressure", RequirementPressure(self.pressure))
+        object.__setattr__(self, "consequence", ConsequenceWeight(self.consequence))
+
+    @property
+    def key(self) -> Tuple[int, int, int]:
+        return (_CRITICALITY_RANK[self.criticality], _PRESSURE_RANK[self.pressure],
+                _CONSEQUENCE_RANK[self.consequence])
+
+    def explain(self) -> str:
+        return (f"dependency: {self.criticality.value}; "
+                f"requirement: {self.pressure.value}; "
+                f"consequence: {self.consequence.value}"
+                + (f" — {self.basis}" if self.basis else ""))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"criticality": self.criticality.value,
+                "requirement_pressure": self.pressure.value,
+                "consequence": self.consequence.value,
+                "order": list(self.key), "basis": self.basis,
+                # Stated in the record: there is no scalar priority to read.
+                "composite_score": None,
+                "explain": self.explain()}
 
 
 @dataclass(frozen=True)
 class AttentionItem:
-    """One thing a person should look at, and what looking would settle."""
+    """One thing a person should look at, and everything they need to judge it.
+
+    Nine questions, answered on the item rather than scattered across the case:
+    what it is, why it matters, what depends on it, what supports it, what
+    contradicts it, where it stands, what epistemic status that standing has,
+    what the human can do, and what evidence would settle it.
+    """
 
     item_id: str
     reason: AttentionReason
     effect: RequirementEffect
     focus: str
     focus_kind: str
-    summary: str
-    why_it_matters: str
-    remedy: str
+    summary: str                                   # WHAT
+    why_it_matters: str                            # WHY IT MATTERS
+    remedy: str                                    # WHAT THE HUMAN CAN DO
+    depends_on: Tuple[str, ...] = ()               # WHAT DEPENDS ON IT
+    supporting_evidence: Tuple[str, ...] = ()      # SUPPORTING EVIDENCE
+    contradicting_evidence: Tuple[str, ...] = ()   # CONTRADICTING EVIDENCE
+    status: str = "OPEN"                           # STATUS
+    epistemic_status: str = "UNKNOWN"              # EPISTEMIC STATUS
+    resolving_evidence: Tuple[str, ...] = ()       # WHAT EVIDENCE WOULD RESOLVE IT
+    ranking: AttentionRanking = field(default_factory=AttentionRanking)
     leverage: int = 1
     rule_ids: Tuple[str, ...] = ()
     refs: Tuple[str, ...] = ()
@@ -162,6 +310,50 @@ class AttentionItem:
         object.__setattr__(self, "effect", RequirementEffect(self.effect))
         object.__setattr__(self, "rule_ids", tuple(self.rule_ids))
         object.__setattr__(self, "refs", tuple(self.refs))
+        for name in ("depends_on", "supporting_evidence", "contradicting_evidence",
+                     "resolving_evidence"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+
+    @property
+    def undroppable(self) -> bool:
+        """No compression may omit this.
+
+        A blocking item and an item on what the decision rests on are the two
+        things a shortened list must never quietly lose. Compression here means
+        collapsing many findings onto the one thing to inspect — not dropping an
+        inspection to reach a target count.
+        """
+        return (self.effect is RequirementEffect.BLOCK
+                or self.ranking.criticality is AttentionCriticality.ON_CRITICAL_PATH)
+
+    @property
+    def sort_key(self) -> Tuple[Any, ...]:
+        """Dependency, then requirement, then consequence. Volume last, always."""
+        return (*self.ranking.key, _EFFECT_RANK[self.effect], -self.leverage,
+                self.item_id)
+
+    def render(self) -> str:
+        """The nine questions, in the order a reviewer asks them."""
+        def block(label: str, value: Any) -> str:
+            if not value:
+                return f"  {label}: (none recorded)"
+            if isinstance(value, tuple):
+                shown = ", ".join(value[:6])
+                more = f" (+{len(value) - 6} more)" if len(value) > 6 else ""
+                return f"  {label}: {shown}{more}"
+            return f"  {label}: {value}"
+        return "\n".join([
+            f"[{self.reason.value}] {self.summary}",
+            block("WHY IT MATTERS", self.why_it_matters),
+            block("WHAT DEPENDS ON IT", self.depends_on),
+            block("SUPPORTING EVIDENCE", self.supporting_evidence),
+            block("CONTRADICTING EVIDENCE", self.contradicting_evidence),
+            block("STATUS", self.status),
+            block("EPISTEMIC STATUS", self.epistemic_status),
+            block("WHAT YOU CAN DO", self.remedy),
+            block("WHAT WOULD RESOLVE IT", self.resolving_evidence),
+            f"  RANKED BY: {self.ranking.explain()}",
+        ])
 
     @property
     def record_type(self) -> str:
@@ -175,8 +367,21 @@ class AttentionItem:
         return {"record_type": "attention_item", "record_id": self.item_id,
                 "reason": self.reason.value, "effect": self.effect.value,
                 "focus": self.focus, "focus_kind": self.focus_kind,
-                "summary": self.summary, "why_it_matters": self.why_it_matters,
-                "remedy": self.remedy, "leverage": self.leverage,
+                # The nine, named as the reviewer asks them.
+                "what": self.summary,
+                "why_it_matters": self.why_it_matters,
+                "what_depends_on_it": list(self.depends_on),
+                "supporting_evidence": list(self.supporting_evidence),
+                "contradicting_evidence": list(self.contradicting_evidence),
+                "status": self.status,
+                "epistemic_status": self.epistemic_status,
+                "what_the_human_can_do": self.remedy,
+                "what_evidence_would_resolve_it": list(self.resolving_evidence),
+                # Kept under their old names too, so existing readers hold.
+                "summary": self.summary, "remedy": self.remedy,
+                "ranking": self.ranking.to_dict(),
+                "undroppable": self.undroppable,
+                "leverage": self.leverage,
                 "rule_ids": list(self.rule_ids), "refs": list(self.refs)}
 
 
@@ -201,12 +406,62 @@ class HumanAttentionSet:
     def total_leverage(self) -> int:
         return sum(i.leverage for i in self.items)
 
-    def top(self, n: int = 5) -> Tuple[AttentionItem, ...]:
-        return self.items[:n]
+    @property
+    def undroppable(self) -> Tuple[AttentionItem, ...]:
+        return tuple(i for i in self.items if i.undroppable)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def top(self, n: int = 7) -> Tuple[AttentionItem, ...]:
+        """The n a person should read first — and never fewer than they must.
+
+        A plain slice is how a critical issue disappears to make a list fit. So
+        everything undroppable comes first and comes whole: if eleven items block
+        or bear on what the decision rests on, `top(7)` returns eleven, and
+        `withheld_note` says why the list is longer than asked for. Compression
+        happens by collapsing findings onto one inspection, never by leaving an
+        inspection out.
+        """
+        must = [i for i in self.items if i.undroppable]
+        rest = [i for i in self.items if not i.undroppable]
+        return tuple(must + rest[:max(0, n - len(must))])
+
+    def withheld(self, n: int = 7) -> Tuple[AttentionItem, ...]:
+        """What `top(n)` left out. Never anything undroppable."""
+        shown = {i.item_id for i in self.top(n)}
+        return tuple(i for i in self.items if i.item_id not in shown)
+
+    def withheld_note(self, n: int = 7) -> str:
+        """What a reader is not being shown, stated rather than implied."""
+        must, held = len(self.undroppable), self.withheld(n)
+        parts = []
+        if must > n:
+            parts.append(f"{must} item(s) are shown rather than {n}: they block or "
+                         "bear on what this decision rests on, and a shorter list "
+                         "would have to hide one")
+        if held:
+            by_reason: Dict[str, int] = {}
+            for item in held:
+                by_reason[item.reason.value] = by_reason.get(item.reason.value, 0) + 1
+            parts.append(f"{len(held)} further item(s) are not shown: "
+                         + ", ".join(f"{k} ({v})" for k, v in sorted(by_reason.items()))
+                         + " — none of them blocking, none on the critical path")
+        return "; ".join(parts) or "every item is shown"
+
+    def to_dict(self, limit: Optional[int] = None) -> Dict[str, Any]:
+        shown = self.items if limit is None else self.top(limit)
         return {"count": len(self.items), "basis": self.basis,
-                "items": [i.to_dict() for i in self.items]}
+                "undroppable": len(self.undroppable),
+                "shown": len(shown),
+                "withheld": (0 if limit is None else len(self.withheld(limit))),
+                "withheld_note": ("every item is shown" if limit is None
+                                  else self.withheld_note(limit)),
+                "items": [i.to_dict() for i in shown]}
+
+    def render(self, limit: int = 7) -> str:
+        if not self.items:
+            return "Nothing in this case needs a person before the others."
+        head = [f"{len(self.items)} thing(s) need a person; showing "
+                f"{len(self.top(limit))}.", self.withheld_note(limit), ""]
+        return "\n".join(head + [i.render() + "\n" for i in self.top(limit)])
 
 
 @dataclass(frozen=True)
@@ -265,7 +520,7 @@ class RequiredEvidenceSet:
 # evidence record, so pointing a reviewer at an arbitrary id would waste the trip.
 _WHOLE_CASE_KINDS = frozenset({"case", "input", "subject", "execution", "producer",
                                "manifest", "tools", "stakes", "contradiction",
-                               "assumption", "failure_point"})
+                               "assumption", "failure_point", "coverage_dimension"})
 
 
 def _focus_of(finding: Finding) -> Tuple[str, str]:
@@ -281,8 +536,114 @@ def _reason_of(finding: Finding) -> AttentionReason:
                             _DOMAIN_REASON.get(finding.domain, AttentionReason.COVERAGE_GAP))
 
 
+def _rank(focus: str, kind: str, findings: Sequence[Finding],
+          criticality: Any, consequence: Any,
+          pressured: Mapping[str, RequirementEffect]) -> AttentionRanking:
+    """The three factors, each derived and each reported.
+
+    Never combined into a number. A reviewer who is told an item scored 0.82
+    cannot argue with it; one told "the decision rests on this claim, a blocking
+    requirement is waiting on it, and the action is irreversible" can.
+    """
+    standing = AttentionCriticality.UNDETERMINED
+    basis_parts: List[str] = []
+    if criticality is not None and getattr(criticality, "determinable", False):
+        entry = criticality.of(focus) if kind == "claim" else None
+        # A finding whose refs are counterexample or contradiction ids is still
+        # about the claims it names, and those are carried in `critical_claims`
+        # rather than left to be guessed from the shape of a ref. Without this a
+        # finding whose own summary reads "against a critical claim" ranked
+        # OFF_PATH — and an off-path item is droppable, which is the exact
+        # failure "never hide critical issues for compression" forbids.
+        touched = ({r for f in findings for r in f.refs} | {focus}
+                   | {c for f in findings
+                      for c in (f.observed.get("critical_claims") or ())})
+        if entry is not None and entry.critical:
+            standing = AttentionCriticality.ON_CRITICAL_PATH
+            basis_parts.append(f"{focus} is load-bearing at depth {entry.depth}")
+        elif touched & set(criticality.critical_ids):
+            standing = AttentionCriticality.ON_CRITICAL_PATH
+            named = sorted(touched & set(criticality.critical_ids))[:3]
+            basis_parts.append("touches load-bearing " + ", ".join(named))
+        elif entry is not None:
+            standing = (AttentionCriticality.SUPPORTING
+                        if entry.standing.value == "SUPPORTING"
+                        else AttentionCriticality.OFF_PATH)
+        elif kind in _WHOLE_CASE_KINDS:
+            # A finding about the case as a whole bears on whatever the case
+            # rests on; it is not off the path merely for naming no claim.
+            standing = AttentionCriticality.UNDETERMINED
+            basis_parts.append("about the case rather than one claim")
+        else:
+            standing = AttentionCriticality.OFF_PATH
+    elif criticality is not None:
+        basis_parts.append("criticality could not be derived for this case")
+
+    pressure = RequirementPressure.NONE
+    hit = [pressured[r] for r in ({focus} | {x for f in findings for x in f.refs})
+           if r in pressured]
+    hit += [pressured[r] for r in (f.rule_id for f in findings) if r in pressured]
+    if RequirementEffect.BLOCK in hit:
+        pressure = RequirementPressure.BLOCKS
+    elif RequirementEffect.HOLD in hit:
+        pressure = RequirementPressure.HOLDS
+    elif hit:
+        pressure = RequirementPressure.UNASSESSED
+    if hit:
+        basis_parts.append("an unresolved requirement names it")
+
+    weight = ConsequenceWeight.UNKNOWN
+    if consequence is not None:
+        try:
+            from release_gate.assurance.consequence import ConsequenceDimension
+            reversibility = consequence.value(ConsequenceDimension.REVERSIBILITY)
+            externality = consequence.value(ConsequenceDimension.EXTERNALITY)
+            if reversibility == "IRREVERSIBLE":
+                weight = ConsequenceWeight.IRREVERSIBLE
+                basis_parts.append("the action is irreversible")
+            elif externality in ("EXTERNAL", "THIRD_PARTY", "PUBLIC"):
+                weight = ConsequenceWeight.EXTERNAL
+                basis_parts.append("effects land outside this system")
+            elif reversibility == "UNKNOWN":
+                weight = ConsequenceWeight.UNKNOWN
+            else:
+                weight = ConsequenceWeight.BOUNDED
+        except Exception:
+            weight = ConsequenceWeight.UNKNOWN
+    return AttentionRanking(criticality=standing, pressure=pressure,
+                            consequence=weight, basis="; ".join(basis_parts))
+
+
+def _evidence_for(focus: str, kind: str, findings: Sequence[Finding],
+                  claim_graph: Any) -> Tuple[Tuple[str, ...], Tuple[str, ...],
+                                             Tuple[str, ...], str]:
+    """What depends on it, what supports it, what contradicts it, and how known.
+
+    Read from the claim graph where the focus is a claim, and from the findings
+    themselves otherwise. Where nothing is recorded the answer is an empty tuple
+    rendered as "(none recorded)" — never a claim that nothing depends on it.
+    """
+    depends: Tuple[str, ...] = ()
+    supporting: Tuple[str, ...] = ()
+    contradicting: Tuple[str, ...] = ()
+    epistemic = "UNKNOWN"
+    if claim_graph is not None and kind == "claim":
+        claim = claim_graph.claim(focus)
+        if claim is not None:
+            # What falls if this is wrong: every claim that rests on it.
+            depends = tuple(sorted(
+                c.claim_id for c in claim_graph.claims if focus in c.depends_on))[:12]
+            supporting = tuple(claim.supporting_evidence)[:12]
+            contradicting = tuple(claim.contradicting_evidence)[:12]
+            epistemic = claim_graph.status(focus).value
+    if not supporting:
+        supporting = tuple(sorted({r for f in findings for r in f.refs}))[:12]
+    return depends, supporting, contradicting, epistemic
+
+
 def build_attention(case: AssuranceCase, analysis: AnalysisResult,
-                    assessment: Optional[MethodologyAssessment] = None
+                    assessment: Optional[MethodologyAssessment] = None,
+                    required: Optional["RequiredEvidenceSet"] = None
                     ) -> HumanAttentionSet:
     """Collapse findings onto the things a person would actually open.
 
@@ -292,10 +653,39 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
     list where a reader can find them. Attention is a scarce resource and padding
     it with things that do not change a decision is how it stops being read.
     """
+    criticality = getattr(analysis, "criticality", None)
+    consequence = getattr(analysis, "consequence", None)
+    claim_graph = getattr(analysis, "claim_graph", None)
+    critical_ids = (set(criticality.critical_ids)
+                    if criticality is not None and criticality.determinable else set())
+
+    # What an unresolved requirement is waiting on, keyed by whatever it names.
+    pressured: Dict[str, RequirementEffect] = {}
+    if assessment is not None:
+        for result in assessment.unmet():
+            for key in (result.requirement_id, *(str(v) for v in
+                                                 (result.observed or {}).values()
+                                                 if isinstance(v, str))):
+                pressured.setdefault(key, result.effect)
+
+    # What would resolve each gap, keyed by the rule that raised it, so an item
+    # can answer "what evidence would settle this?" on its own rather than
+    # sending the reader to a separate list.
+    resolvers: Dict[str, List[str]] = {}
+    for entry in (required.items if required is not None else ()):
+        for rule in entry.resolves:
+            resolvers.setdefault(rule, []).append(entry.what)
+
     groups: Dict[Tuple[str, str], List[Finding]] = {}
     for finding in analysis.findings:
         if finding.effect is RequirementEffect.ADVISORY:
-            continue
+            # Advisories ride along on an item that already exists — except where
+            # they bear on what the decision rests on. "Never hide critical issues
+            # for compression" outranks keeping the list short, and an advisory
+            # about a load-bearing claim is exactly the thing that would otherwise
+            # vanish for being merely advisory.
+            if not (critical_ids and ({*finding.refs} & critical_ids)):
+                continue
         groups.setdefault(_focus_of(finding), []).append(finding)
 
     items: List[AttentionItem] = []
@@ -313,11 +703,24 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
         refs = tuple(sorted({r for f in findings for r in f.refs}))[:12]
         summary = (worst.summary if len(findings) == 1
                    else f"{worst.summary} (+{len(findings) - 1} more finding(s) here)")
+        depends, supporting, contradicting, epistemic = _evidence_for(
+            focus, kind, findings, claim_graph)
+        resolving = tuple(dict.fromkeys(
+            [w for rule in rule_ids for w in resolvers.get(rule, ())]
+            or [f.remedy for f in findings if f.remedy]))[:6]
         items.append(AttentionItem(
             item_id=f"att_{kind}_{focus}".replace(" ", "_")[:96],
             reason=_reason_of(reason_source), effect=worst.effect,
             focus=focus, focus_kind=kind,
             summary=summary, why_it_matters=worst.detail, remedy=worst.remedy,
+            depends_on=depends, supporting_evidence=supporting,
+            contradicting_evidence=contradicting,
+            status=("BLOCKING" if worst.effect is RequirementEffect.BLOCK
+                    else "OPEN" if worst.effect is RequirementEffect.HOLD
+                    else "ADVISORY"),
+            epistemic_status=epistemic,
+            resolving_evidence=resolving,
+            ranking=_rank(focus, kind, findings, criticality, consequence, pressured),
             leverage=len(findings), rule_ids=rule_ids, refs=refs))
 
     if assessment is not None:
@@ -334,6 +737,13 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
                     "have (Invariant 10)."),
                 remedy="state a methodology — a built-in, an organisation's own, or one "
                        "supplied through the API — and re-run",
+                status="OPEN", epistemic_status="NOT_ASSESSED",
+                resolving_evidence=("a stated methodology for this class of decision",),
+                # Sufficiency is unassessable without a yardstick, and the
+                # consequence of the action is unchanged by that — so this ranks
+                # on the case's own stakes rather than at the bottom.
+                ranking=_rank("METHODOLOGY_REQUIRED", "case", (), criticality,
+                              consequence, pressured),
                 leverage=1, rule_ids=("RG-ZC-001",)))
         else:
             for result in assessment.unmet():
@@ -346,10 +756,36 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
                     summary=f"{result.description} — {result.outcome.value}",
                     why_it_matters=result.detail,
                     remedy=result.remedy or "satisfy the requirement",
+                    status=result.outcome.value,
+                    epistemic_status=("NOT_ASSESSED"
+                                      if result.outcome is RequirementOutcome.NOT_ASSESSED
+                                      else "DERIVED"),
+                    resolving_evidence=tuple(
+                        resolvers.get(result.requirement_id,
+                                      [result.remedy] if result.remedy else [])),
+                    ranking=AttentionRanking(
+                        criticality=(AttentionCriticality.ON_CRITICAL_PATH
+                                     if critical_ids else
+                                     AttentionCriticality.UNDETERMINED),
+                        pressure=(RequirementPressure.BLOCKS
+                                  if result.effect is RequirementEffect.BLOCK
+                                  else RequirementPressure.HOLDS),
+                        consequence=_rank(result.requirement_id, "requirement", (),
+                                          None, consequence, {}).consequence,
+                        basis="an assurance requirement this decision is held to is "
+                              "unresolved"),
                     leverage=1, rule_ids=(result.requirement_id,)))
 
-    items.sort(key=lambda i: (_EFFECT_RANK[i.effect], -i.leverage, i.item_id))
-    return HumanAttentionSet(items=tuple(items))
+    # Dependency, then unresolved requirement, then consequence — the three the
+    # product ranks on. Effect and leverage break the remaining ties and are
+    # deliberately last: a count of findings must never outrank a dependency
+    # (Invariant 12).
+    items.sort(key=lambda i: i.sort_key)
+    return HumanAttentionSet(
+        items=tuple(items),
+        basis=("ranked by what the decision rests on, then by what an unresolved "
+               "assurance requirement is waiting on, then by what is at stake; "
+               "no composite score is computed"))
 
 
 # ── required evidence ────────────────────────────────────────────────────────

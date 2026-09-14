@@ -972,8 +972,10 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
 
     assessment = assess(analysed, methodology)
 
-    attention = build_attention(analysed, analysis, assessment)
+    # Required evidence first: each attention item carries what would resolve it,
+    # so the reader is not sent to a second list to find out what to ask for.
     required = build_required_evidence(analysed, analysis, assessment)
+    attention = build_attention(analysed, analysis, assessment, required=required)
 
     # Attention and required evidence are release-gate's own conclusions, folded in
     # for the record only. They are deliberately not present when the methodology

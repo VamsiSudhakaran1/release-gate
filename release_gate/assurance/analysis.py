@@ -712,7 +712,9 @@ def _analyse_adversarial(review: Optional[AdversarialReview],
             remedy="repair the support the critic identified and record what answers "
                    "the finding, or withdraw the claim",
             refs=tuple(f.finding_id for f in against_critical[:12]),
-            observed={"open_argument_defects_critical": len(against_critical)}))
+            observed={"open_argument_defects_critical": len(against_critical),
+                      "critical_claims": sorted({f.target_claim
+                                                 for f in against_critical})[:12]}))
 
     # Everything else still standing, minus the accepted risks: those are reported
     # by RG-ADV-003, which says something this rule cannot, and counting them here
@@ -755,7 +757,9 @@ def _analyse_adversarial(review: Optional[AdversarialReview],
                    "to see it either way",
             refs=tuple(f.finding_id for f in accepted[:12]),
             observed={"accepted_risks": len(accepted),
-                      "against_critical": len(critical_accepts)}))
+                      "against_critical": len(critical_accepts),
+                      "critical_claims": sorted({f.target_claim
+                                                 for f in critical_accepts})[:12]}))
 
     cleared = review.self_cleared()
     if cleared:
@@ -775,7 +779,9 @@ def _analyse_adversarial(review: Optional[AdversarialReview],
                    "claim's support, and cite that review as resolution_evidence",
             refs=tuple(f.finding_id for f in cleared[:12]),
             observed={"self_cleared": len(cleared),
-                      "against_critical": len(critical_cleared)}))
+                      "against_critical": len(critical_cleared),
+                      "critical_claims": sorted({f.target_claim
+                                                 for f in critical_cleared})[:12]}))
 
     related = review.non_independent()
     if related:
@@ -872,7 +878,9 @@ def _analyse_replication(profile: Optional[ReplicationProfile],
             remedy="find out why the paths differ and record what settles it, or "
                    "withdraw the result until they agree",
             refs=tuple(t.target.target_id for t in against_critical[:12]),
-            observed={"divergent_critical": len(against_critical)}))
+            observed={"divergent_critical": len(against_critical),
+                      "critical_claims": sorted({t.target.target_id
+                                                 for t in against_critical})[:12]}))
 
     other = [t for t in divergent if t not in against_critical]
     if other:
@@ -1046,7 +1054,9 @@ def _analyse_counterexamples(ledger: Optional[CounterexampleLedger],
             remedy="answer the counterexample and record what answers it, restate the "
                    "claim so it survives, or withdraw the claim",
             refs=tuple(a.counterexample_id for a in against_critical[:12]),
-            observed={"open_against_critical": len(against_critical)}))
+            observed={"open_against_critical": len(against_critical),
+                      "critical_claims": sorted({a.target_claim
+                                                 for a in against_critical})[:12]}))
 
     other = [a for a in live if a.target_claim not in critical]
     if other:
@@ -1178,6 +1188,8 @@ def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
                    "it does not bear on the decision",
             refs=tuple(c.contradiction_id for c in critical[:12]),
             observed={"unresolved_critical": len(critical),
+                      "critical_claims": sorted({c for x in critical
+                                                 for c in x.target_claims})[:12],
                       "contradiction_ids": [c.contradiction_id for c in critical[:12]]}))
 
     if claim_graph is None:

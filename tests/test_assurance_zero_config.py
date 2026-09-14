@@ -379,11 +379,20 @@ class TestHumanAttention:
         items = list(assure(refuted_file).attention)
         assert items[0].effect is RequirementEffect.BLOCK
 
-    def test_advisory_findings_do_not_create_attention_items(self, clean_file):
+    def test_advisory_findings_off_the_critical_path_create_no_items(self, clean_file):
+        # Advisories ride along rather than filling the list — except where they
+        # bear on what the decision rests on. "Never hide critical issues for
+        # compression" outranks keeping the list short, so an advisory about a
+        # load-bearing claim is surfaced and one about anything else is not.
         outcome = assure(clean_file)
         assert any(f.effect is RequirementEffect.ADVISORY
                    for f in outcome.analysis.findings)
-        assert all(i.effect is not RequirementEffect.ADVISORY for i in outcome.attention)
+        critical = set(outcome.criticality.critical_ids)
+        advisory = [i for i in outcome.attention
+                    if i.effect is RequirementEffect.ADVISORY]
+        assert all(set(i.refs) & critical for i in advisory)
+        assert len(advisory) < sum(1 for f in outcome.analysis.findings
+                                   if f.effect is RequirementEffect.ADVISORY)
 
     def test_a_missing_methodology_is_itself_an_attention_item(self, clean_file):
         outcome = assure(clean_file)

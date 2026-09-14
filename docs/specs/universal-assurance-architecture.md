@@ -1538,6 +1538,10 @@ release-gate ever deciding it.
 
 ## 7. The Human Attention Engine
 
+> **Implemented.** `release_gate/assurance/attention.py`. Measured on 188,001
+> input records — 98,000 claims, 90,000 evidence records from 10,000 producers,
+> 8,000 verification attempts — producing **8 attention items, 7 shown**.
+
 The component the frontier case exists for: given a case with potentially millions
 of records, produce **the smallest set of things a human must inspect before
 accepting responsibility**.
@@ -1565,11 +1569,46 @@ status to best-case and worst-case and recompute the root claim's
 not, regardless of how many events they involve. A single load-bearing lemma
 outranks 50,000 informational events by construction, not by heuristic.
 
-Ordering: integrity breaks and unresolved contradictions on load-bearing claims are
-pinned first, then by `(consequence_weight × leverage)`, ties broken by stable id so
-output is reproducible. The set is capped (default 7) with an **explicit remainder
-count and a reference to the full set** — never a silent truncation, which would be
-an Invariant 3 violation dressed as UX.
+**Every item answers nine questions**, on the item rather than scattered across
+the case: what it is, why it matters, what depends on it, what supports it, what
+contradicts it, where it stands, what epistemic status that standing has, what
+the human can do, and what evidence would resolve it. The last of those is joined
+onto the item from `RequiredEvidence` rather than left in a second list, so a
+reviewer is never sent elsewhere to find out what to ask for. An answer nobody
+recorded renders as `(none recorded)` — never as an assertion that nothing
+depends on it.
+
+**Ranking is three factors, kept separate.** `AttentionRanking` carries
+dependency criticality (from §6.2a), unresolved requirement pressure (from the
+methodology assessment), and consequence (from §6.8), compared as an ordered
+tuple. They are deliberately **not multiplied into a score**: `composite_score`
+is `None` in the record, because a reviewer told an item scored 0.82 cannot argue
+with it, while one told "the decision rests on this claim, a blocking requirement
+is waiting on it, and the action is irreversible" can. Effect and leverage break
+remaining ties and come last — a count of findings must never outrank a
+dependency.
+
+Two orderings invert what a naive implementation would do. `UNDETERMINED`
+criticality ranks **above** `OFF_PATH`, and `UNKNOWN` consequence **above**
+`BOUNDED`: not knowing whether something matters is a reason to look, and sorting
+unknowns to the bottom with the unimportant is how a case whose criticality could
+not be derived comes to look calm (Invariant 3).
+
+**Compression collapses findings onto inspections; it never drops an
+inspection.** Forty findings across three claims are three items. But `top(n)`
+returns *at least* everything undroppable — every blocking item and every item on
+what the decision rests on — so `top(7)` over eleven blockers returns eleven, and
+`withheld_note` says why the list is longer than asked for. What is left out is
+named by reason and counted; nothing vanishes silently. This also reaches the
+advisories: an advisory finding normally rides along rather than filling the
+list, **except** where it bears on a load-bearing claim, because "never hide
+critical issues for compression" outranks keeping the list short.
+
+An item's criticality does not depend on the shape of its refs. A counterexample
+finding refs counterexample ids, not claim ids, so the analysers that partition by
+criticality state the claims in `observed["critical_claims"]` — without it, a
+finding whose own summary read "against a critical claim" ranked `OFF_PATH`, and
+an off-path item is droppable.
 
 **`RequiredEvidence`** is the HOLD counterpart: for each condition blocking
 PROMOTE, what specific evidence would resolve it — "an independent replication of
