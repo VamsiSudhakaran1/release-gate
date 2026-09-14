@@ -58,6 +58,11 @@ from release_gate.assurance.canonical import (
     thaw_value,
 )
 from release_gate.assurance.case import AssuranceCase
+from release_gate.assurance.verification import (
+    VerificationAttempt,
+    VerificationStatus,
+    VerificationTarget,
+)
 from release_gate.assurance.evidence import (
     EpistemicStatus,
     EvidenceRecord,
@@ -68,6 +73,12 @@ from release_gate.assurance.records import Presence
 from release_gate.assurance.subject import ContentReference
 
 CLAIM_SCHEMA_VERSION = 1
+
+#: Historical name for the attempt vocabulary. It is now `VerificationStatus`,
+#: which is a superset: the old three values could not express a check that was
+#: expected and never ran, or one whose result was later retracted. Kept as an
+#: alias so existing callers and stored records keep working.
+AttemptOutcome = VerificationStatus
 
 
 class ClaimType(str, Enum):
@@ -108,12 +119,6 @@ class ClaimEdgeType(str, Enum):
     DERIVED_FROM = "DERIVED_FROM"
     SUPERSEDES = "SUPERSEDES"
     EQUIVALENT_TO = "EQUIVALENT_TO"  # declared, never inferred
-
-
-class AttemptOutcome(str, Enum):
-    PASSED = "PASSED"
-    FAILED = "FAILED"              # the verification ran and rejected: a refutation
-    INCONCLUSIVE = "INCONCLUSIVE"  # it ran and could not tell
 
 
 class ClaimError(ValueError):
@@ -188,38 +193,6 @@ def link_evidence(claims: Iterable[Claim],
 def weakest(statuses: Iterable[ClaimStatus]) -> Optional[ClaimStatus]:
     ranked = [s for s in statuses if s in _STATUS_ORDER]
     return min(ranked, key=lambda s: _STATUS_ORDER[s]) if ranked else None
-
-
-@dataclass(frozen=True)
-class VerificationAttempt:
-    """One attempt to verify a claim — including the ones that did not work.
-
-    Kept whatever the outcome. A graph recording only successes would make every
-    case look like its best branch (Invariant 7).
-    """
-
-    evidence_id: str
-    method: VerificationMethod
-    outcome: AttemptOutcome
-    detail: str = ""
-    attempted_at: str = field(default_factory=_utc_now)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "method", VerificationMethod(self.method))
-        object.__setattr__(self, "outcome", AttemptOutcome(self.outcome))
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {"evidence_id": self.evidence_id, "method": self.method.value,
-                "outcome": self.outcome.value, "detail": self.detail,
-                "attempted_at": self.attempted_at}
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "VerificationAttempt":
-        return cls(evidence_id=data["evidence_id"],
-                   method=VerificationMethod(data["method"]),
-                   outcome=AttemptOutcome(data["outcome"]),
-                   detail=data.get("detail", ""),
-                   attempted_at=data.get("attempted_at") or _utc_now())
 
 
 @dataclass(frozen=True)
@@ -677,11 +650,11 @@ class ClaimGraph:
         unresolved = [e for e in contradicting if e.evidence_id not in self._resolved]
 
         passed = [a for a in claim.verification_attempts
-                  if a.outcome is AttemptOutcome.PASSED]
+                  if a.status is VerificationStatus.PASSED]
         failed = [a for a in claim.verification_attempts
-                  if a.outcome is AttemptOutcome.FAILED]
+                  if a.status is VerificationStatus.FAILED]
         inconclusive = [a for a in claim.verification_attempts
-                        if a.outcome is AttemptOutcome.INCONCLUSIVE]
+                        if a.status is VerificationStatus.INCONCLUSIVE]
 
         counts = dict(supporting=len(claim.supporting_evidence),
                       contradicting=len(claim.contradicting_evidence),

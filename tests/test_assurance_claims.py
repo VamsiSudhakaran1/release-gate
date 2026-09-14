@@ -57,8 +57,9 @@ def _graph(claims, *records, resolved=()):
 
 
 def _attempt(outcome, evidence_id="ev_x"):
-    return VerificationAttempt(evidence_id=evidence_id,
-                               method=VerificationMethod.THEOREM_PROVER, outcome=outcome)
+    return VerificationAttempt(method=VerificationMethod.THEOREM_PROVER,
+                               verifier="prover://test", evidence=(evidence_id,),
+                               status=outcome)
 
 
 # ── the taxonomies ──────────────────────────────────────────────────────────

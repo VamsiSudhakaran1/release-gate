@@ -768,9 +768,56 @@ always in the graph, which is where provenance meets the decision.
 
 ### 5.5 `VerificationGraph` (optional)
 
-The projection that answers "what was checked, by whom, with what method, against
-which digest, and did it still apply?" It is derived from evidence records with a
-`verification_method`, and it is the structure the approval packet renders.
+> **Implemented.** `release_gate/assurance/verification.py`.
+
+Answers "what was checked, by whom, with what method, against which digest, and
+does it still apply?" — and answers it as a graph, because a boolean is how
+assurance systems mislead people.
+
+```text
+Claim C-12
+ ├── verified_by   FormalProof    V-1
+ ├── tested_by     Simulation     V-8
+ ├── challenged_by Counterexample CE-2
+ └── reviewed_by   Agent 818
+```
+
+The relationship is computed from method and status together rather than supplied
+alongside them, so the two can never disagree: a **failed** proof is
+`CHALLENGED_BY`, not `VERIFIED_BY`, whatever produced it.
+
+**An attempt binds to an exact target state.** `target_digest` is the content the
+check actually ran against. When the target moves, the attempt does not move with
+it — it becomes `SUPERSEDED` and stops counting. Applicability is therefore a
+computation, not an assumption, and `UNDETERMINED` (no digest on one side) is
+emphatically not `APPLIES`: "cannot tell whether this still holds" must never be
+read as "it holds".
+
+Six statuses, and two pairs of them are deliberately distinct:
+
+* `INVALIDATED` ≠ `FAILED`. One means the check was withdrawn or found
+  unreliable; the other that the claim did not hold. An invalidated pass is not a
+  pass and is not counted as one.
+* `INVALIDATED` ≠ superseded. Invalidation is a property of the *attempt*;
+  supersession is a property of its *relationship to a target that moved*. An
+  attempt can be perfectly sound and still not apply.
+* `NOT_RUN` is a status, so a check somebody expected and never ran is a fact
+  about the case rather than an absence of one.
+
+**A challenge outranks a pass.** One applicable failure and one applicable pass
+gives `FAILED`: a check that found a problem is not cancelled by a check that did
+not look for it (Invariant 7).
+
+**Corroboration is counted by lineage, not by attempt.** `independence_lineage`
+records what a verification's independence rests on, and attempts sharing any
+element are one group — two provers run by one organisation share that
+organisation's assumptions. An attempt with no recorded lineage is counted apart
+rather than credited, because provenance nobody stated is not independence.
+
+`claims.VerificationAttempt` was a narrower version of this record, not a peer,
+and has been generalised onto it; `AttemptOutcome` remains as an alias for
+`VerificationStatus`, whose three old values could not express `NOT_RUN` or
+`INVALIDATED`.
 
 ---
 

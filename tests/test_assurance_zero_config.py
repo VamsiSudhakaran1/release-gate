@@ -265,7 +265,7 @@ class TestIngestBoundary:
         held = {r.evidence_id for r in normalisation.evidence}
         claim = normalisation.claims[0]
         assert set(claim.supporting_evidence) <= held
-        assert all(a.evidence_id in held for a in claim.verification_attempts)
+        assert all(set(a.evidence) <= held for a in claim.verification_attempts)
 
     def test_unmappable_records_are_counted_not_dropped_silently(self, tmp_path):
         path = _write(tmp_path, "mixed.jsonl", CLEAN_ENVELOPE + [
@@ -573,4 +573,5 @@ class TestEvalIngestion:
         held = {r.evidence_id for r in normalisation.evidence}
         for claim in normalisation.claims:
             for attempt in claim.verification_attempts:
-                assert attempt.evidence_id in held
+                assert set(attempt.evidence) <= held
+                assert attempt.evidence, "an eval attempt must cite its result record"

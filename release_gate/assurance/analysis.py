@@ -33,6 +33,9 @@ from release_gate.assurance.execution_graph import CompletenessStatus, Execution
 from release_gate.assurance.methodology import RequirementEffect
 from release_gate.assurance.records import Presence
 from release_gate.assurance.subject import MutationStatus
+from release_gate.assurance.verification import (
+    Applicability, TargetKind, VerificationGraph, VerificationStatus, VerificationTarget,
+)
 
 __all__ = [
     "AnalysisDomain",
@@ -98,6 +101,7 @@ class AnalysisResult:
     claim_graph: Optional[ClaimGraph] = None
     artifact_graph: Optional[ArtifactGraph] = None
     execution_graph: Optional[ExecutionGraph] = None
+    verification_graph: Optional[VerificationGraph] = None
     capabilities: Optional[CapabilitySurface] = None
     consequence: Optional[ConsequenceProfile] = None
 
@@ -198,7 +202,7 @@ def _analyse_verification(case: AssuranceCase, records: Sequence[EvidenceRecord]
         failed: List[str] = []
         conflicting: List[str] = []
         for claim in sorted(claim_graph.claims, key=lambda c: c.claim_id):
-            outcomes = {a.outcome.value for a in claim.verification_attempts}
+            outcomes = {a.status.value for a in claim.verification_attempts}
             if "FAILED" in outcomes:
                 failed.append(claim.claim_id)
             if "FAILED" in outcomes and "PASSED" in outcomes:
@@ -226,6 +230,88 @@ def _analyse_verification(case: AssuranceCase, records: Sequence[EvidenceRecord]
                 remedy="record which attempt supersedes the other and on what basis",
                 refs=_sorted_ids(conflicting),
                 observed={"claims_conflicting": len(conflicting)}))
+    return findings
+
+
+def _analyse_verification_graph(graph: Optional[VerificationGraph]) -> List[Finding]:
+    """What the verification graph says that a per-claim status cannot.
+
+    The sharp one is supersession: an attempt that passed against content the
+    target no longer has. A boolean "verified" carries that forward silently;
+    a graph that binds each attempt to a digest cannot.
+    """
+    findings: List[Finding] = []
+    if graph is None or not graph.attempts:
+        return findings
+
+    superseded = graph.superseded_attempts()
+    if superseded:
+        findings.append(Finding(
+            rule_id="RG-VERIF-004", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.BLOCK,
+            summary=f"{len(superseded)} verification(s) ran against content the target "
+                    "no longer has",
+            detail="These checks were sound when they ran and do not apply now: "
+                   + "; ".join(
+                       f"{a.verification_id} ({a.method.value}, {a.status.value}) on "
+                       f"{a.target.kind.value} {a.target.target_id}"
+                       for a in superseded[:6])
+                   + ". A proof of an earlier state is not a proof of this one.",
+            remedy="re-run the verification against the current target state",
+            refs=tuple(a.verification_id for a in superseded[:12]),
+            observed={"superseded": len(superseded)}))
+
+    undetermined = [a for a in graph.attempts
+                    if a.target is not None
+                    and a.applicability(graph.current_digest(a.target))
+                    is Applicability.UNDETERMINED
+                    and a.counts_toward_status]
+    if undetermined:
+        findings.append(Finding(
+            rule_id="RG-VERIF-005", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(undetermined)} verification(s) do not record what state they "
+                    "ran against",
+            detail="Without a target digest on the attempt, or a current digest for the "
+                   "target, whether these still apply cannot be computed. They are "
+                   "reported and not counted as current — 'cannot tell' is not 'still "
+                   "holds'.",
+            remedy="record target_digest on each verification attempt, so its "
+                   "applicability becomes a computation rather than an assumption",
+            refs=tuple(a.verification_id for a in undetermined[:12]),
+            observed={"undetermined": len(undetermined)}))
+
+    invalidated = graph.invalidated()
+    if invalidated:
+        findings.append(Finding(
+            rule_id="RG-VERIF-006", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(invalidated)} verification(s) have been invalidated",
+            detail="These ran, and their results have since been withdrawn or found "
+                   "unreliable: "
+                   + "; ".join(f"{a.verification_id} ({a.method.value})"
+                               for a in invalidated[:6])
+                   + ". An invalidated pass is not a pass, and is not counted as one.",
+            remedy="re-run the invalidated checks, or record why the target stands "
+                   "without them",
+            refs=tuple(a.verification_id for a in invalidated[:12]),
+            observed={"invalidated": len(invalidated)}))
+
+    not_run = graph.not_run()
+    if not_run:
+        findings.append(Finding(
+            rule_id="RG-VERIF-007", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(not_run)} expected verification(s) were never run",
+            detail="; ".join(f"{a.method.value} on "
+                             f"{a.target.kind.value if a.target else 'an unnamed target'}"
+                             f"{': ' + a.detail if a.detail else ''}"
+                             for a in not_run[:6])
+                   + ". Recorded because a check somebody expected and did not run is a "
+                     "fact about this case, not an absence of one.",
+            remedy="run them, or withdraw the expectation",
+            refs=tuple(a.verification_id for a in not_run[:12]),
+            observed={"not_run": len(not_run)}))
     return findings
 
 
@@ -724,9 +810,23 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
         except Exception:
             execution = None
 
+    # Current digests per target, so applicability is a computation. Without them
+    # every attempt is UNDETERMINED, which is honest but says nothing.
+    digests: Dict[Tuple[str, str], str] = {}
+    if artifact_graph is not None:
+        for logical_id in artifact_graph.logical_ids():
+            current = artifact_graph.current_version(logical_id)
+            if current is not None and current.digest:
+                digests[(TargetKind.ARTIFACT.value, logical_id)] = current.digest
+    try:
+        verification_graph = VerificationGraph.from_case(case, digests=digests)
+    except Exception:
+        verification_graph = None
+
     findings: List[Finding] = []
     findings.extend(_analyse_provenance(case, records))
     findings.extend(_analyse_verification(case, records, claim_graph))
+    findings.extend(_analyse_verification_graph(verification_graph))
     findings.extend(_analyse_contradiction(claim_graph, records))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
@@ -738,4 +838,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.sort(key=lambda f: (f.domain.value, f.rule_id, f.refs[0] if f.refs else ""))
     return AnalysisResult(findings=tuple(findings), claim_graph=claim_graph,
                           artifact_graph=artifact_graph, execution_graph=execution,
+                          verification_graph=verification_graph,
                           capabilities=capabilities, consequence=consequence)

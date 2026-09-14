@@ -49,6 +49,9 @@ from release_gate.assurance.methodology import (
     assess,
 )
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
+from release_gate.assurance.verification import (
+    Applicability, VerificationGraph, VerificationStatus,
+)
 from release_gate.assurance.evidence import (
     EvidenceRecord, EvidenceType, Producer, file_content,
 )
@@ -100,6 +103,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def verification(self) -> Optional[VerificationGraph]:
+        """Every check on every target, with whether each still applies."""
+        return self.analysis.verification_graph
+
+    @property
     def capabilities(self) -> Optional[CapabilitySurface]:
         """What the system reached for. Evidence on the case, not a verdict input."""
         return self.normalisation.capabilities
@@ -118,6 +126,8 @@ class AssuranceOutcome:
             "capabilities": (self.capabilities.to_dict() if self.capabilities
                              else None),
             "consequence": self.consequence.to_dict(),
+            "verification": (self.verification.to_dict() if self.verification
+                             else None),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -141,7 +151,8 @@ def _coverage_row(dimension: str, assessed: bool, note: str,
 
 
 def _ingest_coverage(normalisation: Normalisation,
-                     consequence: ConsequenceProfile) -> List[SimpleRecord]:
+                     consequence: ConsequenceProfile,
+                     verification: Optional[VerificationGraph]) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
         _coverage_row("input_identification", detection.recognised,
@@ -161,6 +172,7 @@ def _ingest_coverage(normalisation: Normalisation,
                        "no execution telemetry was present in this input")),
         _capability_coverage(normalisation.capabilities),
         _consequence_coverage(consequence),
+        _verification_coverage(verification),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -208,6 +220,34 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         declared_only=len(surface.declared_only), unknown=len(surface.unknown),
         bounded=surface.bounded, observation_possible=surface.can_observe,
         surface_digest=surface.digest())
+
+
+def _verification_coverage(graph: Optional[VerificationGraph]) -> SimpleRecord:
+    """Coverage for verification, keyed on whether applicability is computable.
+
+    ASSESSED only when every attempt that could move a status records what state
+    it ran against. A case full of verifications that never said what they checked
+    has not assessed verification currency — it has recorded checks whose
+    applicability is unknowable.
+    """
+    if graph is None or not graph.attempts:
+        return _coverage_row("verification_currency", False,
+                             "no verification attempts are recorded, so whether "
+                             "anything still applies cannot be asked")
+    undetermined = sum(
+        1 for a in graph.attempts
+        if a.target is not None and a.counts_toward_status
+        and a.applicability(graph.current_digest(a.target)) is Applicability.UNDETERMINED)
+    superseded = len(graph.superseded_attempts())
+    summary = graph.summary()
+    return _coverage_row(
+        "verification_currency", undetermined == 0,
+        (f"{summary['attempts']} attempt(s) on {summary['targets']} target(s); "
+         f"{superseded} superseded, {undetermined} with no recorded target state"),
+        attempts=summary["attempts"], targets=summary["targets"],
+        superseded=superseded, undetermined=undetermined,
+        invalidated=summary["invalidated"], not_run=summary["not_run"],
+        graph_digest=summary["digest"])
 
 
 def _consequence_coverage(profile: ConsequenceProfile) -> SimpleRecord:
@@ -282,6 +322,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 objective: str, requested_decision: str,
                 methodology: Optional[AssuranceMethodology],
                 consequence: ConsequenceProfile,
+                verification: Optional[VerificationGraph] = None,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -330,7 +371,8 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.extend("verification", verifications)
 
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
-    builder.extend("coverage", _ingest_coverage(normalisation, consequence))
+    builder.extend("coverage", _ingest_coverage(normalisation, consequence,
+                                                verification))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -506,7 +548,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     analysed = _build_case(
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
-        consequence=consequence,
+        consequence=consequence, verification=analysis.verification_graph,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -521,7 +563,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     final = _build_case(
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
-        consequence=consequence,
+        consequence=consequence, verification=analysis.verification_graph,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -590,6 +632,20 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+
+    graph = outcome.verification
+    if graph is not None and graph.attempts:
+        add("")
+        add(f"  VERIFICATION ({len(graph.attempts)} attempt(s))")
+        for target in graph.targets():
+            assessment = graph.assess(target)
+            add(f"    {graph.render(target)}".replace("\n", "\n    "))
+            note = (f"      -> {assessment.status.value}: {assessment.basis}")
+            add(note)
+            if assessment.status is VerificationStatus.PASSED:
+                add(f"      -> {assessment.independent_confirmations} independent "
+                    f"confirmation(s), {assessment.unattributed_confirmations} whose "
+                    "independence is unrecorded")
 
     surface = outcome.capabilities
     if surface is not None and len(surface):

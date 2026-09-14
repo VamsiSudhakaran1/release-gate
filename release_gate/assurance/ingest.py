@@ -36,8 +36,9 @@ from release_gate.assurance.capabilities import CapabilitySurface, declared_from
 from release_gate.assurance.consequence import (
     ConsequenceDescriptor, descriptors_from_mapping,
 )
-from release_gate.assurance.claims import (
-    AttemptOutcome, Claim, ClaimProvenance, ClaimType, VerificationAttempt,
+from release_gate.assurance.claims import Claim, ClaimProvenance, ClaimType
+from release_gate.assurance.verification import (
+    VerificationAttempt, VerificationError, VerificationStatus,
 )
 from release_gate.assurance.evidence import (
     EpistemicStatus, EvidenceRecord, EvidenceType, Producer, ProducerKind,
@@ -559,21 +560,34 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
     for raw in row.get("verification_attempts") or ():
         if not isinstance(raw, Mapping):
             continue
-        # `evidence_id` is what the attempt is recorded against. An envelope that
-        # names no evidence still records the attempt — a check nobody can open is
-        # weaker evidence, not absent evidence — and says so in the detail rather
-        # than inventing an id that would resolve to nothing.
-        performed_by = str(raw.get("performed_by") or "").strip()
-        detail = str(raw.get("detail") or "")
-        if performed_by:
-            detail = f"performed by {performed_by}{'; ' + detail if detail else ''}"
+        evidence_ids = tuple(resolve(i) for i in _as_ids(
+            raw.get("evidence") or raw.get("evidence_id")))
+        status = VerificationStatus(str(raw.get("outcome") or raw.get("status")
+                                        or "INCONCLUSIVE").upper())
+        # A check nobody is answerable for cannot be weighed, so an attempt with
+        # no named verifier inherits the record's producer rather than being
+        # dropped — the evidence is real even when the attribution is coarse.
+        verifier = str(raw.get("verifier") or raw.get("performed_by")
+                       or producer.producer_id).strip()
         try:
             attempts.append(VerificationAttempt(
-                evidence_id=resolve(str(raw.get("evidence_id") or "").strip()),
                 method=VerificationMethod(str(raw.get("method", "OTHER")).upper()),
-                outcome=AttemptOutcome(str(raw.get("outcome", "INCONCLUSIVE")).upper()),
-                detail=detail))
-        except ValueError:
+                verifier="" if status is VerificationStatus.NOT_RUN else verifier,
+                # `target_digest` is passed through when the envelope records it
+                # and left absent when it does not. Absent means UNDETERMINED
+                # against any state — the truthful reading of a check that never
+                # said what it ran against, and never to be filled in from the
+                # target's current digest, which would assert currency the check
+                # never established.
+                target_digest=(str(raw["target_digest"])
+                               if raw.get("target_digest") else None),
+                input_state=(str(raw["input_state"])
+                             if raw.get("input_state") else None),
+                result=raw.get("result") if isinstance(raw.get("result"), Mapping) else {},
+                evidence=() if status is VerificationStatus.NOT_RUN else evidence_ids,
+                independence_lineage=tuple(_as_ids(raw.get("independence_lineage"))),
+                status=status, detail=str(raw.get("detail") or "")))
+        except (ValueError, VerificationError):
             continue
     extracted_by = row.get("extracted_by_model")
     return Claim(
@@ -655,11 +669,12 @@ def _eval_records(doc: Any, source: str, producer: Producer
             claim_type=ClaimType.ASSERTION, producer=producer,
             provenance=ClaimProvenance.DECLARED,
             verification_attempts=(VerificationAttempt(
-                evidence_id="",  # filled in below, once the record exists
                 method=VerificationMethod.TEST_SUITE,
-                outcome=AttemptOutcome.PASSED if passed else AttemptOutcome.FAILED,
-                detail=(f"reported by {producer.producer_id} in "
-                        f"{Path(source).name}")),)))
+                verifier=producer.producer_id,
+                # Evidence is attached below, once the record it describes exists.
+                status=(VerificationStatus.PASSED if passed
+                        else VerificationStatus.FAILED),
+                detail=f"reported by {producer.producer_id} in {Path(source).name}"),)))
         reference, _ = inline_content(json.dumps(dict(case), sort_keys=True), label=name)
         record = EvidenceRecord.from_producer(
             dict(case), evidence_type=EvidenceType.EVAL_RESULT, source=source,
@@ -673,7 +688,7 @@ def _eval_records(doc: Any, source: str, producer: Producer
         # A verification nobody can open is weaker evidence than one they can.
         claims[-1] = dataclasses.replace(claims[-1], verification_attempts=(
             dataclasses.replace(claims[-1].verification_attempts[0],
-                                evidence_id=record.evidence_id),))
+                                evidence=(record.evidence_id,)),))
     return evidence, claims, len(cases), skipped
 
 
