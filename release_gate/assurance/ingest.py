@@ -43,6 +43,9 @@ from release_gate.assurance.counterexample import (
 from release_gate.assurance.failed_branches import (
     MAX_INLINE_DETAIL, BranchOutcome, FailedBranch, FailureLocus,
 )
+from release_gate.assurance.verifiers import (
+    VerifierError, VerifierReport, default_verifier_registry,
+)
 from release_gate.assurance.claims import Claim, ClaimProvenance, ClaimType
 from release_gate.assurance.verification import (
     VerificationAttempt, VerificationError, VerificationStatus,
@@ -91,6 +94,7 @@ class InputKind(str, Enum):
     PROMPTFOO_EVAL = "PROMPTFOO_EVAL"
     ASSURANCE_ENVELOPE = "ASSURANCE_ENVELOPE"
     AUDIT_REPORT = "AUDIT_REPORT"
+    VERIFIER_REPORT = "VERIFIER_REPORT"
     UNRECOGNISED = "UNRECOGNISED"
 
 
@@ -113,6 +117,7 @@ _SUBJECT_TYPE = {
     InputKind.PROMPTFOO_EVAL: SubjectType.GENERAL_RESULT,
     InputKind.ASSURANCE_ENVELOPE: SubjectType.GENERAL_RESULT,
     InputKind.AUDIT_REPORT: SubjectType.DEPLOYMENT,
+    InputKind.VERIFIER_REPORT: SubjectType.GENERAL_RESULT,
     InputKind.UNRECOGNISED: SubjectType.GENERAL_RESULT,
 }
 
@@ -155,6 +160,7 @@ class Normalisation:
     declared_consequence: Tuple[ConsequenceDescriptor, ...] = ()
     counterexamples: Tuple[CounterexampleAttempt, ...] = ()
     failed_branches: Tuple[FailedBranch, ...] = ()
+    verifier_report: Optional[VerifierReport] = None
     records_seen: int = 0
     records_mapped: int = 0
     skipped: Mapping[str, int] = field(default_factory=dict)
@@ -174,6 +180,8 @@ class Normalisation:
                 "declared_consequence": [d.to_dict() for d in self.declared_consequence],
                 "counterexamples": len(self.counterexamples),
                 "failed_branches": len(self.failed_branches),
+                "verifier_report": (self.verifier_report.summary()
+                                    if self.verifier_report else None),
                 "records_seen": self.records_seen, "records_mapped": self.records_mapped,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
@@ -248,6 +256,15 @@ def _looks_like_otlp(doc: Any) -> int:
     return 65 if identified else 55
 
 
+def _looks_like_verifier_report(doc: Any) -> int:
+    """A machine verifier's output, via whatever adapters are registered."""
+    try:
+        scored = default_verifier_registry().detect(doc)
+    except Exception:
+        return 0
+    return scored[0][1] if scored else 0
+
+
 def detect_document(doc: Any, *, filename: str = "") -> Detection:
     """Identify a document, or say plainly that we could not.
 
@@ -273,6 +290,10 @@ def detect_document(doc: Any, *, filename: str = "") -> Detection:
     if score:
         native.append((InputKind.OTLP_TRACE, score,
                        "OTLP resource/scope/span structure"))
+    score = _looks_like_verifier_report(doc)
+    if score:
+        native.append((InputKind.VERIFIER_REPORT, score,
+                       "a registered verifier adapter recognised this output"))
 
     try:
         from release_gate.adapters import detect as adapter_detect
@@ -931,6 +952,13 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
 
     declared_consequence = _consequence_from(doc, source)
 
+    verifier_report: Optional[VerifierReport] = None
+    if detection.kind is InputKind.VERIFIER_REPORT:
+        try:
+            verifier_report = default_verifier_registry().convert(doc)
+        except VerifierError as exc:
+            notes.append(f"verifier output was recognised but not convertible: {exc}")
+
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
         ev, cl, art, cex, fbr, mapped, skipped, env_notes = _envelope_records(
@@ -961,6 +989,27 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
             coverage_note=("execution as reported by the emitting system; release-gate "
                            "reconstructed the graph but did not observe the run")))
 
+    elif verifier_report is not None:
+        seen = verifier_report.records_seen
+        mapped = verifier_report.records_mapped
+        skipped.update(verifier_report.skipped)
+        notes.extend(verifier_report.notes)
+        # The tool's own account, recorded as DECLARED: release-gate read the file,
+        # it did not watch the prover run, and it does not re-check the result.
+        evidence.append(EvidenceRecord.from_producer(
+            {"verifier": verifier_report.tool.to_dict(),
+             "coverage": verifier_report.coverage.to_dict()},
+            evidence_type=EvidenceType.FORMAL_PROOF, source=source,
+            producer=Producer(producer_id=verifier_report.tool.reference,
+                              kind=ProducerKind.TOOL,
+                              identity_basis=("pinned-digest"
+                                              if verifier_report.tool.pinned
+                                              else "unauthenticated"),
+                              version=verifier_report.tool.version or None),
+            status=EpistemicStatus.DECLARED, applies_to_digest=file_digest,
+            coverage_note="; ".join(verifier_report.coverage.does_not_cover)[:400]
+                          or "the verifier stated no coverage limits"))
+
     elif detection.kind is InputKind.AUDIT_REPORT and isinstance(doc, Mapping):
         seen, mapped, extra = _audit_records(doc, source, evidence, file_digest)
         skipped.update(extra)
@@ -975,7 +1024,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
         capabilities=capabilities, declared_consequence=tuple(declared_consequence),
         counterexamples=tuple(counterexamples),
-        failed_branches=tuple(failed_branches),
+        failed_branches=tuple(failed_branches), verifier_report=verifier_report,
         records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
         notes=tuple(notes))
 

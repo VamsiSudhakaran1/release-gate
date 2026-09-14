@@ -821,6 +821,84 @@ and has been generalised onto it; `AttemptOutcome` remains as an alias for
 
 ---
 
+### 5.6 Formal verification adapters
+
+> **Implemented.** `release_gate/assurance/verifiers.py`, plus the
+> `VERIFIER_REPORT` input kind in `release_gate/assurance/ingest.py`.
+
+`VerificationGraph` says how a machine check is *recorded*. This says how one
+gets *in* — from Lean, Coq, Isabelle, an SMT solver, a model checker, a property
+checker, a compiler or type checker, a test framework, or a domain validator.
+
+**Release-Gate does not replace any of these tools and does not re-verify their
+work.** It records what was verified, against which artifact version, with what
+result, by which tool identity and version, with a verifier digest where one is
+available, with the evidence, and with the coverage limits of the method. The
+proof obligation stays with the prover; the epistemic bookkeeping is ours.
+
+**No prover is hardcoded.** An adapter is a class with `detect(doc) -> int`
+(0–100 confidence) and `convert(doc) -> VerifierReport`. `VerifierRegistry`
+picks the highest scorer and records the runner-up, so an ambiguous document is
+visibly ambiguous rather than silently assigned. Two adapters ship: a
+tool-neutral envelope any tool can emit, and an SMT-LIB adapter that exists to
+demonstrate the pattern — not to privilege solvers.
+
+**`ToolFamily` selects a default `VerificationMethod` and nothing else.** It
+never affects status, confidence, or weight. A proof assistant's `PASSED` and a
+test framework's `PASSED` are the same status; what differs is the coverage
+recorded beside it.
+
+**One result-word table, shared by every adapter** (`VerifierAdapter.RESULT_WORDS`).
+Adapters do not each re-decide what `unknown` means — that is exactly how one of
+them eventually maps it to a pass. `unknown`, `timeout`, `gaveup`,
+`resource_limit` and kin are `INCONCLUSIVE`: a tool that gave up has verified
+nothing. `skipped`/`pending` are `NOT_RUN`, `retracted` is `INVALIDATED`, and
+**any word the table does not contain is `UNKNOWN`, never `PASSED`** — an
+unrecognised result is a gap in our vocabulary, not a success.
+
+**SMT results are read through declared polarity, or not at all.** `unsat`
+means "no model exists for the query as posed", which is a proof of the property
+only when the query is the property's *negation*. `QueryPolarity` makes the
+encoding say so:
+
+| polarity | `unsat` | `sat` | `unknown` |
+|---|---|---|---|
+| `NEGATION_OF_PROPERTY` | `PASSED` | `FAILED` (model is a counterexample) | `INCONCLUSIVE` |
+| `DIRECT` | `FAILED` — contradictory assertion: a broken or vacuous encoding, not a proof | `INCONCLUSIVE` — a model exists; the property is not thereby proved | `INCONCLUSIVE` |
+| `UNDECLARED` | `UNKNOWN` | `UNKNOWN` | `INCONCLUSIVE` |
+
+An undeclared polarity establishes nothing, because the same solver output
+supports opposite conclusions depending on how the query was written. Guessing
+the likely one is how a vacuous encoding becomes a green check.
+
+**Coverage is a property of the method, stated once** (`_FAMILY_COVERAGE`), as a
+pair: what the family's result covers, and what it explicitly does not. A proof
+assistant does not establish "whether the formalisation says what its author
+meant"; a model checker does not cover "states outside the explored bound"; a
+test framework does not cover "behaviour the tests do not exercise". Adapters
+inherit these rather than each inventing their own wording, and
+`VerifierCoverage.complete` is true only when a report says so — the default is
+incomplete, and `ToolFamily.OTHER` records "nothing is recorded about what this
+result covers" rather than an empty list that could read as "nothing is
+excluded".
+
+**Pinning a tool establishes identity, not correctness.**
+`ToolIdentity.trust_status` is `PROVISIONAL` when a digest is pinned and
+`NOT_ESTABLISHED` when it is not. It is never `ESTABLISHED`: knowing exactly
+which binary ran is not evidence that the binary is sound (Invariant 11 —
+provenance is not trust). A verifier that verifies itself is the oldest failure
+in this space.
+
+**The report arrives as `DECLARED` evidence, not `VERIFIED`.** Ingest emits a
+`FORMAL_PROOF` evidence record whose producer is the tool, whose epistemic status
+is `DECLARED` — Release-Gate observed the tool's *claim*, not the proof — and
+whose `coverage_note` carries the method's limits. The individual attempts land
+in the `verification` collection, where the graph's existing rules apply
+unchanged: an attempt binds to `target_digest`, moves to `SUPERSEDED` when the
+target moves, and an applicable failure still outranks an applicable pass.
+
+---
+
 ## 6. The assurance engine
 
 Six analysers. Each is a **pure function** `(AssuranceCase) -> AnalysisResult`.
@@ -1482,6 +1560,8 @@ release_gate/assurance/
     from_lockfile.py     lockfile                  -> ArtifactGraph + drift evidence
     from_governance.py   governance.yaml           -> DECLARED evidence
     from_envelope.py     the emission protocol (declared claims/evidence/artifacts)
+    verifiers.py         external verifier adapters (proof assistants, SMT, model
+                         checkers, type checkers, compilers, test frameworks) -> attempts
   analyzers/
     provenance.py  coverage.py  contradiction.py  independence.py  drift.py  completeness.py
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode

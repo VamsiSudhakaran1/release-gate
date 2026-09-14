@@ -573,7 +573,11 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         "derived from what the claims in this case declare they rest on")
     builder.extend("assumptions", list(assumptions) if assumptions else [])
 
-    verifications = [r for r in normalisation.evidence if r.is_verification]
+    # A verifier's attempts go in whole: they are typed verification records the
+    # tool produced, and the VerificationGraph reads them from here.
+    report = normalisation.verifier_report
+    verifications = list(report.attempts) if report else []
+    verifications += [r for r in normalisation.evidence if r.is_verification]
     builder.declare_present(
         "verification",
         "the ingest looked for typed verification in this input"
