@@ -39,6 +39,8 @@ from release_gate.assurance.failed_branches import (
     FailedBranchLedger, FailedBranchRecorder, branches_from_verification,
 )
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
+from release_gate.assurance.expectation import (
+    CoverageLedger, CoverageState, EvidenceExpectation, ExpectationStanding)
 from release_gate.assurance.criticality import (
     CriticalitySet, DecisionLink, LoadBearing, analyse_criticality)
 from release_gate.assurance.adversarial import (
@@ -73,6 +75,7 @@ class AnalysisDomain(str, Enum):
     REPLICATION = "REPLICATION"
     ADVERSARIAL = "ADVERSARIAL"
     CRITICALITY = "CRITICALITY"
+    EXPECTATION = "EXPECTATION"
     ASSUMPTION = "ASSUMPTION"
     COUNTEREXAMPLE = "COUNTEREXAMPLE"
     FAILED_BRANCH = "FAILED_BRANCH"
@@ -134,6 +137,7 @@ class AnalysisResult:
     replication: Optional[ReplicationProfile] = None
     adversarial: Optional[AdversarialReview] = None
     criticality: Optional[CriticalitySet] = None
+    coverage_ledger: Optional[CoverageLedger] = None
     contradictions: Optional[ContradictionLedger] = None
     assumptions: Optional[AssumptionGraph] = None
     counterexamples: Optional[CounterexampleLedger] = None
@@ -421,6 +425,148 @@ def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Findin
             remedy="correct the parent_evidence chain so derivation is acyclic",
             refs=profile.cycles_detected[:12],
             observed={"cycles": len(profile.cycles_detected)}))
+    return findings
+
+
+# ── expectation (RG-EXPECT-*) ────────────────────────────────────────────────
+
+def _coverage_ledger(case: AssuranceCase,
+                     normalisation: Optional[Any]) -> CoverageLedger:
+    """Every coverage dimension the case holds, plus any declared expectations.
+
+    Where a declared expectation names a dimension the case already has a row
+    for, the one with the stronger standing wins: an orchestrator's denominator
+    tells you something a producer's count of itself cannot, so it is not
+    overwritten by the row that happened to be built first. Equal standing keeps
+    the declaration, because someone went to the trouble of writing it down.
+    """
+    rows: Dict[str, EvidenceExpectation] = {}
+    for record in case.records("coverage"):
+        payload = record.to_dict() if hasattr(record, "to_dict") else {}
+        dimension = str(payload.get("dimension") or "")
+        if not dimension:
+            continue
+        try:
+            rows[dimension] = EvidenceExpectation.from_dict(
+                {**payload, "assessed": payload.get("status") == "ASSESSED"})
+        except Exception:
+            continue
+
+    rank = {ExpectationStanding.NOT_ESTABLISHED: 0,
+            ExpectationStanding.SELF_REPORTED: 1,
+            ExpectationStanding.ESTABLISHED: 2}
+    for declared in (getattr(normalisation, "expectations", ()) or ()):
+        held = rows.get(declared.dimension)
+        if held is None or rank[declared.standing] >= rank[held.standing]:
+            rows[declared.dimension] = declared
+    return CoverageLedger(tuple(rows[k] for k in sorted(rows)))
+
+
+def _analyse_expectation(ledger: Optional[CoverageLedger]) -> List[Finding]:
+    """What was expected against what arrived, and what can honestly be divided.
+
+    `RG-EXPECT-002` is advisory on purpose and will fire on most cases: a
+    dimension with no denominator is the normal state of the world, not a fault.
+    What would be a fault is rendering it as complete, and that is prevented in
+    the record rather than by a finding. A methodology that needs a real
+    denominator for a named dimension says so through `ExpectationDeclared`.
+    """
+    findings: List[Finding] = []
+    if ledger is None or not len(ledger):
+        return findings
+
+    missing = ledger.known_missing()
+    if missing:
+        total = sum(r.known_missing or 0 for r in missing)
+        findings.append(Finding(
+            rule_id="RG-EXPECT-001", domain=AnalysisDomain.EXPECTATION,
+            effect=RequirementEffect.HOLD,
+            summary=f"{total} expected piece(s) of evidence did not arrive across "
+                    f"{len(missing)} dimension(s)",
+            detail="; ".join(r.basis for r in missing[:4])[:700]
+                   + ". This is evidence known to be absent, which is a different "
+                     "and much stronger fact than evidence nobody looked for.",
+            remedy="supply the missing evidence, or record why the expectation no "
+                   "longer applies",
+            refs=tuple(r.dimension for r in missing[:12]),
+            observed={"known_missing_total": total,
+                      "dimensions": [r.dimension for r in missing[:12]],
+                      "named": [i for r in missing for i in r.known_missing_ids[:4]]}))
+
+    unknown = [r for r in ledger.unknown() if not r.over_count]
+    if unknown:
+        findings.append(Finding(
+            rule_id="RG-EXPECT-002", domain=AnalysisDomain.EXPECTATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(unknown)} coverage dimension(s) have no expectation, so "
+                    "their coverage is UNKNOWN rather than a percentage",
+            detail="; ".join(f"{r.dimension}: observed {r.observed}, expected UNKNOWN"
+                             for r in unknown[:6])[:600]
+                   + ". Observations without a denominator cannot be divided into a "
+                     "ratio, and reporting one would be inventing the number a reader "
+                     "most wants to believe. UNKNOWN here is not a fault — most "
+                     "dimensions genuinely have nobody to state a total.",
+            remedy="declare an expectation for the dimensions this decision depends "
+                   "on — an orchestration manifest, a verifier inventory, an "
+                   "experiment matrix or a CI plan will do",
+            refs=tuple(r.dimension for r in unknown[:12]),
+            observed={"unknown_dimensions": len(unknown),
+                      "with_expectation": len(ledger.with_expectation()),
+                      "overall_coverage": None}))
+
+    over = ledger.over_counted()
+    if over:
+        findings.append(Finding(
+            rule_id="RG-EXPECT-003", domain=AnalysisDomain.EXPECTATION,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(over)} dimension(s) received more evidence than was "
+                    "expected, so their denominator is not trustworthy",
+            detail="; ".join(r.basis for r in over[:4])[:600]
+                   + ". Coverage for these is reported UNKNOWN rather than clamped to "
+                     "100%: an over-count is an anomaly, and rounding it down would "
+                     "render it as perfection.",
+            remedy="reconcile the expectation with what arrived — either the total "
+                   "was wrong or records arrived that nothing planned for",
+            refs=tuple(r.dimension for r in over[:12]),
+            observed={"over_counted": len(over)}))
+
+    unplanned = ledger.unexpected()
+    if unplanned:
+        findings.append(Finding(
+            rule_id="RG-EXPECT-004", domain=AnalysisDomain.EXPECTATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{sum(len(r.unexpected_ids) for r in unplanned)} record(s) "
+                    "arrived that no expectation named",
+            detail="; ".join(f"{r.dimension}: {', '.join(r.unexpected_ids[:4])}"
+                             for r in unplanned[:4])[:600]
+                   + ". An enumerated expectation can tell the planned from the "
+                     "unplanned; a bare count cannot see this at all.",
+            remedy="none required; extend the expectation if these were meant to be "
+                   "part of it",
+            refs=tuple(r.dimension for r in unplanned[:12]),
+            observed={"unexpected": sum(len(r.unexpected_ids) for r in unplanned)}))
+
+    certified = ledger.self_certified()
+    if certified:
+        findings.append(Finding(
+            rule_id="RG-EXPECT-005", domain=AnalysisDomain.EXPECTATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(certified)} coverage dimension(s) are measured against an "
+                    "expectation declared by the party that produced the evidence",
+            detail="; ".join(f"{r.dimension}: expected by {r.source.declared_by}, "
+                             "which also produced it" for r in certified[:5])[:600]
+                   + ". The count may be right. What it cannot do is detect an "
+                     "omission: whatever was dropped from the evidence was dropped "
+                     "from the denominator with it, and the coverage reads high "
+                     "precisely because something is missing (Invariant 13). Signing "
+                     "does not change this — it establishes which party declared the "
+                     "number, not that they were disinterested.",
+            remedy="obtain the expectation from an orchestrator, a roster or a plan "
+                   "written before the evidence, rather than from its producer",
+            refs=tuple(r.dimension for r in certified[:12]),
+            observed={"self_certified": len(certified),
+                      "authenticated": sum(1 for r in certified
+                                           if r.source and r.source.authenticated)}))
     return findings
 
 
@@ -1535,6 +1681,8 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     # answer, and three approximations of it would eventually disagree about the
     # same case. Criticality is reachability from what the decision is being asked
     # about — never volume, never depth-weighted (Invariant 12).
+    coverage_ledger = _coverage_ledger(case, normalisation)
+
     criticality = analyse_criticality(
         claim_graph,
         evidence_producers={r.evidence_id: r.producer.producer_id for r in records})
@@ -1613,6 +1761,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_independence(independence))
     findings.extend(_analyse_replication(replication, critical))
     findings.extend(_analyse_criticality(criticality))
+    findings.extend(_analyse_expectation(coverage_ledger))
     findings.extend(_analyse_adversarial(adversarial, critical))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
@@ -1635,6 +1784,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           independence=independence, replication=replication,
                           adversarial=adversarial,
                           criticality=criticality,
+                          coverage_ledger=coverage_ledger,
                           contradictions=ledger,
                           assumptions=assumption_graph,
                           counterexamples=counterexamples,

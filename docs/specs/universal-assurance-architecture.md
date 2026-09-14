@@ -1605,6 +1605,10 @@ methodology profiles, preserving behaviour exactly.
 
 ### 8.2 Coverage is part of the verdict, not a footnote
 
+> **Implemented.** `release_gate/assurance/expectation.py`, plus the
+> `ExpectationDeclared` methodology predicate and the `RG-EXPECT-*` analyser.
+> Every coverage row in the system now carries the five-state answer.
+
 A `Verdict` object cannot be constructed without a `CoverageMatrix` — enforced in
 the constructor, tested directly. Each row:
 
@@ -1619,6 +1623,51 @@ when `expected` is a real number established by a manifest, a declaration, a
 sequence, or direct enumeration. Otherwise `coverage: UNKNOWN`. Valid:
 `observed 97 of expected 100 → 97%`. Also valid: `observed 97, expected UNKNOWN →
 coverage UNKNOWN`. Never: `observed 97 → 100%`.
+
+`coverage` is `None` where no ratio exists and serialises as `null` — never `0`,
+never `1`. `UNKNOWN` and `NOT_ASSESSED` are kept apart everywhere including the
+rendering, because "examined, and no denominator exists" and "never examined" are
+the two absences that most want to collapse into one line.
+
+**A denominator needs a source, and the source must name who wrote it.**
+`EvidenceExpectation` refuses to hold an `expected` with no `ExpectationSource`,
+and an `ExpectationSource` refuses to exist without a `declared_by`. The eight
+kinds — methodology, orchestration manifest, producer manifest, agent roster,
+verifier inventory, experiment matrix, CI plan, sequence declaration — select no
+behaviour at all. What separates them is the next rule.
+
+**The counted party cannot be the counting party.** An expectation declared by
+whoever produced the observations cannot detect an omission: a producer that
+dropped a record dropped it from its own count too, and the coverage reads high
+*precisely because* something is missing (Invariant 13). `ExpectationStanding`
+derives `SELF_REPORTED` from `ESTABLISHED` by comparing `declared_by` against
+`observed_from`. The ratio is still reported, because a producer's count of
+itself is a real if weaker fact; what is refused is `matches_expectation`.
+Signing does not move the needle — a signature establishes *which* party wrote
+the number, not that they were disinterested (Invariant 11).
+
+**An over-count is not 110%, and not 100% either.** Eleven arriving where ten
+were expected means the denominator is no longer known, so the state degrades to
+`UNKNOWN` with a basis saying why. Clamping would render an anomaly as
+perfection.
+
+**An enumeration beats a count** and is worth asking for: `expected_ids` names
+*which* record is missing rather than how many, and separates "everything planned
+arrived" from "something unplanned also arrived" — a distinction a cardinality
+cannot make at all, which is why an unplanned arrival degrades a count to
+`UNKNOWN` but leaves an enumeration computable.
+
+**No overall percentage is ever offered.** `CoverageLedger.overall_coverage`
+returns `None` as a refusal, not an omission: averaging the dimensions that
+happen to have denominators would let a case with one measurable dimension out of
+fifteen report a confident number. A reader gets the rows.
+
+**And `OBSERVED` is deliberately not called COMPLETE.** An expectation is itself a
+declaration: "the manifest said ten and ten arrived" does not establish there were
+not twelve. `bounds_completeness` returns `False` unconditionally, on the row and
+on the ledger, and the methodology predicate restates it in its own observed
+fields — the same refusal `CompletenessStatus` makes by having no `COMPLETE`
+member, one level up.
 
 ### 8.3 Completeness declarations
 
@@ -1800,6 +1849,7 @@ release_gate/assurance/
     replication.py       paths to a result, copies collapsed
     adversarial.py       verifiers that set out to disprove the candidate
     criticality.py       what the decision rests on, by dependency
+    expectation.py       denominators: what was expected, what arrived
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
   packet.py              ApprovalPacket rendering (json / markdown / html)
@@ -2096,7 +2146,7 @@ repo: deterministic, fast, no network.
 | 10 | No universal truth claims | Packet rendering spec + banned-language test | A surface asserts safe/correct/true |
 | 11 | Provenance ≠ trust | `analyzers/provenance.py` reports origin only | Origin and authority are merged into one score |
 | 12 | Dependency criticality beats volume | `criticality.py` reachability from the decision (§6.2a), then `attention.py` leverage (§7) | Criticality or ranking keys on counts, producers, depth or generic severity |
-| 13 | Evidence omission is a threat | `analyzers/completeness.py` (§6.6) | "Not observed" is rendered as "did not happen" |
+| 13 | Evidence omission is a threat | `expectation.py` denominators and self-certification (§8.2), `analyzers/completeness.py` (§6.6) | "Not observed" is rendered as "did not happen"; a producer's count of itself is read as coverage |
 | 14 | Not every graph is mandatory | Optional overlays in `case.py` (§3.2) | A small case is forced to populate a claim graph |
 | 15 | Approval is authorisation, not truth | `BoundApproval.statement` + rendering spec | A packet implies certification |
 

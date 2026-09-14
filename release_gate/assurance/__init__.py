@@ -202,6 +202,7 @@ from release_gate.assurance.methodology import (
     Criticality,
     CriticalityRule,
     EvidenceExpectation,
+    ExpectationDeclared,
     IndependenceRequirement,
     MethodologyAssessment,
     MethodologyDriftError,
@@ -244,6 +245,16 @@ from release_gate.assurance.subject import (
     directory_manifest_digest,
 )
 
+from release_gate.assurance.expectation import (
+    EXPECTATION_SCHEMA_VERSION,
+    CoverageLedger,
+    CoverageState,
+    EvidenceExpectation,
+    ExpectationError,
+    ExpectationSource,
+    ExpectationSourceKind,
+    ExpectationStanding,
+)
 from release_gate.assurance.criticality import (
     CRITICALITY_SCHEMA_VERSION,
     ClaimCriticality,
@@ -444,6 +455,8 @@ __all__ = [
     "CounterexampleResult",
     "CounterexampleStatus",
     "CoverageExpectation",
+    "CoverageLedger",
+    "CoverageState",
     "CoverageStatus",
     "CriticalClaimsIdentified",
     "CriticalPath",
@@ -460,6 +473,7 @@ __all__ = [
     "EVIDENCE_KINDS",
     "EVIDENCE_SCHEMA_VERSION",
     "EXECUTION_SCHEMA_VERSION",
+    "EXPECTATION_SCHEMA_VERSION",
     "EdgeType",
     "EpistemicStatus",
     "EvidenceError",
@@ -478,6 +492,11 @@ __all__ = [
     "ExecutionGraphError",
     "ExecutionNode",
     "ExecutionNodeKind",
+    "ExpectationDeclared",
+    "ExpectationError",
+    "ExpectationSource",
+    "ExpectationSourceKind",
+    "ExpectationStanding",
     "FAILED_BRANCH_SCHEMA_VERSION",
     "FailedBranch",
     "FailedBranchError",

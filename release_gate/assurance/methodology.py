@@ -615,6 +615,122 @@ class AncestryIndependence(Predicate):
 
 @_predicate
 @dataclass(frozen=True)
+class ExpectationDeclared(Predicate):
+    """A named coverage dimension must have a real denominator.
+
+    The sufficiency layer over `RG-EXPECT-002`, which is advisory because most
+    dimensions genuinely have nobody to state a total. This is where a decision
+    that turns on a particular dimension says that "we observed nine and nobody
+    knows of what" is not good enough for it.
+
+    `require_independent` is the one worth setting. An expectation written by the
+    party that produced the evidence cannot detect an omission — whatever was
+    dropped from the evidence was dropped from the denominator with it — so a
+    methodology guarding against silent omission has to ask for a denominator
+    from somewhere else (Invariant 13). Signing does not substitute: it
+    establishes which party wrote the number, not that they were disinterested.
+    """
+
+    KIND = "expectation_declared"
+    dimension: str = ""
+    require_independent: bool = False
+    minimum_coverage: Optional[float] = None
+    allow_unexpected: bool = True
+
+    def __post_init__(self) -> None:
+        if not (self.dimension or "").strip():
+            raise MethodologyError(
+                "expectation_declared must name the dimension it is about")
+        object.__setattr__(self, "dimension", self.dimension.strip())
+        if self.minimum_coverage is not None and not 0 <= self.minimum_coverage <= 1:
+            raise MethodologyError("minimum_coverage must be a ratio between 0 and 1")
+
+    def describe(self) -> str:
+        parts = [f"the {self.dimension!r} dimension states how much evidence to expect"]
+        if self.require_independent:
+            parts.append("from a party other than the one that produced it")
+        if self.minimum_coverage is not None:
+            parts.append(f"with at least {self.minimum_coverage:.0%} of it observed")
+        if not self.allow_unexpected:
+            parts.append("and nothing arriving that the expectation did not name")
+        return ", ".join(parts)
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, "coverage")
+        rows = [r for r in records if r.get(FIELD_DIMENSION) == self.dimension]
+        if not rows:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                f"no coverage row states the {self.dimension!r} dimension, so whether "
+                "anything was expected of it has not been assessed",
+                {"dimension": self.dimension, "rows_held": len(records),
+                 "materialisation_incomplete": incomplete})
+
+        row = rows[0]
+        observed = {"dimension": self.dimension, "state": row.get("state"),
+                    "expected": row.get("expected"), "observed": row.get("observed"),
+                    "known_missing": row.get("known_missing"),
+                    "coverage": row.get("coverage"),
+                    "expectation_standing": row.get("expectation_standing"),
+                    "self_certified": row.get("self_certified"),
+                    "unexpected": len(row.get("unexpected_ids") or ()),
+                    # Restated at the point of judgement: satisfying this predicate
+                    # is not a completeness finding, because the expectation it
+                    # reads is itself a declaration.
+                    "bounds_completeness": False,
+                    "materialisation_incomplete": incomplete}
+
+        if row.get("expected") is None:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{row.get('observed')} {self.dimension} record(s) were observed and "
+                "nothing states how many there should have been, so coverage is "
+                "UNKNOWN and no proportion of this dimension has been established",
+                observed)
+
+        if self.require_independent and row.get("self_certified"):
+            source = (row.get("source") or {}).get("declared_by") or "its producer"
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"the {self.dimension!r} expectation was declared by {source}, which "
+                "also produced the evidence; a denominator written by the counted "
+                "party cannot detect an omission (Invariant 13)",
+                observed)
+
+        coverage = row.get("coverage")
+        if coverage is None:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"coverage of {self.dimension!r} could not be computed: "
+                + str(row.get("basis") or "the denominator is not usable"),
+                observed)
+
+        if self.minimum_coverage is not None and float(coverage) < self.minimum_coverage:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{float(coverage):.0%} of the expected {self.dimension} arrived, "
+                f"below the {self.minimum_coverage:.0%} this methodology requires; "
+                f"{row.get('known_missing')} known missing",
+                observed)
+
+        if not self.allow_unexpected and (row.get("unexpected_ids") or ()):
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(row.get('unexpected_ids') or ())} {self.dimension} record(s) "
+                "arrived that the expectation did not name",
+                observed)
+
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"{float(coverage):.0%} of the {row.get('expected')} expected "
+            f"{self.dimension} arrived" +
+            ("; the expectation is self-reported, which this predicate reports and "
+             "does not refuse" if row.get("self_certified") else ""),
+            observed)
+
+
+@_predicate
+@dataclass(frozen=True)
 class CriticalClaimsIdentified(Predicate):
     """What this decision rests on must be established before it can be taken.
 

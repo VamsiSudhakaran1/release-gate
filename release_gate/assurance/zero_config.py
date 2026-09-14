@@ -55,6 +55,8 @@ from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.adversarial import AdversarialReview
 from release_gate.assurance.criticality import CriticalitySet
+from release_gate.assurance.expectation import (
+    CoverageLedger, EvidenceExpectation, ExpectationSource, ExpectationSourceKind)
 from release_gate.assurance.replication import ReplicationOutcome, ReplicationProfile
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -196,18 +198,31 @@ class AssuranceOutcome:
 
 # ── case construction ────────────────────────────────────────────────────────
 
-def _coverage_row(dimension: str, assessed: bool, note: str,
+def _coverage_row(dimension: str, assessed: bool, note: str, *,
+                  expectation: Optional[EvidenceExpectation] = None,
                   **observed: Any) -> SimpleRecord:
     """One statement of what was and was not assessed.
 
     `assessed=False` is a `NOT_ASSESSED` row — a first-class result, never an
     omission and never a zero.
+
+    Where a dimension has a real denominator, pass an `EvidenceExpectation` and
+    the row carries the five-state answer: how many were expected, how many
+    arrived, how many are known missing, and the ratio — or `null` where no
+    ratio exists. Where it does not, the row still says `UNKNOWN` rather than
+    implying that what arrived was all there was. The old two-state `status`
+    field is kept beside the new `state` so existing readers are not broken.
     """
-    return SimpleRecord(
-        record_type="coverage", record_id=f"cov_{dimension}",
-        payload={"dimension": dimension,
-                 "status": "ASSESSED" if assessed else "NOT_ASSESSED",
-                 "note": note, **observed})
+    if expectation is not None:
+        payload = expectation.to_dict()
+        payload.update({"note": note, **observed})
+        return SimpleRecord(record_type="coverage",
+                            record_id=f"cov_{dimension}", payload=payload)
+    bare = EvidenceExpectation(dimension=dimension, assessed=assessed, note=note)
+    payload = bare.to_dict()
+    payload.update({"note": note, **observed})
+    return SimpleRecord(record_type="coverage", record_id=f"cov_{dimension}",
+                        payload=payload)
 
 
 def _ingest_coverage(normalisation: Normalisation,
@@ -232,6 +247,19 @@ def _ingest_coverage(normalisation: Normalisation,
         _coverage_row("record_mapping", normalisation.skipped_total == 0,
                       (f"{normalisation.records_mapped} of {normalisation.records_seen} "
                        f"record(s) mapped; {normalisation.skipped_total} skipped"),
+                      # The file states its own total, so this denominator is
+                      # self-reported by construction: it can say how many records
+                      # failed to map, and nothing about a record the producer
+                      # never wrote.
+                      expectation=EvidenceExpectation(
+                          dimension="record_mapping",
+                          expected=normalisation.records_seen,
+                          observed=normalisation.records_mapped,
+                          source=ExpectationSource(
+                              kind=ExpectationSourceKind.PRODUCER_MANIFEST,
+                              declared_by=detection.kind.value,
+                              detail="the input document is its own denominator"),
+                          observed_from=detection.kind.value),
                       seen=normalisation.records_seen,
                       mapped=normalisation.records_mapped,
                       skipped=normalisation.skipped_total),
