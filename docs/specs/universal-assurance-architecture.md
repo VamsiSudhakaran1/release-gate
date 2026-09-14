@@ -916,6 +916,45 @@ wrote down, and the dangerous ones are usually the ones nobody thought to mentio
 
 ---
 
+### 6.3c Counterexamples (`RG-CEX-*`)
+
+> **Implemented.** `release_gate/assurance/counterexample.py`.
+
+A counterexample search is a verification attempt with its semantics inverted,
+and the inversion is where systems go wrong. Finding one is decisive: the claim,
+as stated, is false. Finding none is almost nothing — it bounds the search, not
+the claim. Folding both into one pass/fail field destroys exactly the content
+that matters.
+
+**An empty search never proves absence.** `proves_absence` returns `False`
+unconditionally — a refusal, not a computation. Not for a formal method, not for
+"the entire input space", not for a thousand searches; and per §6.4, a thousand
+searches sharing a generator are one search anyway. No field is offered that
+could be read as "proven safe", and the ledger summary states `absence_proven:
+false` flatly so a reader of the summary alone cannot infer otherwise.
+
+**`result` and `status` are separate fields, and the separation is load-bearing.**
+`result` is what the search came back with; `status` is where a finding now
+stands. A search that found nothing is `NOT_APPLICABLE` — nothing to resolve —
+which is a different fact from `RESOLVED`, and the constructor refuses to let one
+be recorded as the other. Conflating them would let "we looked and found nothing"
+read as "we found something and dealt with it".
+
+**A live refutation becomes a contradiction.** Rather than a second enforcement
+path, an unresolved counterexample is converted into a `Contradiction`, which
+§6.3b's `render_verdict()` guard already refuses to omit when the claim is
+critical. One guard kept correct beats two that drift apart — and the conversion
+skips claims that already produced a claim/evidence conflict, so the same
+disagreement is never filed twice under two ids.
+
+Two intake paths, because each sees what the other cannot. Evidence typed
+`COUNTEREXAMPLE` is lifted automatically, so producers that never called their
+finding a counterexample still get tracked; and an envelope `counterexample`
+record is the only way to say a search came back *empty*, since there is no
+evidence record for "I looked here and there was nothing".
+
+---
+
 ### 6.3b Contradiction preservation
 
 > **Implemented.** `release_gate/assurance/contradiction.py`, plus the refusal in

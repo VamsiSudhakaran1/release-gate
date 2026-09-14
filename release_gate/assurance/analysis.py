@@ -30,7 +30,10 @@ from release_gate.assurance.consequence import (
 )
 from release_gate.assurance.claims import ClaimGraph, ClaimStatus
 from release_gate.assurance.contradiction import (
-    ContradictionLedger, detect_contradictions,
+    ContradictionKind, ContradictionLedger, detect_contradictions,
+)
+from release_gate.assurance.counterexample import (
+    CounterexampleLedger, CounterexampleResult, counterexamples_from_evidence,
 )
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
 from release_gate.assurance.independence import (
@@ -59,6 +62,7 @@ class AnalysisDomain(str, Enum):
     CONSEQUENCE = "CONSEQUENCE"
     INDEPENDENCE = "INDEPENDENCE"
     ASSUMPTION = "ASSUMPTION"
+    COUNTEREXAMPLE = "COUNTEREXAMPLE"
     PROVENANCE = "PROVENANCE"
     CONTRADICTION = "CONTRADICTION"
     VERIFICATION = "VERIFICATION"
@@ -116,6 +120,7 @@ class AnalysisResult:
     independence: Optional[IndependenceProfile] = None
     contradictions: Optional[ContradictionLedger] = None
     assumptions: Optional[AssumptionGraph] = None
+    counterexamples: Optional[CounterexampleLedger] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -449,6 +454,72 @@ def _analyse_assumptions(graph: Optional[AssumptionGraph]) -> List[Finding]:
             remedy="state what each of these assumptions actually asserts",
             refs=tuple(a.assumption_id for a in unstated[:12]),
             observed={"unstated": len(unstated)}))
+    return findings
+
+
+# ── counterexamples (RG-CEX-*) ───────────────────────────────────────────────
+
+def _analyse_counterexamples(ledger: Optional[CounterexampleLedger],
+                             critical: Set[str]) -> List[Finding]:
+    """Attempts to break a claim, and the asymmetry between the two outcomes.
+
+    A live refutation against a critical claim BLOCKs — the claim as stated is
+    false and nothing has answered it. A search that came back empty is reported
+    and credited with nothing, because it bounds the search rather than the claim.
+    """
+    findings: List[Finding] = []
+    if ledger is None or not len(ledger):
+        return findings
+
+    live = ledger.open()
+    against_critical = [a for a in live if a.target_claim in critical]
+    if against_critical:
+        findings.append(Finding(
+            rule_id="RG-CEX-001", domain=AnalysisDomain.COUNTEREXAMPLE,
+            effect=RequirementEffect.BLOCK,
+            summary=f"{len(against_critical)} unresolved counterexample(s) stand "
+                    "against a critical claim",
+            detail="; ".join(
+                f"{a.counterexample_id}: {a.method.value} by "
+                f"{a.producer or 'an unnamed producer'} broke {a.target_claim}"
+                for a in against_critical[:4])[:700]
+                   + ". The claim as stated is false unless something answers this.",
+            remedy="answer the counterexample and record what answers it, restate the "
+                   "claim so it survives, or withdraw the claim",
+            refs=tuple(a.counterexample_id for a in against_critical[:12]),
+            observed={"open_against_critical": len(against_critical)}))
+
+    other = [a for a in live if a.target_claim not in critical]
+    if other:
+        findings.append(Finding(
+            rule_id="RG-CEX-002", domain=AnalysisDomain.COUNTEREXAMPLE,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(other)} unresolved counterexample(s) stand against "
+                    "non-critical claims",
+            detail="; ".join(f"{a.counterexample_id} broke {a.target_claim}"
+                             for a in other[:6])[:500],
+            remedy="answer or withdraw these, or record why they do not bear on the "
+                   "decision",
+            refs=tuple(a.counterexample_id for a in other[:12]),
+            observed={"open": len(other)}))
+
+    empty = ledger.searched_without_finding()
+    if empty:
+        findings.append(Finding(
+            rule_id="RG-CEX-003", domain=AnalysisDomain.COUNTEREXAMPLE,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(empty)} counterexample search(es) came back empty",
+            detail="; ".join(f"{a.method.value} on {a.target_claim} over "
+                             f"{a.search_bound}" for a in empty[:4])[:600]
+                   + ". Recorded as evidence about the search, not about the claim: "
+                     "an empty search bounds what was looked at and nothing more, "
+                     "however many of them there are.",
+            remedy="none required; state the search space if a reviewer needs to know "
+                   "what was actually covered",
+            refs=tuple(a.counterexample_id for a in empty[:12]),
+            observed={"searched_without_finding": len(empty),
+                      "unbounded": sum(1 for a in empty if not a.searched.strip()),
+                      "absence_proven": False}))
     return findings
 
 
@@ -977,9 +1048,36 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
 
     findings: List[Finding] = []
     independence = analyse_independence(records)
-    ledger = detect_contradictions(claim_graph=claim_graph, evidence=records,
-                                   verification_graph=verification_graph)
+    detected = detect_contradictions(claim_graph=claim_graph, evidence=records,
+                                     verification_graph=verification_graph)
     assumption_graph = AssumptionGraph.from_claim_graph(claim_graph)
+
+    # Which claims a refutation would actually matter to: the proposition the case
+    # is about, and anything else rests on. Structural, as everywhere else.
+    critical: Set[str] = set()
+    if claim_graph is not None:
+        critical |= {c.claim_id for c in claim_graph.roots()}
+        try:
+            critical |= set(claim_graph.load_bearing())
+        except Exception:
+            pass
+
+    # Declared attempts from the envelope, plus any lifted from counterexample
+    # evidence already in the case. Both paths matter: only the envelope can say a
+    # search came back empty, and only the lift picks up producers that never
+    # thought to call their finding a counterexample.
+    declared_attempts = tuple(getattr(normalisation, "counterexamples", ()) or ())
+    counterexamples = CounterexampleLedger(
+        declared_attempts + counterexamples_from_evidence(records))
+    # A live refutation becomes a contradiction so `render_verdict` cannot omit it.
+    # Claims that already produced a claim/evidence conflict are skipped, or the
+    # same disagreement would be filed twice under two ids.
+    already = {c for contradiction in detected
+               if contradiction.kind is ContradictionKind.CLAIM_EVIDENCE_CONFLICT
+               for c in contradiction.target_claims}
+    lifted = tuple(c for c in counterexamples.to_contradictions(critical_claims=critical)
+                   if not set(c.target_claims) & already)
+    ledger = ContradictionLedger(tuple(detected.contradictions) + lifted)
 
     findings: List[Finding] = []
     findings.extend(_analyse_provenance(case, records))
@@ -988,6 +1086,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_verification_graph(verification_graph))
     findings.extend(_analyse_contradiction(claim_graph, records, ledger))
     findings.extend(_analyse_assumptions(assumption_graph))
+    findings.extend(_analyse_counterexamples(counterexamples, critical))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
@@ -1001,4 +1100,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           verification_graph=verification_graph,
                           capabilities=capabilities, consequence=consequence,
                           independence=independence, contradictions=ledger,
-                          assumptions=assumption_graph)
+                          assumptions=assumption_graph,
+                          counterexamples=counterexamples)

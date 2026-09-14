@@ -50,6 +50,7 @@ from release_gate.assurance.methodology import (
 )
 from release_gate.assurance.assumptions import AssumptionGraph
 from release_gate.assurance.contradiction import Contradiction, ContradictionLedger
+from release_gate.assurance.counterexample import CounterexampleLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -106,6 +107,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def counterexamples(self) -> CounterexampleLedger:
+        """Attempts to break the claims, and what each came back with."""
+        return self.analysis.counterexamples or CounterexampleLedger()
+
+    @property
     def assumptions(self) -> AssumptionGraph:
         """What the argument takes for granted, and what falls with each."""
         return self.analysis.assumptions or AssumptionGraph()
@@ -150,6 +156,7 @@ class AssuranceOutcome:
                              else None),
             "contradictions": self.contradictions.to_dict(),
             "assumptions": self.assumptions.to_dict(),
+            "counterexamples": self.counterexamples.to_dict(),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -177,7 +184,8 @@ def _ingest_coverage(normalisation: Normalisation,
                      verification: Optional[VerificationGraph],
                      independence: Optional[IndependenceProfile],
                      contradictions: Optional[ContradictionLedger] = None,
-                     assumptions: Optional[AssumptionGraph] = None
+                     assumptions: Optional[AssumptionGraph] = None,
+                     counterexamples: Optional[CounterexampleLedger] = None
                      ) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
@@ -202,6 +210,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _independence_coverage(independence),
         _contradiction_coverage(contradictions),
         _assumption_coverage(assumptions),
+        _counterexample_coverage(counterexamples),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -249,6 +258,31 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         declared_only=len(surface.declared_only), unknown=len(surface.unknown),
         bounded=surface.bounded, observation_possible=surface.can_observe,
         surface_digest=surface.digest())
+
+
+def _counterexample_coverage(ledger: Optional[CounterexampleLedger]) -> SimpleRecord:
+    """Coverage for attempts to break the claims, and the asymmetry between them.
+
+    Never ASSESSED on the strength of empty searches. A run where every search
+    came back clean has not established that no counterexample exists — it has
+    established what those searches covered, which is a different and much smaller
+    statement.
+    """
+    if ledger is None or not len(ledger):
+        return _coverage_row(
+            "counterexamples", False,
+            "nobody tried to break the claims in this case; no counterexample search "
+            "is recorded")
+    summary = ledger.summary()
+    return _coverage_row(
+        "counterexamples", summary["open"] == 0 and summary["found"] == 0,
+        (f"{summary['total']} search(es): {summary['found']} found a counterexample, "
+         f"{summary['open']} of those unresolved, "
+         f"{summary['searched_without_finding']} came back empty. An empty search "
+         "bounds the search, not the claim — absence is never established here"),
+        total=summary["total"], found=summary["found"], open=summary["open"],
+        searched_without_finding=summary["searched_without_finding"],
+        absence_proven=False, ledger_digest=summary["digest"])
 
 
 def _assumption_coverage(graph: Optional[AssumptionGraph]) -> SimpleRecord:
@@ -433,6 +467,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 independence: Optional[IndependenceProfile] = None,
                 contradictions: Optional[ContradictionLedger] = None,
                 assumptions: Optional[AssumptionGraph] = None,
+                counterexamples: Optional[CounterexampleLedger] = None,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -478,6 +513,13 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
             payload=normalisation.execution.summary()))
 
     builder.declare_present(
+        "counterexamples",
+        "attempts to break the claims in this case, found here or lifted from "
+        "counterexample evidence")
+    builder.extend("counterexamples",
+                   list(counterexamples) if counterexamples else [])
+
+    builder.declare_present(
         "assumptions",
         "derived from what the claims in this case declare they rest on")
     builder.extend("assumptions", list(assumptions) if assumptions else [])
@@ -492,7 +534,8 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
                                                 verification, independence,
-                                                contradictions, assumptions))
+                                                contradictions, assumptions,
+                                                counterexamples))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -688,7 +731,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, contradictions=analysis.contradictions,
-        assumptions=analysis.assumptions,
+        assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -705,7 +748,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, contradictions=analysis.contradictions,
-        assumptions=analysis.assumptions,
+        assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -789,6 +832,13 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+
+    breaking = outcome.counterexamples
+    if len(breaking):
+        add("")
+        add(f"  ATTEMPTS TO BREAK IT ({len(breaking)})")
+        for line in breaking.render().splitlines():
+            add(f"    {line}")
 
     assumptions = outcome.assumptions
     if len(assumptions):

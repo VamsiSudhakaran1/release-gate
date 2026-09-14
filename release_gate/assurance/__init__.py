@@ -132,6 +132,15 @@ from release_gate.assurance.contradiction import (
     ContradictionStatus,
     detect_contradictions,
 )
+from release_gate.assurance.counterexample import (
+    COUNTEREXAMPLE_SCHEMA_VERSION,
+    CounterexampleAttempt,
+    CounterexampleError,
+    CounterexampleLedger,
+    CounterexampleResult,
+    CounterexampleStatus,
+    counterexamples_from_evidence,
+)
 from release_gate.assurance.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     CoverageStatus,
@@ -312,6 +321,7 @@ __all__ = [
     "COLLECTION_KINDS",
     "CONSEQUENCE_SCHEMA_VERSION",
     "CONTRADICTION_SCHEMA_VERSION",
+    "COUNTEREXAMPLE_SCHEMA_VERSION",
     "CanonicalisationError",
     "Capability",
     "CapabilityRecord",
@@ -352,6 +362,11 @@ __all__ = [
     "ContradictionLedger",
     "ContradictionSide",
     "ContradictionStatus",
+    "CounterexampleAttempt",
+    "CounterexampleError",
+    "CounterexampleLedger",
+    "CounterexampleResult",
+    "CounterexampleStatus",
     "CoverageExpectation",
     "CoverageStatus",
     "Criticality",
@@ -454,6 +469,7 @@ __all__ = [
     "build_required_evidence",
     "canonical_json",
     "classify_tool_name",
+    "counterexamples_from_evidence",
     "decide",
     "declared_from_document",
     "default_case_type",

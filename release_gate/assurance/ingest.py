@@ -36,6 +36,10 @@ from release_gate.assurance.capabilities import CapabilitySurface, declared_from
 from release_gate.assurance.consequence import (
     ConsequenceDescriptor, descriptors_from_mapping,
 )
+from release_gate.assurance.counterexample import (
+    CounterexampleAttempt, CounterexampleError, CounterexampleResult,
+    CounterexampleStatus,
+)
 from release_gate.assurance.claims import Claim, ClaimProvenance, ClaimType
 from release_gate.assurance.verification import (
     VerificationAttempt, VerificationError, VerificationStatus,
@@ -66,7 +70,8 @@ __all__ = [
 DETECT_FLOOR = 50
 
 ENVELOPE_RECORD_TYPES = frozenset(
-    {"claim", "evidence", "artifact", "execution", "edge", "completeness"})
+    {"claim", "evidence", "artifact", "execution", "edge", "completeness",
+     "counterexample"})
 
 
 class IngestError(ValueError):
@@ -145,6 +150,7 @@ class Normalisation:
     execution: Optional[ExecutionGraph] = None
     capabilities: Optional[CapabilitySurface] = None
     declared_consequence: Tuple[ConsequenceDescriptor, ...] = ()
+    counterexamples: Tuple[CounterexampleAttempt, ...] = ()
     records_seen: int = 0
     records_mapped: int = 0
     skipped: Mapping[str, int] = field(default_factory=dict)
@@ -162,6 +168,7 @@ class Normalisation:
                 "capabilities": (self.capabilities.summary() if self.capabilities
                                  else None),
                 "declared_consequence": [d.to_dict() for d in self.declared_consequence],
+                "counterexamples": len(self.counterexamples),
                 "records_seen": self.records_seen, "records_mapped": self.records_mapped,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
@@ -467,10 +474,12 @@ def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
 
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
-                                 int, Dict[str, int], List[str]]:
+                                 List[CounterexampleAttempt], int, Dict[str, int],
+                                 List[str]]:
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
     artifacts: List[Artifact] = []
+    counterexamples: List[CounterexampleAttempt] = []
     skipped: Dict[str, int] = {}
     notes: List[str] = []
     mapped = 0
@@ -500,6 +509,9 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                 claim_rows.append((row, producer))
             elif record_type == "artifact":
                 artifacts.append(_artifact_from(row, producer))
+                mapped += 1
+            elif record_type == "counterexample":
+                counterexamples.append(_counterexample_from(row, producer))
                 mapped += 1
             elif record_type in ENVELOPE_RECORD_TYPES:
                 skip(f"{record_type} records are not folded by the zero-config path")
@@ -545,7 +557,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
             skip("record rejected: " + type(exc).__name__)
             notes.append(f"a claim record was rejected: {exc}")
 
-    return evidence, claims, artifacts, mapped, skipped, notes
+    return evidence, claims, artifacts, counterexamples, mapped, skipped, notes
 
 
 def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
@@ -739,6 +751,36 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
         extracted_by_model=str(extracted_by) if extracted_by else None)
 
 
+def _counterexample_from(row: Mapping[str, Any],
+                         producer: Producer) -> CounterexampleAttempt:
+    """An explicitly declared attempt to break a claim.
+
+    The envelope is the only way to record a search that came back *empty*:
+    evidence can carry a counterexample that was found, but there is no evidence
+    record for "I looked here and there was nothing", and that fact is worth
+    keeping — bounded though it is.
+    """
+    result = CounterexampleResult(str(row.get("result") or "UNKNOWN").upper())
+    declared_status = row.get("status")
+    if declared_status:
+        status = CounterexampleStatus(str(declared_status).upper())
+    elif result is CounterexampleResult.FOUND:
+        # A found counterexample is open until something answers it. Silence in the
+        # envelope is not an answer.
+        status = CounterexampleStatus.OPEN
+    else:
+        status = CounterexampleStatus.NOT_APPLICABLE
+    return CounterexampleAttempt(
+        target_claim=str(row.get("target_claim") or row.get("claim_id") or ""),
+        producer=str(row.get("producer_id") or producer.producer_id),
+        method=VerificationMethod(str(row.get("method") or "PROPERTY_TEST").upper()),
+        result=result, evidence=tuple(_as_ids(row.get("evidence"))),
+        resolution=str(row.get("resolution") or ""),
+        resolution_evidence=tuple(_as_ids(row.get("resolution_evidence"))),
+        status=status, searched=str(row.get("searched") or ""),
+        detail=str(row.get("detail") or ""))
+
+
 def _artifact_from(row: Mapping[str, Any], producer: Producer) -> Artifact:
     digest = row.get("digest")
     return Artifact(
@@ -826,6 +868,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
     artifacts: List[Artifact] = []
+    counterexamples: List[CounterexampleAttempt] = []
     skipped: Dict[str, int] = {}
     notes: List[str] = []
     seen = 0
@@ -842,13 +885,16 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     notes.extend(cap_notes)
 
     declared_consequence = _consequence_from(doc, source)
+    counterexamples: List[CounterexampleAttempt] = []
 
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
-        ev, cl, art, mapped, skipped, env_notes = _envelope_records(doc, source, producer)
+        ev, cl, art, cex, mapped, skipped, env_notes = _envelope_records(
+            doc, source, producer)
         evidence.extend(ev)
         claims.extend(cl)
         artifacts.extend(art)
+        counterexamples.extend(cex)
         notes.extend(env_notes)
 
     elif detection.kind is InputKind.PROMPTFOO_EVAL:
@@ -883,6 +929,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
         detection=detection, source=source, evidence=tuple(evidence),
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
         capabilities=capabilities, declared_consequence=tuple(declared_consequence),
+        counterexamples=tuple(counterexamples),
         records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
         notes=tuple(notes))
 
