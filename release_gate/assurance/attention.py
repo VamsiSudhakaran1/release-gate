@@ -68,6 +68,13 @@ _FOCUS_KIND = {
     "RG-CAP-007": "capability",
     "RG-CONS-001": "case", "RG-CONS-002": "stakes", "RG-CONS-003": "stakes",
     "RG-CONS-004": "stakes", "RG-CONS-005": "stakes",
+    "RG-REPL-001": "claim", "RG-REPL-002": "claim", "RG-REPL-003": "case",
+    "RG-REPL-004": "case", "RG-REPL-005": "case", "RG-REPL-006": "case",
+    # Adversarial findings key on the finding itself: a reviewer opens the attack
+    # and its evidence, not the claim in the abstract.
+    "RG-ADV-001": "adversarial_finding", "RG-ADV-002": "adversarial_finding",
+    "RG-ADV-003": "adversarial_finding", "RG-ADV-004": "adversarial_finding",
+    "RG-ADV-005": "case", "RG-ADV-006": "case", "RG-ADV-007": "case",
 }
 
 
@@ -92,6 +99,10 @@ class AttentionReason(str, Enum):
     RECURRING_FAILURE = "RECURRING_FAILURE"
     METHODOLOGY_ABSENT = "METHODOLOGY_ABSENT"
     REQUIREMENT_UNMET = "REQUIREMENT_UNMET"
+    NOT_REPRODUCED = "NOT_REPRODUCED"
+    ADVERSARIAL_FINDING = "ADVERSARIAL_FINDING"
+    ACCEPTED_RISK = "ACCEPTED_RISK"
+    SELF_CLEARED = "SELF_CLEARED"
 
 
 _DOMAIN_REASON = {
@@ -105,6 +116,8 @@ _DOMAIN_REASON = {
     AnalysisDomain.ASSUMPTION: AttentionReason.UNEXAMINED_ASSUMPTION,
     AnalysisDomain.COUNTEREXAMPLE: AttentionReason.LIVE_COUNTEREXAMPLE,
     AnalysisDomain.FAILED_BRANCH: AttentionReason.RECURRING_FAILURE,
+    AnalysisDomain.REPLICATION: AttentionReason.NOT_REPRODUCED,
+    AnalysisDomain.ADVERSARIAL: AttentionReason.ADVERSARIAL_FINDING,
 }
 
 _RULE_REASON = {
@@ -117,6 +130,14 @@ _RULE_REASON = {
     "RG-CONS-002": AttentionReason.CONSEQUENCE_DISPUTED,
     "RG-CONS-003": AttentionReason.CONSEQUENCE_DISPUTED,
     "RG-CONTRA-005": AttentionReason.UNRESOLVED_DISAGREEMENT,
+    "RG-REPL-001": AttentionReason.UNRESOLVED_DISAGREEMENT,
+    "RG-REPL-002": AttentionReason.UNRESOLVED_DISAGREEMENT,
+    # An accepted risk and a self-cleared finding are distinct things to look at,
+    # and neither reads correctly as a generic adversarial finding: the first asks
+    # the authorizer to confirm what is being accepted on their behalf, the second
+    # asks whether the answer came from a party entitled to give it.
+    "RG-ADV-003": AttentionReason.ACCEPTED_RISK,
+    "RG-ADV-004": AttentionReason.SELF_CLEARED,
 }
 
 
@@ -281,13 +302,21 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
     for (focus, kind), findings in groups.items():
         findings.sort(key=lambda f: (_EFFECT_RANK[f.effect], f.rule_id))
         worst = findings[0]
+        # The reason comes from the most specific rule in the group rather than
+        # simply the worst one. A rule with its own mapped reason says something a
+        # domain default cannot — "this risk was accepted", "this was closed by the
+        # party it was against" — and losing that to an alphabetically earlier
+        # sibling would blur the one word a reviewer actually scans.
+        named = [f for f in findings if f.rule_id in _RULE_REASON]
+        reason_source = named[0] if named else worst
         rule_ids = tuple(sorted({f.rule_id for f in findings}))
         refs = tuple(sorted({r for f in findings for r in f.refs}))[:12]
         summary = (worst.summary if len(findings) == 1
                    else f"{worst.summary} (+{len(findings) - 1} more finding(s) here)")
         items.append(AttentionItem(
             item_id=f"att_{kind}_{focus}".replace(" ", "_")[:96],
-            reason=_reason_of(worst), effect=worst.effect, focus=focus, focus_kind=kind,
+            reason=_reason_of(reason_source), effect=worst.effect,
+            focus=focus, focus_kind=kind,
             summary=summary, why_it_matters=worst.detail, remedy=worst.remedy,
             leverage=len(findings), rule_ids=rule_ids, refs=refs))
 
@@ -339,6 +368,11 @@ _NON_MONOTONE_RULES = frozenset({
     "RG-CONTRA-005",
     # A resolved counterexample can be reopened by a search that has not run yet.
     "RG-CEX-001", "RG-CEX-002",
+    # An agreeing set of paths can be split by a replication that has not run.
+    "RG-REPL-001", "RG-REPL-002",
+    # And an adversarial finding that was answered can be reopened by an attack
+    # nobody has made yet: a clean adversarial result is never settled by arrival.
+    "RG-ADV-001", "RG-ADV-002", "RG-ADV-003", "RG-ADV-004",
 })
 
 

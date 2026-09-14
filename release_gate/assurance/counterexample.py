@@ -280,7 +280,14 @@ class CounterexampleLedger:
     """Every attempt to break a claim, and what each came back with."""
 
     def __init__(self, attempts: Iterable[CounterexampleAttempt] = ()) -> None:
-        held = list(attempts)
+        # Deduplicated by id, because two byte-identical attempts are one attempt
+        # by the same reasoning that derives the id from content. Attempts now
+        # arrive from three places — the envelope, evidence, and adversarial
+        # findings — and the same search reported through two of them must not
+        # become two refutations, nor collide when the collection rejects a
+        # duplicate record_id.
+        by_id = {a.counterexample_id: a for a in attempts}
+        held = list(by_id.values())
         held.sort(key=lambda a: (not a.is_open, not a.found, a.target_claim,
                                  a.counterexample_id))
         self._held: Tuple[CounterexampleAttempt, ...] = tuple(held)

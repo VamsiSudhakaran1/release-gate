@@ -1083,6 +1083,80 @@ evidence record for "I looked here and there was nothing".
 
 ---
 
+### 6.3d Adversarial verification (`RG-ADV-*`)
+
+> **Implemented.** `release_gate/assurance/adversarial.py`, plus the
+> `AdversarialReviewRequired` methodology predicate.
+
+A counterexample agent, a red team, a proof critic, a security adversary, a
+falsification agent, an independent tester: all of them do the same structural
+thing, which is to try to break the candidate rather than confirm it. That stance
+is the content, because evidence from a party trying to fail you is worth
+something evidence from a party trying to agree with you is not.
+
+**Release-Gate never requires them.** Most decisions have no adversary and are
+not worse for it. A case with none reports `NOT_ASSESSED` on the
+`adversarial_review` coverage row, stores no review record, and produces no
+finding. Only `AdversarialReviewRequired` can turn absence into a verdict.
+
+**Breaking the argument is not breaking the claim.** A proof critic who finds
+that step 7 does not follow has not shown the theorem false — they have shown the
+proof does not establish it. `CANDIDATE_REFUTED` and `ARGUMENT_DEFECT` are
+separate outcomes: collapsing them one way would call true claims false,
+collapsing them the other would let broken support read as clean. Only a
+refutation converts to a `CounterexampleAttempt`, which reaches `Contradiction`
+and `render_verdict` by the path §6.3c already built — so refutations are
+deliberately *not* re-reported under `RG-ADV-*`, and there is one guard to keep
+correct rather than two that drift.
+
+**An adversary sharing origin with the candidate is not an adversary.** A red
+team running the same model, from the same prompt lineage, staffed by the people
+who built the thing, will systematically miss what the builders missed.
+`AdversarialStance` is derived — from who produced the candidate's supporting
+evidence and from declared lineage — never accepted as a claim, and an adversary
+that records nothing about where it came from is `UNDETERMINED` rather than
+independent. `UNDETERMINED` is also deliberately not counted as *related*: not
+knowing is not knowing.
+
+**A finding closed by the party it was against is not closed.** The oldest
+failure in assurance is the team that wrote the code resolving the red-team
+ticket with "not exploitable". `self_cleared` is computed from the candidate's
+own producers, not from anything the resolver said, and a self-cleared finding on
+a critical claim blocks (`RG-ADV-004`) whatever its recorded status says.
+
+**Accepting a risk is not resolving it.** `ACCEPTED_RISK` is a distinct status
+and counts as open. It requires both a stated basis and a named accepting party,
+because proceeding with a known weakness is an act of authority somebody has to
+be answerable for. It converts to an *open* counterexample, never a resolved one.
+And it always reaches Human Attention: the person authorizing the release is
+exactly who should be told what is being accepted on their behalf — approval is
+authorization, not truth certification (Invariant 15).
+
+**An attack that found nothing bounds the search, not the claim.**
+`proves_absence` is `False` at both the finding and the review level, and
+`search_bound` states what the role structurally cannot cover — a red team does
+not cover "attacks this team did not think of"; a property checker does not cover
+"inputs the generator did not produce" — so an adversary's own account of its
+thoroughness earns nothing (Invariant 1).
+
+Seven rules. `RG-ADV-001` blocks on an open argument defect against a critical
+claim; `RG-ADV-002` holds everything else still standing; `RG-ADV-003` surfaces
+accepted risks; `RG-ADV-004` surfaces self-clearing; `RG-ADV-005`, `RG-ADV-006`
+and `RG-ADV-007` report non-independent adversaries, empty searches, and critical
+claims nobody attacked — all advisory, because adversarial review is optional and
+a gate that docked its absence would be charging for a thing it says is not
+required.
+
+**Human Attention.** `ADVERSARIAL_FINDING`, `ACCEPTED_RISK` and `SELF_CLEARED`
+are separate reasons, and the attention builder now takes a group's reason from
+the most specific rule present rather than the alphabetically first — an accepted
+risk grouped with a generic open finding would otherwise reach a reviewer labelled
+as neither. All four substantive rules are non-monotone: an adversarial finding
+that was answered can be reopened by an attack nobody has made yet, so a clean
+adversarial result is never settled by arrival.
+
+---
+
 ### 6.3b Contradiction preservation
 
 > **Implemented.** `release_gate/assurance/contradiction.py`, plus the refusal in
@@ -1654,6 +1728,7 @@ release_gate/assurance/
   analyzers/
     provenance.py  coverage.py  contradiction.py  independence.py  drift.py  completeness.py
     replication.py       paths to a result, copies collapsed
+    adversarial.py       verifiers that set out to disprove the candidate
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
   packet.py              ApprovalPacket rendering (json / markdown / html)

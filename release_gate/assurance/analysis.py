@@ -39,6 +39,8 @@ from release_gate.assurance.failed_branches import (
     FailedBranchLedger, FailedBranchRecorder, branches_from_verification,
 )
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
+from release_gate.assurance.adversarial import (
+    AdversarialOutcome, AdversarialReview, AdversarialStance, analyse_adversarial)
 from release_gate.assurance.replication import (
     ReplicationOutcome, ReplicationProfile, ResultEquivalence, analyse_replication)
 from release_gate.assurance.independence import (
@@ -67,6 +69,7 @@ class AnalysisDomain(str, Enum):
     CONSEQUENCE = "CONSEQUENCE"
     INDEPENDENCE = "INDEPENDENCE"
     REPLICATION = "REPLICATION"
+    ADVERSARIAL = "ADVERSARIAL"
     ASSUMPTION = "ASSUMPTION"
     COUNTEREXAMPLE = "COUNTEREXAMPLE"
     FAILED_BRANCH = "FAILED_BRANCH"
@@ -126,6 +129,7 @@ class AnalysisResult:
     consequence: Optional[ConsequenceProfile] = None
     independence: Optional[IndependenceProfile] = None
     replication: Optional[ReplicationProfile] = None
+    adversarial: Optional[AdversarialReview] = None
     contradictions: Optional[ContradictionLedger] = None
     assumptions: Optional[AssumptionGraph] = None
     counterexamples: Optional[CounterexampleLedger] = None
@@ -413,6 +417,165 @@ def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Findin
             remedy="correct the parent_evidence chain so derivation is acyclic",
             refs=profile.cycles_detected[:12],
             observed={"cycles": len(profile.cycles_detected)}))
+    return findings
+
+
+# ── adversarial (RG-ADV-*) ───────────────────────────────────────────────────
+
+def _analyse_adversarial(review: Optional[AdversarialReview],
+                         critical: Set[str]) -> List[Finding]:
+    """Verifiers whose job was to make the candidate fail, and what came of it.
+
+    Refutations are deliberately *not* re-reported here. An adversarial finding
+    of `CANDIDATE_REFUTED` converts to a `CounterexampleAttempt` and is handled by
+    `RG-CEX-*` all the way through to the contradiction the verdict cannot omit.
+    Filing it twice under two rule ids would double a reviewer's work and let the
+    two copies drift apart. What this analyser reports is everything the
+    counterexample path cannot see: a broken argument, a risk somebody accepted,
+    a finding closed by the party it was against, and an adversary that shares
+    origin with what it attacked.
+
+    The absence of adversaries is never a finding. Most decisions have none.
+    """
+    findings: List[Finding] = []
+    if review is None or not review.present:
+        return findings
+
+    defects = [f for f in review.argument_defects() if f.is_open]
+    against_critical = [f for f in defects if f.target_claim in critical]
+    if against_critical:
+        findings.append(Finding(
+            rule_id="RG-ADV-001", domain=AnalysisDomain.ADVERSARIAL,
+            effect=RequirementEffect.BLOCK,
+            summary=f"{len(against_critical)} unanswered adversarial finding(s) break "
+                    "the argument for a critical claim",
+            detail="; ".join(f"{f.finding_id}: {f.role.value} {f.adversary} found "
+                             f"{f.target_claim}'s support does not establish it"
+                             for f in against_critical[:4])[:700]
+                   + ". This does not say the claim is false — it says nothing here "
+                     "shows it true. The support has to be repaired or replaced.",
+            remedy="repair the support the critic identified and record what answers "
+                   "the finding, or withdraw the claim",
+            refs=tuple(f.finding_id for f in against_critical[:12]),
+            observed={"open_argument_defects_critical": len(against_critical)}))
+
+    # Everything else still standing, minus the accepted risks: those are reported
+    # by RG-ADV-003, which says something this rule cannot, and counting them here
+    # too would bill a reviewer twice for one finding.
+    remaining = [f for f in review.open()
+                 if not f.accepted and f not in against_critical
+                 and f.outcome is not AdversarialOutcome.CANDIDATE_REFUTED]
+    if remaining:
+        findings.append(Finding(
+            rule_id="RG-ADV-002", domain=AnalysisDomain.ADVERSARIAL,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(remaining)} unanswered adversarial finding(s) stand",
+            detail="; ".join(f"{f.finding_id} ({f.outcome.value}) by {f.adversary} "
+                             f"against {f.target_claim}"
+                             for f in remaining[:6])[:600],
+            remedy="answer these and record what answers them, or record why they do "
+                   "not bear on the decision",
+            refs=tuple(f.finding_id for f in remaining[:12]),
+            observed={"open": len(remaining),
+                      "against_critical": sum(1 for f in remaining
+                                              if f.target_claim in critical)}))
+
+    accepted = review.accepted_risks()
+    if accepted:
+        critical_accepts = [f for f in accepted if f.target_claim in critical]
+        findings.append(Finding(
+            rule_id="RG-ADV-003", domain=AnalysisDomain.ADVERSARIAL,
+            effect=(RequirementEffect.HOLD if critical_accepts
+                    else RequirementEffect.ADVISORY),
+            summary=f"{len(accepted)} adversarial finding(s) were accepted as risk "
+                    "rather than answered",
+            detail="; ".join(f"{f.finding_id} against {f.target_claim}, accepted by "
+                             f"{f.accepted_by or 'an unnamed party'}: {f.resolution}"
+                             for f in accepted[:4])[:700]
+                   + ". Accepting a risk is a decision to proceed, not a resolution. "
+                     "It is surfaced because the person authorizing this release is "
+                     "exactly who should be told what is being accepted on their "
+                     "behalf (Invariant 15).",
+            remedy="none required if the acceptance is intended; the authorizer needs "
+                   "to see it either way",
+            refs=tuple(f.finding_id for f in accepted[:12]),
+            observed={"accepted_risks": len(accepted),
+                      "against_critical": len(critical_accepts)}))
+
+    cleared = review.self_cleared()
+    if cleared:
+        critical_cleared = [f for f in cleared if f.target_claim in critical]
+        findings.append(Finding(
+            rule_id="RG-ADV-004", domain=AnalysisDomain.ADVERSARIAL,
+            effect=(RequirementEffect.BLOCK if critical_cleared
+                    else RequirementEffect.HOLD),
+            summary=f"{len(cleared)} adversarial finding(s) were closed by the party "
+                    "they were against",
+            detail="; ".join(f"{f.finding_id} against {f.target_claim} was closed by "
+                             f"{f.resolved_by or f.accepted_by}, who also produced "
+                             "that claim's support" for f in cleared[:4])[:700]
+                   + ". A finding answered by the party it argues against has not "
+                     "been independently answered, whatever its recorded status says.",
+            remedy="have the resolution reviewed by a party that did not produce the "
+                   "claim's support, and cite that review as resolution_evidence",
+            refs=tuple(f.finding_id for f in cleared[:12]),
+            observed={"self_cleared": len(cleared),
+                      "against_critical": len(critical_cleared)}))
+
+    related = review.non_independent()
+    if related:
+        by_stance = {s.value: sum(1 for f in related
+                                  if review.stances.get(f.finding_id) is s)
+                     for s in AdversarialStance}
+        findings.append(Finding(
+            rule_id="RG-ADV-005", domain=AnalysisDomain.ADVERSARIAL,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(related)} adversarial attack(s) came from an adversary "
+                    "sharing origin with what it attacked",
+            detail="An adversary that produced the candidate's own support, or rests "
+                   "on the same lineage, will tend to miss what the builder missed. "
+                   "Their findings still count for everything they found; what they "
+                   "did not find covers less than it appears to (Invariant 6).",
+            remedy="none required; obtain an attack from an adversary with a separate "
+                   "lineage if the decision needs the search to be genuinely other",
+            refs=tuple(f.finding_id for f in related[:12]),
+            observed={"non_independent": len(related), "by_stance": by_stance}))
+
+    empty = review.empty_searches()
+    if empty:
+        unbounded = review.unbounded_searches()
+        findings.append(Finding(
+            rule_id="RG-ADV-006", domain=AnalysisDomain.ADVERSARIAL,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(empty)} adversarial attack(s) found nothing",
+            detail="; ".join(f"{f.role.value} {f.adversary} on {f.target_claim}: "
+                             f"{f.search_bound}" for f in empty[:3])[:700]
+                   + ". Recorded as evidence about the search and credited with "
+                     "nothing about the claim: an attack that came back empty bounds "
+                     "what was tried, however many of them there are."
+                   + (f" {len(unbounded)} of these recorded no search extent at all."
+                      if unbounded else ""),
+            remedy="state what each attack actually covered, so a reviewer can see "
+                   "what an empty result does and does not bound",
+            refs=tuple(f.finding_id for f in empty[:12]),
+            observed={"empty_searches": len(empty), "unbounded": len(unbounded),
+                      "proves_absence": False}))
+
+    unattacked = review.unattacked(critical)
+    if unattacked:
+        findings.append(Finding(
+            rule_id="RG-ADV-007", domain=AnalysisDomain.ADVERSARIAL,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(unattacked)} critical claim(s) had adversarial review "
+                    "elsewhere in this case but not on them",
+            detail="Adversaries attacked this case but did not attack these claims. "
+                   "Reported so the presence of a red team is not read as coverage of "
+                   "everything (Invariant 9). Adversarial review is never required.",
+            remedy="none required; point an adversary at these claims if the decision "
+                   "needs them attacked too",
+            refs=tuple(unattacked[:12]),
+            observed={"unattacked_critical": len(unattacked),
+                      "claims_attacked": len(review.claims_attacked)}))
     return findings
 
 
@@ -1284,9 +1447,37 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
         verification_graph.attempts if verification_graph is not None else (),
         records=records)
 
+    # Who produced each claim's support, and what lineage that support rests on.
+    # Both come from the case rather than from the adversaries, which is the only
+    # way self-review and self-clearing are findable at all: an adversary will not
+    # tell you it is the builder, and the builder will not tell you it closed its
+    # own ticket.
+    claim_producers: Dict[str, Set[str]] = {}
+    claim_lineage: Dict[str, Set[str]] = {}
+    by_evidence = {r.evidence_id: r for r in records}
+    for claim in (claim_graph.claims if claim_graph is not None else ()):
+        producers = claim_producers.setdefault(claim.claim_id, set())
+        lineage = claim_lineage.setdefault(claim.claim_id, set())
+        if claim.producer is not None:
+            producers.add(claim.producer.producer_id)
+        for evidence_id in claim.supporting_evidence:
+            supporting = by_evidence.get(evidence_id)
+            if supporting is not None:
+                producers.add(supporting.producer.producer_id)
+                lineage.add(supporting.producer.producer_id)
+                lineage.update(supporting.parent_evidence)
+
+    adversarial = analyse_adversarial(
+        getattr(normalisation, "adversarial", ()) or (),
+        claim_producers=claim_producers, claim_lineage=claim_lineage)
+
     declared_attempts = tuple(getattr(normalisation, "counterexamples", ()) or ())
+    # Adversarial refutations join the counterexample ledger rather than getting a
+    # second enforcement path: `render_verdict` already refuses to omit an
+    # unresolved critical one, and one guard kept correct beats two that drift.
     counterexamples = CounterexampleLedger(
-        declared_attempts + counterexamples_from_evidence(records))
+        declared_attempts + counterexamples_from_evidence(records)
+        + adversarial.to_counterexamples())
     # A live refutation becomes a contradiction so `render_verdict` cannot omit it.
     # Claims that already produced a claim/evidence conflict are skipped, or the
     # same disagreement would be filed twice under two ids.
@@ -1310,6 +1501,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_provenance(case, records))
     findings.extend(_analyse_independence(independence))
     findings.extend(_analyse_replication(replication, critical))
+    findings.extend(_analyse_adversarial(adversarial, critical))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
     findings.extend(_analyse_contradiction(claim_graph, records, ledger))
@@ -1329,6 +1521,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           verification_graph=verification_graph,
                           capabilities=capabilities, consequence=consequence,
                           independence=independence, replication=replication,
+                          adversarial=adversarial,
                           contradictions=ledger,
                           assumptions=assumption_graph,
                           counterexamples=counterexamples,

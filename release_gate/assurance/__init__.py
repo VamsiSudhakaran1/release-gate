@@ -191,6 +191,7 @@ from release_gate.assurance.methodologies import (
 )
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
+    AdversarialReviewRequired,
     AssessmentStatus,
     AncestryIndependence,
     AssumptionsExamined,
@@ -242,6 +243,17 @@ from release_gate.assurance.subject import (
     directory_manifest_digest,
 )
 
+from release_gate.assurance.adversarial import (
+    ADVERSARIAL_SCHEMA_VERSION,
+    AdversarialError,
+    AdversarialFinding,
+    AdversarialOutcome,
+    AdversarialReview,
+    AdversarialRole,
+    AdversarialStance,
+    AdversarialStatus,
+    analyse_adversarial,
+)
 from release_gate.assurance.replication import (
     REPLICATION_SCHEMA_VERSION,
     CollapseReason,
@@ -322,10 +334,19 @@ from release_gate.assurance.zero_config import (
 )
 
 __all__ = [
+    "ADVERSARIAL_SCHEMA_VERSION",
     "ALL_CASE_TYPES",
     "ANALYSIS_RULESET_VERSION",
     "ARTIFACT_SCHEMA_VERSION",
     "ASSUMPTION_SCHEMA_VERSION",
+    "AdversarialError",
+    "AdversarialFinding",
+    "AdversarialOutcome",
+    "AdversarialReview",
+    "AdversarialReviewRequired",
+    "AdversarialRole",
+    "AdversarialStance",
+    "AdversarialStatus",
     "AnalysisDomain",
     "AnalysisResult",
     "AncestryCluster",
@@ -534,6 +555,7 @@ __all__ = [
     "ZERO_CONFIG_RULESET_VERSION",
     "ZeroConfigError",
     "analyse",
+    "analyse_adversarial",
     "analyse_independence",
     "analyse_replication",
     "assess",

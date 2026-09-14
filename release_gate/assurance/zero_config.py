@@ -53,6 +53,7 @@ from release_gate.assurance.contradiction import Contradiction, ContradictionLed
 from release_gate.assurance.counterexample import CounterexampleLedger
 from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
+from release_gate.assurance.adversarial import AdversarialReview
 from release_gate.assurance.replication import ReplicationOutcome, ReplicationProfile
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -134,6 +135,11 @@ class AssuranceOutcome:
         return self.analysis.independence
 
     @property
+    def adversarial(self) -> Optional[AdversarialReview]:
+        """Verifiers that set out to disprove this. Absent is normal, not a gap."""
+        return self.analysis.adversarial
+
+    @property
     def replication(self) -> Optional[ReplicationProfile]:
         """What has actually been reproduced, once copies have collapsed."""
         return self.analysis.replication
@@ -168,6 +174,8 @@ class AssuranceOutcome:
                              else None),
             "replication": (self.replication.to_dict()
                             if self.replication is not None else None),
+            "adversarial": (self.adversarial.to_dict()
+                            if self.adversarial is not None else None),
             "contradictions": self.contradictions.to_dict(),
             "assumptions": self.assumptions.to_dict(),
             "counterexamples": self.counterexamples.to_dict(),
@@ -199,6 +207,7 @@ def _ingest_coverage(normalisation: Normalisation,
                      verification: Optional[VerificationGraph],
                      independence: Optional[IndependenceProfile],
                      replication: Optional[ReplicationProfile] = None,
+                     adversarial: Optional[AdversarialReview] = None,
                      contradictions: Optional[ContradictionLedger] = None,
                      assumptions: Optional[AssumptionGraph] = None,
                      counterexamples: Optional[CounterexampleLedger] = None,
@@ -226,6 +235,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _verification_coverage(verification),
         _independence_coverage(independence),
         _replication_coverage(replication),
+        _adversarial_coverage(adversarial),
         _contradiction_coverage(contradictions),
         _assumption_coverage(assumptions),
         _counterexample_coverage(counterexamples),
@@ -403,6 +413,38 @@ def _independence_coverage(profile: Optional[IndependenceProfile]) -> SimpleReco
         profile_digest=profile.digest())
 
 
+def _adversarial_coverage(review: Optional[AdversarialReview]) -> SimpleRecord:
+    """Coverage for adversarial review, which is NOT_ASSESSED by default.
+
+    Absence is the normal case and never a shortfall: most decisions have no
+    adversary and are not worse for it. Where adversaries are present the row says
+    what they attacked and, deliberately, that an attack finding nothing bounds
+    the search rather than the claim — so a red team in the case never reads as
+    the case having been cleared.
+    """
+    if review is None or not review.present:
+        return _coverage_row("adversarial_review", False,
+                             "no verifier set out to disprove this candidate; "
+                             "adversarial review is never required, so this is "
+                             "NOT_ASSESSED rather than a gap")
+    return _coverage_row(
+        "adversarial_review", True,
+        (f"{len(review)} attack(s) by {len(review.adversaries)} adversary(ies) on "
+         f"{len(review.claims_attacked)} claim(s); {len(review.open())} unresolved, "
+         f"{len(review.empty_searches())} found nothing (which bounds the search, not "
+         f"the claim). {review.basis}"),
+        attacks=len(review), adversaries=len(review.adversaries),
+        claims_attacked=len(review.claims_attacked), open=len(review.open()),
+        refutations=len(review.refutations()),
+        argument_defects=len(review.argument_defects()),
+        accepted_risks=len(review.accepted_risks()),
+        self_cleared=len(review.self_cleared_ids),
+        independent=len(review.independent()),
+        non_independent=len(review.non_independent()),
+        empty_searches=len(review.empty_searches()),
+        proves_absence=False)
+
+
 def _replication_coverage(profile: Optional[ReplicationProfile]) -> SimpleRecord:
     """Coverage for replication, keyed on whether any second path exists at all.
 
@@ -540,6 +582,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 verification: Optional[VerificationGraph] = None,
                 independence: Optional[IndependenceProfile] = None,
                 replication: Optional[ReplicationProfile] = None,
+                adversarial: Optional[AdversarialReview] = None,
                 contradictions: Optional[ContradictionLedger] = None,
                 assumptions: Optional[AssumptionGraph] = None,
                 counterexamples: Optional[CounterexampleLedger] = None,
@@ -574,6 +617,14 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         # Same reasoning as the consequence profile: one object, already a record,
         # and the predicate finds it here by record_type.
         builder.add("evidence", independence)
+    if adversarial is not None and adversarial.present:
+        # Only when adversaries actually attacked something. An empty review is
+        # left out rather than stored as a zero: `AdversarialReviewRequired`
+        # reports NOT_ASSESSED on its absence, which is the honest reading of a
+        # case nobody tried to break, and a stored empty review would invite
+        # reading it as "we checked, there was nothing".
+        builder.add("evidence", adversarial)
+
     if replication is not None and replication.targets:
         # Same again. Empty is left out rather than stored: a profile over no
         # targets says nothing, and `ReplicationEstablished` reports NOT_ASSESSED
@@ -631,7 +682,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
                                                 verification, independence, replication,
-                                                contradictions, assumptions,
+                                                adversarial, contradictions, assumptions,
                                                 counterexamples, failed_branches))
 
     for kind, records in (extra or {}).items():
@@ -828,6 +879,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, replication=analysis.replication,
+        adversarial=analysis.adversarial,
         contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         failed_branches=analysis.failed_branches,
@@ -847,6 +899,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
         independence=analysis.independence, replication=analysis.replication,
+        adversarial=analysis.adversarial,
         contradictions=analysis.contradictions,
         assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
         failed_branches=analysis.failed_branches,

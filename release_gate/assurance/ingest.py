@@ -36,6 +36,8 @@ from release_gate.assurance.capabilities import CapabilitySurface, declared_from
 from release_gate.assurance.consequence import (
     ConsequenceDescriptor, descriptors_from_mapping,
 )
+from release_gate.assurance.adversarial import (
+    AdversarialFinding, AdversarialOutcome, AdversarialRole, AdversarialStatus)
 from release_gate.assurance.counterexample import (
     CounterexampleAttempt, CounterexampleError, CounterexampleResult,
     CounterexampleStatus,
@@ -77,7 +79,7 @@ DETECT_FLOOR = 50
 
 ENVELOPE_RECORD_TYPES = frozenset(
     {"claim", "evidence", "artifact", "execution", "edge", "completeness",
-     "counterexample", "failed_branch"})
+     "counterexample", "failed_branch", "adversarial"})
 
 
 class IngestError(ValueError):
@@ -159,6 +161,7 @@ class Normalisation:
     capabilities: Optional[CapabilitySurface] = None
     declared_consequence: Tuple[ConsequenceDescriptor, ...] = ()
     counterexamples: Tuple[CounterexampleAttempt, ...] = ()
+    adversarial: Tuple[AdversarialFinding, ...] = ()
     failed_branches: Tuple[FailedBranch, ...] = ()
     verifier_report: Optional[VerifierReport] = None
     records_seen: int = 0
@@ -179,6 +182,7 @@ class Normalisation:
                                  else None),
                 "declared_consequence": [d.to_dict() for d in self.declared_consequence],
                 "counterexamples": len(self.counterexamples),
+                "adversarial": len(self.adversarial),
                 "failed_branches": len(self.failed_branches),
                 "verifier_report": (self.verifier_report.summary()
                                     if self.verifier_report else None),
@@ -501,11 +505,13 @@ def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  List[CounterexampleAttempt], List[FailedBranch],
+                                 List[AdversarialFinding],
                                  int, Dict[str, int], List[str]]:
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
     artifacts: List[Artifact] = []
     counterexamples: List[CounterexampleAttempt] = []
+    adversarial: List[AdversarialFinding] = []
     branches: List[FailedBranch] = []
     skipped: Dict[str, int] = {}
     notes: List[str] = []
@@ -542,6 +548,9 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                 mapped += 1
             elif record_type == "failed_branch":
                 branches.append(_failed_branch_from(row, producer))
+                mapped += 1
+            elif record_type == "adversarial":
+                adversarial.append(_adversarial_from(row, producer))
                 mapped += 1
             elif record_type in ENVELOPE_RECORD_TYPES:
                 skip(f"{record_type} records are not folded by the zero-config path")
@@ -587,8 +596,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
             skip("record rejected: " + type(exc).__name__)
             notes.append(f"a claim record was rejected: {exc}")
 
-    return (evidence, claims, artifacts, counterexamples, branches, mapped,
-            skipped, notes)
+    return (evidence, claims, artifacts, counterexamples, branches, adversarial,
+            mapped, skipped, notes)
 
 
 def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
@@ -812,6 +821,43 @@ def _counterexample_from(row: Mapping[str, Any],
         detail=str(row.get("detail") or ""))
 
 
+def _adversarial_from(row: Mapping[str, Any],
+                      producer: Producer) -> AdversarialFinding:
+    """A verifier whose job was to make the candidate fail.
+
+    The status default is the asymmetry in miniature. A finding that turned
+    something up is OPEN until something answers it — silence in the envelope is
+    not an answer — and an attack that found nothing has nothing to answer, which
+    is NOT_APPLICABLE rather than resolved.
+    """
+    outcome = AdversarialOutcome(str(row.get("outcome") or "NOT_RUN").upper())
+    declared = row.get("status")
+    if declared:
+        status = AdversarialStatus(str(declared).upper())
+    elif outcome in (AdversarialOutcome.CANDIDATE_REFUTED,
+                     AdversarialOutcome.ARGUMENT_DEFECT,
+                     AdversarialOutcome.WEAKNESS_FOUND):
+        status = AdversarialStatus.OPEN
+    else:
+        status = AdversarialStatus.NOT_APPLICABLE
+    return AdversarialFinding(
+        target_claim=str(row.get("target_claim") or row.get("claim_id") or ""),
+        role=AdversarialRole(str(row.get("role") or "OTHER").upper()),
+        adversary=str(row.get("adversary") or row.get("producer_id")
+                      or producer.producer_id),
+        method=(VerificationMethod(str(row["method"]).upper())
+                if row.get("method") else None),
+        outcome=outcome, status=status,
+        evidence=tuple(_as_ids(row.get("evidence"))),
+        independence_lineage=tuple(_as_ids(row.get("independence_lineage"))),
+        attacked=str(row.get("attacked") or row.get("searched") or ""),
+        resolution=str(row.get("resolution") or ""),
+        resolution_evidence=tuple(_as_ids(row.get("resolution_evidence"))),
+        resolved_by=str(row.get("resolved_by") or ""),
+        accepted_by=str(row.get("accepted_by") or ""),
+        detail=str(row.get("detail") or ""))
+
+
 def _failed_branch_from(row: Mapping[str, Any], producer: Producer) -> FailedBranch:
     """A declared attempt that did not work out.
 
@@ -934,6 +980,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     claims: List[Claim] = []
     artifacts: List[Artifact] = []
     counterexamples: List[CounterexampleAttempt] = []
+    adversarial: List[AdversarialFinding] = []
     failed_branches: List[FailedBranch] = []
     skipped: Dict[str, int] = {}
     notes: List[str] = []
@@ -961,13 +1008,14 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
 
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
-        ev, cl, art, cex, fbr, mapped, skipped, env_notes = _envelope_records(
+        ev, cl, art, cex, fbr, adv, mapped, skipped, env_notes = _envelope_records(
             doc, source, producer)
         failed_branches.extend(fbr)
         evidence.extend(ev)
         claims.extend(cl)
         artifacts.extend(art)
         counterexamples.extend(cex)
+        adversarial.extend(adv)
         notes.extend(env_notes)
 
     elif detection.kind is InputKind.PROMPTFOO_EVAL:
@@ -1023,7 +1071,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
         detection=detection, source=source, evidence=tuple(evidence),
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
         capabilities=capabilities, declared_consequence=tuple(declared_consequence),
-        counterexamples=tuple(counterexamples),
+        counterexamples=tuple(counterexamples), adversarial=tuple(adversarial),
         failed_branches=tuple(failed_branches), verifier_report=verifier_report,
         records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
         notes=tuple(notes))

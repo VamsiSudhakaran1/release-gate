@@ -615,6 +615,141 @@ class AncestryIndependence(Predicate):
 
 @_predicate
 @dataclass(frozen=True)
+class AdversarialReviewRequired(Predicate):
+    """Something must have set out to disprove this, and got a fair hearing.
+
+    The only place the absence of adversaries costs anything. Release-Gate never
+    requires them — most decisions have none and are not worse for it — so a
+    methodology has to say that *this* class of decision needs somebody trying to
+    break it before an empty adversarial review becomes a verdict.
+
+    Three separate things are checked, because passing one is not passing the
+    others. Enough attacks happened; they came from adversaries not shown to
+    share origin with what they attacked; and nothing they found was closed by
+    the party it was against. The last is the one that catches the realistic
+    failure: a case with a full red-team report where every finding was waved
+    through by the team that built the thing.
+    """
+
+    KIND = "adversarial_review_required"
+    minimum_attacks: int = 1
+    required_roles: Tuple[str, ...] = ()
+    require_independent: bool = True
+    forbid_self_cleared: bool = True
+    require_critical_coverage: bool = False
+    collection: str = "evidence"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "required_roles",
+                           tuple(sorted({str(r).upper() for r in self.required_roles})))
+        if self.minimum_attacks < 1:
+            raise MethodologyError(
+                "minimum_attacks must be at least 1; a requirement for zero "
+                "adversarial review is not a requirement")
+
+    def describe(self) -> str:
+        parts = [f"at least {self.minimum_attacks} adversarial attack(s) on this case"]
+        if self.required_roles:
+            parts.append("including " + ", ".join(r.lower().replace("_", " ")
+                                                  for r in self.required_roles))
+        if self.require_independent:
+            parts.append("from an adversary independent of what it attacked")
+        if self.forbid_self_cleared:
+            parts.append("with no finding closed by the party it was against")
+        if self.require_critical_coverage:
+            parts.append("covering every critical claim")
+        return ", ".join(parts)
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        reviews = [r for r in records if r.get("record_type") == "adversarial_review"]
+        if not reviews:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no adversarial review is recorded on this case; nothing set out to "
+                "disprove the candidate, so whether it survives being attacked has "
+                "not been assessed",
+                {"attacks": 0, "materialisation_incomplete": incomplete})
+
+        review = reviews[0]
+        attacks = int(review.get("total") or 0)
+        observed = {"attacks": attacks, "minimum_attacks": self.minimum_attacks,
+                    "independent": review.get("independent"),
+                    "non_independent": review.get("non_independent"),
+                    "self_cleared": review.get("self_cleared"),
+                    "open": review.get("open"),
+                    "accepted_risks": review.get("accepted_risks"),
+                    "claims_attacked": review.get("claims_attacked"),
+                    "required_roles": list(self.required_roles),
+                    "materialisation_incomplete": incomplete}
+
+        if attacks < self.minimum_attacks:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{attacks} adversarial attack(s) recorded, {self.minimum_attacks} "
+                "required by this methodology",
+                observed)
+
+        if self.forbid_self_cleared and int(review.get("self_cleared") or 0):
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{review.get('self_cleared')} adversarial finding(s) were closed by "
+                "the party they were against; a finding answered by what it argues "
+                "against has not been independently answered",
+                observed)
+
+        if self.require_independent and not int(review.get("independent") or 0):
+            unknown = int(review.get("by_stance", {}).get("UNDETERMINED") or 0)
+            extra = (f"; {unknown} attack(s) record nothing from which independence "
+                     "could be derived" if unknown else "")
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                "no adversarial attack came from an adversary shown independent of "
+                f"what it attacked{extra}. An adversary that shares origin with the "
+                "candidate misses what the builder missed (Invariant 6)",
+                observed)
+
+        if self.required_roles:
+            present = {str(f.get("role")) for f in (review.get("findings") or ())}
+            missing = sorted(set(self.required_roles) - present)
+            if missing:
+                return _Finding(
+                    RequirementOutcome.UNSATISFIED,
+                    "no attack came from " + ", ".join(r.lower().replace("_", " ")
+                                                       for r in missing),
+                    observed)
+
+        if self.require_critical_coverage:
+            # Root claims are what the case is about; an adversarial programme that
+            # attacked everything except the conclusion has covered nothing that
+            # matters. Truncation is treated as not-covered rather than assumed
+            # fine: a list that was cut short cannot establish what is in it.
+            claims, _incomplete, _n = _records(case, "claims")
+            critical = {str(c.get("claim_id")) for c in claims if c.get("is_root")}
+            attacked = set(review.get("claims_attacked_ids") or ())
+            missing = sorted(critical - attacked)
+            if missing or int(review.get("claims_attacked_truncated") or 0):
+                observed["unattacked_critical"] = missing[:12]
+                return _Finding(
+                    RequirementOutcome.UNSATISFIED,
+                    f"{len(missing)} claim(s) this case rests on were not attacked by "
+                    "any adversary: " + ", ".join(missing[:4]) +
+                    ". Adversarial review elsewhere in a case is not coverage of the "
+                    "claim the decision turns on",
+                    observed)
+
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"{attacks} adversarial attack(s), "
+            f"{review.get('independent')} from an independent adversary" +
+            (f"; {review.get('accepted_risks')} finding(s) accepted as risk rather "
+             "than answered, which this predicate reports and does not refuse"
+             if int(review.get("accepted_risks") or 0) else ""),
+            observed)
+
+
+@_predicate
+@dataclass(frozen=True)
 class ReplicationEstablished(Predicate):
     """A result must have been reproduced by paths that could fail differently.
 
