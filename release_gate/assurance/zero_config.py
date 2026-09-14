@@ -48,6 +48,7 @@ from release_gate.assurance.methodology import (
     AssessmentStatus, AssuranceMethodology, MethodologyAssessment, RequirementEffect,
     assess,
 )
+from release_gate.assurance.contradiction import Contradiction, ContradictionLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -104,6 +105,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def contradictions(self) -> ContradictionLedger:
+        """Every disagreement found, and what became of each."""
+        return self.analysis.contradictions or ContradictionLedger()
+
+    @property
     def independence(self) -> Optional[IndependenceProfile]:
         """Where the support actually comes from. Structure, never a probability."""
         return self.analysis.independence
@@ -136,6 +142,7 @@ class AssuranceOutcome:
                              else None),
             "independence": (self.independence.to_dict() if self.independence
                              else None),
+            "contradictions": self.contradictions.to_dict(),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -161,7 +168,9 @@ def _coverage_row(dimension: str, assessed: bool, note: str,
 def _ingest_coverage(normalisation: Normalisation,
                      consequence: ConsequenceProfile,
                      verification: Optional[VerificationGraph],
-                     independence: Optional[IndependenceProfile]) -> List[SimpleRecord]:
+                     independence: Optional[IndependenceProfile],
+                     contradictions: Optional[ContradictionLedger] = None
+                     ) -> List[SimpleRecord]:
     detection = normalisation.detection
     rows = [
         _coverage_row("input_identification", detection.recognised,
@@ -183,6 +192,7 @@ def _ingest_coverage(normalisation: Normalisation,
         _consequence_coverage(consequence),
         _verification_coverage(verification),
         _independence_coverage(independence),
+        _contradiction_coverage(contradictions),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -230,6 +240,28 @@ def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
         declared_only=len(surface.declared_only), unknown=len(surface.unknown),
         bounded=surface.bounded, observation_possible=surface.can_observe,
         surface_digest=surface.digest())
+
+
+def _contradiction_coverage(ledger: Optional[ContradictionLedger]) -> SimpleRecord:
+    """Coverage for contradictions, and a refusal to imply completeness.
+
+    ASSESSED means the detectors ran and every disagreement they found is closed.
+    It never means no disagreement exists: these detectors see structural conflict
+    in what the case holds, and two claims that contradict each other in meaning
+    alone pass straight through.
+    """
+    if ledger is None:
+        return _coverage_row("contradiction", False,
+                             "contradiction detection did not run")
+    summary = ledger.summary()
+    return _coverage_row(
+        "contradiction", summary["open"] == 0,
+        (f"{summary['total']} contradiction(s) detected, {summary['open']} still open, "
+         f"{summary['unresolved_critical']} of those on a critical claim; structural "
+         "conflict only — semantic disagreement is not assessed"),
+        total=summary["total"], open=summary["open"],
+        unresolved_critical=summary["unresolved_critical"],
+        by_status=summary["by_status"], ledger_digest=summary["digest"])
 
 
 def _independence_coverage(profile: Optional[IndependenceProfile]) -> SimpleRecord:
@@ -332,9 +364,13 @@ def _capability_evidence(surface: Optional[CapabilitySurface],
             "on protocol attributes, INFERRED entries on tool names only"))]
 
 
-def _analysis_records(analysis: AnalysisResult) -> Tuple[List[Finding], List[SimpleRecord]]:
-    contradictions = [f for f in analysis.findings
-                      if f.domain is AnalysisDomain.CONTRADICTION]
+def _analysis_records(analysis: AnalysisResult
+                      ) -> Tuple[List[Any], List[SimpleRecord]]:
+    # Real contradiction objects, not the findings that mention them: the
+    # collection is what a verdict is checked against and what `NoUnresolved`
+    # reads, so it has to carry the disagreements themselves.
+    ledger = analysis.contradictions or ContradictionLedger()
+    contradictions: List[Any] = list(ledger.contradictions)
     rows = [
         _coverage_row(
             "structural_analysis", True,
@@ -343,8 +379,10 @@ def _analysis_records(analysis: AnalysisResult) -> Tuple[List[Finding], List[Sim
             findings=len(analysis.findings),
             blocking=len(analysis.blocking), holding=len(analysis.holding)),
     ]
+    # CONTRADICTION is deliberately absent: `_contradiction_coverage` reports the
+    # ledger itself, which says more than a count of findings that mention it.
     for domain in (AnalysisDomain.PROVENANCE, AnalysisDomain.VERIFICATION,
-                   AnalysisDomain.DRIFT, AnalysisDomain.CONTRADICTION):
+                   AnalysisDomain.DRIFT):
         found = analysis.by_domain(domain)
         rows.append(_coverage_row(
             domain.value.lower(), True,
@@ -359,6 +397,7 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
                 consequence: ConsequenceProfile,
                 verification: Optional[VerificationGraph] = None,
                 independence: Optional[IndependenceProfile] = None,
+                contradictions: Optional[ContradictionLedger] = None,
                 extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
@@ -412,7 +451,8 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
 
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _ingest_coverage(normalisation, consequence,
-                                                verification, independence))
+                                                verification, independence,
+                                                contradictions))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")
@@ -494,6 +534,24 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
             reasons.append(
                 f"every requirement of {assessment.methodology_ref} is met, with the "
                 "coverage recorded on this case")
+
+    # Every unresolved disagreement on a critical claim is named here, whatever
+    # the decision turns out to be. `render_verdict` refuses a verdict that omits
+    # one, so this is not decoration — it is the clause that makes the refusal
+    # satisfiable rather than a wall.
+    for contradiction in (analysis.contradictions.unresolved_critical()
+                          if analysis.contradictions else ()):
+        fired.append(contradiction.contradiction_id)
+        reasons.append(
+            f"{contradiction.contradiction_id}: unresolved disagreement on "
+            f"{', '.join(contradiction.target_claims)} ({contradiction.critical_basis}) — "
+            + " vs ".join(f"{side.label} {len(side.evidence)} record(s)"
+                          for side in contradiction.sides))
+        if decision is Decision.PROMOTE:
+            # Reachable only with a methodology whose requirements are all met.
+            # Promoting over an open disagreement on a load-bearing claim is a
+            # decision a person may take; taking it silently is not available.
+            decision = Decision.HOLD
 
     if holding and decision is Decision.HOLD and RULE_STRUCTURAL_HOLD not in fired:
         fired.append(RULE_STRUCTURAL_HOLD)
@@ -589,7 +647,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
-        independence=analysis.independence,
+        independence=analysis.independence, contradictions=analysis.contradictions,
         extra={"contradictions": contradictions, "coverage": coverage_rows})
 
     assessment = assess(analysed, methodology)
@@ -605,7 +663,7 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         subject, normalisation, objective=objective,
         requested_decision=requested_decision, methodology=methodology,
         consequence=consequence, verification=analysis.verification_graph,
-        independence=analysis.independence,
+        independence=analysis.independence, contradictions=analysis.contradictions,
         extra={"contradictions": contradictions,
                "coverage": coverage_rows,
                "attention_items": list(attention.items),
@@ -650,6 +708,21 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
     methodology = case.methodology.ref if case.methodology else "NONE"
     add(f"  Methodology {methodology}")
 
+    # Before anything else. An unresolved disagreement on a load-bearing claim is
+    # the one thing a reader must not scroll past, so it sits above coverage,
+    # findings and attention rather than being filed among them.
+    critical = outcome.contradictions.unresolved_critical()
+    if critical:
+        add("")
+        add("  " + "!" * 74)
+        add(f"  UNRESOLVED DISAGREEMENT ({len(critical)}) — this decision is being put "
+            "to you")
+        add("  with the following still contested:")
+        for contradiction in critical:
+            for line in contradiction.render().splitlines():
+                add(f"  {line}")
+        add("  " + "!" * 74)
+
     add("")
     add("  WHAT WAS ASSESSED")
     for row in case.records("coverage"):
@@ -674,6 +747,13 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+
+    ledger = outcome.contradictions
+    if len(ledger):
+        add("")
+        add(f"  CONTRADICTIONS ({len(ledger)})")
+        for line in ledger.render().splitlines():
+            add(f"    {line}")
 
     lineage = outcome.independence
     if lineage is not None and lineage.contributors:

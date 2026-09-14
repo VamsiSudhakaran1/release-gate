@@ -485,7 +485,42 @@ class AssuranceCase:
             raise CaseValidationError(
                 "a verdict requires coverage: what this case assessed and what it did "
                 "not. A verdict without coverage is invalid (Invariant 9)")
+        self._require_open_contradictions_named(verdict)
         return dataclasses.replace(self, verdict=verdict, updated_at=_utc_now())
+
+    def _require_open_contradictions_named(self, verdict: "CaseVerdict") -> None:
+        """A verdict may not quietly omit an unresolved critical disagreement.
+
+        The same shape of enforcement as the coverage check above, for the same
+        reason: the harm is silence, not falsehood. A case can carry an open
+        contradiction on a load-bearing claim and still reach a verdict — the
+        engine does not decide that for anyone — but the verdict has to *say so*,
+        by naming the contradiction in its fired rules or its reasons.
+
+        Only records that are actually contradiction objects are checked, so
+        collections holding other shapes are unaffected.
+        """
+        collection = self.collection("contradictions")
+        if collection.presence is not Presence.PRESENT:
+            return
+        spoken = " ".join(tuple(verdict.fired_rules) + tuple(verdict.reasons))
+        unnamed = []
+        for record in collection.materialised:
+            data = record.to_dict() if hasattr(record, "to_dict") else {}
+            if data.get("record_type") != "contradiction":
+                continue
+            if data.get("resolved") or not data.get("affects_critical"):
+                continue
+            identifier = str(data.get("contradiction_id") or record.record_id)
+            if identifier not in spoken:
+                unnamed.append(identifier)
+        if unnamed:
+            raise CaseValidationError(
+                f"{len(unnamed)} unresolved contradiction(s) affect a critical claim and "
+                f"are not named in this verdict: {', '.join(sorted(unnamed))}. A verdict "
+                "may reach any decision it likes over an open disagreement, and may not "
+                "reach one without mentioning it — silently dropping it is the erasure "
+                "the contradiction record exists to prevent.")
 
     def with_approval(self, approval: CaseRecord) -> "AssuranceCase":
         """Attach a bound approval.

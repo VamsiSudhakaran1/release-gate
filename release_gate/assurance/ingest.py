@@ -517,27 +517,24 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
         payload.pop("record_type", None)
         payload.pop("parent_evidence", None)
         declared_id = str(payload.get("evidence_id") or "").strip()
+        supports = tuple(_as_ids(payload.get("supports_claims")))
+        contradicts = tuple(_as_ids(payload.get("contradicts_claims")))
         try:
-            record = EvidenceRecord.from_producer(
-                payload, evidence_type=_evidence_type_of(payload),
-                source=source, producer=producer,
-                status=EpistemicStatus.DECLARED,
-                parent_evidence=resolved_parents,
-                supports_claims=tuple(_as_ids(payload.get("supports_claims"))),
-                contradicts_claims=tuple(_as_ids(payload.get("contradicts_claims"))),
-                coverage_note=str(payload.get("coverage_note") or ""))
+            built = _build_evidence(payload, source=source, producer=producer,
+                                    parents=resolved_parents, supports=supports,
+                                    contradicts=contradicts, notes=notes)
         except Exception as exc:
             skip(f"record rejected: {type(exc).__name__}")
             notes.append(f"an evidence record was rejected: {exc}")
             continue
-        evidence.append(record)
+        evidence.extend(built)
         if declared_id:
             if declared_id in id_map:
                 notes.append(
                     f"evidence id {declared_id!r} was declared more than once; "
                     "references to it resolve to the first record")
             else:
-                id_map[declared_id] = record.evidence_id
+                id_map[declared_id] = built[0].evidence_id
         mapped += 1
 
     for row, producer in claim_rows:
@@ -549,6 +546,58 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
             notes.append(f"a claim record was rejected: {exc}")
 
     return evidence, claims, artifacts, mapped, skipped, notes
+
+
+def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
+                    parents: Tuple[str, ...], supports: Tuple[str, ...],
+                    contradicts: Tuple[str, ...], notes: List[str]
+                    ) -> List[EvidenceRecord]:
+    """Build a record, splitting one that cuts both ways rather than dropping it.
+
+    `EvidenceRecord` refuses to hold a claim in both `supports` and `contradicts`,
+    which is correct — one record cannot be read both ways without saying which
+    reading applies. But *rejecting* the record loses the disagreement entirely,
+    and a producer that says a claim is both supported and contradicted has told us
+    something real: it disagrees with itself.
+
+    So the record is split into the two halves it was trying to be. Both keep the
+    producer, so the contradiction that falls out of them shows one participant on
+    each side — which is the honest picture of what arrived.
+    """
+    overlap = tuple(sorted(set(supports) & set(contradicts)))
+    if not overlap:
+        return [EvidenceRecord.from_producer(
+            payload, evidence_type=_evidence_type_of(payload), source=source,
+            producer=producer, status=EpistemicStatus.DECLARED,
+            parent_evidence=parents, supports_claims=supports,
+            contradicts_claims=contradicts,
+            coverage_note=str(payload.get("coverage_note") or ""))]
+
+    notes.append(
+        f"a record from {producer.producer_id} both supports and contradicts "
+        f"{', '.join(overlap)}; it has been split into its two halves so the "
+        "disagreement is preserved rather than the record being dropped")
+    note = str(payload.get("coverage_note") or "")
+    marker = {"split_from_self_conflict": True, "self_conflict_claims": list(overlap)}
+    halves: List[EvidenceRecord] = []
+    for label, keeps, drops in (("supports", supports, contradicts),
+                                ("contradicts", contradicts, supports)):
+        # This half keeps the whole of its own side; the other side keeps only
+        # what was never contested, so each claim in the overlap lands on exactly
+        # one half and the conflict becomes two records disagreeing.
+        mine = tuple(sorted(set(keeps)))
+        theirs = tuple(sorted(set(drops) - set(overlap)))
+        halves.append(EvidenceRecord.from_producer(
+            {**payload, "_split_side": label},
+            evidence_type=_evidence_type_of(payload), source=source,
+            producer=producer, status=EpistemicStatus.DECLARED,
+            parent_evidence=parents,
+            supports_claims=mine if label == "supports" else theirs,
+            contradicts_claims=mine if label == "contradicts" else theirs,
+            content={**marker, "split_side": label},
+            coverage_note=(f"{note} (split half: {label})" if note
+                           else f"split half: {label}")))
+    return halves
 
 
 def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],

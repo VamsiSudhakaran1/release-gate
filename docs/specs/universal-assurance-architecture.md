@@ -867,6 +867,46 @@ refutation was never answered (Invariant 7). Resolution is explicit: a
 contradiction is closed only by a record that answers it (a later verification, a
 human ruling), never by a newer successful branch existing.
 
+### 6.3b Contradiction preservation
+
+> **Implemented.** `release_gate/assurance/contradiction.py`, plus the refusal in
+> `AssuranceCase.render_verdict()`.
+
+The failure this guards against is quiet. A system gathers evidence pointing both
+ways, synthesises a confident summary, and the disagreement never reaches the
+person signing. Nothing was falsified. Something was just not mentioned.
+
+So a contradiction is a first-class object — both sides, who is on each, how many
+independent lineages back each — and it can never be closed without a statement
+of what closed it. `resolve()` demands `resolution_evidence`; `invalidate()` and
+`supersede()` demand a reason. Dismissing a recorded disagreement is a claim
+somebody has to be answerable for.
+
+**The verdict may not omit one.** `render_verdict()` refuses a verdict that does
+not name every unresolved contradiction affecting a critical claim — the same
+shape of enforcement as the coverage check, for the same reason: the harm is
+silence, not falsehood. A case may reach *any* decision over an open
+disagreement; it may not reach one without mentioning it. Criticality is
+structural — a root claim, or one others depend on — never release-gate judging
+importance.
+
+**The counting is inert.** Seven independent roots on one side and one on the
+other is reported and never adjudicated. More sources is not more true, and a
+module that resolved disagreements by weight would be doing exactly the silent
+erasure it was built to stop.
+
+Two things were found while building it and are worth recording. `RG-CONTRA-001`
+scanned for a record that both supports and contradicts one claim, and **could
+never fire** — `EvidenceRecord` refuses that construction — so it has been
+removed; a rule that cannot fire is worse than no rule, because it implies a
+check is happening. And the ingest *rejected* such a record outright, which
+dropped the disagreement entirely: the erasure this section exists to prevent,
+sitting in the ingest. It now splits the record into its two halves, so one
+producer declaring both sides becomes a recorded `RECORD_SELF_CONFLICT` rather
+than a skipped line.
+
+---
+
 ### 6.4 Independence (`RG-INDEP-*`)
 
 > **Implemented.** `release_gate/assurance/independence.py`, plus the

@@ -28,6 +28,9 @@ from release_gate.assurance.consequence import (
     ConsequenceBasis, ConsequenceDimension, ConsequenceProfile,
 )
 from release_gate.assurance.claims import ClaimGraph, ClaimStatus
+from release_gate.assurance.contradiction import (
+    ContradictionLedger, detect_contradictions,
+)
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
 from release_gate.assurance.independence import (
     IndependenceProfile, LineageConcentration, analyse_independence,
@@ -109,6 +112,7 @@ class AnalysisResult:
     capabilities: Optional[CapabilitySurface] = None
     consequence: Optional[ConsequenceProfile] = None
     independence: Optional[IndependenceProfile] = None
+    contradictions: Optional[ContradictionLedger] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -398,25 +402,37 @@ def _analyse_independence(profile: Optional[IndependenceProfile]) -> List[Findin
 # ── contradiction (RG-CONTRA-*) ──────────────────────────────────────────────
 
 def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
-                           records: Sequence[EvidenceRecord]) -> List[Finding]:
+                           records: Sequence[EvidenceRecord],
+                           ledger: Optional[ContradictionLedger] = None) -> List[Finding]:
     findings: List[Finding] = []
+    ledger = ledger if ledger is not None else ContradictionLedger()
 
-    # Evidence that both supports and contradicts the same claim: a producer
-    # disagreeing with itself inside one record.
-    self_conflicted = sorted(
-        r.evidence_id for r in records
-        if set(r.supports_claims) & set(r.contradicts_claims))
-    if self_conflicted:
+    # RG-CONTRA-001 used to scan here for a record that both supports and
+    # contradicts one claim. It could never fire: `EvidenceRecord` refuses that
+    # construction outright, so no such record reaches analysis. The real case —
+    # a producer declaring both in an envelope — is now handled at the ingest
+    # boundary, which splits the record into its two halves so the disagreement
+    # survives as a contradiction instead of the record being dropped. A rule that
+    # cannot fire is worse than no rule, because it implies a check is happening.
+
+    # The one the verdict is structurally forbidden from omitting.
+    critical = ledger.unresolved_critical()
+    if critical:
         findings.append(Finding(
-            rule_id="RG-CONTRA-001", domain=AnalysisDomain.CONTRADICTION,
+            rule_id="RG-CONTRA-005", domain=AnalysisDomain.CONTRADICTION,
             effect=RequirementEffect.HOLD,
-            summary=f"{len(self_conflicted)} evidence record(s) both support and "
-                    "contradict the same claim",
-            detail="One record cannot be read as evidence for and against the same "
-                   "proposition without saying which reading applies.",
-            remedy="split the record, or state which relationship holds",
-            refs=tuple(self_conflicted[:12]),
-            observed={"records": len(self_conflicted)}))
+            summary=f"{len(critical)} unresolved contradiction(s) affect a critical claim",
+            detail="; ".join(
+                f"{c.contradiction_id} on {', '.join(c.target_claims)} "
+                f"({c.critical_basis}); "
+                + " vs ".join(f"{s.label}: {len(s.evidence)} record(s) across "
+                              f"{s.independent_roots} lineage(s)" for s in c.sides)
+                for c in critical[:4])[:700],
+            remedy="resolve the disagreement and record what resolved it, or record why "
+                   "it does not bear on the decision",
+            refs=tuple(c.contradiction_id for c in critical[:12]),
+            observed={"unresolved_critical": len(critical),
+                      "contradiction_ids": [c.contradiction_id for c in critical[:12]]}))
 
     if claim_graph is None:
         return findings
@@ -905,11 +921,15 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
 
     findings: List[Finding] = []
     independence = analyse_independence(records)
+    ledger = detect_contradictions(claim_graph=claim_graph, evidence=records,
+                                   verification_graph=verification_graph)
+
+    findings: List[Finding] = []
     findings.extend(_analyse_provenance(case, records))
     findings.extend(_analyse_independence(independence))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
-    findings.extend(_analyse_contradiction(claim_graph, records))
+    findings.extend(_analyse_contradiction(claim_graph, records, ledger))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
@@ -922,4 +942,4 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           artifact_graph=artifact_graph, execution_graph=execution,
                           verification_graph=verification_graph,
                           capabilities=capabilities, consequence=consequence,
-                          independence=independence)
+                          independence=independence, contradictions=ledger)
