@@ -57,6 +57,9 @@ _FOCUS_KIND = {
     "RG-DRIFT-003": "artifact", "RG-DRIFT-004": "artifact", "RG-DRIFT-005": "evidence",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
     "RG-COV-004": "execution", "RG-COV-005": "case",
+    "RG-CAP-001": "manifest", "RG-CAP-002": "tools", "RG-CAP-003": "case",
+    "RG-CAP-004": "case", "RG-CAP-005": "case", "RG-CAP-006": "capability",
+    "RG-CAP-007": "capability",
 }
 
 
@@ -71,6 +74,8 @@ class AttentionReason(str, Enum):
     NOT_VERIFIED = "NOT_VERIFIED"
     NOT_CORROBORATED = "NOT_CORROBORATED"
     COVERAGE_GAP = "COVERAGE_GAP"
+    UNDECLARED_CAPABILITY = "UNDECLARED_CAPABILITY"
+    UNIDENTIFIED_TOOL = "UNIDENTIFIED_TOOL"
     METHODOLOGY_ABSENT = "METHODOLOGY_ABSENT"
     REQUIREMENT_UNMET = "REQUIREMENT_UNMET"
 
@@ -81,6 +86,7 @@ _DOMAIN_REASON = {
     AnalysisDomain.PROVENANCE: AttentionReason.NOT_CORROBORATED,
     AnalysisDomain.DRIFT: AttentionReason.STALE_VERIFICATION,
     AnalysisDomain.COVERAGE: AttentionReason.COVERAGE_GAP,
+    AnalysisDomain.CAPABILITY: AttentionReason.UNDECLARED_CAPABILITY,
 }
 
 _RULE_REASON = {
@@ -89,6 +95,7 @@ _RULE_REASON = {
     "RG-VERIF-002": AttentionReason.FAILED_VERIFICATION,
     "RG-DRIFT-001": AttentionReason.SUBJECT_CHANGED,
     "RG-DRIFT-002": AttentionReason.SUBJECT_CHANGED,
+    "RG-CAP-002": AttentionReason.UNIDENTIFIED_TOOL,
 }
 
 
@@ -214,7 +221,8 @@ class RequiredEvidenceSet:
 # Kinds where the thing to inspect is the situation, not one of the records that
 # revealed it. "All your evidence has one producer" is not fixed by opening one
 # evidence record, so pointing a reviewer at an arbitrary id would waste the trip.
-_WHOLE_CASE_KINDS = frozenset({"case", "input", "subject", "execution", "producer"})
+_WHOLE_CASE_KINDS = frozenset({"case", "input", "subject", "execution", "producer",
+                               "manifest", "tools"})
 
 
 def _focus_of(finding: Finding) -> Tuple[str, str]:
@@ -300,6 +308,9 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
 _NON_MONOTONE_RULES = frozenset({
     "RG-CONTRA-001", "RG-CONTRA-002", "RG-CONTRA-003", "RG-CONTRA-004",
     "RG-VERIF-002", "RG-VERIF-003", "RG-DRIFT-001", "RG-DRIFT-003", "RG-DRIFT-005",
+    # More evidence can reveal a capability that was exercised and undeclared, so
+    # a clean capability comparison is never settled by arrival.
+    "RG-CAP-001", "RG-CAP-002",
 })
 
 

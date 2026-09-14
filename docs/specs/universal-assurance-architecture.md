@@ -857,7 +857,52 @@ match what arrived; missing spans between a parent and its children. Where none 
 those signals exist, the analyser emits exactly one thing: completeness is
 `UNKNOWN`, and "not observed" must not be read as "did not happen".
 
-### 6.7 Determinism requirements
+### 6.7 Capability discovery (`RG-CAP-*`)
+
+> **Implemented.** `release_gate/assurance/capabilities.py`.
+
+*What did the system reach for?* — answered at four strengths, because the
+evidence for it arrives at four strengths. The vocabulary is
+`OBSERVED_CAPABILITY` / `DECLARED_CAPABILITY` / `INFERRED_CAPABILITY` /
+`UNKNOWN_CAPABILITY` over a closed set of thirteen capabilities.
+
+**Status is the weaker of two independent axes.** *Did we see it happen?* is
+answered by whether a span exists. *Do we know what it was?* is answered by
+whether the telemetry named it or we matched a string. A span carrying
+`db.system=postgresql` with `db.operation=INSERT` is an observed database write;
+a tool called `db_write` with no other attribute is an observed *something* we
+are guessing about. Reporting the second as OBSERVED would launder a naming
+convention into a fact, so it is INFERRED.
+
+Three consequences the implementation makes explicit rather than hiding:
+
+* **The capabilities that matter most are the ones no telemetry standard names.**
+  Payment, deployment and identity management have no semantic convention, so
+  they are almost always INFERRED. Reaching `api.stripe.com` is an *observed*
+  external API call and an *inferred* payment — a balance read looks identical
+  from here.
+* **Some categories cannot determine their own properties.** `mutating` and
+  `external_effect` are `Optional[bool]`: "filesystem" covers reads and writes
+  alike, so the category alone cannot say a read changed anything. `None` is
+  never defaulted to `False`.
+* **The list is not an inventory.** A shell can curl; an MCP server exposes
+  whatever its author wrote; an unidentified tool could do anything. Where one of
+  these was exercised, `CapabilitySurface.bounded` is `False` and the coverage row
+  says the surface was sampled, not assessed. A tidy list that implied
+  completeness would be the most dangerous output this analyser could produce.
+
+The sharp finding is the cross-product: **exercised but never declared** — the
+system did something nobody said it could. That is `RG-CAP-001`, and it fires
+only when a manifest exists; with nothing declared there is no bound to have
+exceeded, which is `RG-CAP-003` and is a coverage gap rather than a violation.
+
+**Nothing here BLOCKs.** "The agent sent an email" is not structurally wrong, and
+whether it was permitted is a domain question a methodology answers. Capability
+discovery is evidence, and is deliberately not the centre of the product.
+
+---
+
+### 6.8 Determinism requirements
 
 * Pure functions; all inputs in the case; no wall-clock, no network, no model.
 * **Order-independent fold.** Ingesting the same records in any order, serially or

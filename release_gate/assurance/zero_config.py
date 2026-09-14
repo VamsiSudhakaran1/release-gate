@@ -33,6 +33,7 @@ from release_gate.assurance.analysis import (
 from release_gate.assurance.attention import (
     HumanAttentionSet, RequiredEvidenceSet, build_attention, build_required_evidence,
 )
+from release_gate.assurance.capabilities import CapabilitySurface
 from release_gate.assurance.case import (
     AssuranceCase, AssuranceCaseBuilder, CaseVerdict, Decision, MethodologyRef,
     default_case_type,
@@ -45,7 +46,9 @@ from release_gate.assurance.methodology import (
     assess,
 )
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
-from release_gate.assurance.evidence import file_content
+from release_gate.assurance.evidence import (
+    EvidenceRecord, EvidenceType, Producer, file_content,
+)
 from release_gate.assurance.subject import AssuranceSubject, DigestMethod, DigestStatus
 
 __all__ = [
@@ -93,6 +96,11 @@ class AssuranceOutcome:
         return self.normalisation.detection
 
     @property
+    def capabilities(self) -> Optional[CapabilitySurface]:
+        """What the system reached for. Evidence on the case, not a verdict input."""
+        return self.normalisation.capabilities
+
+    @property
     def exit_code(self) -> int:
         return _EXIT[self.decision]
 
@@ -103,6 +111,8 @@ class AssuranceOutcome:
             "ingest": self.normalisation.to_dict(),
             "analysis": self.analysis.to_dict(),
             "assessment": self.assessment.to_dict(),
+            "capabilities": (self.capabilities.to_dict() if self.capabilities
+                             else None),
             "attention": self.attention.to_dict(),
             "required_evidence": self.required_evidence.to_dict(),
             "ruleset_version": ZERO_CONFIG_RULESET_VERSION,
@@ -143,6 +153,7 @@ def _ingest_coverage(normalisation: Normalisation) -> List[SimpleRecord]:
                       ("execution graph reconstructed from the input"
                        if normalisation.execution is not None else
                        "no execution telemetry was present in this input")),
+        _capability_coverage(normalisation.capabilities),
         # The one release-gate can never answer on its own.
         _coverage_row("domain_sufficiency", False,
                       "whether this evidence is sufficient for the decision is a domain "
@@ -161,6 +172,57 @@ def _ingest_coverage(normalisation: Normalisation) -> List[SimpleRecord]:
                       not_assessed_dimensions=["domain_sufficiency"]),
     ]
     return rows
+
+
+def _capability_coverage(surface: Optional[CapabilitySurface]) -> SimpleRecord:
+    """Coverage for capability discovery, including what it cannot bound.
+
+    Marked ASSESSED only when the surface could in principle contain an observed
+    capability *and* is an upper bound on what ran. A tidy list built from names,
+    or one with a shell in it, has not assessed the capability surface — it has
+    sampled it.
+    """
+    if surface is None:
+        return _coverage_row("capability_discovery", False,
+                             "no execution evidence was present, so nothing can be said "
+                             "about what the system reached for")
+    assessed = surface.can_observe and surface.bounded
+    if surface.bounded:
+        bound_note = "the list is an upper bound on what was reached for"
+    else:
+        bound_note = ("the list is NOT an upper bound: "
+                      + ", ".join(sorted(r.capability.value for r in surface.subsuming))
+                      + " can reach other capabilities without appearing as them")
+    return _coverage_row(
+        "capability_discovery", assessed,
+        (f"{len(surface.records)} capabilit(y/ies) from {surface.spans_examined} "
+         f"span(s) via {surface.attribute_basis}; {bound_note}"),
+        observed=len(surface.observed), inferred=len(surface.inferred),
+        declared_only=len(surface.declared_only), unknown=len(surface.unknown),
+        bounded=surface.bounded, observation_possible=surface.can_observe,
+        surface_digest=surface.digest())
+
+
+def _capability_evidence(surface: Optional[CapabilitySurface],
+                         applies_to: Optional[str]) -> List[EvidenceRecord]:
+    """The capability surface as one DERIVED evidence record.
+
+    One record, not thirteen. Capabilities are evidence about the execution, and
+    release-gate computed them from records already in the case — folding each
+    capability in separately would let a summary inflate the evidence count that
+    methodologies measure.
+    """
+    if surface is None:
+        return []
+    return [EvidenceRecord.derived(
+        EvidenceType.TRACE, source="release-gate/capability-discovery",
+        producer=Producer.release_gate("assurance/capabilities"),
+        applies_to_digest=applies_to,
+        content={"capability_surface": surface.summary(),
+                 "capabilities": [r.to_dict() for r in surface.records]},
+        coverage_note=(
+            "capabilities as classified from execution evidence; OBSERVED entries rest "
+            "on protocol attributes, INFERRED entries on tool names only"))]
 
 
 def _analysis_records(analysis: AnalysisResult) -> Tuple[List[Finding], List[SimpleRecord]]:
@@ -205,6 +267,9 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
 
     builder.collection("evidence", basis=MaterialisationBasis.COMPLETE)
     builder.extend("evidence", normalisation.evidence)
+    builder.extend("evidence", _capability_evidence(
+        normalisation.capabilities,
+        normalisation.evidence[0].digest if normalisation.evidence else None))
 
     # Present-but-empty is not the same as never supplied. The ingest looked for
     # claims and artifacts, so the collections are declared present either way.
@@ -381,7 +446,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
                               methodology=methodology)
     analysis = analyse(provisional, normalisation=normalisation,
                        claim_graph=None, artifact_graph=None,
-                       execution=normalisation.execution)
+                       execution=normalisation.execution,
+                       capabilities=normalisation.capabilities)
 
     # The analysed case: the ingest, plus what the analysers concluded about it.
     # This is what the methodology is held against — assessing the provisional
@@ -456,6 +522,36 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         data = row.to_dict()
         mark = "assessed" if data.get("status") == "ASSESSED" else "NOT_ASSESSED"
         add(f"    [{mark:>12}]  {data.get('dimension')}: {data.get('note')}")
+
+    surface = outcome.capabilities
+    if surface is not None and len(surface):
+        add("")
+        add(f"  OBSERVED CAPABILITIES ({len(surface)})")
+        for record in surface.records:
+            flags = []
+            if record.mutating is True:
+                flags.append("mutating")
+            elif record.mutating is None:
+                flags.append("direction unknown")
+            if record.external_effect is True:
+                flags.append("external effect")
+            if record.subsuming:
+                flags.append("can reach other capabilities")
+            if record.declared:
+                flags.append("declared")
+            suffix = f"  [{', '.join(flags)}]" if flags else ""
+            count = f"x{record.occurrences}" if record.occurrences else "not exercised"
+            add(f"    {record.status.value:<22} {record.capability.value:<20} "
+                f"{count}{suffix}")
+            if full:
+                add(f"                             {record.basis}")
+        if not surface.bounded:
+            add("    This list is NOT an inventory: "
+                + ", ".join(sorted(r.capability.value for r in surface.subsuming))
+                + " can reach other capabilities without appearing as them.")
+        if not surface.can_observe:
+            add("    Every entry was inferred from a name; none was observed. "
+                "Run against the raw trace for protocol-level classification.")
 
     if outcome.analysis.findings:
         add("")

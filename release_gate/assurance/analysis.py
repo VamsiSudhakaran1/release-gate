@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.artifacts import ArtifactGraph, CurrencyStatus
+from release_gate.assurance.capabilities import CapabilitySurface, CapabilityStatus
 from release_gate.assurance.case import AssuranceCase
 from release_gate.assurance.claims import ClaimGraph, ClaimStatus
 from release_gate.assurance.evidence import EvidenceRecord, ProducerKind
@@ -41,6 +42,7 @@ ANALYSIS_RULESET_VERSION = "rg-structural-1"
 
 
 class AnalysisDomain(str, Enum):
+    CAPABILITY = "CAPABILITY"
     PROVENANCE = "PROVENANCE"
     CONTRADICTION = "CONTRADICTION"
     VERIFICATION = "VERIFICATION"
@@ -92,6 +94,7 @@ class AnalysisResult:
     claim_graph: Optional[ClaimGraph] = None
     artifact_graph: Optional[ArtifactGraph] = None
     execution_graph: Optional[ExecutionGraph] = None
+    capabilities: Optional[CapabilitySurface] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -459,12 +462,135 @@ def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
     return findings
 
 
+# ── capability (RG-CAP-*) ────────────────────────────────────────────────────
+
+def _analyse_capabilities(surface: Optional[CapabilitySurface]) -> List[Finding]:
+    """What the system reached for — surfaced, never judged.
+
+    Nothing here BLOCKs. "The agent sent an email" is not structurally wrong;
+    whether it was permitted is a domain question, and a methodology is where that
+    belongs. Two findings HOLD, and both are about *not knowing*: a capability
+    exercised outside what was declared, and a tool nobody could identify.
+    """
+    findings: List[Finding] = []
+    if surface is None:
+        return findings
+
+    declared_anything = any(r.declared for r in surface.records)
+
+    if declared_anything:
+        # The sharp one. A manifest exists and the system went outside it.
+        outside = [r for r in surface.undeclared
+                   if r.capability.value != "UNKNOWN_TOOL"]
+        if outside:
+            findings.append(Finding(
+                rule_id="RG-CAP-001", domain=AnalysisDomain.CAPABILITY,
+                effect=RequirementEffect.HOLD,
+                summary=f"{len(outside)} capabilit(y/ies) were exercised that the tool "
+                        "manifest does not declare",
+                detail="The system reached for something nobody said it could: "
+                       + ", ".join(sorted(r.capability.value for r in outside))
+                       + ". Whether that is acceptable is a domain question; that it "
+                         "was unannounced is a structural one.",
+                remedy="declare these capabilities, or establish why the system reached "
+                       "for them",
+                refs=_sorted_ids(r.capability.value for r in outside),
+                observed={"undeclared": sorted(r.capability.value for r in outside)}))
+    else:
+        findings.append(Finding(
+            rule_id="RG-CAP-003", domain=AnalysisDomain.CAPABILITY,
+            effect=RequirementEffect.ADVISORY,
+            summary="nothing declared what this system is permitted to do",
+            detail="No tool manifest was present, so every capability below is "
+                   "reported without a denominator. There is nothing to have exceeded, "
+                   "which is not the same as having stayed within bounds.",
+            remedy="supply a tool manifest so exercised capabilities can be compared "
+                   "against declared ones",
+            observed={"declared": 0, "exercised": len(surface.undeclared)}))
+
+    if surface.unclassified_tools:
+        findings.append(Finding(
+            rule_id="RG-CAP-002", domain=AnalysisDomain.CAPABILITY,
+            effect=RequirementEffect.HOLD,
+            summary=f"{len(surface.unclassified_tools)} tool(s) were invoked that could "
+                    "not be identified",
+            detail="These tools ran and nothing here can say what they can do: "
+                   + ", ".join(surface.unclassified_tools[:8])
+                   + ". An unidentified tool is an unassessed part of the execution, "
+                     "not an absent one.",
+            remedy="name these tools in a manifest, or emit the protocol attributes "
+                   "(db.system, url.full, process.command_line) that would classify them",
+            refs=surface.unclassified_tools[:12],
+            observed={"tools": list(surface.unclassified_tools[:12])}))
+
+    if not surface.bounded:
+        subsuming = sorted(r.capability.value for r in surface.subsuming)
+        findings.append(Finding(
+            rule_id="RG-CAP-004", domain=AnalysisDomain.CAPABILITY,
+            effect=RequirementEffect.ADVISORY,
+            summary="the capability list is not an upper bound on what the system did",
+            detail=f"{', '.join(subsuming)} can reach any other capability without it "
+                   "appearing separately — a shell can make a network call, an MCP "
+                   "server exposes whatever its author wrote. Read the list as what was "
+                   "seen, never as an inventory.",
+            remedy="instrument inside the subsuming capability, or constrain it, if the "
+                   "decision depends on knowing the full surface",
+            refs=tuple(subsuming), observed={"subsuming": subsuming}))
+
+    if not surface.can_observe and surface.records:
+        findings.append(Finding(
+            rule_id="RG-CAP-005", domain=AnalysisDomain.CAPABILITY,
+            effect=RequirementEffect.ADVISORY,
+            summary="every capability here was inferred from a name, not observed",
+            detail=f"Classification ran against {surface.attribute_basis}, which carries "
+                   "no protocol attributes. A tool called `db_write` is evidence of a "
+                   "naming convention, not of a database write.",
+            remedy="run capability discovery against the raw trace, where db.system, "
+                   "url.full and process.command_line settle several of these outright",
+            observed={"attribute_basis": surface.attribute_basis}))
+
+    unexercised = surface.declared_only
+    if unexercised:
+        findings.append(Finding(
+            rule_id="RG-CAP-006", domain=AnalysisDomain.CAPABILITY,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(unexercised)} declared capabilit(y/ies) were never exercised "
+                    "in this evidence",
+            detail="The system may do more than this run shows: "
+                   + ", ".join(sorted(r.capability.value for r in unexercised))
+                   + ". The blast radius of the system is wider than the trace.",
+            remedy="none required; recorded so the decision is made against the "
+                   "declared surface rather than one run's worth of it",
+            refs=_sorted_ids(r.capability.value for r in unexercised),
+            observed={"declared_unexercised": sorted(r.capability.value
+                                                     for r in unexercised)}))
+
+    external = surface.mutating_external
+    if external:
+        findings.append(Finding(
+            rule_id="RG-CAP-007", domain=AnalysisDomain.CAPABILITY,
+            effect=RequirementEffect.ADVISORY,
+            summary=f"{len(external)} capabilit(y/ies) with effects outside the system "
+                    "were exercised",
+            detail=", ".join(f"{r.capability.value} ({r.status.value})"
+                             for r in external)
+                   + ". These change state that release-gate cannot see and cannot undo. "
+                     "This is a statement of what happened, not a judgement about it.",
+            remedy="none required; a methodology decides whether these need human "
+                   "authorisation",
+            refs=_sorted_ids(r.capability.value for r in external),
+            observed={"capabilities": sorted(r.capability.value for r in external),
+                      "statuses": sorted({r.status.value for r in external})}))
+    return findings
+
+
 # ── the entry point ──────────────────────────────────────────────────────────
 
 def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
             claim_graph: Optional[ClaimGraph] = None,
             artifact_graph: Optional[ArtifactGraph] = None,
-            execution: Optional[ExecutionGraph] = None) -> AnalysisResult:
+            execution: Optional[ExecutionGraph] = None,
+            capabilities: Optional[CapabilitySurface] = None) -> AnalysisResult:
     """Run every config-free analyser over a case.
 
     Graphs are read from the case when not supplied. Order of findings is stable:
@@ -501,7 +627,11 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_contradiction(claim_graph, records))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
+    if capabilities is None and normalisation is not None:
+        capabilities = getattr(normalisation, "capabilities", None)
+    findings.extend(_analyse_capabilities(capabilities))
 
     findings.sort(key=lambda f: (f.domain.value, f.rule_id, f.refs[0] if f.refs else ""))
     return AnalysisResult(findings=tuple(findings), claim_graph=claim_graph,
-                          artifact_graph=artifact_graph, execution_graph=execution)
+                          artifact_graph=artifact_graph, execution_graph=execution,
+                          capabilities=capabilities)

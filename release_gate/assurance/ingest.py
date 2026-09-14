@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.artifacts import Artifact, ArtifactKind
 from release_gate.assurance.canonical import digest_object
+from release_gate.assurance.capabilities import CapabilitySurface, declared_from_document
 from release_gate.assurance.claims import (
     AttemptOutcome, Claim, ClaimProvenance, ClaimType, VerificationAttempt,
 )
@@ -138,6 +139,7 @@ class Normalisation:
     claims: Tuple[Claim, ...] = ()
     artifacts: Tuple[Artifact, ...] = ()
     execution: Optional[ExecutionGraph] = None
+    capabilities: Optional[CapabilitySurface] = None
     records_seen: int = 0
     records_mapped: int = 0
     skipped: Mapping[str, int] = field(default_factory=dict)
@@ -152,6 +154,8 @@ class Normalisation:
                 "evidence": len(self.evidence), "claims": len(self.claims),
                 "artifacts": len(self.artifacts),
                 "execution_nodes": len(self.execution.nodes) if self.execution else 0,
+                "capabilities": (self.capabilities.summary() if self.capabilities
+                                 else None),
                 "records_seen": self.records_seen, "records_mapped": self.records_mapped,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
@@ -202,6 +206,30 @@ def _looks_like_native_trace(doc: Any) -> int:
     return int(95 * shaped / sample) if sample else 0
 
 
+def _looks_like_otlp(doc: Any) -> int:
+    """Structural OTLP, whatever the spans happen to be about.
+
+    The platform adapters score on *content* — gen_ai attributes, OpenInference
+    keys — so a perfectly valid OTLP export of database and HTTP spans scores zero
+    with all of them and would be reported as unrecognised. The envelope shape is
+    recognisable on its own, and recognising it is what lets execution and
+    capability reconstruction run. Scored below the content adapters so a GenAI
+    trace still routes to the adapter that understands it.
+    """
+    from release_gate.adapters.common import iter_otlp_spans
+    spans = 0
+    identified = 0
+    for span, _ in iter_otlp_spans(doc):
+        spans += 1
+        if span.get("spanId") or span.get("span_id"):
+            identified += 1
+        if spans >= 50:
+            break
+    if not spans:
+        return 0
+    return 65 if identified else 55
+
+
 def detect_document(doc: Any, *, filename: str = "") -> Detection:
     """Identify a document, or say plainly that we could not.
 
@@ -223,6 +251,10 @@ def detect_document(doc: Any, *, filename: str = "") -> Detection:
     if score:
         native.append((InputKind.NATIVE_TRACE, score,
                        "objects carrying trace steps in release-gate's native shape"))
+    score = _looks_like_otlp(doc)
+    if score:
+        native.append((InputKind.OTLP_TRACE, score,
+                       "OTLP resource/scope/span structure"))
 
     try:
         from release_gate.adapters import detect as adapter_detect
@@ -352,6 +384,40 @@ def _execution_from(doc: Any, detection: Detection) -> Tuple[Optional[ExecutionG
                 return ExecutionGraph.from_native_trace(traces[0]), notes
     except Exception as exc:  # a malformed export must not crash the run
         notes.append(f"execution reconstruction did not complete: {exc}")
+    return None, notes
+
+
+def _capabilities_from(doc: Any, detection: Detection,
+                       execution: Optional[ExecutionGraph]
+                       ) -> Tuple[Optional[CapabilitySurface], List[str]]:
+    """What the system reached for, read from the strongest source available.
+
+    Raw OTLP spans still carry the attributes that settle a capability outright,
+    so they are preferred. A graph alone keeps labels only, and the surface built
+    from one says so — every classification there is a name match, and none of
+    them can be OBSERVED.
+    """
+    notes: List[str] = []
+    declared = declared_from_document(doc)
+    try:
+        # Raw spans wherever the document *has* them, not only where the GenAI
+        # adapter claimed it. A trace of pure database and HTTP spans carries no
+        # gen_ai attributes and so is not an "OTLP_TRACE" to the adapter — but its
+        # attributes are exactly the ones that settle a capability outright, and
+        # dropping to labels here would turn observations into inferences.
+        from release_gate.adapters.common import iter_otlp_spans
+        if next(iter_otlp_spans(doc), None) is not None:
+            return CapabilitySurface.from_spans(doc, declared=declared), notes
+        if execution is not None:
+            return CapabilitySurface.from_execution_graph(
+                execution, declared=declared), notes
+        if declared:
+            # No execution evidence at all, but somebody said what the system may
+            # do. That is worth keeping: it is the denominator a later run needs.
+            return CapabilitySurface.from_execution_graph(
+                None, declared=declared), notes
+    except Exception as exc:
+        notes.append(f"capability discovery did not complete: {exc}")
     return None, notes
 
 
@@ -586,6 +652,9 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     execution, exec_notes = _execution_from(doc, detection)
     notes.extend(exec_notes)
 
+    capabilities, cap_notes = _capabilities_from(doc, detection, execution)
+    notes.extend(cap_notes)
+
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
         ev, cl, art, mapped, skipped, env_notes = _envelope_records(doc, source, producer)
@@ -625,8 +694,8 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     return Normalisation(
         detection=detection, source=source, evidence=tuple(evidence),
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
-        records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
-        notes=tuple(notes))
+        capabilities=capabilities, records_seen=seen, records_mapped=mapped,
+        skipped=dict(skipped), notes=tuple(notes))
 
 
 def _audit_records(doc: Mapping[str, Any], source: str,
