@@ -2813,6 +2813,78 @@ one is ever needed, is a single shared reverse traversal rather than a cache.
 
 ---
 
+## 10j. Evidence compaction (`compact_case`)
+
+> **Implemented.** `release_gate/assurance/compaction.py` — `RetentionReason`,
+> `CompactionBudget`, `CompactionReport`, `classify()`, `compact_case()`,
+> `verify_drill_down()`.
+
+A frontier run produces four million model calls. The engine must not hold four
+million model calls, and must not pretend they did not happen. Compaction keeps
+the argument and drops the bulk while the count and the commitment stay exactly
+what they were.
+
+### 10j.1 Three properties, in the order they matter
+
+**1. Critical-path drill-down survives, unconditionally.** A record on the path
+from the decision to the reason is retained whatever the budget says. The budget
+bounds the *residue* — what is left after everything the retain list names has
+been kept — and never the argument. If the argument alone exceeds the budget, the
+budget is **exceeded and reported**, never honoured by evicting a critical node.
+Verified on a case of 2,000 bulk records with a residue budget of **zero**: the
+whole argument survives, including the evidence arguing *against* the claim.
+
+**2. Deterministic.** The retained set is a function of the records, not of the
+order they arrived in. `RetainFirst` (§10i) was not: the same evidence sharded
+six ways kept six different sets while committing to one digest, so two runs
+agreed on what existed and disagreed on what could be inspected. Selection orders
+by **content digest**, which is stable across shards, reruns and resumptions —
+asserted by permuting a collection and getting a byte-identical retained set.
+Compaction is also idempotent.
+
+**3. The commitment is untouched.** A compacted record is still in `total_count`
+and still folded into `fold_digest`. Measured: 4,006 evidence records → **22
+held, 4,006 counted, identical fold digest**. Compaction can never be used to
+quietly change what a case says it saw, and a compacted collection stops calling
+itself `COMPLETE`.
+
+### 10j.2 The retain list, as named reasons
+
+Every surviving record carries *why*, so a reviewer asking "why is this here and
+that not" gets an answer from the case rather than from whoever wrote the policy.
+
+| reason | what it covers |
+|---|---|
+| `CRITICAL_NODE` | on a path to the decision |
+| `DEPENDENCY_EDGE` | a parent of a critical claim, or an artifact something points at — without it drill-down stops one hop short of the reason |
+| `FINAL_DEPENDENCY` | what the decision ultimately rests on |
+| `VERIFICATION` · `FAILURE` · `CONTRADICTION` · `ASSUMPTION` · `COUNTEREXAMPLE` · `COVERAGE` | whole collections, retained entire — these *are* the retain list, and a case that compacted them would have compacted away its own findings |
+| `EXTERNAL_REFERENCE` | holds a pointer to raw evidence |
+| `DIGEST_ONLY` | compacted: counted, committed, not held |
+
+**Evidence that contradicts a claim is never bulk.** A compaction that kept the
+supporting half and dropped the objecting half would be the most dangerous edit
+this engine could make to itself, so it is a retention reason in its own right
+rather than something that happens to survive.
+
+### 10j.3 Raw evidence lives outside
+
+A compacted record keeps its `ContentReference`, so the bytes stay fetchable from
+wherever they actually are. Release-gate holds the digest and the reference; the
+object store holds the object. Nothing here deletes anything from anybody's
+system — this is only about what the *engine* carries. A record with an external
+reference is retained for that reason alone: it is cheap, and it is the handle
+that makes compaction safe.
+
+### 10j.4 Measured
+
+20,000 bulk records plus a four-record argument, residue budget 50: **fewer than
+200 records held**, over 20,000 counted, drill-down intact. The basis reports
+`CAPPED` rather than `SAMPLED`, because the residue slice makes no claim to be
+representative even though the retained argument was chosen on purpose.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

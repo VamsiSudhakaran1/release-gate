@@ -59,6 +59,15 @@ from release_gate.assurance.attestation import (
     SignatureState,
     chain_from_case,
 )
+from release_gate.assurance.compaction import (
+    COMPACTION_SCHEMA_VERSION,
+    CompactionBudget,
+    CompactionError,
+    CompactionReport,
+    RetentionReason,
+    compact_case,
+    verify_drill_down,
+)
 from release_gate.assurance.completeness import (
     COMPLETENESS_SCHEMA_VERSION,
     CompletenessError,
@@ -521,6 +530,7 @@ __all__ = [
     "CASE_BINDING_ALGO",
     "CLAIM_SCHEMA_VERSION",
     "COLLECTION_KINDS",
+    "COMPACTION_SCHEMA_VERSION",
     "COMPLETENESS_SCHEMA_VERSION",
     "CONSEQUENCE_SCHEMA_VERSION",
     "CONTRADICTION_SCHEMA_VERSION",
@@ -552,6 +562,9 @@ __all__ = [
     "ClaimType",
     "CollapseReason",
     "CollapseSet",
+    "CompactionBudget",
+    "CompactionError",
+    "CompactionReport",
     "CompletenessError",
     "CompletenessStatus",
     "ConsequenceBasis",
@@ -763,6 +776,7 @@ __all__ = [
     "chain_from_case",
     "check_approval",
     "classify_tool_name",
+    "compact_case",
     "compare_cases",
     "counterexamples_from_evidence",
     "decide",
@@ -808,4 +822,5 @@ __all__ = [
     "submit_approval",
     "target_kind_for_focus",
     "values_for",
+    "verify_drill_down",
 ]
