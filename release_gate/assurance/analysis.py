@@ -1382,9 +1382,15 @@ def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
                           "mapped": normalisation.records_mapped}))
 
     if claim_graph is not None:
+        # Contradicting evidence counts as evidence. A claim something argues
+        # against has been assessed and found wanting, which is a different fact
+        # from one nothing in the case bears on either way — and reporting a
+        # refuted claim as "rests on no evidence at all" tells a reviewer to go
+        # looking for evidence that is already in front of them.
         unsupported = sorted(
             c.claim_id for c in claim_graph.claims
-            if not c.supporting_evidence and not c.verification_attempts)
+            if not c.supporting_evidence and not c.verification_attempts
+            and not c.contradicting_evidence)
         if unsupported:
             # `load_bearing()` returns claim ids, not Claim objects. The defensive
             # getattr here was hiding that: the branch only runs when the graph has

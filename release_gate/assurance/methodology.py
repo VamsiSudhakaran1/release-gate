@@ -59,10 +59,17 @@ from release_gate.assurance.case import (
     CaseType,
     MethodologyRef,
 )
+from release_gate.assurance.expectation import CoverageState
 from release_gate.assurance.records import Presence
 from release_gate.assurance.subject import SubjectType
 
-METHODOLOGY_MODEL_VERSION = 1
+#: Bumped to 2 when `CoverageDimensionDeclared` gained `require_assessed`. A
+#: methodology serialised under v1 still loads — the field defaults to False,
+#: which is exactly the old behaviour — but its *digest* changes, because the
+#: predicate now serialises one more key. Anything that pinned a v1 methodology
+#: digest must re-pin. Reported rather than hidden: a digest that silently
+#: changes meaning is the failure content addressing exists to prevent.
+METHODOLOGY_MODEL_VERSION = 2
 
 #: Record field names the predicates read. Declared here so the evidence and
 #: claim types defined by later prompts land on the same names rather than
@@ -457,13 +464,26 @@ class RecordFieldRequired(Predicate):
 @_predicate
 @dataclass(frozen=True)
 class CoverageDimensionDeclared(Predicate):
-    """A named coverage dimension must be stated (Invariant 9)."""
+    """A named coverage dimension must be stated (Invariant 9).
+
+    `require_assessed` is the difference between "somebody answered the question"
+    and "the answer was yes". Stating a dimension as NOT_ASSESSED satisfies this
+    predicate by default, and should: a case that says plainly what it did not
+    look at has met the coverage obligation, and a methodology that refused it
+    would be pressuring cases to stay silent rather than declare a gap.
+
+    A methodology whose decision genuinely cannot be taken without a dimension
+    sets `require_assessed=True`, which is a domain judgement about sufficiency
+    and not a structural one — the layering this module keeps throughout.
+    """
 
     KIND = "coverage_dimension_declared"
     dimension: str
+    require_assessed: bool = False
 
     def describe(self) -> str:
-        return f"coverage states the {self.dimension!r} dimension"
+        return (f"coverage states the {self.dimension!r} dimension"
+                + (" and it was actually assessed" if self.require_assessed else ""))
 
     def evaluate(self, case: AssuranceCase) -> _Finding:
         coll = case.collection("coverage")
@@ -473,12 +493,29 @@ class CoverageDimensionDeclared(Predicate):
                             "invalid (Invariant 9)", {"presence": coll.presence.value})
         records, incomplete, total = _records(case, "coverage")
         found = [r for r in records if r.get(FIELD_DIMENSION) == self.dimension]
-        return _threshold_outcome(
-            bool(found), incomplete,
-            met_detail=f"coverage states {self.dimension!r}",
-            unmet_detail=f"coverage does not state {self.dimension!r}",
-            observed={"dimension": self.dimension, "rows_held": len(records),
-                      "total_count": total})
+        observed = {"dimension": self.dimension, "rows_held": len(records),
+                    "total_count": total, "require_assessed": self.require_assessed}
+        if found:
+            observed["state"] = found[0].get("state")
+            observed["note"] = found[0].get("note")
+        if not (found and self.require_assessed):
+            return _threshold_outcome(
+                bool(found), incomplete,
+                met_detail=f"coverage states {self.dimension!r}",
+                unmet_detail=f"coverage does not state {self.dimension!r}",
+                observed=observed)
+
+        row = found[0]
+        if str(row.get("state")) == CoverageState.NOT_ASSESSED.value:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{self.dimension!r} is stated as NOT_ASSESSED, and this decision "
+                "cannot be taken without it: "
+                + str(row.get("note") or "no basis was recorded"),
+                observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"coverage states {self.dimension!r} as {row.get('state')}", observed)
 
 
 @_predicate
@@ -729,6 +766,67 @@ class ExpectationDeclared(Predicate):
             observed)
 
 
+def _critical_ids(case: AssuranceCase, collection: str = "evidence"
+                  ) -> Tuple[frozenset, Optional["_Finding"], bool]:
+    """The load-bearing claim ids, or the finding that says why they are unknown.
+
+    Extracted so every predicate about load-bearing claims reads one criticality
+    profile through one set of refusals. A second copy of this would be a second
+    definition of "load-bearing", and two definitions that drift is precisely the
+    failure Invariant 12 is about.
+
+    Returns `(ids, refusal, incomplete)`. When `refusal` is not None the caller
+    must return it unchanged: it carries the reason the set could not be derived,
+    and every one of those reasons is NOT_ASSESSED rather than a pass, because
+    reporting "all clear" over a set that could not be built is the vacuous pass
+    these predicates exist to prevent (Invariant 3).
+    """
+    records, incomplete, _total = _records(case, collection)
+    derived = [r for r in records if r.get("record_type") == "criticality"]
+    if not derived:
+        return frozenset(), _Finding(
+            RequirementOutcome.NOT_ASSESSED,
+            "no criticality analysis is recorded, so which claims the decision "
+            "rests on has not been derived and this cannot be assessed",
+            {"materialisation_incomplete": incomplete}), incomplete
+    profile = derived[0]
+    if not profile.get("determinable"):
+        return frozenset(), _Finding(
+            RequirementOutcome.NOT_ASSESSED,
+            "what this decision rests on could not be derived: " +
+            str(profile.get("basis") or ""),
+            {"determinable": False}), incomplete
+
+    critical = frozenset(profile.get("critical_ids") or ())
+    truncated = int(profile.get("critical_ids_truncated") or 0)
+    if truncated:
+        return critical, _Finding(
+            RequirementOutcome.NOT_ASSESSED,
+            f"{truncated} load-bearing claim(s) were not listed, so what rests on "
+            "this decision cannot be established from what is held",
+            {"critical": len(critical), "critical_ids_truncated": truncated}), incomplete
+    if not critical:
+        return critical, _Finding(
+            RequirementOutcome.NOT_ASSESSED,
+            "no claim is load-bearing on this case, so there is nothing for this "
+            "requirement to be about", {"critical": 0}), incomplete
+    return critical, None, incomplete
+
+
+def _claim_graph(case: AssuranceCase) -> Optional[Any]:
+    """The case's claim graph, or None when it declares no claims.
+
+    Imported at call time for the same reason `_attempts_of` does it: the claims
+    module reaches back into this one, and a module-level import would close the
+    cycle.
+    """
+    try:
+        from release_gate.assurance.claims import ClaimGraph
+        return ClaimGraph.from_case(case)
+    except Exception:
+        return None
+
+
 def _attempts_of(case: AssuranceCase) -> Tuple[Any, ...]:
     """Every verification attempt the case holds, from both places they live.
 
@@ -779,38 +877,12 @@ class CriticalClaimsVerified(Predicate):
                    else ""))
 
     def evaluate(self, case: AssuranceCase) -> _Finding:
-        records, incomplete, _total = _records(case, self.collection)
-        derived = [r for r in records if r.get("record_type") == "criticality"]
-        if not derived:
-            # Without criticality there is no set of load-bearing claims to check
-            # against, and reporting "all verified" over an empty set would be the
-            # vacuous pass this predicate exists to prevent (Invariant 3).
-            return _Finding(
-                RequirementOutcome.NOT_ASSESSED,
-                "no criticality analysis is recorded, so which claims the decision "
-                "rests on has not been derived and this cannot be assessed",
-                {"materialisation_incomplete": incomplete})
-        profile = derived[0]
-        if not profile.get("determinable"):
-            return _Finding(
-                RequirementOutcome.NOT_ASSESSED,
-                "what this decision rests on could not be derived: " +
-                str(profile.get("basis") or ""),
-                {"determinable": False})
-
-        critical = set(profile.get("critical_ids") or ())
-        if int(profile.get("critical_ids_truncated") or 0):
-            return _Finding(
-                RequirementOutcome.NOT_ASSESSED,
-                f"{profile.get('critical_ids_truncated')} load-bearing claim(s) were "
-                "not listed, so whether every one is verified cannot be established "
-                "from what is held",
-                {"critical": len(critical)})
-        if not critical:
-            return _Finding(
-                RequirementOutcome.NOT_ASSESSED,
-                "no claim is load-bearing on this case, so there is nothing for this "
-                "requirement to be about", {"critical": 0})
+        # Without criticality there is no set of load-bearing claims to check
+        # against, and reporting "all verified" over an empty set would be the
+        # vacuous pass this predicate exists to prevent (Invariant 3).
+        critical, refusal, incomplete = _critical_ids(case, self.collection)
+        if refusal is not None:
+            return refusal
 
         verified: Dict[str, List[str]] = {}
         for attempt in _attempts_of(case):
@@ -845,6 +917,97 @@ class CriticalClaimsVerified(Predicate):
         return _Finding(
             RequirementOutcome.SATISFIED,
             f"all {len(critical)} load-bearing claim(s) are verified", observed)
+
+
+@_predicate
+@dataclass(frozen=True)
+class NoClaimInStatus(Predicate):
+    """No claim may stand in one of the named statuses (Invariant 7).
+
+    `NoUnresolved` reads a collection of *recorded disagreements*. This reads the
+    status the claim graph *computes*, and they catch different failures. A claim
+    with evidence on both sides is a contradiction and gets a record. A claim with
+    nothing but evidence against it is not a disagreement at all — it is refuted,
+    and no contradiction record is ever written for it.
+
+    That gap is not hypothetical. Static analysis finding a taint path to an
+    execution sink, with nothing answering it, produces exactly the second shape:
+    the claim "this code is safe" comes out REFUTED while the contradictions
+    collection is empty. A profile guarding only the first reports a clean bill of
+    health on it, which is the false-clean this predicate exists to close.
+
+    `scope="critical"` asks only about claims the decision rests on, so a refuted
+    claim nothing depends on does not block — dependency criticality decides what
+    matters here, not count (Invariant 12).
+    """
+
+    KIND = "no_claim_in_status"
+    statuses: Tuple[str, ...] = ("REFUTED",)
+    scope: str = "critical"
+
+    def __post_init__(self) -> None:
+        statuses = tuple(sorted({str(s).strip().upper() for s in self.statuses
+                                 if str(s).strip()}))
+        if not statuses:
+            raise MethodologyError(
+                "no_claim_in_status must name at least one status to forbid")
+        object.__setattr__(self, "statuses", statuses)
+        scope = str(self.scope).strip().lower()
+        if scope not in ("critical", "all"):
+            raise MethodologyError(
+                "no_claim_in_status scope must be 'critical' or 'all', "
+                f"not {self.scope!r}")
+        object.__setattr__(self, "scope", scope)
+
+    def describe(self) -> str:
+        statuses = ", ".join(s.lower() for s in self.statuses)
+        subject = ("no load-bearing claim" if self.scope == "critical"
+                   else "no claim")
+        return f"{subject} is {statuses}"
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        collection = case.collection("claims")
+        if collection.presence is not Presence.PRESENT:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no claims were supplied, so whether any stands refuted has not "
+                "been assessed", {"presence": collection.presence.value})
+        graph = _claim_graph(case)
+        if graph is None:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "the claims collection could not be modelled as a graph, so no "
+                "claim status has been computed", {"presence": "PRESENT"})
+
+        incomplete = collection.not_materialised > 0
+        if self.scope == "critical":
+            candidates, refusal, crit_incomplete = _critical_ids(case)
+            if refusal is not None:
+                return refusal
+            incomplete = incomplete or crit_incomplete
+        else:
+            candidates = frozenset(c.claim_id for c in graph.claims)
+
+        forbidden = set(self.statuses)
+        offending = sorted(
+            cid for cid in candidates
+            if getattr(graph.status(cid), "value", None) in forbidden)
+        observed = {"scope": self.scope, "statuses": list(self.statuses),
+                    "examined": len(candidates), "offending": offending[:12],
+                    "offending_count": len(offending),
+                    "materialisation_incomplete": incomplete}
+        subject = ("load-bearing claim(s)" if self.scope == "critical"
+                   else "claim(s)")
+        return _absence_outcome(
+            offending, incomplete,
+            clean_detail=(f"none of the {len(candidates)} {subject} examined is "
+                          + " or ".join(s.lower() for s in self.statuses)),
+            violation_detail=(
+                f"{len(offending)} {subject} stand(s) "
+                + " or ".join(s.lower() for s in self.statuses)
+                + ", with nothing recorded that answers the evidence against "
+                  "them: " + ", ".join(offending[:4])),
+            observed=observed)
 
 
 @_predicate

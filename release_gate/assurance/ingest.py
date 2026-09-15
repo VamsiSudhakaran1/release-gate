@@ -1112,7 +1112,8 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
                           or "the verifier stated no coverage limits"))
 
     elif detection.kind is InputKind.AUDIT_REPORT and isinstance(doc, Mapping):
-        seen, mapped, extra = _audit_records(doc, source, evidence, file_digest)
+        seen, mapped, extra = _audit_records(doc, source, evidence, file_digest,
+                                             claims, expectations)
         skipped.update(extra)
 
     else:
@@ -1132,32 +1133,164 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
 
 
 def _audit_records(doc: Mapping[str, Any], source: str,
-                   evidence: List[EvidenceRecord], applies_to: str
+                   evidence: List[EvidenceRecord], applies_to: str,
+                   claims: Optional[List[Claim]] = None,
+                   expectations: Optional[List[EvidenceExpectation]] = None
                    ) -> Tuple[int, int, Dict[str, int]]:
-    """release-gate's own audit output, folded back in as its own evidence."""
+    """release-gate's own audit output, folded in as a real assurance argument.
+
+    The point of this function is that there is one product. Everything the
+    ADMISSION plane already computes — static analysis, taint, agent tool
+    boundaries, declared safeguards, its own coverage — becomes claims with
+    evidence for and against them, so a software case gets criticality,
+    contradiction detection, attention ranking, a packet and an approval binding
+    exactly like a research case does. Before this, audit findings arrived as
+    evidence attached to no claim, which meant every one of those mechanisms had
+    nothing to work with and a software case was a second-class case.
+
+    Claims are derived from the audit's own dimensions and never invented: a
+    dimension the audit does not assess produces no claim, and one it assesses
+    and fails produces a claim with evidence against it rather than a missing
+    claim.
+    """
     producer = Producer.release_gate("audit")
+    claims = claims if claims is not None else []
+    mapped = 0
+
     findings = [f for f in (doc.get("code_findings") or []) if isinstance(f, Mapping)]
-    for finding in findings:
-        evidence.append(EvidenceRecord.derived(
-            EvidenceType.STATIC_FINDING, source=source, producer=producer,
-            verification_method=VerificationMethod.STATIC_ANALYSIS,
-            applies_to_digest=applies_to,
-            content={k: finding.get(k) for k in ("rule", "file", "line", "severity", "basis")
-                     if k in finding},
-            coverage_note=f"static analysis, basis={finding.get('basis', 'unstated')}"))
     safeguards = doc.get("safeguards") or {}
-    declared = 0
-    if isinstance(safeguards, Mapping):
-        for name, present in safeguards.items():
-            if not present:
-                continue
-            declared += 1
-            evidence.append(EvidenceRecord.from_producer(
-                {"safeguard": name}, evidence_type=EvidenceType.OTHER, source=source,
-                producer=producer, status=EpistemicStatus.DECLARED,
+    safeguard_items = [(str(name), value) for name, value in safeguards.items()
+                       if isinstance(value, Mapping)] if isinstance(safeguards, Mapping) else []
+
+    dimension_claims: List[str] = []
+
+    # ── code safety: findings argue against it ──────────────────────────────
+    code_safety = doc.get("code_safety") or {}
+    if findings or (isinstance(code_safety, Mapping) and code_safety.get("applicable")):
+        claim_id = "sw:code-safety"
+        dimension_claims.append(claim_id)
+        claims.append(Claim(
+            claim_id=claim_id, producer=producer,
+            statement="static analysis found no unsafe pattern in this code",
+            supporting_evidence=(), contradicting_evidence=()))
+        for finding in findings:
+            evidence.append(EvidenceRecord.derived(
+                EvidenceType.STATIC_FINDING, source=source, producer=producer,
+                # No `verification_method`: the evidence model refuses one on a
+                # DERIVED record, because a method implies a verification that
+                # reached a verdict, and a static finding is an observation that
+                # argues against a claim rather than a check that settled it. The
+                # previous version passed STATIC_ANALYSIS here and raised
+                # EvidenceError on every audit report that had any finding at all.
                 applies_to_digest=applies_to,
-                coverage_note="declared safeguard; a declaration is not a runtime guarantee"))
-    return len(findings) + declared, len(findings) + declared, {}
+                # `rule_id` is the key the audit actually emits. The previous
+                # version copied `rule`, which no finding has ever carried, so
+                # every ingested finding lost its identity on the way in.
+                content={**{k: finding.get(k) for k in
+                            ("rule_id", "title", "file", "line", "severity", "basis",
+                             "confidence", "evidence", "compliance_tags")
+                            if k in finding},
+                         "method": VerificationMethod.STATIC_ANALYSIS.value},
+                contradicts_claims=(claim_id,),
+                coverage_note=(f"static analysis, basis={finding.get('basis', 'unstated')}"
+                               f", confidence={finding.get('confidence', 'unstated')}")))
+            mapped += 1
+        if not findings:
+            evidence.append(EvidenceRecord.derived(
+                EvidenceType.STATIC_FINDING, source=source, producer=producer,
+                applies_to_digest=applies_to,
+                content={"findings": 0, "score": code_safety.get("score"),
+                         "method": VerificationMethod.STATIC_ANALYSIS.value},
+                supports_claims=(claim_id,),
+                coverage_note=("static analysis found nothing; that bounds what was "
+                               "scanned and never establishes that the code is safe")))
+            mapped += 1
+
+    # ── declared safeguards ─────────────────────────────────────────────────
+    for name, value in safeguard_items:
+        claim_id = f"sw:safeguard:{name}"
+        dimension_claims.append(claim_id)
+        claims.append(Claim(
+            claim_id=claim_id, producer=producer,
+            statement=f"the {name.replace('_', ' ')} safeguard is in place"))
+        present = bool(value.get("present"))
+        detail = str(value.get("evidence") or "")
+        if present:
+            # A safeguard somebody declared. DECLARED, because a governance file
+            # saying a kill switch exists is the producer's account of their own
+            # system and not a runtime guarantee (Invariant 1).
+            evidence.append(EvidenceRecord.from_producer(
+                {"safeguard": name, "status": value.get("status"), "detail": detail},
+                evidence_type=EvidenceType.ATTESTATION, source=source,
+                producer=producer, status=EpistemicStatus.DECLARED,
+                applies_to_digest=applies_to, supports_claims=(claim_id,),
+                coverage_note="declared safeguard; a declaration is not a runtime "
+                              "guarantee"))
+        else:
+            # A safeguard release-gate looked for and did not find. That IS
+            # release-gate's own observation, so it is DERIVED — and it argues
+            # against the claim rather than for it. The previous version tested
+            # the truthiness of a non-empty dict, so every failing safeguard was
+            # ingested as a declared one: a repo with no safeguards produced
+            # evidence that it had all of them.
+            evidence.append(EvidenceRecord.derived(
+                EvidenceType.STATIC_FINDING, source=source, producer=producer,
+                applies_to_digest=applies_to,
+                content={"safeguard": name, "status": value.get("status"),
+                         "detail": detail,
+                         "issues": list(value.get("issues") or ())[:4],
+                         "compliance_tags": list(value.get("compliance_tags") or ())},
+                contradicts_claims=(claim_id,),
+                coverage_note=f"release-gate looked for {name} and did not find it"))
+        mapped += 1
+
+    # ── the root: what admitting this change would mean ─────────────────────
+    # Link the claims back to the evidence that argues about them. The evidence
+    # records already name their claims; a claim that also names its evidence is
+    # what lets the claim graph, the coverage analyser and the packet answer
+    # "what bears on this?" without re-scanning every record.
+    by_claim_for: Dict[str, List[str]] = {}
+    by_claim_against: Dict[str, List[str]] = {}
+    for record in evidence:
+        for cid in record.supports_claims:
+            by_claim_for.setdefault(cid, []).append(record.evidence_id)
+        for cid in record.contradicts_claims:
+            by_claim_against.setdefault(cid, []).append(record.evidence_id)
+    for index, claim in enumerate(claims):
+        supports = tuple(by_claim_for.get(claim.claim_id, ()))
+        against = tuple(by_claim_against.get(claim.claim_id, ()))
+        if supports or against:
+            claims[index] = dataclasses.replace(
+                claim, supporting_evidence=supports, contradicting_evidence=against)
+
+    if dimension_claims:
+        claims.append(Claim(
+            claim_id="sw:admissible", producer=producer, is_root=True,
+            statement="this change is safe to admit",
+            parents=tuple(dimension_claims)))
+
+    # ── the audit's own coverage, as coverage ───────────────────────────────
+    # Folded through the expectation mechanism so an audit dimension the checks
+    # could not reach reads as NOT_ASSESSED on the case, rather than being absent
+    # and therefore invisible (Invariant 3).
+    if expectations is not None:
+        for row in (doc.get("coverage") or []):
+            if not isinstance(row, Mapping):
+                continue
+            dimension = str(row.get("dimension") or "").strip()
+            if not dimension:
+                continue
+            try:
+                expectations.append(EvidenceExpectation(
+                    dimension=dimension.lower().replace(" ", "_").replace("/", "_"),
+                    assessed=str(row.get("status") or "") == "assessed",
+                    note=str(row.get("note") or ""),
+                    observed_from="release-gate/audit"))
+                mapped += 1
+            except Exception:
+                continue
+
+    return mapped, mapped, {}
 
 
 # ── the one-call path ────────────────────────────────────────────────────────

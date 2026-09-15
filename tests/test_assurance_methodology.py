@@ -480,7 +480,7 @@ def test_the_default_registry_ships_the_builtins():
     registry = default_registry()
     assert set(registry.ids()) == {"general-agent-action", "software-change",
                                    "production-database-change", "research-mathematics",
-                                   "research-assurance"}
+                                   "research-assurance", "software-agent-assurance"}
     for row in registry.list():
         assert row["source"] == "builtin"
 

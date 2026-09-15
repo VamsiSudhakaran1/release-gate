@@ -29,21 +29,24 @@ from __future__ import annotations
 from release_gate.assurance.case import CaseType
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
-    AssuranceMethodology,
-    CoverageExpectation,
-    Criticality,
-    CriticalityRule,
-    EvidenceExpectation,
-    IndependenceRequirement,
-    MethodologyRegistry,
-    NoUnresolved,
     AdversarialReviewRequired,
     AppliesToCurrentState,
     AssumptionsExamined,
+    AssuranceMethodology,
+    ConsequenceDeclared,
+    CoverageDimensionDeclared,
+    CoverageExpectation,
     CriticalClaimsIdentified,
     CriticalClaimsVerified,
+    Criticality,
+    CriticalityRule,
     DeclaredIndependenceHolds,
+    EvidenceExpectation,
     ExpectationDeclared,
+    IndependenceRequirement,
+    MethodologyRegistry,
+    NoClaimInStatus,
+    NoUnresolved,
     OverrideRule,
     ReplicationEstablished,
     Requirement,
@@ -95,6 +98,14 @@ _NO_OPEN_COUNTEREXAMPLES = Requirement(
     effect=RequirementEffect.BLOCK,
     remedy="address each counterexample, or record why it does not apply",
     rationale="A counterexample that nobody answered is the strongest evidence in the case.")
+
+_COVERAGE_STATED_REQUIREMENT = Requirement(
+    requirement_id="RG-SW-008",
+    description="coverage is stated",
+    predicate=CoverageDimensionDeclared(dimension="overall"),
+    effect=RequirementEffect.BLOCK,
+    remedy="state what was and was not assessed",
+    rationale="A verdict without coverage is invalid whatever the domain (Invariant 9).")
 
 _COVERAGE_STATED = CoverageExpectation(
     dimension="overall",
@@ -518,12 +529,226 @@ RESEARCH_ASSURANCE_V1 = AssuranceMethodology(
                                 "RG-CLAIM-013", "subject.identified"))
 
 
+SOFTWARE_AGENT_ASSURANCE_V1 = AssuranceMethodology(
+    methodology_id="software-agent-assurance",
+    version="1.0.0",
+    domain="software",
+    description=(
+        "The advanced software and agent profile. It grades exactly what "
+        "release-gate's admission plane already computes — static analysis and "
+        "taint, agent tool boundaries, PII and prompt-injection paths, execution "
+        "sinks, evals, traces, tests, AIBOM and lock drift, PR diff and runtime "
+        "evidence — against the same assurance machinery a research case uses.\n\n"
+        "There is one product. An audit report ingests as claims with evidence for "
+        "and against them, so a software case gets criticality, contradiction "
+        "detection, attention ranking, a packet and an approval binding exactly "
+        "like any other case. Nothing here re-implements a check; every rule is a "
+        "sufficiency judgement over findings the existing engine already produces."),
+    case_types=(CaseType.CODE_CHANGE, CaseType.AUTONOMOUS_ACTION,
+                CaseType.DEPLOYMENT, CaseType.GENERAL_DECISION),
+    requirements=(
+        _SUBJECT_IDENTIFIED,
+
+        # RG-SW-001 UNRESOLVED_CODE_FINDING
+        # Fires when: a static, taint, PII, injection or sink finding argues
+        # against a load-bearing claim and nothing answers it — the claim comes
+        # out REFUTED, or DISPUTED where evidence also argues for it.
+        # Does not fire when: the finding was answered, or bears on no
+        # load-bearing claim.
+        # NOT_ASSESSED when: no claims were supplied, or criticality could not
+        # be derived, so there is no load-bearing set to read.
+        #
+        # Deliberately NOT `NoUnresolved(collection="contradictions")`. A
+        # contradiction record is only written where evidence points BOTH ways at
+        # one claim; a finding with nothing answering it is unanimous, so no
+        # record exists and that predicate reported "all 0 contradictions
+        # resolved" on a report carrying a live taint path to a subprocess.
+        Requirement(
+            requirement_id="RG-SW-001",
+            description="no code finding stands unanswered against the change",
+            predicate=NoClaimInStatus(statuses=("REFUTED", "DISPUTED"),
+                                      scope="critical"),
+            effect=RequirementEffect.BLOCK,
+            remedy="fix the finding, or record why the sink is unreachable with the "
+                   "evidence that establishes it",
+            rationale=("A taint path to an execution sink is a counterexample to "
+                       "'this change is safe to admit'. Answering it means evidence, "
+                       "not a suppression comment.")),
+
+        # RG-SW-002 SAFEGUARD_ABSENT
+        # Fires when: a declared safeguard is load-bearing and release-gate looked
+        # for it and did not find it.
+        # Does not fire when: every safeguard the audit checks is present.
+        # NOT_ASSESSED when: criticality is undeterminable.
+        Requirement(
+            requirement_id="RG-SW-002",
+            description="what the change rests on is identified and unbroken",
+            predicate=CriticalClaimsIdentified(require_determinable=True,
+                                               forbid_broken_chains=True),
+            effect=RequirementEffect.BLOCK,
+            remedy="declare the safeguards in governance, or record why this change "
+                   "does not need them",
+            rationale=("A declared safeguard is DECLARED: a governance file saying a "
+                       "kill switch exists is the team's account of their own system "
+                       "and not a runtime guarantee (Invariant 1).")),
+
+        # RG-SW-003 RUNTIME_EVIDENCE_ABSENT
+        # Fires when: no trace, eval or test evidence carries a typed verification.
+        # Does not fire when: any accepted runtime method is present.
+        # NOT_ASSESSED when: the verification collection was never supplied.
+        Requirement(
+            requirement_id="RG-SW-003",
+            description="the change is exercised, not only read",
+            predicate=VerificationPresent(
+                methods=(TEST_SUITE, SIMULATION, EXPERIMENT, RUNTIME_ASSERTION,
+                         PROPERTY_TEST),
+                minimum=1),
+            effect=RequirementEffect.HOLD,
+            remedy="supply a test run, an eval result or a trace from the change "
+                   "actually running",
+            rationale=("Static analysis bounds what the code can do; it does not "
+                       "establish what it did. Runtime evidence is the other half "
+                       "and neither substitutes for the other (Invariant 8).")),
+
+        # RG-SW-004 CAPABILITY_UNDECLARED
+        # Fires when: the capability_discovery row is NOT_ASSESSED — no execution
+        # evidence to discover from, or a surface that is not an upper bound
+        # because something in it (a shell, an eval) can reach capabilities
+        # without appearing as them.
+        # Does not fire when: the surface was observed AND bounds what ran.
+        # NOT_ASSESSED when: never — a missing row is UNSATISFIED, since this
+        # methodology holds that an undeclared blast radius is not a small one.
+        #
+        # `require_assessed` is the whole rule. A bare presence check passes on
+        # the NOT_ASSESSED row that zero-config emits for every input, which is
+        # exactly the case this is meant to catch.
+        Requirement(
+            requirement_id="RG-SW-004",
+            description="what the agent can reach is declared",
+            predicate=CoverageDimensionDeclared(dimension="capability_discovery",
+                                                require_assessed=True),
+            effect=RequirementEffect.HOLD,
+            remedy="supply a tool manifest, or a trace from which the exercised "
+                   "capability surface can be derived",
+            rationale=("An agent's blast radius is what it can reach, not what it "
+                       "reached this time. A manifest bounds the first; a trace only "
+                       "ever samples the second.")),
+
+        # RG-SW-005 ARTIFACT_MUTATED_AFTER_VERIFICATION
+        # Fires when: an artifact's verified digest differs from its current one —
+        # lock drift, a rebuilt image, a re-pushed branch.
+        # Does not fire when: they match, or none was recorded.
+        # NOT_ASSESSED when: no artifact carries a digest.
+        Requirement(
+            requirement_id="RG-SW-005",
+            description="nothing verified has been rebuilt since",
+            predicate=AppliesToCurrentState(scope="artifact"),
+            effect=RequirementEffect.BLOCK,
+            remedy="re-verify at the current digest, or pin the artifact that was "
+                   "verified",
+            rationale=("Lock drift and a re-pushed branch are the same failure: the "
+                       "thing that was checked is not the thing that will run "
+                       "(Invariant 5).")),
+
+        # RG-SW-006 STALE_VERIFICATION
+        # Fires when: a check names a target digest the target has left.
+        # Does not fire when: digests match, or no digest was named.
+        # NOT_ASSESSED when: no verification attempts are recorded.
+        Requirement(
+            requirement_id="RG-SW-006",
+            description="no check applies to a state its target has left",
+            predicate=AppliesToCurrentState(scope="verification"),
+            effect=RequirementEffect.BLOCK,
+            remedy="re-run the check against the current commit and record the digest",
+            rationale="A green CI run on a superseded commit is not a green CI run.",),
+
+        # RG-SW-007 EVIDENCE_AGAINST_A_SUPERSEDED_BUILD
+        # Fires when: evidence names an applies_to_digest no current artifact has.
+        # Does not fire when: it matches, or none was named.
+        # NOT_ASSESSED when: no artifact carries a digest.
+        Requirement(
+            requirement_id="RG-SW-007",
+            description="no evidence in use was produced against a superseded build",
+            predicate=AppliesToCurrentState(scope="evidence"),
+            effect=RequirementEffect.HOLD,
+            remedy="re-produce the evidence against the current build, or record why "
+                   "the earlier one is the relevant state",
+            rationale="Evidence about the previous build is evidence about the "
+                      "previous build."),
+
+        # RG-SW-008 COVERAGE_UNSTATED
+        # Fires when: the overall coverage dimension is absent.
+        # Does not fire when: coverage is stated, whatever it says.
+        # NOT_ASSESSED when: the coverage collection was never supplied at all.
+        _COVERAGE_STATED_REQUIREMENT,
+
+        # RG-SW-009 SUBMISSION_DENOMINATOR_SELF_REPORTED
+        # Fires when: the denominator for what was submitted is the submitting
+        # system's own count — which is the default, because a file that states
+        # its own total is its own denominator.
+        # Does not fire when: an independent source (a CI plan, an orchestration
+        # manifest, a verifier inventory) declares the total instead.
+        # NOT_ASSESSED when: no coverage row names the dimension.
+        #
+        # ADVISORY, not HOLD: most software cases genuinely have nobody but the
+        # producer to state this, and blocking on it would demand evidence that
+        # frequently does not exist. It is stated every time because the gap is
+        # real every time, and it closes the moment an independent plan arrives.
+        Requirement(
+            requirement_id="RG-SW-009",
+            description="the count of what was submitted comes from outside the "
+                        "submitting system",
+            predicate=ExpectationDeclared(dimension="record_mapping",
+                                          require_independent=True),
+            effect=RequirementEffect.ADVISORY,
+            remedy="have CI declare the planned job list, rather than counting the "
+                   "jobs that happened to run",
+            rationale=("CI reporting '10 of 10 passed' cannot tell you about the job "
+                       "that was silently never scheduled (Invariant 13).")),
+
+        # RG-SW-010 CONSEQUENCE_UNSTATED
+        # Fires when: no consequence dimension is stated for the action.
+        # Does not fire when: at least reversibility is declared.
+        # NOT_ASSESSED when: no consequence profile was built.
+        Requirement(
+            requirement_id="RG-SW-010",
+            description="what shipping this would do is stated",
+            predicate=ConsequenceDeclared(dimensions=("REVERSIBILITY",)),
+            effect=RequirementEffect.HOLD,
+            remedy="declare reversibility for this change",
+            rationale=("Release-gate does not guess at whether a deployment can be "
+                       "rolled back, and an unstated consequence is an unassessed "
+                       "one rather than a small one.")),
+    ),
+    accepted_verification_types=(TEST_SUITE, SIMULATION, EXPERIMENT, PROPERTY_TEST,
+                                 RUNTIME_ASSERTION, STATIC_ANALYSIS, TYPE_CHECKER,
+                                 COMPILER, DOMAIN_CHECKER, HUMAN_REVIEW,
+                                 INDEPENDENT_REPLICATION),
+    minimum_evidence_expectations=(
+        EvidenceExpectation(collection="claims", minimum=1,
+                            rationale=("An audit report ingests as claims; a case "
+                                       "with none has not been through the bridge."),
+                            effect=RequirementEffect.BLOCK),
+        EvidenceExpectation(collection="artifacts", minimum=1,
+                            rationale="Without an artifact there is nothing whose "
+                                      "mutation could be detected.")),
+    coverage_expectations=(
+        _COVERAGE_STATED,
+        CoverageExpectation(dimension="capability_discovery",
+                            expected_source="a tool manifest, or a trace the surface "
+                                            "can be derived from",
+                            rationale="An agent's reach is the blast radius."),),
+    non_overridable_conditions=("RG-SW-001", "RG-SW-005", "RG-SW-006",
+                                "subject.identified"))
+
+
 BUILTIN_METHODOLOGIES = (
     GENERAL_AGENT_ACTION_V1,
     SOFTWARE_CHANGE_V1,
     PRODUCTION_DATABASE_CHANGE_V1,
     RESEARCH_MATHEMATICS_V1,
     RESEARCH_ASSURANCE_V1,
+    SOFTWARE_AGENT_ASSURANCE_V1,
 )
 
 

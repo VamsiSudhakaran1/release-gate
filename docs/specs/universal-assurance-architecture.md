@@ -2045,6 +2045,91 @@ nobody can override in a real emergency is one people route around entirely.
 
 ---
 
+## 10b. The software / agent assurance profile (`RG-SW-*`)
+
+> **Implemented.** `release_gate/assurance/methodologies.py` —
+> `SOFTWARE_AGENT_ASSURANCE_V1`; the audit bridge in `ingest.py`
+> (`_audit_records`); one new predicate and one generalised predicate in
+> `methodology.py`.
+
+**There is one product, not two.** Release-gate's ADMISSION plane already
+computes static analysis and taint, agent tool boundaries, PII and
+prompt-injection paths, execution sinks, evals, traces, tests, AIBOM and lock
+drift, PR diff and runtime evidence. Before this, those findings arrived as
+evidence attached to *no claim*, so criticality, contradiction detection,
+attention ranking, the packet and the approval binding all had nothing to work
+with, and a software case was a second-class case. The bridge folds an audit
+report into the same `AssuranceCase` a research case uses.
+
+**The bridge derives claims; it never invents them.** An audit dimension
+produces a claim only where the audit actually assessed it:
+
+* `code_findings` become evidence *contradicting* `sw:code-safety`.
+* A clean scan (`code_findings: []` with `code_safety.applicable`) produces the
+  same claim with evidence *supporting* it — the scanner ran and found nothing.
+* A scan that could not run (`applicable: false` — no agent detected, or a
+  language the analyser cannot parse) produces **no claim at all**, because
+  asserting code safety there would assert something nobody established.
+* Each declared safeguard becomes `sw:safeguard:<name>`, supported by an
+  `ATTESTATION` (DECLARED — a governance file saying a kill switch exists is the
+  team's account of their own system, not a runtime guarantee, Invariant 1) or
+  contradicted by release-gate's own observation that it looked and did not find
+  it (DERIVED).
+* The audit's own `coverage` rows become `EvidenceExpectation`s, so a dimension
+  the checks could not reach reads as `NOT_ASSESSED` on the case rather than
+  being absent and therefore invisible (Invariant 3). `partial` is recorded as
+  NOT_ASSESSED, never rounded up to assessed.
+* `sw:admissible` is the root, resting on every dimension claim — which is what
+  makes a refuted safeguard reach the thing the human is being asked about.
+
+| rule | fires when | does *not* fire when | NOT_ASSESSED when |
+|---|---|---|---|
+| **001** UNRESOLVED_CODE_FINDING | a finding leaves a load-bearing claim REFUTED or DISPUTED with nothing answering it | the finding was answered; it bears on no load-bearing claim | no claims supplied, or criticality undeterminable |
+| **002** SAFEGUARD_ABSENT | a load-bearing safeguard claim is broken or the chain cannot be walked | every safeguard the audit checks is present | criticality undeterminable |
+| **003** RUNTIME_EVIDENCE_ABSENT | no test, eval, simulation or runtime assertion carries a typed verification | any accepted runtime method is present | the verification collection was never supplied |
+| **004** CAPABILITY_UNDECLARED | `capability_discovery` is NOT_ASSESSED — no execution evidence, or a surface that is not an upper bound | the surface was observed **and** bounds what ran | never: a missing row is UNSATISFIED |
+| **005** ARTIFACT_MUTATED_AFTER_VERIFICATION | an artifact's verified digest ≠ its current digest | they match; none recorded | no artifact carries a digest |
+| **006** STALE_VERIFICATION | a check names a target digest the target has left | digests match; no digest named | no verification attempts recorded |
+| **007** EVIDENCE_AGAINST_A_SUPERSEDED_BUILD | evidence names an `applies_to_digest` no current artifact has | it matches; none named | no artifact carries a digest |
+| **008** COVERAGE_UNSTATED | the `overall` dimension is absent | coverage is stated, whatever it says | the coverage collection was never supplied |
+| **009** SUBMISSION_DENOMINATOR_SELF_REPORTED | the denominator for what was submitted is the submitting system's own count | an independent source (CI plan, orchestration manifest, verifier inventory) declares it | no coverage row names the dimension |
+| **010** CONSEQUENCE_UNSTATED | no consequence dimension is stated | reversibility is declared | no consequence profile was built |
+
+`RG-SW-001`, `005`, `006` and `subject.identified` cannot be waived.
+
+> **Why 001 does not read the contradictions collection.** A `Contradiction`
+> record is written only where evidence points **both ways** at one claim. A
+> taint path to an execution sink with nothing answering it is *unanimous* — so
+> the collection stays empty, and `NoUnresolved(collection="contradictions")`
+> reports "all 0 contradictions resolved" on a live finding. That false clean is
+> what the new `NoClaimInStatus` predicate closes: it reads the status the claim
+> graph *computes* (REFUTED, DISPUTED) rather than a record somebody wrote. The
+> two predicates catch genuinely different failures and neither subsumes the
+> other. A test pins the gap so 001 is never "simplified" back onto the wrong one.
+
+> **Why 004 needs `require_assessed`.** `CoverageDimensionDeclared` asks whether
+> somebody answered the question; zero-config emits a `capability_discovery` row
+> for every input, including one saying plainly that it discovered nothing. A
+> bare presence check is therefore satisfied on exactly the case the rule exists
+> to catch. The predicate was **generalised** with `require_assessed` (default
+> `False`, so every existing rule is unchanged) rather than forked into a second
+> near-identical predicate. Stating a dimension as NOT_ASSESSED still satisfies
+> the default, and should: a case that declares its gaps has met the coverage
+> obligation, and refusing it would pressure cases into silence.
+
+> **Why 009 is advisory and fires on nearly every ingest.** A document that
+> states its own total *is its own denominator*, so it can say how many records
+> failed to map and nothing at all about a record the producer never wrote — the
+> omission it cannot detect is the one that matters (Invariant 13). That is true
+> of almost every software case, which is why it informs rather than blocks, and
+> it clears the moment an independent plan declares the total instead.
+
+**Nothing here re-implements a check.** Every rule is a sufficiency judgement
+over findings the existing engine already produces — the same layering as §10a,
+and the reason the audit path did not need a parallel architecture.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → repository
@@ -2060,6 +2145,13 @@ nobody can override in a real emergency is one people route around entirely.
 * **Versioned and bound.** The methodology id and version sit in the case digest,
   so tightening a methodology invalidates prior approvals rather than silently
   re-grading them.
+* **`METHODOLOGY_MODEL_VERSION` is 2.** Bumped when `CoverageDimensionDeclared`
+  gained `require_assessed` (§10b). A methodology serialised under v1 still
+  loads — the field defaults to `False`, which is the old behaviour exactly — but
+  its **digest changes**, because the predicate now serialises one more key.
+  Anything that pinned a v1 methodology digest must re-pin. Stated rather than
+  hidden: a digest that silently changes meaning is the failure content
+  addressing exists to prevent.
 
 ---
 

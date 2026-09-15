@@ -237,6 +237,7 @@ _PREDICATE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "independence_threshold": _K.INDEPENDENT_VERIFICATION,
     "ancestry_independence": _K.INDEPENDENT_VERIFICATION,
     "no_unresolved": _K.CONTRADICTION_RESOLUTION,
+    "no_claim_in_status": _K.CONTRADICTION_RESOLUTION,
     "record_field_required": _K.PROVENANCE_ATTESTATION,
     "coverage_dimension_declared": _K.EXPECTATION_DECLARATION,
     "expectation_declared": _K.EXPECTATION_DECLARATION,
