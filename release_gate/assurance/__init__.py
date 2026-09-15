@@ -59,6 +59,14 @@ from release_gate.assurance.attestation import (
     SignatureState,
     chain_from_case,
 )
+from release_gate.assurance.streaming import (
+    STREAMING_SCHEMA_VERSION,
+    AssurancePhase,
+    PhaseObservation,
+    PhaseTransition,
+    observe_phase,
+    observe_session,
+)
 from release_gate.assurance.compaction import (
     COMPACTION_SCHEMA_VERSION,
     CompactionBudget,
@@ -512,6 +520,7 @@ __all__ = [
     "AssuranceLevel",
     "AssuranceMethodology",
     "AssuranceOutcome",
+    "AssurancePhase",
     "AssuranceSession",
     "AssuranceSubject",
     "AttemptOutcome",
@@ -684,6 +693,8 @@ __all__ = [
     "OverrideRule",
     "PACKET_SCHEMA_VERSION",
     "PacketSection",
+    "PhaseObservation",
+    "PhaseTransition",
     "Presence",
     "Producer",
     "ProducerKind",
@@ -716,6 +727,7 @@ __all__ = [
     "RetentionPolicy",
     "RetentionReason",
     "SESSION_SCHEMA_VERSION",
+    "STREAMING_SCHEMA_VERSION",
     "SectionKey",
     "SessionError",
     "SignalStrength",
@@ -810,6 +822,8 @@ __all__ = [
     "link_evidence",
     "merkle_root",
     "normalise",
+    "observe_phase",
+    "observe_session",
     "offer_approval",
     "predicate_from_dict",
     "record_digest",

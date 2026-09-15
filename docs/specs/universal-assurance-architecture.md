@@ -2885,6 +2885,89 @@ representative even though the retained argument was chosen on purpose.
 
 ---
 
+## 10k. Streaming assurance (`AssurancePhase`)
+
+> **Implemented.** `release_gate/assurance/streaming.py` — `AssurancePhase`,
+> `PhaseObservation`, `PhaseTransition`, `observe_phase()`, `observe_session()`.
+
+A case can stay open for hours. Agents keep working, evidence keeps arriving, and
+a reviewer wants to know where things stand *now* — not after everything stops.
+
+### 10k.1 The constraint that shapes it
+
+**Release-gate must not become the orchestrator.** Every phase here is an
+observation about evidence, never an instruction. There is no
+`begin_verification()`, no `request_review()`, nothing imperative — asserted by a
+test that scans the module for imperative names. `observe_phase()` is a pure
+function of a case: the same case always yields the same phase, reading it
+changes nothing, and reading a live session does not finalize it.
+
+Release-gate reports `VERIFYING` because verification attempts are arriving, not
+to announce that verification should begin. `PhaseObservation.directs_work` is an
+unconditional `False`. When a case sits in `EVIDENCE_ACCUMULATING` with an
+unresolved contradiction, release-gate says so and stops: it does not pause the
+agents, schedule a verifier or retry anything. An orchestrator watching may do
+all three — that is its job, and the separation is what lets one assurance engine
+sit behind many orchestrators without owning any.
+
+**Transitions are reported, never enforced.** Release-gate cannot refuse a
+transition because it does not control the world: if evidence arrived after a
+human started reviewing, that happened. A backward move is a *finding* — the
+reviewer holds a view about a case that has since changed — not an error to
+reject. There is deliberately no `permitted()` and no `enforce_transition()`.
+
+### 10k.2 Two axes, deliberately not merged
+
+`CaseState` (DRAFT / SEALED / APPROVED / SUPERSEDED / INVALIDATED) is the
+*record's* integrity lifecycle: SEALED means the digest is fixed and a verdict
+may be attached. `AssurancePhase` is the *work's* progress. Folding them would
+mean a case could not be both "evidence still arriving" and "this snapshot is
+sealed and digested" — which is what a long-running case is every time somebody
+reads it, and is asserted directly.
+
+### 10k.3 The eight phases, and what each is read from
+
+| phase | read from |
+|---|---|
+| `OPEN` | nothing **submitted** has arrived |
+| `EVIDENCE_ACCUMULATING` | records arriving, nothing identifiable asserted |
+| `CANDIDATE_READY` | a claim or a submitted artifact exists, nothing has checked it |
+| `VERIFYING` | verification attempts recorded, settled or not, case still open |
+| `HUMAN_REVIEW` | a verdict rendered on a sealed case, unanswered |
+| `APPROVED` · `REJECTED` | a person's decision, read rather than inferred |
+| `INVALIDATED` | the case record or the approval says what was judged has moved |
+
+### 10k.4 Three derivation defects, found by driving a case through
+
+**Every session reported `CANDIDATE_READY` before anyone sent anything.**
+Release-gate records its own work as evidence — the input container it hashed,
+plus the consequence, independence and criticality profiles it derived — so an
+empty case already held three evidence records. Submitted work now means work
+whose producer is somebody other than release-gate; a record with no producer at
+all was not submitted by anybody. `OPEN` was unreachable before this.
+
+**The subject digest could not mark a candidate.** Release-gate always sets one,
+because it hashes whatever it was handed, so every case looked like it had a
+candidate from the first record and `EVIDENCE_ACCUMULATING` was unreachable too.
+What makes a candidate is somebody *asserting* something — a claim, or an
+artifact submitted with a digest. Raw trace evidence piling up is work happening,
+which is a different thing.
+
+**A passed test suite read as "nothing has checked it".** Attempts submitted
+through the envelope arrive embedded on their claims, so the `verification`
+collection stays empty and counting it was wrong. Read through
+`VerificationGraph` instead, which folds both places attempts live.
+
+### 10k.5 Weaknesses while the work continues
+
+`observe_session()` runs the provisional analysis, so a caller gets what
+release-gate can already see while the external system is still operating — a
+contradiction detected at minute three is worth far more than the same
+contradiction at hour six. Reading does not finalize the session, and more
+evidence can arrive afterwards.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
