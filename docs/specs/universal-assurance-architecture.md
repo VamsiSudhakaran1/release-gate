@@ -2234,6 +2234,112 @@ Invariant 14 in practice: not every graph is mandatory.
 
 ---
 
+## 10d. Progressive assurance (`AssuranceLevel`)
+
+> **Implemented.** `release_gate/assurance/level.py` — `AssuranceLevel`,
+> `LevelAssessment`, `assess_level()`; consumed by `zero_config.assure()` and
+> packet §9. Stdlib-only, and it imports nothing from the package.
+
+Progressive assurance was Invariant 14 and a paragraph in §0.1 — a principle the
+analysers honoured and **nothing in the code ever named**. The degrade-gracefully
+half was already true: analysers no-op on an absent collection rather than
+inventing one. What was missing is that no case ever stated its own depth, so
+every case was *reported* in the vocabulary of the deepest one.
+
+Measured, before this section existed. A PROMOTE'd one-agent "send an invoice
+reminder": **21 coverage dimensions, nine of them about replication, adversarial
+review, criticality, counterexamples and failed branches**, each NOT_ASSESSED.
+The same case on HOLD: **two of its three required-evidence items asked for an
+independently-operated producer and a typed verification**, while the one thing
+that would actually resolve it — say what the action does — sat third.
+That is forcing Level 4 onto Level 0.
+
+### 10d.1 The five levels
+
+| level | the question | what it turns on |
+|---|---|---|
+| **L0** MINIMAL | one agent, low consequence | what happened, and what it was asked to do |
+| **L1** ATTRIBUTED | one agent, consequential | action provenance, subject integrity, authorization |
+| **L2** ORCHESTRATED | a multi-agent workflow | execution lineage, artifact provenance |
+| **L3** CORROBORATED | a high-impact workflow | independent verification, contradictions, assumptions |
+| **L4** FRONTIER | research, critical infrastructure | claim graph, formal verification, adversarial review, replication |
+
+The names are scales, not scores. **Level 0 is not a worse case than Level 4; it
+is a smaller question.**
+
+### 10d.2 Two numbers, never one
+
+`supported` is the depth the evidence present can sustain. `required` is the
+depth this decision demands, from the three inputs the contract names — case
+type, methodology, available evidence — with consequence folded into `required`
+because it is what separates "send a reminder" from "send a termination notice"
+when the two produce identical traces. Collapsing them into a single "level"
+would lose the only interesting fact: which is larger. `required > supported` is
+the gap worth leading with; `supported > required` is a team being thorough and
+is never a penalty.
+
+Where the builtin profiles land: `general-autonomous-action` and
+`general-agent-action` require **L1**; `software-change`,
+`production-database-change` and `software-agent-assurance` require **L3**;
+`research-assurance` requires **L4**.
+
+### 10d.3 The level is not a gate
+
+**It is computed after `decide()`, from the sealed case, and consumed only by
+reporting and ordering.** No analyser reads it, no finding's effect is softened
+by it, and no verdict consults it. A level that could stop release-gate from
+looking would be a way to launder a finding out of a case, which is the exact
+opposite of the point.
+
+Asserted directly rather than assumed: a Level 3 contradiction planted in a
+Level 1 case is still detected, still ranked into Human Attention, and **still
+BLOCKs**, with the `contradiction` dimension sitting out of scope the whole time.
+
+Scope is a statement about **depth**, never about results. An early version
+partitioned on coverage state instead, and got it backwards: `assessed` does not
+mean the same thing across dimensions — for the ledger dimensions it means
+*settled*, so an OPEN contradiction reads NOT_ASSESSED — and the case carrying a
+live contradiction was the one reporting that dimension as unexamined.
+
+Out-of-scope dimensions keep their coverage rows and their states. They are
+grouped and counted, never dropped: NOT_ASSESSED is first-class (Invariant 3),
+and a matrix that silently omitted rows would claim a completeness nobody
+established.
+
+### 10d.4 What it changes
+
+* **Packet §9** separates "dimensions this decision was expected to cover and did
+  not" from "dimensions that apply above this depth", and lists the first group
+  first. The L1 email send reads *3 in-depth gaps and 7 above depth* instead of
+  ten undifferentiated failures.
+* **Required evidence** is re-ranked so proportionate asks come first — the L1
+  case now leads with "declare reversibility and scope". Above-level asks are
+  **kept and ranked last, never dropped**; the gap they describe is real.
+
+### 10d.5 Two derivation traps, both hit
+
+* **Presence is not population.** Release-gate marks a collection PRESENT to mean
+  *this was looked for*, so every case has empty frontier ledgers. Reading
+  presence rated a one-agent email send as FRONTIER-**supported** on the strength
+  of five empty ledgers. `supported` reads record counts.
+* **One node is not a relation.** Level 2 is execution lineage and artifact
+  provenance, both claims about how things relate, and every zero-config run
+  creates an artifact for the input file itself — so a threshold of one rated
+  that same email send as carrying multi-agent workflow structure. L2 collections
+  need two records; L3 and L4 collections are about a kind of evidence existing
+  at all, so one is enough.
+
+Level 1 is the one level no collection represents — "action provenance and
+subject integrity" is a property of records the case already holds — so it is
+asserted from named signals (`subject_digest`, `execution_reconstructed`,
+`producers_identified`) rather than inferred from a count.
+
+An unclassified dimension is treated as **L0**, so a newly added dimension shows
+up in every case and gets noticed rather than silently vanishing from the small
+ones.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → repository

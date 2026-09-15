@@ -23,6 +23,7 @@ the system already uses: `METHODOLOGY_REQUIRED`, `NOT_ASSESSED`, `HOLD`.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -34,10 +35,12 @@ from release_gate.assurance.attention import (
     HumanAttentionSet, RequiredEvidenceSet, build_attention, build_required_evidence,
 )
 from release_gate.assurance.capabilities import CapabilitySurface
+from release_gate.assurance.level import LevelAssessment, assess_level
 from release_gate.assurance.consequence import (
     ConsequenceProfile, ConsequenceRegistry, default_consequence_registry,
 )
 from release_gate.assurance.case import (
+    COLLECTION_KINDS,
     AssuranceCase, AssuranceCaseBuilder, CaseVerdict, Decision, MethodologyRef,
     default_case_type,
 )
@@ -108,6 +111,11 @@ class AssuranceOutcome:
     attention: HumanAttentionSet
     required_evidence: RequiredEvidenceSet
     consequence: ConsequenceProfile = field(default_factory=ConsequenceProfile)
+    #: How deep this case goes and how deep it needs to go. Derived after the
+    #: fact and consumed only by reporting: no analyser reads it, and it can
+    #: neither soften a finding nor change a verdict.
+    level: LevelAssessment = field(
+        default_factory=lambda: assess_level())
 
     @property
     def decision(self) -> Decision:
@@ -1094,10 +1102,38 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
                      methodology=methodology, consequence=consequence)
     decided = final.seal().render_verdict(verdict)
 
+    # Derived last, from the sealed case, and deliberately AFTER `decide`. The
+    # level describes a case that has already been analysed and ruled on in full;
+    # computing it earlier would invite a future edit to branch analysis on it,
+    # which is exactly the suppression channel this must never become.
+    level = assess_level(
+        case_type=decided.case_type, methodology=methodology,
+        consequence=consequence,
+        # Collections that HOLD something, not ones merely marked PRESENT:
+        # PRESENT means "this was looked for", so every case has empty frontier
+        # ledgers and reading presence here rated an email send as FRONTIER.
+        populated_collections={kind: decided.collection(kind).total_count
+                               for kind in COLLECTION_KINDS
+                               if decided.collection(kind).total_count > 0},
+        dimensions=[str(r.to_dict().get("dimension") or "")
+                    for r in decided.collection("coverage").materialised],
+        signals={
+            "subject_digest": bool(getattr(decided.subject, "digest", "")),
+            "execution_reconstructed": normalisation.execution is not None,
+            "producers_identified": any(
+                getattr(getattr(r, "producer", None), "producer_id", "")
+                for r in decided.collection("evidence").materialised)})
+
+    # Proportionate asks first. Nothing is dropped — an above-level requirement
+    # describes a real gap — but a Level 1 case should be told to state its
+    # consequence before it is told to find a second independent producer.
+    required = dataclasses.replace(
+        required, items=level.order_requirements(required.items))
+
     return AssuranceOutcome(case=decided, normalisation=normalisation,
                             analysis=analysis, assessment=assessment,
                             attention=attention, required_evidence=required,
-                            consequence=consequence)
+                            consequence=consequence, level=level)
 
 
 # ── rendering ────────────────────────────────────────────────────────────────

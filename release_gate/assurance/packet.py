@@ -662,7 +662,8 @@ def _failures_section(outcome: Any, analysis: Any) -> PacketSection:
               if dropped else ""))
 
 
-def _not_assessed_section(case: Any, analysis: Any) -> PacketSection:
+def _not_assessed_section(case: Any, analysis: Any,
+                          level: Any = None) -> PacketSection:
     """What was never looked at, read from the sealed case rather than the analysis.
 
     The analysis carries a coverage ledger built while it was still running, so
@@ -686,15 +687,32 @@ def _not_assessed_section(case: Any, analysis: Any) -> PacketSection:
         state = str(payload.get("state") or payload.get("status") or "")
         note = str(payload.get("note") or "")[:110]
         if state == "NOT_ASSESSED":
+            # A dimension that applies above this decision's depth is still
+            # listed — it is genuinely NOT_ASSESSED and Invariant 3 does not
+            # bend — but it is labelled as out of depth rather than left to read
+            # as a gap. A Level 1 action that has not been replicated is not a
+            # Level 1 action with a replication problem.
+            above = bool(level is not None and dimension in (level.out_of_scope or ()))
             unexamined.append({"label": f"NOT ASSESSED — {dimension}",
-                               "detail": note or "never examined",
-                               "state": "NOT_ASSESSED"})
+                               "detail": ((note + " " if note else "")
+                                          + f"(applies above {level.required.label}; "
+                                            "not expected at this depth)").strip()
+                                         if above else (note or "never examined"),
+                               "state": "NOT_ASSESSED",
+                               "above_level": above})
         elif state == "UNKNOWN":
             unmeasured.append({"label": f"NO DENOMINATOR — {dimension}",
                                "detail": note or ("examined; nothing states how much "
                                                   "there should have been, so no "
                                                   "proportion exists"),
                                "state": "UNKNOWN"})
+    # In-depth gaps first: a dimension this decision was expected to populate and
+    # did not is the one a reviewer must act on, and it must not be buried under
+    # frontier structures a small case was never going to carry. Sorted before
+    # the concatenation, because sorting afterwards leaves `rows` untouched.
+    unexamined.sort(key=lambda r: bool(r.get("above_level")))
+    above_count = sum(1 for r in unexamined if r.get("above_level"))
+    in_depth = len(unexamined) - above_count
     rows: List[Dict[str, Any]] = unexamined + unmeasured
     criticality = getattr(analysis, "criticality", None)
     if criticality is not None and not criticality.determinable:
@@ -707,12 +725,20 @@ def _not_assessed_section(case: Any, analysis: Any) -> PacketSection:
         if collection.presence.value == "ABSENT":
             rows.append({"label": kind, "detail": "collection never supplied"})
     shown, hidden, total, basis = _rows(rows)
+    if total and above_count:
+        answer = (f"{in_depth} dimension(s) this decision was expected to cover were "
+                  f"never examined; a further {above_count} apply above "
+                  f"{level.required.label} and are not expected at this depth; "
+                  f"{len(unmeasured)} were examined with no denominator")
+    elif total:
+        answer = (f"{len(unexamined)} dimension(s) were never examined; "
+                  f"{len(unmeasured)} were examined with no denominator, so their "
+                  "coverage is UNKNOWN rather than a percentage")
+    else:
+        answer = "Every dimension release-gate examines was assessed."
     return PacketSection(
         key=SectionKey.NOT_ASSESSED,
-        answer=(f"{len(unexamined)} dimension(s) were never examined; "
-                f"{len(unmeasured)} were examined with no denominator, so their "
-                "coverage is UNKNOWN rather than a percentage" if total
-                else "Every dimension release-gate examines was assessed."),
+        answer=answer,
         rows=shown, truncated=hidden, total=total, basis=basis,
         drill_down=("coverage",),
         note=("This section carries the same weight as section 3. An unassessed "
@@ -801,7 +827,7 @@ def build_packet(case: Any, outcome: Any = None, *,
                                        "new human act"},),
                       drill_down=("approvals",), total=1,
                       note=delta.basis),
-        _not_assessed_section(case, analysis),
+        _not_assessed_section(case, analysis, getattr(outcome, "level", None)),
         _recommendation_section(case, outcome),
         _binding_section(case),
     )
