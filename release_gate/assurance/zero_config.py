@@ -86,6 +86,9 @@ RULE_METHODOLOGY_REQUIRED = "RG-ZC-001"
 RULE_STRUCTURAL_BLOCK = "RG-ZC-002"
 RULE_STRUCTURAL_HOLD = "RG-ZC-003"
 RULE_METHODOLOGY_SATISFIED = "RG-ZC-004"
+#: A structural HOLD the methodology accepted up front. Named on the verdict so
+#: the audit trail shows an acceptance was applied rather than a shorter list.
+RULE_STRUCTURAL_ACCEPTED = "RG-ZC-005"
 
 _EXIT = {Decision.PROMOTE: 0, Decision.HOLD: 10, Decision.BLOCK: 1}
 
@@ -843,7 +846,9 @@ def _subject_for(path: Path, normalisation: Normalisation,
 # ── the decision ─────────────────────────────────────────────────────────────
 
 def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
-           has_methodology: bool) -> CaseVerdict:
+           has_methodology: bool,
+           methodology: Optional[AssuranceMethodology] = None,
+           consequence: Optional[ConsequenceProfile] = None) -> CaseVerdict:
     """Compose structural findings and methodology assessment into one verdict.
 
     The ordering is deliberate. Structural BLOCKs come first because they are
@@ -854,6 +859,22 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
     Then sufficiency. With no methodology the answer is HOLD and the reason is
     `METHODOLOGY_REQUIRED` — never PROMOTE, and never a silently generous
     default. That branch is the whole point of this module.
+
+    **Accepted structural holds.** A methodology may declare, up front, that a
+    named structural HOLD is not disqualifying for the class of decision it
+    covers (`AcceptedFinding`). This exists because some findings are
+    tautological at a given scale: "all evidence traces to a single producer" is
+    true by construction of every one-agent case, and holding on it means an
+    ordinary single-agent action can never be promoted however much evidence it
+    carries — penalising a case for being small, which is the volume judgement
+    Invariants 6 and 12 refuse.
+
+    The acceptance is narrow and loud. Only HOLD findings are eligible; a
+    structural BLOCK is never accepted, and `blocking` is not consulted here at
+    all. Each acceptance is recorded in `reasons` with the methodology's own
+    rationale, so the verdict states what was accepted and why rather than
+    quietly showing a shorter list. The finding itself still reaches Human
+    Attention and the packet: this narrows what *blocks*, never what is *shown*.
     """
     fired: List[str] = []
     reasons: List[str] = []
@@ -861,6 +882,26 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
     blocking = analysis.blocking
     holding = analysis.holding
     decision = Decision.HOLD
+
+    # Which structural holds this methodology has accepted, given what the case
+    # actually states about consequence. Computed before any branch so that the
+    # acceptance is recorded even on a case that BLOCKs for another reason.
+    accepted_holds: List[Tuple[Finding, Any]] = []
+    if methodology is not None and holding:
+        stated = {d.dimension.value: d.value for d in (consequence.known if consequence
+                                                       else ())}
+        for finding in holding:
+            accepted = methodology.acceptance_for(finding.rule_id, stated)
+            if accepted is not None:
+                accepted_holds.append((finding, accepted))
+    if accepted_holds:
+        accepted_ids = {f.rule_id for f, _ in accepted_holds}
+        holding = tuple(f for f in holding if f.rule_id not in accepted_ids)
+        for finding, acceptance in accepted_holds:
+            reasons.append(
+                f"{finding.rule_id}: accepted by {assessment.methodology_ref} — "
+                f"{acceptance.rationale}. The finding stands and is shown; this "
+                "methodology does not treat it as disqualifying here.")
 
     if blocking:
         decision = Decision.BLOCK
@@ -923,6 +964,9 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
     if holding and decision is Decision.HOLD and RULE_STRUCTURAL_HOLD not in fired:
         fired.append(RULE_STRUCTURAL_HOLD)
         reasons.extend(f"{f.rule_id}: {f.summary}" for f in holding)
+
+    if accepted_holds:
+        fired.append(RULE_STRUCTURAL_ACCEPTED)
 
     if not fired:
         # Reachable only with a methodology that has no applicable requirements.
@@ -1046,7 +1090,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
                "attention_items": list(attention.items),
                "required_evidence": list(required.items)})
 
-    verdict = decide(analysis, assessment, has_methodology=methodology is not None)
+    verdict = decide(analysis, assessment, has_methodology=methodology is not None,
+                     methodology=methodology, consequence=consequence)
     decided = final.seal().render_verdict(verdict)
 
     return AssuranceOutcome(case=decided, normalisation=normalisation,

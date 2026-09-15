@@ -45,6 +45,7 @@ import dataclasses
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.canonical import (
@@ -63,13 +64,18 @@ from release_gate.assurance.expectation import CoverageState
 from release_gate.assurance.records import Presence
 from release_gate.assurance.subject import SubjectType
 
-#: Bumped to 2 when `CoverageDimensionDeclared` gained `require_assessed`. A
+#: Bumped to 2 when `CoverageDimensionDeclared` gained `require_assessed`, and to
+#: 3 when methodologies gained `accepted_findings`. A
 #: methodology serialised under v1 still loads — the field defaults to False,
 #: which is exactly the old behaviour — but its *digest* changes, because the
 #: predicate now serialises one more key. Anything that pinned a v1 methodology
 #: digest must re-pin. Reported rather than hidden: a digest that silently
 #: changes meaning is the failure content addressing exists to prevent.
-METHODOLOGY_MODEL_VERSION = 2
+METHODOLOGY_MODEL_VERSION = 3
+
+#: An immutable empty mapping, so a default argument cannot be mutated by a
+#: caller and every call site shares one object.
+_EMPTY_MAP: Mapping[str, str] = MappingProxyType({})
 
 #: Record field names the predicates read. Declared here so the evidence and
 #: claim types defined by later prompts land on the same names rather than
@@ -1909,6 +1915,107 @@ class OverrideRule:
 
 
 @dataclass(frozen=True)
+class AcceptedFinding:
+    """A structural HOLD this methodology does not treat as disqualifying.
+
+    The sibling of `accepted_verification_types`: both are a methodology stating
+    its standards up front, before any case exists. This is emphatically **not**
+    `OverrideRule`, which is a person waiving a requirement at decision time and
+    carries an actor, a role and a recorded act. Merging the two would invent an
+    actor where there is none and lose one where there is.
+
+    It exists because some structural findings are *tautological* at a given
+    scale. `RG-PROV-002` ("all evidence traces to a single producer") is true by
+    construction of every one-agent case, and holding on it means the ordinary
+    single-agent action can never be promoted however much evidence it carries —
+    penalising a case for being small, which is a volume judgement of exactly the
+    kind Invariants 6 and 12 refuse.
+
+    Four properties keep this from becoming a suppression channel:
+
+    * **HOLD only.** A structural BLOCK can never be accepted; `decide()` treats
+      blocking findings as facts about the evidence that no yardstick waves
+      through, and this does not change that.
+    * **A rationale is mandatory.** A methodology that cannot say why is not
+      making a judgement.
+    * **The ceiling denies UNKNOWN.** Acceptance conditioned on consequence
+      applies only where that consequence is actually *stated* at or below the
+      named value. UNKNOWN is not "low" (Invariant 3) — an unstated consequence
+      is an unassessed one, never a small one.
+    * **Nothing is hidden.** The finding still reaches Human Attention and the
+      packet, and the acceptance and its rationale are recorded in the verdict.
+      This narrows what *blocks*; it never narrows what is *shown*.
+    """
+
+    rule_id: str
+    rationale: str
+    #: Dimension -> the values at which acceptance still applies. Empty means
+    #: unconditional. A dimension absent from the case, or present as UNKNOWN,
+    #: never satisfies the ceiling.
+    max_consequence: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        rule_id = str(self.rule_id or "").strip()
+        if not rule_id:
+            raise MethodologyError("an accepted finding must name a rule id")
+        object.__setattr__(self, "rule_id", rule_id)
+        if not str(self.rationale or "").strip():
+            raise MethodologyError(
+                f"{rule_id}: an accepted finding must carry a rationale; a "
+                "methodology that cannot say why it accepts a finding is not "
+                "making a judgement")
+        object.__setattr__(self, "rationale", str(self.rationale).strip())
+        ceiling = {
+            str(dim).strip().upper(): tuple(
+                sorted({str(v).strip().upper() for v in values if str(v).strip()}))
+            for dim, values in dict(self.max_consequence or {}).items()
+            if str(dim).strip()}
+        for dim, values in ceiling.items():
+            if not values:
+                raise MethodologyError(
+                    f"{rule_id}: the {dim} ceiling names no values; an empty ceiling "
+                    "would accept every value including UNKNOWN")
+            if "UNKNOWN" in values:
+                raise MethodologyError(
+                    f"{rule_id}: UNKNOWN cannot appear in a consequence ceiling. An "
+                    "unstated consequence is an unassessed one, never a small one "
+                    "(Invariant 3)")
+        object.__setattr__(self, "max_consequence", dict(ceiling))
+
+    def applies_to(self, stated: Mapping[str, str]) -> bool:
+        """Does this acceptance hold, given what the case states about consequence?
+
+        `stated` maps dimension to value for dimensions the case actually
+        declares. A dimension the ceiling guards which is missing, or UNKNOWN,
+        fails — the caller never has to remember to special-case that.
+        """
+        for dimension, permitted in self.max_consequence.items():
+            value = str(stated.get(dimension, "UNKNOWN") or "UNKNOWN").upper()
+            if value == "UNKNOWN" or value not in permitted:
+                return False
+        return True
+
+    def describe(self) -> str:
+        if not self.max_consequence:
+            return f"{self.rule_id} is accepted: {self.rationale}"
+        terms = "; ".join(
+            f"{dim} in {{{', '.join(values)}}}"
+            for dim, values in sorted(self.max_consequence.items()))
+        return f"{self.rule_id} is accepted where {terms}: {self.rationale}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"rule_id": self.rule_id, "rationale": self.rationale,
+                "max_consequence": {k: list(v)
+                                    for k, v in sorted(self.max_consequence.items())}}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "AcceptedFinding":
+        return cls(rule_id=data["rule_id"], rationale=data.get("rationale", ""),
+                   max_consequence={k: tuple(v) for k, v in
+                                    (data.get("max_consequence") or {}).items()})
+
+
+@dataclass(frozen=True)
 class OverrideDecision:
     """The answer to 'may this be waived here?', with its reason."""
 
@@ -1942,6 +2049,7 @@ class AssuranceMethodology:
     requirements: Tuple[Requirement, ...] = ()
     criticality_rules: Tuple[CriticalityRule, ...] = ()
     accepted_verification_types: Tuple[str, ...] = ()
+    accepted_findings: Tuple[AcceptedFinding, ...] = ()
     minimum_evidence_expectations: Tuple[EvidenceExpectation, ...] = ()
     independence_requirements: Tuple[IndependenceRequirement, ...] = ()
     coverage_expectations: Tuple[CoverageExpectation, ...] = ()
@@ -1969,6 +2077,7 @@ class AssuranceMethodology:
 
         object.__setattr__(self, "case_types", tuple(CaseType(c) for c in self.case_types))
         for name in ("requirements", "criticality_rules", "accepted_verification_types",
+                     "accepted_findings",
                      "minimum_evidence_expectations", "independence_requirements",
                      "coverage_expectations", "override_rules", "non_overridable_conditions"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
@@ -2052,6 +2161,20 @@ class AssuranceMethodology:
         """Is this a verification type this methodology will credit? (Invariant 8)"""
         return (not self.accepted_verification_types
                 or verification_method in self.accepted_verification_types)
+
+    def acceptance_for(self, rule_id: str,
+                       stated_consequence: Mapping[str, str] = _EMPTY_MAP
+                       ) -> Optional[AcceptedFinding]:
+        """The acceptance covering this structural finding here, if any.
+
+        Returns the `AcceptedFinding` only when its consequence ceiling actually
+        holds for what the case states, so a caller cannot accidentally apply an
+        acceptance whose conditions were never met.
+        """
+        for accepted in self.accepted_findings:
+            if accepted.rule_id == rule_id and accepted.applies_to(stated_consequence):
+                return accepted
+        return None
 
     def criticality_for(self, collection: str, record: Mapping[str, Any]) -> Optional[Criticality]:
         """The highest criticality any rule assigns, or None.
@@ -2141,6 +2264,7 @@ class AssuranceMethodology:
             requirements=tuple(self.requirements) + tuple(add_requirements),
             criticality_rules=tuple(self.criticality_rules) + tuple(add_criticality_rules),
             accepted_verification_types=accepted,
+            accepted_findings=tuple(self.accepted_findings),
             minimum_evidence_expectations=(tuple(self.minimum_evidence_expectations)
                                            + tuple(add_evidence_expectations)),
             independence_requirements=(tuple(self.independence_requirements)
@@ -2166,6 +2290,7 @@ class AssuranceMethodology:
             "requirements": [r.to_dict() for r in self.requirements],
             "criticality_rules": [r.to_dict() for r in self.criticality_rules],
             "accepted_verification_types": list(self.accepted_verification_types),
+            "accepted_findings": [a.to_dict() for a in self.accepted_findings],
             "minimum_evidence_expectations": [e.to_dict()
                                               for e in self.minimum_evidence_expectations],
             "independence_requirements": [i.to_dict() for i in self.independence_requirements],
@@ -2219,6 +2344,8 @@ class AssuranceMethodology:
             criticality_rules=tuple(CriticalityRule.from_dict(r)
                                     for r in data.get("criticality_rules", ())),
             accepted_verification_types=tuple(data.get("accepted_verification_types", ())),
+            accepted_findings=tuple(AcceptedFinding.from_dict(a)
+                                    for a in data.get("accepted_findings", ())),
             minimum_evidence_expectations=tuple(
                 EvidenceExpectation.from_dict(e)
                 for e in data.get("minimum_evidence_expectations", ())),

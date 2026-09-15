@@ -2130,6 +2130,110 @@ and the reason the audit path did not need a parallel architecture.
 
 ---
 
+## 10c. The general autonomous action profile (`RG-ACT-*`)
+
+> **Implemented.** `release_gate/assurance/methodologies.py` —
+> `GENERAL_AUTONOMOUS_ACTION_V1`; `AcceptedFinding` in `methodology.py`;
+> the acceptance branch in `zero_config.decide()`.
+
+The ordinary case, and the one most teams actually have: **one agent, one
+action, the execution record it produced, and verification only where it happens
+to exist.** Send an email. Modify a record. Execute a transaction. Deploy an
+app. Change cloud infrastructure.
+
+### 10c.1 The problem this exposed
+
+`decide()` computed `elif unmet_hold or holding:` — *any* structural finding with
+HOLD effect forced HOLD, and no methodology could speak to it. Two findings fire
+on every single-agent action:
+
+* `RG-PROV-002` "all evidence traces to a single producer" — **tautological**
+  when there is one agent.
+* `RG-VERIF-001` "nothing in this case was verified".
+
+So **PROMOTE was unreachable for the entire one-agent scale**, whatever the
+operator supplied; a case with all eleven consequence dimensions declared still
+held on both. The only case in the repository that reached PROMOTE carried a
+claim graph, two producers and two typed verifications — exactly the research
+machinery this scale does not have. A gate that can only refuse the ordinary
+case is not a gate; it is an outage.
+
+### 10c.2 `AcceptedFinding`
+
+A methodology may declare, up front, that a named structural HOLD is not
+disqualifying for the class of decision it covers. It is the sibling of
+`accepted_verification_types` — both are a methodology stating its standards
+before any case exists — and deliberately **not** `OverrideRule`, which is a
+person waiving a requirement at decision time and carries an actor, a role and a
+recorded act. Merging them would invent an actor where there is none and lose one
+where there is.
+
+Four properties stop it becoming a suppression channel:
+
+* **HOLD only.** `decide()` never consults acceptance for a blocking finding.
+  A structural BLOCK is a fact about the evidence that no yardstick waves
+  through, and a methodology naming every BLOCK on a case as accepted still
+  gets BLOCK.
+* **A rationale is mandatory.** A methodology that cannot say why is not making
+  a judgement, and the constructor refuses it.
+* **The ceiling denies UNKNOWN.** An acceptance conditioned on consequence
+  applies only where that consequence is *stated* at or below the named value.
+  A guarded dimension that is missing or UNKNOWN fails the ceiling, and UNKNOWN
+  may not even appear in one: an unstated consequence is an unassessed one,
+  never a small one (Invariant 3).
+* **Nothing is hidden.** The finding still reaches Human Attention and the
+  packet; the verdict records the acceptance and its rationale and fires
+  `RG-ZC-005`. This narrows what **blocks**, never what is **shown**.
+
+### 10c.3 The profile
+
+| rule | fires when | does *not* fire when | NOT_ASSESSED when |
+|---|---|---|---|
+| `subject.identified` | no digest binds the subject | a digest binds it | never |
+| `contradictions.resolved` | any contradiction is open | all resolved | collection never supplied |
+| **RG-ACT-001** EXECUTION_RECORD_ABSENT | `execution_reconstruction` is NOT_ASSESSED | an execution graph was rebuilt | never — a missing row is UNSATISFIED |
+| **RG-ACT-002** CONSEQUENCE_UNSTATED | reversibility or scope is not stated | both carry a value | never |
+| **RG-ACT-003** COVERAGE_UNSTATED | the `overall` dimension is absent | coverage is stated, whatever it says | collection never supplied |
+
+`subject.identified` and `RG-ACT-001` cannot be waived — without an execution
+record there is nothing to promote on.
+
+**`RG-ACT-002` is the load-bearing requirement.** Both acceptances are
+conditioned on stated consequence, so a case that declines to say what the action
+would do gets neither and holds. Release-gate cannot derive from a trace whether
+sending an email is a reminder or a termination notice; the operator states the
+stakes, and the profile then holds them to it.
+
+The two acceptances apply only inside `_BOUNDED_ACTION`: reversible or reversible
+with effort, single-subject or bounded scope, no or bounded financial impact, no
+security impact, no legal impact. Outside those bounds the action is not
+"risky" — it is simply beyond what one unverified actor's own account can settle,
+and it holds.
+
+| stated consequence | verdict |
+|---|---|
+| none declared | HOLD — required evidence names `RG-ACT-002` |
+| bounded (send a reminder email) | **PROMOTE**, with no claims and one producer |
+| irreversible | HOLD |
+| grants access, unbounded financial, broad scope | HOLD |
+
+### 10c.4 The tension, stated
+
+Acceptance keys on *declared* consequence, so an operator's assertion is what
+unlocks PROMOTE — friction with Invariant 1 (evidence over assertion). It is
+resolved rather than hidden: consequence is inherently a domain statement nobody
+can derive from a trace, the architecture already treats it that way
+(`ConsequenceDeclared`, `RG-SW-010`), and the acceptance is recorded in the
+verdict and packet with its rationale. A false declaration is attributable to
+whoever made it through the approval binding. The profile does not certify that
+the action was correct; it records the basis on which it was authorised —
+which is what Invariant 15 says an approval is.
+
+**No claim graph, no replication, no adversarial review, no second producer.**
+Invariant 14 in practice: not every graph is mandatory.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → repository
@@ -2145,8 +2249,9 @@ and the reason the audit path did not need a parallel architecture.
 * **Versioned and bound.** The methodology id and version sit in the case digest,
   so tightening a methodology invalidates prior approvals rather than silently
   re-grading them.
-* **`METHODOLOGY_MODEL_VERSION` is 2.** Bumped when `CoverageDimensionDeclared`
-  gained `require_assessed` (§10b). A methodology serialised under v1 still
+* **`METHODOLOGY_MODEL_VERSION` is 3.** Bumped when `CoverageDimensionDeclared`
+  gained `require_assessed` (§10b), and again when methodologies gained
+  `accepted_findings` (§10c). A methodology serialised under v1 still
   loads — the field defaults to `False`, which is the old behaviour exactly — but
   its **digest changes**, because the predicate now serialises one more key.
   Anything that pinned a v1 methodology digest must re-pin. Stated rather than

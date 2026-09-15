@@ -195,6 +195,7 @@ from release_gate.assurance.methodologies import (
 )
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
+    AcceptedFinding,
     AdversarialReviewRequired,
     AssessmentStatus,
     AncestryIndependence,
@@ -401,6 +402,7 @@ __all__ = [
     "APPROVAL_SCHEMA_VERSION",
     "ARTIFACT_SCHEMA_VERSION",
     "ASSUMPTION_SCHEMA_VERSION",
+    "AcceptedFinding",
     "AdversarialError",
     "AdversarialFinding",
     "AdversarialOutcome",

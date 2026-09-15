@@ -29,6 +29,7 @@ from __future__ import annotations
 from release_gate.assurance.case import CaseType
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
+    AcceptedFinding,
     AdversarialReviewRequired,
     AppliesToCurrentState,
     AssumptionsExamined,
@@ -742,6 +743,129 @@ SOFTWARE_AGENT_ASSURANCE_V1 = AssuranceMethodology(
                                 "subject.identified"))
 
 
+# ── the ordinary case ───────────────────────────────────────────────────────
+# Send an email. Modify a record. Execute a transaction. Deploy an app. Change
+# cloud infrastructure. One agent, one action, and whatever evidence happens to
+# exist — which is most of the work most teams actually put through a gate.
+
+#: Consequence bounded enough that a single operator acting alone, with the
+#: action's own execution record and no independent check, is a proportionate
+#: basis for promotion. Everything outside this is not "risky" — it is simply
+#: beyond what one unverified actor's own account can settle, and it holds.
+_BOUNDED_ACTION = {
+    "REVERSIBILITY": ("REVERSIBLE", "REVERSIBLE_WITH_EFFORT"),
+    "SCOPE": ("SINGLE_SUBJECT", "BOUNDED_SET"),
+    "FINANCIAL_IMPACT": ("NONE", "BOUNDED"),
+    "DATA_IMPACT": ("NONE", "READ", "MODIFIED"),
+    "SECURITY_IMPACT": ("NONE",),
+    "LEGAL_IMPACT": ("NONE",),
+}
+
+GENERAL_AUTONOMOUS_ACTION_V1 = AssuranceMethodology(
+    methodology_id="general-autonomous-action",
+    version="1.0.0",
+    domain="general",
+    description=(
+        "The profile for an ordinary autonomous action: one agent, one task, the "
+        "execution record it produced, and verification only where it happens to "
+        "exist. It asks for four things — an identified subject, an execution "
+        "record that was actually reconstructed, a statement of what the action "
+        "would do, and coverage — and it promotes on that basis when the stated "
+        "consequence is bounded.\n\n"
+        "It requires no claim graph, no replication, no adversarial review and no "
+        "independent producer, because a single agent doing a single task has "
+        "none of those by construction and demanding them would mean the ordinary "
+        "case can never be promoted at all. What it does instead is make the "
+        "consequence declaration load-bearing: the two structural holds that are "
+        "tautological at this scale are accepted only while the action stays "
+        "inside bounds the operator has actually stated, and an unstated "
+        "consequence is an unassessed one rather than a small one."),
+    case_types=ALL_CASE_TYPES,
+    requirements=(
+        _SUBJECT_IDENTIFIED,
+        _NO_OPEN_CONTRADICTIONS,
+
+        # RG-ACT-001 EXECUTION_RECORD_ABSENT
+        # Fires when: the execution_reconstruction dimension is NOT_ASSESSED —
+        # no trace, or telemetry too thin to rebuild what happened.
+        # Does not fire when: an execution graph was reconstructed.
+        # NOT_ASSESSED when: never — a missing row is UNSATISFIED, because
+        # "what did it do?" is the one question this profile cannot skip.
+        Requirement(
+            requirement_id="RG-ACT-001",
+            description="what the agent actually did was reconstructed",
+            predicate=CoverageDimensionDeclared(dimension="execution_reconstruction",
+                                                require_assessed=True),
+            effect=RequirementEffect.BLOCK,
+            remedy="supply the run's trace or tool-call log",
+            rationale=("This profile promotes on an action's own execution record. "
+                       "Without one there is nothing to promote on, and the "
+                       "remaining checks would be grading an empty case.")),
+
+        # RG-ACT-002 CONSEQUENCE_UNSTATED
+        # Fires when: reversibility and scope are not both stated.
+        # Does not fire when: both carry a value other than UNKNOWN.
+        # NOT_ASSESSED when: never — nobody stated them is a clear no.
+        #
+        # This is the load-bearing requirement of the profile. Both structural
+        # acceptances below are conditioned on stated consequence, so a case that
+        # declines to say what the action would do gets neither, and holds.
+        Requirement(
+            requirement_id="RG-ACT-002",
+            description="what this action would do is stated",
+            predicate=ConsequenceDeclared(dimensions=("REVERSIBILITY", "SCOPE")),
+            effect=RequirementEffect.HOLD,
+            remedy="declare reversibility and scope for this action",
+            rationale=("Release-gate cannot derive from a trace whether sending an "
+                       "email is a reminder or a termination notice. The operator "
+                       "states the stakes; this profile then holds them to it.")),
+
+        # RG-ACT-003 COVERAGE_UNSTATED
+        # Fires when: the overall dimension is absent.
+        # Does not fire when: coverage is stated, whatever it says.
+        # NOT_ASSESSED when: the coverage collection was never supplied.
+        Requirement(
+            requirement_id="RG-ACT-003",
+            description="coverage is stated",
+            predicate=CoverageDimensionDeclared(dimension="overall"),
+            effect=RequirementEffect.BLOCK,
+            remedy="state what was and was not assessed",
+            rationale=("A verdict without coverage is invalid whatever the domain "
+                       "(Invariant 9). Stating a gap satisfies this; hiding one "
+                       "does not.")),
+    ),
+    # Any typed method is credited. A general profile has no standing to rule one
+    # out (Invariant 8 cuts both ways: typing verification is not the same as
+    # having opinions about tools).
+    accepted_verification_types=(),
+    accepted_findings=(
+        AcceptedFinding(
+            rule_id="RG-PROV-002",
+            rationale=(
+                "one agent performing one task is one producer by construction, so "
+                "this finding is tautological at this scale rather than a fact about "
+                "this case. Holding on it would mean no single-agent action could "
+                "ever be promoted however much evidence it carried, which penalises "
+                "a case for being small — the volume judgement Invariants 6 and 12 "
+                "refuse. The absence of corroboration is still real and still shown; "
+                "it is not disqualifying for a bounded action"),
+            max_consequence=_BOUNDED_ACTION),
+        AcceptedFinding(
+            rule_id="RG-VERIF-001",
+            rationale=(
+                "an ordinary action frequently has no independent check available, "
+                "and this profile promotes on the action's own execution record — "
+                "which is an observation of what happened, never a verification that "
+                "it was right. That distinction is preserved in the case and in the "
+                "packet; what this acceptance says is that for a bounded, reversible "
+                "action an operator may authorise on the record alone"),
+            max_consequence=_BOUNDED_ACTION),
+    ),
+    coverage_expectations=(_COVERAGE_STATED,),
+    non_overridable_conditions=("subject.identified", "RG-ACT-001"),
+    metadata={"note": "Replace with a domain methodology where one exists."})
+
+
 BUILTIN_METHODOLOGIES = (
     GENERAL_AGENT_ACTION_V1,
     SOFTWARE_CHANGE_V1,
@@ -749,6 +873,7 @@ BUILTIN_METHODOLOGIES = (
     RESEARCH_MATHEMATICS_V1,
     RESEARCH_ASSURANCE_V1,
     SOFTWARE_AGENT_ASSURANCE_V1,
+    GENERAL_AUTONOMOUS_ACTION_V1,
 )
 
 
