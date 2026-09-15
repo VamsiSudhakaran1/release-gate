@@ -1779,6 +1779,74 @@ completeness analyser checks it and reports the delta.
 
 ---
 
+## 8a. The approval packet
+
+> **Implemented.** `release_gate/assurance/packet.py`, reachable as
+> `AssuranceOutcome.packet()`.
+
+Everything upstream exists so that one person, about to accept responsibility for
+something a machine did, can answer eleven questions and know where each answer
+came from. The packet puts those answers side by side. It computes no new
+judgement: it is a projection of a sealed case, and it can never be more
+confident than the case it renders.
+
+| # | Question | Source |
+|---|---|---|
+| 1 | What exactly am I being asked to authorize? | `AssuranceSubject` + its digest basis |
+| 2 | What happens if I authorize it? | `ConsequenceProfile` (§6.8), UNKNOWNs listed |
+| 3 | What evidence supports it? | evidence, ordered load-bearing first (§6.2a) |
+| 4 | What verification was performed? | `VerificationGraph` (§5.5) |
+| 5 | What remains unresolved? | contradictions, counterexamples, assumptions, adversarial findings, known-missing evidence |
+| 6 | How independent is supporting evidence? | `IndependenceProfile` (§6.4) |
+| 7 | What failed? | `FailedBranchLedger` (§6.3), relevance-directed |
+| 8 | What changed since the previous verified state? | `AssuranceDelta` |
+| 9 | What has not been assessed? | the case's own coverage collection (§8.2) |
+| 10 | What does Release-Gate recommend? | `CaseVerdict` |
+| 11 | What exact digests will approval bind to? | `binding_state()` / `rg-bind-1` (§9) |
+
+The order is the product. A reviewer asks what they are authorising before they
+ask what supports it, and asks what is unresolved before they are told what is
+recommended. A packet that led with the recommendation would be asking for assent
+rather than judgement.
+
+**No section is ever omitted.** The constructor refuses a packet missing any of
+the eleven. A section with nothing to say says so — "no typed verification is
+recorded", "no previous verified state was supplied" — because an absent section
+reads as an answered one.
+
+**Section 9 is numbered, not appended.** It carries the same weight as section 3,
+and it separates *never examined* from *examined without a denominator*: two
+different facts that PROMPT 24 established must not merge. It reads the sealed
+case rather than the analysis, because the analysis carries a coverage ledger
+built while it was still running — reading that reported criticality,
+contradiction and adversarial review as "never examined" while section 5 was
+simultaneously listing findings from them.
+
+**Section 8 never says "nothing changed" when there was nothing to compare.** A
+first run and an unchanged run are different facts and only one of them is
+reassuring. `AssuranceDelta.shrank` is restricted to the evidentiary collections:
+release-gate's own derived outputs shrink whenever it finds less to say, and
+reporting that as "evidence present before and absent now" would cry wolf on the
+one signal here that most needs to be believed (Invariant 13).
+`approval_carryover_permitted` is unconditionally `False`, as it is in
+`describe_supersession`.
+
+**Filtering is never hiding.** Section 7 shows relevant failures, and "relevant"
+is a filter, so it obeys the attention engine's rule: a failure bearing on what
+the decision rests on is never dropped to shorten the list, and what is left out
+is counted with `RELEVANCE_DIRECTED` as its declared basis. Every section carries
+a `MaterialisationBasis` and a truncation count, and none claims completeness —
+`bounds_completeness` is `False` throughout.
+
+**The packet binds; it does not approve.** `authorises` is unconditionally
+`False`, the header says so before any content, and section 11 states the exact
+digests a human act would attach to. `packet.matches(case)` reports whether the
+packet still describes that case — a packet is a view of one exact state, and
+when the case moves the packet describes something that is no longer what would
+be authorised (Invariant 15).
+
+---
+
 ## 9. Approval binding
 
 ```text
@@ -1953,7 +2021,7 @@ release_gate/assurance/
     required_evidence.py the outbound protocol: typed, targeted, dispatchable
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
-  packet.py              ApprovalPacket rendering (json / markdown / html)
+  packet.py              ApprovalPacket: the eleven questions (§8a)
   approval.py            BoundApproval, sign/verify (uses release_gate/crypto)
   store.py               content-addressed local evidence store
 ```

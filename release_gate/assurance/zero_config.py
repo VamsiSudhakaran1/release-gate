@@ -55,6 +55,7 @@ from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
 from release_gate.assurance.adversarial import AdversarialReview
 from release_gate.assurance.criticality import CriticalitySet
+from release_gate.assurance.packet import ApprovalPacket
 from release_gate.assurance.expectation import (
     CoverageLedger, EvidenceExpectation, ExpectationSource, ExpectationSourceKind)
 from release_gate.assurance.replication import ReplicationOutcome, ReplicationProfile
@@ -161,6 +162,18 @@ class AssuranceOutcome:
     def capabilities(self) -> Optional[CapabilitySurface]:
         """What the system reached for. Evidence on the case, not a verdict input."""
         return self.normalisation.capabilities
+
+    def packet(self, *, previous: Any = None) -> "ApprovalPacket":
+        """The eleven questions, answered against this run's sealed case.
+
+        Built on demand rather than eagerly: it is a rendering for a person, and
+        a run whose output is being piped into another system should not pay for
+        one. `previous` is an earlier case or its stored binding state; without
+        it section 8 says there was nothing to compare against, which is the
+        honest answer and not "nothing changed".
+        """
+        from release_gate.assurance.packet import build_packet
+        return build_packet(self.case, self, previous=previous)
 
     @property
     def exit_code(self) -> int:
