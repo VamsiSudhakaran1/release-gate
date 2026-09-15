@@ -441,6 +441,23 @@ def _execution_from(doc: Any, detection: Detection) -> Tuple[Optional[ExecutionG
             notes.append(f"{len(graphs)} traces in one file; the first was reconstructed "
                          "and the rest counted as execution evidence")
             return graphs[0], notes
+        if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
+            # An envelope may carry `execution` records in the native trace
+            # shape. Folding them here is what lets the event protocol preserve
+            # execution reconstruction: without it, telemetry converted to
+            # events would lose the graph that the same telemetry keeps when
+            # read as a trace.
+            traces = [row for row in doc
+                      if isinstance(row, Mapping)
+                      and row.get("record_type") == "execution"
+                      and isinstance(row.get("steps"), list)]
+            if traces:
+                if len(traces) > 1:
+                    notes.append(
+                        f"{len(traces)} execution record(s) in one envelope; the "
+                        "first was reconstructed and the rest counted as execution "
+                        "evidence")
+                return ExecutionGraph.from_native_trace(traces[0]), notes
         if detection.kind in (InputKind.LANGFUSE_EXPORT, InputKind.ARIZE_EXPORT):
             from release_gate.adapters import convert
             converted = convert(doc, source=detection.adapter)

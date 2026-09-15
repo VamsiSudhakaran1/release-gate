@@ -2460,6 +2460,90 @@ to tighten a gate would otherwise silently not tighten it.
 
 ---
 
+## 10f. The event protocol (`AssuranceEvent`)
+
+> **Implemented.** `release_gate/assurance/events.py` — `EventType` (20
+> classes), `AssuranceEvent`, `events_to_records()`, `events_from_otlp()`;
+> execution folding for envelopes in `ingest._execution_from`.
+
+A vendor-neutral vocabulary for *things that happened*, which adapters target and
+which converts into the records a case is already built from.
+
+**A framework does not need to know release-gate exists.** That is the constraint
+this was written under. OTLP spans carrying the GenAI semantic conventions
+convert with nothing installed on the emitting side, and a team that has never
+heard of this vocabulary still gets a case. Native emission is available —
+a span may carry `assurance.event_type` directly — and is never required.
+
+> **Naming.** Not to be confused with the protocol spec's
+> `POST /cases/{id}/events`, which is the universal door for the *record*
+> envelope. That endpoint carries records; this section describes things that
+> happened, which convert into records before reaching it. Both names are in the
+> wild and neither is worth renaming.
+
+### 10f.1 An event is a claim about what happened, made by its emitter
+
+That sentence is the whole design, and the twenty classes split cleanly on it.
+
+| standing | classes | why |
+|---|---|---|
+| **OBSERVED** | `CASE_CREATED`, `RUN_STARTED`, `AGENT_STARTED`, `TASK_STARTED`, `TOOL_CALLED`, `ARTIFACT_CREATED`, `ARTIFACT_MODIFIED`, `VERIFICATION_STARTED`, `HUMAN_INTERVENTION`, `ACTION_PROPOSED`, `RUN_COMPLETED`, `CASE_FINALIZED` | the emitter is the authority on its own execution — a framework saying it called a tool is the best evidence anyone will have that it called that tool |
+| **DECLARED** | `CLAIM_CREATED`, `CLAIM_SUPPORTED`, `CLAIM_CHALLENGED`, `ASSUMPTION_DECLARED`, `VERIFICATION_COMPLETED`, `COUNTEREXAMPLE_FOUND`, `CONTRADICTION_OPENED`, `CONTRADICTION_RESOLVED` | the emitter is asserting a conclusion about the world, and an assertion is not a finding however confidently it is serialised |
+
+DECLARED is the **default** for anything not in the self-report set, so a class
+added later is conservative until somebody argues otherwise.
+
+### 10f.2 Two refusals, structural rather than checked
+
+**No event can produce `VERIFIED`.** `VERIFICATION_COMPLETED` records that a
+verifier reported a result; it does not make the thing verified. The typed
+verification door — the only place VERIFIED is assigned, and only with a named
+method (Invariant 8) — would otherwise be a formality anyone could route around,
+and self-certification would cost one line of JSON. Tested against behaviour: an
+agent emitting `VERIFICATION_COMPLETED` with `outcome: PASSED` on its own claim
+gets a claim that reads `UNVERIFIED`.
+
+**`CONTRADICTION_RESOLVED` does not close a contradiction.** It records that
+somebody said it was closed. A contradiction is closed by evidence that answers
+it, never by an announcement and never by a different branch succeeding
+(Invariant 7). The conversion emits no `resolved` flag on anything, and a case
+whose evidence genuinely points both ways still carries the contradiction after
+the announcement.
+
+Both are absent by construction rather than by a check that could be edited out:
+`events_to_records()` only ever emits OBSERVED or DECLARED, and never writes a
+resolution.
+
+### 10f.3 OpenTelemetry where OTel has the concept
+
+`trace_id`, `span_id`, `parent_span_id`, `timestamp_ns` (Unix nanoseconds), an
+`attributes` bag, `resource` attributes and the three span status values — OTel's
+names with OTel's meanings, rather than synonyms. The emitter is read from
+`service.name`, which is where OTel already records who is speaking, and status
+depends on knowing that.
+
+A span with neither GenAI attributes nor an explicit `assurance.event_type` is
+**skipped and counted**. An HTTP or database span from the same trace is real
+work, but this vocabulary has no class for it and inventing one would put words
+in the emitter's mouth. Likewise an unknown event class is **refused, not
+dropped**: an emitter using a name we do not know has told us something we cannot
+represent, and discarding it silently would understate what the run did.
+
+### 10f.4 Converting telemetry must not be worse than reading it
+
+The first working version of this was. The OTLP→trace adapter builds an execution
+graph; OTLP→events→evidence-records built none, so `execution_reconstruction`
+read NOT_ASSESSED on a run whose every tool call had been reported — the
+vendor-neutral door was a strict downgrade from the one it generalises.
+
+Fixed in two places: execution-describing events also emit an `execution` record
+carrying the native trace shape, and `ingest._execution_from` folds `execution`
+records out of an assurance envelope (it previously reconstructed only for
+trace-shaped inputs). Both paths now agree on the execution graph, the capability
+surface and the decision, which is asserted by a parity test rather than assumed.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
