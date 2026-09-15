@@ -47,6 +47,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from release_gate.assurance.canonical import (
     CanonicalisationError,
+    canonical_bytes,
     canonical_json,
     digest_bytes,
     digest_file,
@@ -373,11 +374,20 @@ class EvidenceRecord:
         try:
             object.__setattr__(self, "content", freeze_value(self.content or {}, "content"))
             object.__setattr__(self, "metadata", freeze_value(self.metadata or {}, "metadata"))
-            canonical_json(self.identity())
+            # Built and canonicalised ONCE. This used to call
+            # `canonical_json(self.identity())` purely to prove the identity
+            # canonicalises, throw the result away, and then call
+            # `digest_object(self.identity())` — which rebuilds the identity and
+            # canonicalises it a second time. Two identity constructions and two
+            # JSON encodings per record, and record construction is the hottest
+            # path in the system at scale. `digest_object(x)` is exactly
+            # `digest_bytes(canonical_bytes(x))`, so this is digest-preserving:
+            # every evidence id is unchanged.
+            payload = canonical_bytes(self.identity())
         except CanonicalisationError as exc:
             raise EvidenceError(str(exc)) from exc
 
-        object.__setattr__(self, "evidence_id", short_id("ev", digest_object(self.identity())))
+        object.__setattr__(self, "evidence_id", short_id("ev", digest_bytes(payload)))
 
     def _validate_verification(self) -> None:
         if self.epistemic_status in _VERIFICATION_STATUSES:

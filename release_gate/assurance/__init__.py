@@ -275,6 +275,10 @@ from release_gate.assurance.methodology import (
     predicate_from_dict,
 )
 from release_gate.assurance.records import (
+    RetainAll,
+    RetainFirst,
+    RetainRelevant,
+    RetentionPolicy,
     CaseRecord,
     DedupeBasis,
     MaterialisationBasis,
@@ -693,6 +697,10 @@ __all__ = [
     "RequirementPressure",
     "RequirementResult",
     "ResultEquivalence",
+    "RetainAll",
+    "RetainFirst",
+    "RetainRelevant",
+    "RetentionPolicy",
     "RetentionReason",
     "SESSION_SCHEMA_VERSION",
     "SectionKey",

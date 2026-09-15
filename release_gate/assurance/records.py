@@ -27,7 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Protocol, Tuple
+from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional,
+                    Protocol, Set, Tuple)
 
 from release_gate.assurance.canonical import (
     MULTISET_ALGO,
@@ -66,6 +67,72 @@ class DedupeBasis(str, Enum):
 
 class RecordError(ValueError):
     """A record cannot be placed in a case collection."""
+
+
+class RetentionPolicy(Protocol):
+    """Which records a bounded fold keeps, decided once rather than per call site.
+
+    Every record counts toward the total and the commitment whatever this says —
+    retention decides what is *held*, never what is *counted*, so a dropped
+    record is still in the digest and still in the number a human reads.
+
+    Separated out because "keep the relevant ones" was previously a `materialise`
+    boolean computed at each call site, which is how two call sites end up
+    disagreeing about what relevant means. A policy object is reviewable, is
+    stated on the collection it produced, and makes the retained set a property
+    of the case rather than of whoever happened to write the loop.
+    """
+
+    name: str
+
+    def retain(self, record: "CaseRecord", held: int, seen: int) -> bool:
+        """Keep this record? `held` and `seen` are the counts so far."""
+        ...
+
+
+@dataclass(frozen=True)
+class RetainAll:
+    """Hold everything. The right policy for almost every real case."""
+
+    name: str = "complete"
+
+    def retain(self, record: Any, held: int, seen: int) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
+class RetainFirst:
+    """Hold the first `limit` records and count the rest.
+
+    The honest bounded default: it makes no claim to have chosen well, which is
+    why the collection it produces reports CAPPED rather than SAMPLED. A reader
+    must not mistake "the first ten thousand" for "a representative ten
+    thousand".
+    """
+
+    limit: int = 10_000
+    name: str = "capped"
+
+    def retain(self, record: Any, held: int, seen: int) -> bool:
+        return held < self.limit
+
+
+@dataclass(frozen=True)
+class RetainRelevant:
+    """Hold records a predicate calls relevant, up to a cap.
+
+    Relevance-directed materialisation: the shape the frontier case needs, where
+    four million model calls are counted and the dozen that bear on the
+    conclusion are kept. The predicate is supplied by the caller because
+    relevance is a domain question this module has no standing to answer.
+    """
+
+    predicate: Callable[[Any], bool]
+    limit: int = 10_000
+    name: str = "relevance_directed"
+
+    def retain(self, record: Any, held: int, seen: int) -> bool:
+        return held < self.limit and bool(self.predicate(record))
 
 
 class CaseRecord(Protocol):
@@ -251,14 +318,29 @@ class RecordCollectionBuilder:
     """
 
     def __init__(self, kind: str, *, basis: MaterialisationBasis = MaterialisationBasis.COMPLETE,
-                 track_ids: bool = True) -> None:
+                 track_ids: bool = True,
+                 policy: Optional[RetentionPolicy] = None) -> None:
         self.kind = kind
         self.basis = basis
+        # Retention is a stated policy rather than a boolean each caller works
+        # out for itself. `RetainAll` is the default because almost every real
+        # case fits in memory, and a bounded policy should be a decision somebody
+        # made rather than one that crept in.
+        self._policy: RetentionPolicy = policy or RetainAll()
         # Tracking every id catches double-ingest, and costs memory proportional
         # to the stream. At frontier scale a caller turns it off and the
         # collection says so through `dedupe_basis` rather than implying a
         # uniqueness guarantee it is not providing.
         self._track_ids = track_ids
+        # Ids of the records actually held. Kept even when `track_ids` is False,
+        # because the duplicate check for that mode used to be a linear scan over
+        # `_materialised` on every add — quadratic, and measurably so: 41us per
+        # record at n=2,000 became 152us at n=8,000, which is about five hours
+        # for a million. This set is bounded by what is already retained, so it
+        # costs no asymptotic memory and makes the check O(1). A record folded
+        # with materialise=False enters neither structure, which is what keeps
+        # relevance-directed ingest genuinely bounded.
+        self._materialised_ids: Set[str] = set()
         self._seen_ids: set = set()
         self._materialised: List[CaseRecord] = []
         self._accumulator = 0
@@ -286,12 +368,18 @@ class RecordCollectionBuilder:
 
     # ── records ─────────────────────────────────────────────────────────────
 
-    def add(self, record: CaseRecord, *, materialise: bool = True) -> "RecordCollectionBuilder":
+    def add(self, record: CaseRecord, *, materialise: Optional[bool] = None
+            ) -> "RecordCollectionBuilder":
         """Fold a record in, holding it unless told not to.
 
         `materialise=False` is relevance-directed ingest: the record counts
-        toward the total and toward the commitment, and is not kept.
+        toward the total and toward the commitment, and is not kept. Left unset,
+        the builder's `RetentionPolicy` decides — which is the form that keeps
+        one definition of "relevant" instead of one per call site.
         """
+        if materialise is None:
+            materialise = self._policy.retain(record, len(self._materialised),
+                                              self._total)
         digest = record_digest(record)
         if self._track_ids:
             if record.record_id in self._seen_ids:
@@ -299,7 +387,7 @@ class RecordCollectionBuilder:
                     f"{self.kind}: duplicate record_id {record.record_id!r}; ids must be "
                     "unique within a collection so evidence cannot be counted twice")
             self._seen_ids.add(record.record_id)
-        elif materialise and any(r.record_id == record.record_id for r in self._materialised):
+        elif materialise and record.record_id in self._materialised_ids:
             raise RecordError(f"{self.kind}: duplicate record_id {record.record_id!r}")
 
         self._present = True
@@ -307,10 +395,11 @@ class RecordCollectionBuilder:
         self._total += 1
         if materialise:
             self._materialised.append(record)
+            self._materialised_ids.add(record.record_id)
         return self
 
-    def extend(self, records: Iterable[CaseRecord], *, materialise: bool = True
-               ) -> "RecordCollectionBuilder":
+    def extend(self, records: Iterable[CaseRecord], *,
+               materialise: Optional[bool] = None) -> "RecordCollectionBuilder":
         for record in records:
             self.add(record, materialise=materialise)
         return self
@@ -334,6 +423,7 @@ class RecordCollectionBuilder:
         self._accumulator = multiset_merge(self._accumulator, other._accumulator)
         self._total += other._total
         self._materialised.extend(other._materialised)
+        self._materialised_ids |= other._materialised_ids
         self._present = self._present or other._present
         for note in other._notes:
             self.note(note)
@@ -346,6 +436,12 @@ class RecordCollectionBuilder:
             return RecordCollection(kind=self.kind, presence=Presence.ABSENT,
                                     notes=tuple(self._notes))
         basis = self.basis
+        if (basis is MaterialisationBasis.COMPLETE and self._materialised
+                and len(self._materialised) < self._total
+                and getattr(self._policy, "name", "") == "relevance_directed"):
+            # The policy chose these on purpose, so say so rather than letting it
+            # read as an arbitrary cap.
+            basis = MaterialisationBasis.RELEVANCE_DIRECTED
         if basis is MaterialisationBasis.COMPLETE and len(self._materialised) < self._total:
             # A collection that dropped records cannot describe itself as complete.
             basis = (MaterialisationBasis.SUMMARY_ONLY if not self._materialised

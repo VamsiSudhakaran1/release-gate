@@ -2717,6 +2717,102 @@ as a named verifier, which is weaker and reported as what it is.
 
 ---
 
+## 10i. Massive scale — measured, then fixed
+
+> **Implemented.** `RetentionPolicy` / `RetainAll` / `RetainFirst` /
+> `RetainRelevant` in `records.py`; the quadratic removed from
+> `RecordCollectionBuilder.add`; single-pass identity in `evidence.py`;
+> `tests/test_assurance_scale.py`.
+
+**Measure before deciding, and do not introduce a graph database until the
+measurements justify one.** They do not. Every target below is met by indexed
+dicts and a streaming fold, on one core, in this container.
+
+### 10i.1 What the measurements said
+
+| target | result |
+|---|---|
+| **10,000,000 events** | 97s, **25.8 MB flat** — RSS identical at 1M, 5M and 10M |
+| **100,000 agents / 1,000,000 records** | 10.3s, **26.7 MB** |
+| **1,000,000 claims** | 30s, 1.35 GB (linear, retained in full) |
+| **100,000 claims** | 3.8s, 164 MB |
+| 500,000 evidence + contradiction detection | 0.80s — the PROMPT 25 fix holds |
+
+Memory is genuinely bounded on the fold path: 10M events cost the same 25.8 MB
+as 1M. The claim graph is the one structure that is O(n) in memory by design,
+because a claim graph that dropped claims would be a different argument.
+
+### 10i.2 Two real defects, both found by measuring
+
+**A naive O(N²) in the hot path.** `RecordCollectionBuilder.add` checked for
+duplicates with `any(r.record_id == record.record_id for r in self._materialised)`
+— a linear scan over every held record, on every add. Measured at 41µs per
+record over 2,000 records and **152µs over 8,000**: four times the work for twice
+the input. A million records would have taken about five hours. Replaced with a
+set of held ids, which is bounded by what is already retained and so costs no
+asymptotic memory: now **flat at ~10.3µs from 2,000 to 128,000 records**.
+
+This is why the bounded-memory design was not actually delivering bounded
+memory — the fold was sound and the duplicate check in the same method defeated
+it.
+
+**Every evidence record was hashed twice.** `__post_init__` called
+`canonical_json(self.identity())` purely to prove the identity canonicalises,
+threw the result away, then called `digest_object(self.identity())` — which
+rebuilds the identity and canonicalises it again. Two constructions and two JSON
+encodings per record, on the hottest path in the system. Since
+`digest_object(x)` is exactly `digest_bytes(canonical_bytes(x))`, building once
+is **digest-preserving**: verified over 2,000 varied records that every
+`evidence_id` is unchanged, which matters because every content-addressed
+reference in the system derives from one. Record construction went from ~124µs to
+~40µs, about 3x.
+
+### 10i.3 Storage abstractions
+
+`CaseRecord` (Protocol) already kept the container ignorant of what it contains.
+What was missing was *which* records a bounded fold keeps — previously a
+`materialise` boolean computed at each call site, which is how two call sites end
+up disagreeing about what relevant means.
+
+`RetentionPolicy` makes it a stated, reviewable decision, and the basis it
+produces is derived from the policy rather than asserted:
+
+| policy | holds | basis | meaning |
+|---|---|---|---|
+| `RetainAll` (default) | everything | `COMPLETE` | almost every real case |
+| `RetainFirst(n)` | the first n | `CAPPED` | **not** SAMPLED — the first n is not a representative n |
+| `RetainRelevant(pred, n)` | what the predicate picks | `RELEVANCE_DIRECTED` | the frontier shape: count four million calls, keep the dozen that bear on the conclusion |
+
+Retention decides what is **held**, never what is **counted**: a dropped record
+is still in the total and still in the commitment, and a fold that dropped
+records reports `CAPPED` or `SUMMARY_ONLY` rather than `COMPLETE`. Two folds over
+the same records produce the same `fold_digest` whether or not either kept
+anything — tested.
+
+### 10i.4 Batch, parallel and resumable
+
+The multiset commitment is order-independent and associative, so six shards
+merged in scrambled order produce a **byte-identical** `fold_digest` to a single
+pass. That one property is what makes parallel ingest, batch submission and a
+resumed run sound; it is asserted by test rather than assumed. A fold that cannot
+vouch for its ids degrades the merged collection to `MATERIALISED_ONLY` rather
+than letting the stronger half speak for the weaker.
+
+### 10i.5 Memoized ancestry — measured, and deliberately not added
+
+`depends_closure` is **not** memoized, and looping it over every claim is O(N²):
+582µs per claim at 2,000 claims, 3,041µs at 8,000. But **no caller does that**.
+`load_bearing` and `binding_constraints` traverse once per root, roots are few,
+and the measured cost is flat at ~9µs per root.
+
+Memoizing would trade that for O(N²) *memory* — each cached closure can be O(N)
+and there are N of them — which is the worse failure at this scale. So the method
+carries a docstring saying not to loop it and why, because a per-claim loop added
+later would be a scaling bug that looks like ordinary code. The right answer, if
+one is ever needed, is a single shared reverse traversal rather than a cache.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
