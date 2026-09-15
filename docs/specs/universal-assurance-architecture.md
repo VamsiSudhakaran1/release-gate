@@ -1976,6 +1976,75 @@ something useful in one command with no setup.
 
 ---
 
+## 10a. The research assurance profile (`RG-CLAIM-*`)
+
+> **Implemented.** `release_gate/assurance/methodologies.py` —
+> `RESEARCH_ASSURANCE_V1`, plus three new predicates in `methodology.py`.
+
+The first advanced domain profile: mathematics, computer science, formal proofs,
+scientific hypotheses, engineering optimisation, algorithm discovery.
+
+**A profile is a methodology, not a new analyser.** The ten rules are
+*sufficiency* judgements over structure the analysers already derive domain-free,
+which is this system's standing layering: analysis enforces shape, methodology
+enforces sufficiency. So each rule is a `Requirement` whose `requirement_id` is
+its `RG-CLAIM-*` id, and the whole existing machinery — assessment, required
+evidence, attention, packet — works unchanged. Nothing in the engine branches on
+a methodology id.
+
+**It does not say a result is true.** It says the argument has the shape a
+research result should have: what it rests on is identified, what it rests on is
+checked, what checked it was independent of what it checked, something tried to
+break it, and nothing it rests on has moved. A profile claiming more would be a
+truth oracle (Invariant 10).
+
+| rule | fires when | does *not* fire when | NOT_ASSESSED when |
+|---|---|---|---|
+| **001** CRITICAL_CLAIM_UNVERIFIED | a load-bearing claim has no PASSED verification by an accepted method carrying a target digest | verified by any accepted method; not load-bearing | criticality undeterminable, or the load-bearing set truncated |
+| **002** LOAD_BEARING_ASSUMPTION_UNVERIFIED | an assumption a conclusion rests on has nothing bearing on it | it has evidence or a verification | no assumption graph |
+| **003** FALSE_INDEPENDENCE | more lineages asserted across attempts than the ancestry traces to | assertion ≤ derived | nothing asserts a lineage |
+| **004** OPEN_COUNTEREXAMPLE | a counterexample was FOUND and nothing answers it | a search came back empty | collection never supplied |
+| **005** FORMAL_VERIFICATION_MISMATCH | an attempt's target digest ≠ the target's current digest | they match; no digest named (that is `RG-VERIF-005`) | no attempts recorded |
+| **006** CRITICAL_CLAIM_SINGLE_LINEAGE | a load-bearing claim's support traces to one producer | two or more producers; **zero** producers (that is `RG-COV-003`) | criticality undeterminable |
+| **007** SUPERSEDED_EVIDENCE_USED | evidence names `applies_to_digest` and no current artifact carries it | it matches; no digest named | no artifact carries a digest |
+| **008** VERIFICATION_COVERAGE_GAP | no denominator, one written by the prover, or coverage below the floor | an independent source states a total and it is met | no coverage row names the dimension |
+| **009** OPEN_CRITICAL_CONTRADICTION | a contradiction is OPEN or UNKNOWN | all resolved, superseded or invalid with a reason | collection never supplied |
+| **010** VERIFIED_ARTIFACT_MUTATED | an artifact's verified digest ≠ its current digest | they match; none recorded | no artifact carries a digest |
+
+Three more carry the emphases that are requirements rather than failure modes:
+`RG-CLAIM-011` independent replication differing in implementation,
+`RG-CLAIM-012` adversarial review from a disjoint lineage with nothing
+self-cleared, and `RG-CLAIM-013` criticality being derivable at all — the last
+because every other rule asks about load-bearing claims, and where criticality is
+undeterminable they all answer no and the case passes because nothing was
+checked.
+
+**Six rules reuse existing predicates; three are new.**
+`CriticalClaimsVerified` because `VerificationPresent` counts records across a
+case ("was anything checked") while this is per-claim ("was everything
+load-bearing checked"), and the two come apart exactly where it matters.
+`DeclaredIndependenceHolds` because an *asserted* lineage is a falsifiable claim
+about the world. `AppliesToCurrentState(scope=…)` because 005, 007 and 010 are one
+question — *did what this rested on move?* — seen from three sides, and writing it
+once means a case cannot pass one side while failing the identical test on
+another. `CriticalClaimsIdentified` gained `maximum_thin` rather than becoming a
+fourth new predicate.
+
+> **What 003 deliberately does not read.** `independence_group` on an evidence
+> record is release-gate's own fingerprint over source and producer. Comparing it
+> against release-gate's own ancestry tracing would fire on any case with two
+> producers and one upstream — the normal and often correct shape §6.4 reports
+> and never penalises — making concentration blocking by the back door. 003 reads
+> `independence_lineage` on verification attempts, which is a producer asserting
+> something falsifiable.
+
+**Cross-model review is not an accepted verification here.** Models agreeing
+about a derivation is agreement, not verification (Invariant 8). Seven rules
+cannot be waived; the rest can, by a named party with a stated reason — a profile
+nobody can override in a real emergency is one people route around entirely.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → repository

@@ -57,7 +57,8 @@ from release_gate.assurance.adversarial import AdversarialReview
 from release_gate.assurance.criticality import CriticalitySet
 from release_gate.assurance.packet import ApprovalPacket
 from release_gate.assurance.expectation import (
-    CoverageLedger, EvidenceExpectation, ExpectationSource, ExpectationSourceKind)
+    CoverageLedger, EvidenceExpectation, ExpectationSource,
+    ExpectationSourceKind, ExpectationStanding)
 from release_gate.assurance.replication import ReplicationOutcome, ReplicationProfile
 from release_gate.assurance.records import MaterialisationBasis, SimpleRecord
 from release_gate.assurance.verification import (
@@ -464,6 +465,43 @@ def _independence_coverage(profile: Optional[IndependenceProfile]) -> SimpleReco
         profile_digest=profile.digest())
 
 
+def _merge_declared_expectations(rows: List[SimpleRecord],
+                                 normalisation: Normalisation) -> List[SimpleRecord]:
+    """Fold envelope-declared expectations into the case's coverage collection.
+
+    Without this, a declared denominator reaches the analyser's ledger and never
+    the case — so every methodology predicate, which reads the case, reported
+    NOT_ASSESSED for a dimension somebody had explicitly stated. The whole
+    sufficiency layer was blind to the one thing PROMPT 24 exists to supply.
+
+    Where a dimension already has a row, the stronger standing wins: an
+    orchestrator's denominator says something a producer's count of itself
+    cannot, and should not lose to whichever row was built first.
+    """
+    declared = tuple(getattr(normalisation, "expectations", ()) or ())
+    if not declared:
+        return rows
+    rank = {ExpectationStanding.NOT_ESTABLISHED: 0,
+            ExpectationStanding.SELF_REPORTED: 1,
+            ExpectationStanding.ESTABLISHED: 2}
+    by_dimension = {str(r.to_dict().get("dimension") or ""): r for r in rows}
+    for expectation in declared:
+        held = by_dimension.get(expectation.dimension)
+        if held is not None:
+            try:
+                existing = EvidenceExpectation.from_dict(
+                    {**held.to_dict(),
+                     "assessed": held.to_dict().get("status") == "ASSESSED"})
+            except Exception:
+                existing = None
+            if existing is not None and rank[expectation.standing] < rank[existing.standing]:
+                continue
+        by_dimension[expectation.dimension] = SimpleRecord(
+            record_type="coverage", record_id=f"cov_{expectation.dimension}",
+            payload=expectation.to_dict())
+    return [by_dimension[k] for k in sorted(by_dimension)]
+
+
 def _criticality_coverage(criticality: Optional[CriticalitySet]) -> SimpleRecord:
     """Coverage for criticality, which gates every other critical-claim guard.
 
@@ -777,11 +815,11 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     builder.extend("verification", verifications)
 
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
-    builder.extend("coverage", _ingest_coverage(normalisation, consequence,
-                                                verification, independence, replication,
-                                                adversarial, criticality,
-                                                contradictions, assumptions,
-                                                counterexamples, failed_branches))
+    builder.extend("coverage", _merge_declared_expectations(
+        _ingest_coverage(normalisation, consequence, verification, independence,
+                         replication, adversarial, criticality, contradictions,
+                         assumptions, counterexamples, failed_branches),
+        normalisation))
 
     for kind, records in (extra or {}).items():
         builder.declare_present(kind, "produced by the zero-config analysis")

@@ -729,6 +729,293 @@ class ExpectationDeclared(Predicate):
             observed)
 
 
+def _attempts_of(case: AssuranceCase) -> Tuple[Any, ...]:
+    """Every verification attempt the case holds, from both places they live.
+
+    Read through `VerificationGraph.from_case`, which already folds the
+    `verification` collection together with the attempts embedded on claims. A
+    predicate that scanned one collection would silently miss the other — and did,
+    until a case whose attempts hung off its claims reported NOT_ASSESSED for
+    three separate rules that had the evidence in front of them.
+    """
+    try:
+        from release_gate.assurance.verification import VerificationGraph
+        return tuple(VerificationGraph.from_case(case).attempts)
+    except Exception:
+        return ()
+
+
+@_predicate
+@dataclass(frozen=True)
+class CriticalClaimsVerified(Predicate):
+    """Every claim the decision rests on carries an applicable verification.
+
+    `VerificationPresent` counts verification *records* across a case, which
+    answers "was anything checked". This answers "was everything load-bearing
+    checked", and the two come apart exactly where it matters: a case with three
+    hundred verifications and one unverified lemma the conclusion rests on passes
+    the first and fails this.
+
+    `methods` narrows what counts. A research profile that accepts a theorem
+    prover and refuses cross-model review is making a typing claim about
+    verification (Invariant 8), not a claim about which tools are fashionable:
+    models agreeing about a proof is agreement, not verification.
+    """
+
+    KIND = "critical_claims_verified"
+    methods: Tuple[str, ...] = ()
+    require_applicable: bool = True
+    collection: str = "evidence"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "methods",
+                           tuple(sorted({str(m).upper() for m in self.methods})))
+
+    def describe(self) -> str:
+        methods = (", ".join(m.lower().replace("_", " ") for m in self.methods)
+                   if self.methods else "any accepted method")
+        return (f"every load-bearing claim carries a verification by {methods}"
+                + (", applicable to its current state" if self.require_applicable
+                   else ""))
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        derived = [r for r in records if r.get("record_type") == "criticality"]
+        if not derived:
+            # Without criticality there is no set of load-bearing claims to check
+            # against, and reporting "all verified" over an empty set would be the
+            # vacuous pass this predicate exists to prevent (Invariant 3).
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no criticality analysis is recorded, so which claims the decision "
+                "rests on has not been derived and this cannot be assessed",
+                {"materialisation_incomplete": incomplete})
+        profile = derived[0]
+        if not profile.get("determinable"):
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "what this decision rests on could not be derived: " +
+                str(profile.get("basis") or ""),
+                {"determinable": False})
+
+        critical = set(profile.get("critical_ids") or ())
+        if int(profile.get("critical_ids_truncated") or 0):
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                f"{profile.get('critical_ids_truncated')} load-bearing claim(s) were "
+                "not listed, so whether every one is verified cannot be established "
+                "from what is held",
+                {"critical": len(critical)})
+        if not critical:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no claim is load-bearing on this case, so there is nothing for this "
+                "requirement to be about", {"critical": 0})
+
+        verified: Dict[str, List[str]] = {}
+        for attempt in _attempts_of(case):
+            target = getattr(attempt, "target", None)
+            if target is None or target.kind.value != "CLAIM":
+                continue
+            if attempt.status.value != "PASSED":
+                continue
+            method = attempt.method.value
+            if self.methods and method not in self.methods:
+                continue
+            if self.require_applicable and not attempt.target_digest:
+                # No digest means applicability is UNDETERMINED, and UNDETERMINED
+                # is emphatically not APPLIES (Invariant 5).
+                continue
+            verified.setdefault(target.target_id, []).append(method)
+
+        unverified = sorted(critical - set(verified))
+        observed = {"critical": len(critical), "verified": len(critical) - len(unverified),
+                    "unverified": unverified[:12],
+                    "methods": list(self.methods),
+                    "require_applicable": self.require_applicable,
+                    "materialisation_incomplete": incomplete}
+        if unverified:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(unverified)} of {len(critical)} load-bearing claim(s) carry no "
+                + ("applicable " if self.require_applicable else "")
+                + "verification by an accepted method: "
+                + ", ".join(unverified[:4]),
+                observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"all {len(critical)} load-bearing claim(s) are verified", observed)
+
+
+@_predicate
+@dataclass(frozen=True)
+class DeclaredIndependenceHolds(Predicate):
+    """Independence a producer *asserted* must survive tracing its lineage.
+
+    Reads `independence_lineage` on verification attempts, which is a producer
+    saying "this check rests on these and nothing else" — a falsifiable claim
+    about the world. It deliberately does **not** read `independence_group` on
+    evidence records: that is release-gate's own fingerprint over source and
+    producer, so comparing it against release-gate's own ancestry tracing would
+    fire on any case with two producers and one upstream, which is the normal and
+    often correct shape the independence analyser reports and never penalises.
+
+    Nothing here accuses anyone of bad faith: a shared upstream nobody noticed
+    produces exactly the same shape. What it refuses is letting an assertion win
+    over the derivation (Invariant 1).
+    """
+
+    KIND = "declared_independence_holds"
+    tolerance: int = 0
+    collection: str = "evidence"
+
+    def __post_init__(self) -> None:
+        if self.tolerance < 0:
+            raise MethodologyError("tolerance cannot be negative")
+
+    def describe(self) -> str:
+        return ("asserted verification lineages are borne out by traced ancestry"
+                + (f", allowing {self.tolerance} more asserted than derived"
+                   if self.tolerance else ""))
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        records, incomplete, _total = _records(case, self.collection)
+        profiles = [r for r in records if r.get("record_type") == "independence"]
+        attempts = _attempts_of(case)
+
+        asserted: Set[str] = set()
+        for attempt in attempts:
+            asserted |= {str(x) for x in (attempt.independence_lineage or ())}
+        if not asserted:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no verification attempt asserts an independence lineage, so there is "
+                "no claim of independence to hold against the ancestry",
+                {"asserted_lineages": 0, "attempts": len(attempts),
+                 "materialisation_incomplete": incomplete})
+        if not profiles:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no independence profile is recorded, so asserted lineages cannot be "
+                "compared against traced ancestry",
+                {"asserted_lineages": len(asserted)})
+
+        profile = profiles[0]
+        if not profile.get("determinable"):
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "ancestry is not determinable: " + str(profile.get("basis") or ""),
+                {"asserted_lineages": len(asserted), "determinable": False})
+
+        derived = int(profile.get("independent_roots") or 0)
+        observed = {"asserted_lineages": len(asserted),
+                    "derived_lineages": derived, "tolerance": self.tolerance,
+                    "unknown_ancestry": profile.get("unknown_ancestry"),
+                    "materialisation_incomplete": incomplete}
+        if len(asserted) - derived > self.tolerance:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(asserted)} independence lineage(s) are asserted across the "
+                f"verification attempts and the evidence traces to {derived} "
+                "lineage(s); the assertion claims more independence than the "
+                "derivation supports, and the derivation wins (Invariant 1)",
+                observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"{len(asserted)} asserted lineage(s) against {derived} traced", observed)
+
+
+@_predicate
+@dataclass(frozen=True)
+class AppliesToCurrentState(Predicate):
+    """What the argument rests on must still apply to the state in front of you.
+
+    One shape, three questions: a verification whose target moved, evidence
+    produced against a superseded digest, and an artifact mutated after being
+    verified are the same failure seen from three sides — something the argument
+    rests on is no longer the thing it was about (Invariant 5).
+
+    `scope` selects which side. Keeping them one predicate rather than three
+    means the rule that decides "does this still apply" is written once, and a
+    case cannot pass one side while failing the identical test on another.
+    """
+
+    KIND = "applies_to_current_state"
+    scope: str = "verification"      # verification | evidence | artifact
+    collection: str = "evidence"
+
+    _SCOPES = ("verification", "evidence", "artifact")
+
+    def __post_init__(self) -> None:
+        if self.scope not in self._SCOPES:
+            raise MethodologyError(
+                f"scope must be one of {', '.join(self._SCOPES)}; got {self.scope!r}")
+
+    def describe(self) -> str:
+        return {
+            "verification": "no verification applies to a state its target has left",
+            "evidence": "no evidence in use was produced against a superseded digest",
+            "artifact": "no verified artifact has been mutated since",
+        }[self.scope]
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        current: Dict[str, str] = {}
+        for record in case.records("artifacts"):
+            payload = record.to_dict() if hasattr(record, "to_dict") else {}
+            logical = str(payload.get("logical_id") or payload.get("artifact_id") or "")
+            digest = str(payload.get("digest") or "")
+            if logical and digest:
+                current[logical] = digest
+        if not current and self.scope in ("evidence", "artifact"):
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no artifact carries a digest, so whether anything was produced "
+                "against a superseded state cannot be asked", {"artifacts": 0})
+
+        records, incomplete, _total = _records(case, self.collection)
+        known = set(current.values())
+        stale: List[str] = []
+
+        if self.scope == "verification":
+            attempts = _attempts_of(case)
+            if not attempts:
+                return _Finding(
+                    RequirementOutcome.NOT_ASSESSED,
+                    "no verification attempts are recorded, so whether any has gone "
+                    "stale cannot be asked", {"attempts": 0})
+            for attempt in attempts:
+                digest = attempt.target_digest or ""
+                target = getattr(attempt, "target", None)
+                logical = target.target_id if target is not None else ""
+                if digest and logical in current and current[logical] != digest:
+                    stale.append(attempt.verification_id)
+        elif self.scope == "evidence":
+            for record in (r for r in records if r.get("record_type") == "evidence"):
+                applies = str(record.get("applies_to_digest") or "")
+                if applies and applies not in known:
+                    stale.append(str(record.get("record_id") or ""))
+        else:
+            for record in case.records("artifacts"):
+                payload = record.to_dict() if hasattr(record, "to_dict") else {}
+                if payload.get("verified_digest") and (
+                        payload.get("verified_digest") != payload.get("digest")):
+                    stale.append(str(payload.get("logical_id") or ""))
+
+        observed = {"scope": self.scope, "stale": stale[:12], "count": len(stale),
+                    "artifacts": len(current),
+                    "materialisation_incomplete": incomplete}
+        if stale:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(stale)} {self.scope} record(s) no longer apply to the current "
+                "state: " + ", ".join(stale[:4]) +
+                ". What the argument rests on has moved since it was established",
+                observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"every {self.scope} record applies to the current state", observed)
+
+
 @_predicate
 @dataclass(frozen=True)
 class CriticalClaimsIdentified(Predicate):
@@ -753,6 +1040,11 @@ class CriticalClaimsIdentified(Predicate):
     require_supported: bool = False
     forbid_broken_chains: bool = True
     maximum_declared_disagreements: Optional[int] = 0
+    #: How many load-bearing claims may rest on a single producer. `None` allows
+    #: any number, which is the right default: thinness is a fact to show a
+    #: reviewer, not a fault, and only a domain that genuinely needs corroboration
+    #: on what it rests on should make it blocking (Invariant 12).
+    maximum_thin: Optional[int] = None
     collection: str = "evidence"
 
     def describe(self) -> str:
@@ -764,6 +1056,9 @@ class CriticalClaimsIdentified(Predicate):
         if self.maximum_declared_disagreements is not None:
             parts.append(f"at most {self.maximum_declared_disagreements} claim(s) "
                          "declared critical that nothing the decision rests on needs")
+        if self.maximum_thin is not None:
+            parts.append(f"at most {self.maximum_thin} load-bearing claim(s) resting "
+                         "on a single producer")
         if self.require_supported:
             parts.append("every load-bearing claim cites some support")
         return ", ".join(parts) or "criticality is recorded"
@@ -818,6 +1113,17 @@ class CriticalClaimsIdentified(Predicate):
                 "not accept the ambiguity",
                 observed)
 
+        if self.maximum_thin is not None and \
+                int(derived.get("thin_critical") or 0) > self.maximum_thin:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{derived.get('thin_critical')} load-bearing claim(s) rest on a "
+                f"single producer, above the {self.maximum_thin} this methodology "
+                "allows; a claim one party emitted once is exactly as load-bearing "
+                "as one many parties discussed, and this domain requires the "
+                "support to be corroborated rather than merely present",
+                observed)
+
         if self.require_supported:
             unsupported = [e.get("claim_id") for e in (derived.get("entries") or ())
                            if e.get("critical") and not e.get("supporting_records")]
@@ -832,7 +1138,7 @@ class CriticalClaimsIdentified(Predicate):
         return _Finding(
             RequirementOutcome.SATISFIED,
             f"the decision rests on {derived.get('critical')} of "
-            f"{derived.get('claims')} claim(s), reached through up to "
+            f"{derived.get('claims_examined')} claim(s), reached through up to "
             f"{derived.get('max_depth')} dependency link(s)" +
             (f"; {derived.get('thin_critical')} of them rest on a single producer, "
              "which this predicate reports and does not penalise"

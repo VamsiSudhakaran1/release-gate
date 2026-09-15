@@ -479,7 +479,8 @@ def test_an_extension_cannot_drop_an_inherited_non_overridable_condition():
 def test_the_default_registry_ships_the_builtins():
     registry = default_registry()
     assert set(registry.ids()) == {"general-agent-action", "software-change",
-                                   "production-database-change", "research-mathematics"}
+                                   "production-database-change", "research-mathematics",
+                                   "research-assurance"}
     for row in registry.list():
         assert row["source"] == "builtin"
 
