@@ -2544,6 +2544,94 @@ surface and the decision, which is asserted by a parity test rather than assumed
 
 ---
 
+## 10g. Completeness and evidence omission (`StreamCompleteness`)
+
+> **Implemented.** `release_gate/assurance/completeness.py` —
+> `StreamCompleteness`, `SourceStream`, `EndOfStream`, `StreamLedger`,
+> `ledger_from_events()`; `stream_id`/`sequence`/`event_counter` on
+> `AssuranceEvent`; phrasing fix in `NoUnresolved`.
+
+Every other analysis here reasons about evidence that arrived. This one reasons
+about evidence that did not, which is the harder question: **a producer that
+wants a clean verdict does not forge a passing test, it declines to mention the
+failing one.** Nothing downstream can see that.
+
+### 10g.1 The asymmetry that shapes everything
+
+**Derived detection is worth a great deal.** A span naming a parent that never
+arrived, a sequence with a hole in it, a counter that went backwards: these are
+observations release-gate makes about the stream's *own structure*, and a
+producer suppressing a record has to suppress the structure too. Omission becomes
+visible rather than silent.
+
+**Declaration is worth much less, and signing does not change that.** A producer
+stating "that was all of it" is telling you what it chose to say about what it
+chose to send. Signing establishes *who said it* — attribution, not completeness
+(Invariant 11). A party that omitted a record omits it from its own manifest too,
+and its signature over that manifest is perfectly valid. `EndOfStream.to_dict()`
+reports `signature_verified: false` and the epistemics would not change if it
+were true.
+
+| mechanism | kind | status |
+|---|---|---|
+| missing-span detection | derived | **already worked** — an unobserved parent yields `GAPS_DETECTED` |
+| sequence numbers | derived | was a field nothing ever populated; now detected |
+| monotonic event counters | derived | new — a regression means replay or reordering |
+| source stream IDs | derived | new — omission hides in aggregation |
+| expected source manifest | declared | existed (`ORCHESTRATION_MANIFEST`, `PRODUCER_MANIFEST`) |
+| expected verifier manifest | declared | existed (`VERIFIER_INVENTORY`, `VerifierRequired`) |
+| end-of-stream attestation | declared | new |
+| signed completion declaration | declared | new — recorded, never treated as proof |
+| producer identity | declared | existed |
+
+### 10g.2 On having a `COMPLETE` value at all
+
+`ExecutionCompleteness` deliberately has none: "nothing a graph can observe about
+telemetry it received establishes that nothing was withheld, and a status value
+saying otherwise would be the single most load-bearing lie in the system." That
+reasoning is right for what it covers — raw spans, with no independent statement
+of what should have been there — and **that enum is unchanged**.
+
+This module has a value it does not, because it can require something that graph
+cannot. `COMPLETE` needs **three** conditions, not one:
+
+1. an **enumerated expectation from a party other than the producer**;
+2. every enumerated stream present;
+3. no derived gap anywhere — no sequence hole, counter regression, truncated
+   tail or count shortfall.
+
+Under those it says something real and bounded: *complete against that
+enumeration*. It never means "nothing is missing" absolutely, because the
+independent party could itself have been told a shorter story, and the note a
+human reads says exactly that.
+
+The guard that makes it safe is one branch: **a self-certified enumeration can
+never reach COMPLETE**, whatever else is true. A producer counting its own output
+— signed, matching, nothing visibly missing — is precisely what a successful
+omission looks like from the inside, and it is the common case. It reports
+`PARTIALLY_COMPLETE` with the reason.
+
+`COMPLETENESS_UNKNOWN` is the default and is **not a failing grade**: it is the
+correct answer whenever nobody supplied anything to check against, which is most
+of the time. A stream with no numbering reports it rather than passing, because
+"no shape for a hole to show up in" is a finding.
+
+### 10g.3 Observed, not absent
+
+The closing rule made concrete. `NoUnresolved` reported *"all 0 contradictions
+record(s) are marked resolved"* on a case where detection merely found none —
+phrased as though the set were closed. It now reads:
+
+> none of the 0 contradictions record(s) held is unresolved; no contradictions
+> was observed among what was submitted, **which is not the same as none
+> existing**
+
+and the predicate describes itself as "no unresolved contradictions **among those
+observed**". Detection is structural and runs over the records a case *holds*; a
+disagreement nobody submitted leaves no trace for it to find.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

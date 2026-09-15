@@ -415,7 +415,7 @@ class NoUnresolved(Predicate):
     collection: str = "contradictions"
 
     def describe(self) -> str:
-        return f"no unresolved {self.collection}"
+        return f"no unresolved {self.collection} among those observed"
 
     def evaluate(self, case: AssuranceCase) -> _Finding:
         coll = case.collection(self.collection)
@@ -433,7 +433,15 @@ class NoUnresolved(Predicate):
                     "unresolved": len(unresolved), "untracked": len(untracked)}
         return _absence_outcome(
             unresolved, incomplete,
-            clean_detail=f"all {len(records)} {self.collection} record(s) are marked resolved",
+            # "none were observed", never "none exist". Detection here is
+            # structural and runs over the records the case HOLDS; a
+            # disagreement nobody submitted leaves no trace for it to find, and
+            # phrasing a clean result as though the set were closed is the exact
+            # overclaim Invariant 13 is about.
+            clean_detail=(f"none of the {len(records)} {self.collection} record(s) "
+                          f"held is unresolved; no {self.collection} was observed "
+                          "among what was submitted, which is not the same as none "
+                          "existing"),
             violation_detail=f"{len(unresolved)} unresolved {self.collection} record(s) remain",
             observed=observed)
 

@@ -196,6 +196,12 @@ class AssuranceEvent:
     #: What the event is about — a claim id, an artifact id, a tool name. The
     #: conversion needs it for every event that names something.
     subject_ref: str = ""
+    #: Completeness carriers (§10g). Optional, and a stream that supplies none is
+    #: simply one with no shape for a hole to show up in — which is itself worth
+    #: reporting rather than reading as "nothing was missing".
+    stream_id: str = ""
+    sequence: Optional[int] = None
+    event_counter: Optional[int] = None
     attributes: Mapping[str, Any] = field(default_factory=dict)
     resource: Mapping[str, Any] = field(default_factory=dict)
     #: OTel span status. ERROR is preserved rather than discarded: a failed tool
@@ -224,8 +230,17 @@ class AssuranceEvent:
                 f"status {self.status!r} is not an OTel span status "
                 "(UNSET, OK, ERROR)")
         object.__setattr__(self, "status", status)
-        for name in ("trace_id", "span_id", "parent_span_id", "subject_ref"):
+        for name in ("trace_id", "span_id", "parent_span_id", "subject_ref",
+                     "stream_id"):
             object.__setattr__(self, name, _clean_id(getattr(self, name), name))
+        for name in ("sequence", "event_counter"):
+            value = getattr(self, name)
+            if value is not None:
+                try:
+                    object.__setattr__(self, name, int(value))
+                except (TypeError, ValueError) as exc:
+                    raise EventError(
+                        f"{name} must be a whole number, not {value!r}") from exc
         try:
             object.__setattr__(self, "timestamp_ns", max(0, int(self.timestamp_ns or 0)))
         except (TypeError, ValueError) as exc:
@@ -256,6 +271,8 @@ class AssuranceEvent:
                 "timestamp_ns": self.timestamp_ns, "trace_id": self.trace_id,
                 "span_id": self.span_id, "parent_span_id": self.parent_span_id,
                 "subject_ref": self.subject_ref, "attributes": dict(self.attributes),
+                "stream_id": self.stream_id, "sequence": self.sequence,
+                "event_counter": self.event_counter,
                 "status": self.status, "detail": self.detail}
 
     def to_dict(self) -> Dict[str, Any]:
@@ -266,6 +283,8 @@ class AssuranceEvent:
                 "timestamp_ns": self.timestamp_ns, "trace_id": self.trace_id,
                 "span_id": self.span_id, "parent_span_id": self.parent_span_id,
                 "subject_ref": self.subject_ref, "attributes": dict(self.attributes),
+                "stream_id": self.stream_id, "sequence": self.sequence,
+                "event_counter": self.event_counter,
                 "resource": dict(self.resource), "status": self.status,
                 "detail": self.detail, "schema_version": EVENT_SCHEMA_VERSION}
 
@@ -285,6 +304,8 @@ class AssuranceEvent:
             parent_span_id=data.get("parent_span_id", ""),
             subject_ref=data.get("subject_ref", ""),
             attributes=data.get("attributes") or {},
+            stream_id=data.get("stream_id", ""), sequence=data.get("sequence"),
+            event_counter=data.get("event_counter"),
             resource=data.get("resource") or {},
             status=data.get("status", "UNSET"), detail=data.get("detail", ""))
 
@@ -587,6 +608,11 @@ def events_from_otlp(doc: Any, *,
         subject = str(attrs.get("gen_ai.tool.name")
                       or attrs.get("assurance.subject_ref")
                       or attrs.get("gen_ai.agent.name") or "").strip()
+        # Completeness carriers off span attributes, so a producer that already
+        # numbers its output gets gap detection without a release-gate SDK.
+        stream_id = str(attrs.get("assurance.stream_id") or "").strip()
+        sequence = _as_int(attrs.get("assurance.sequence"))
+        counter = _as_int(attrs.get("assurance.event_counter"))
 
         events.append(AssuranceEvent(
             event_type=event_type, emitter=emitter,
@@ -595,7 +621,8 @@ def events_from_otlp(doc: Any, *,
             span_id=str(span.get("spanId") or span.get("span_id") or ""),
             parent_span_id=str(span.get("parentSpanId")
                                or span.get("parent_span_id") or ""),
-            subject_ref=subject,
+            subject_ref=subject, stream_id=stream_id, sequence=sequence,
+            event_counter=counter,
             attributes={k: v for k, v in attrs.items()
                         if k.startswith("gen_ai.") or k.startswith("assurance.")},
             resource=resource_attrs,
@@ -608,6 +635,20 @@ def events_from_otlp(doc: Any, *,
             f"{_EVENT_TYPE_ATTRIBUTE}, so this protocol has no class for them and "
             "they were skipped rather than guessed at")
     return events, notes
+
+
+def _as_int(value: Any) -> Optional[int]:
+    """A span attribute as a whole number, or None when it is not one.
+
+    OTLP carries everything as a string often enough that refusing a numeric
+    string here would silently disable gap detection for most real producers.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _emitter_from(resource_attrs: Mapping[str, Any],
