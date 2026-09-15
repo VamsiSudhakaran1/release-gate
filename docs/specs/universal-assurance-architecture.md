@@ -2968,6 +2968,83 @@ evidence can arrive afterwards.
 
 ---
 
+## 10l. The assurance query API (`run_query`)
+
+> **Implemented.** `release_gate/assurance/query.py` — `QueryResult`,
+> `QueryOutcome`, eleven queries, `QUERIES`, `run_query()`, `run_all()`.
+
+Eleven questions, answered **from the case rather than recomputed**. Every query
+reads an analysis the engine already performed; none re-derives criticality,
+re-detects contradictions or re-walks the artifact graph. A query that computed
+its own answer would eventually disagree with the verdict that was rendered, and
+a reviewer would have two numbers and no way to tell which one the gate used.
+`blockers` in particular reads the rendered verdict's own fired rules.
+
+### 10l.1 Empty must never be able to mean "nobody looked"
+
+An empty answer means one of two things and the API refuses to blur them:
+
+| outcome | meaning |
+|---|---|
+| `FOUND` | these matched |
+| `NONE_FOUND` | the analysis ran and nothing matched — a real, load-bearing answer |
+| `NOT_ASSESSED` | the analysis this question needs was never performed |
+
+"Which critical claims are unverified" answering *none* on a case where
+criticality could not be derived would be the most comfortable lie this system
+could tell. `answered` distinguishes the two, and `NOT_ASSESSED` notes say
+"this is unknown, not none".
+
+The distinction is finer than it first looks. Assumption analysis always runs, so
+an empty assumptions answer is `NONE_FOUND` — and its basis still refuses the
+overclaim: *"an argument that declares none is not an argument without any."*
+Approvals are the opposite: a case does not go looking for an approval it was
+never given, so that query answers `NOT_ASSESSED` rather than "none are stale".
+
+### 10l.2 The eleven
+
+| query | reads |
+|---|---|
+| `unverified_critical_claims` | criticality + verification |
+| `blockers` | the rendered verdict |
+| `missing_evidence` | required evidence (§10 PROMPT 26) |
+| `artifacts_changed_after_verification` | `ArtifactGraph.stale_verifications()` |
+| `single_root_claims` | `CriticalitySet.thin()` |
+| `open_contradictions` | `ContradictionLedger.open()` |
+| `assumptions_affecting_result` | `AssumptionGraph.load_bearing()` |
+| `unresolved_verifier_failures` | verification attempts that FAILED or were INVALIDATED |
+| `stale_approvals` | `check_approval()` against supplied approvals |
+| `unknown_completeness_sources` | a supplied `StreamLedger` (§10g) |
+| `hold_resolution` | required evidence with HOLD effect |
+
+`run_all()` never omits a query it could not answer: a caller reading the sweep
+must see that a question was asked and came back unknown, not find it missing and
+assume it did not apply.
+
+### 10l.3 Three bugs, and the pattern that hid two of them
+
+Writing these against real cases surfaced three defects, two of which were
+masked by defensive coding:
+
+* **`open_contradictions` reported none on a case holding one.** The code read
+  `getattr(ledger, "unresolved", lambda: ())()` — the ledger's method is
+  `open()`, so the default returned an empty tuple and a wrong method name became
+  a clean bill of health. Now called directly: a missing method must fail loudly,
+  not answer reassuringly.
+* **`artifacts_changed_after_verification` raised**, because
+  `verification_currency()` takes one logical id; the graph's own answer to this
+  question is `stale_verifications()`. The sweep's exception guard turned the
+  raise into `NOT_ASSESSED` — a broken query reporting "not assessed" is exactly
+  what this module must not ship.
+* **`single_root_claims` raised** calling `len()` on `supporting_producers`,
+  which is a count rather than a collection.
+
+The lesson worth keeping: `getattr(x, "name", default)` on a *method* converts a
+typo into a plausible answer. That is tolerable for optional attributes and
+dangerous for the API of an analysis whose silence means "all clear".
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

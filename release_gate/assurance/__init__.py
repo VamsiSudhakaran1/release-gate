@@ -59,6 +59,15 @@ from release_gate.assurance.attestation import (
     SignatureState,
     chain_from_case,
 )
+from release_gate.assurance.query import (
+    QUERIES,
+    QUERY_SCHEMA_VERSION,
+    QueryError,
+    QueryOutcome,
+    QueryResult,
+    run_all,
+    run_query,
+)
 from release_gate.assurance.streaming import (
     STREAMING_SCHEMA_VERSION,
     AssurancePhase,
@@ -699,7 +708,12 @@ __all__ = [
     "Producer",
     "ProducerKind",
     "ProvenanceStatus",
+    "QUERIES",
+    "QUERY_SCHEMA_VERSION",
+    "QueryError",
+    "QueryOutcome",
     "QueryPolarity",
+    "QueryResult",
     "REPLICATION_SCHEMA_VERSION",
     "REQUIRED_EVIDENCE_SCHEMA_VERSION",
     "RecordCollection",
@@ -833,6 +847,8 @@ __all__ = [
     "requirement_kind_for",
     "requirement_kind_for_predicate",
     "requirement_level",
+    "run_all",
+    "run_query",
     "submit_approval",
     "target_kind_for_focus",
     "values_for",
