@@ -927,6 +927,64 @@ class CriticalClaimsVerified(Predicate):
 
 @_predicate
 @dataclass(frozen=True)
+class VerifierRequired(Predicate):
+    """Named verifiers must each have run (Invariant 8).
+
+    `VerificationPresent` asks whether anything checked this, and
+    `CriticalClaimsVerified` whether everything load-bearing was checked. This
+    asks a third question an organisation is entitled to ask: did *these* checks
+    run. A team that mandates its SAST tool and its policy engine is stating
+    which checks it does not consider optional, and a case that skipped one has
+    not met that bar however much other verification it carries.
+
+    Matched against the verifier identity and the tool family, so a
+    configuration may name either a specific tool or a class of them.
+    """
+
+    KIND = "verifier_required"
+    verifiers: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        names = tuple(sorted({str(v).strip() for v in self.verifiers if str(v).strip()}))
+        if not names:
+            raise MethodologyError(
+                "verifier_required must name at least one verifier")
+        object.__setattr__(self, "verifiers", names)
+
+    def describe(self) -> str:
+        return "these verifiers have run: " + ", ".join(self.verifiers)
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        attempts = _attempts_of(case)
+        if not attempts:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "no verification attempts are recorded, so whether the required "
+                "verifiers ran cannot be established",
+                {"required": list(self.verifiers)})
+        seen = set()
+        for attempt in attempts:
+            for value in (getattr(attempt, "verifier", None),
+                          getattr(getattr(attempt, "tool", None), "family", None),
+                          getattr(attempt, "method", None)):
+                name = getattr(value, "value", value)
+                if name:
+                    seen.add(str(name).strip().lower())
+        missing = sorted(v for v in self.verifiers if v.strip().lower() not in seen)
+        observed = {"required": list(self.verifiers), "missing": missing,
+                    "attempts": len(attempts)}
+        if missing:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(missing)} required verifier(s) did not run: "
+                + ", ".join(missing), observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"all {len(self.verifiers)} required verifier(s) ran", observed)
+
+
+@_predicate
+@dataclass(frozen=True)
 class NoClaimInStatus(Predicate):
     """No claim may stand in one of the named statuses (Invariant 7).
 

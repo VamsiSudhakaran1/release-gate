@@ -234,6 +234,7 @@ _PREDICATE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "minimum_records": _K.MISSING_EVIDENCE,
     "subject_identified": _K.PROVENANCE_ATTESTATION,
     "verification_present": _K.FORMAL_VERIFICATION,
+    "verifier_required": _K.FORMAL_VERIFICATION,
     "independence_threshold": _K.INDEPENDENT_VERIFICATION,
     "ancestry_independence": _K.INDEPENDENT_VERIFICATION,
     "no_unresolved": _K.CONTRADICTION_RESOLUTION,

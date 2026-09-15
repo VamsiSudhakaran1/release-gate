@@ -1093,12 +1093,22 @@ in-process scans, so neither loads the stream.
 
 ## 15. Local parity
 
-Every endpoint has a CLI equivalent operating on `.release-gate/cases/`, and the
-wire format is the file format — the NDJSON a client POSTs is the NDJSON the CLI
-reads. A case built locally and a case built through the API with the same records
-produce the same `case_digest`. Anything else would make the hosted service a
-different product wearing the same name, and would mean a local reproduction could
-not check a hosted decision.
+Every endpoint has a CLI equivalent, and the wire format is the file format — the
+NDJSON a client POSTs is the NDJSON the CLI reads. A case built locally and a case
+built through the API from the same records, under the same `source`, produce the
+same **`records_digest`** and the same decision. Anything else would make the
+hosted service a different product wearing the same name, and would mean a local
+reproduction could not check a hosted decision.
+
+**Not the same `case_digest`, and deliberately so.** This section previously
+claimed that, and it was wrong. Release-gate records the input container as
+evidence in its own right: a file on disk is a FILE content reference carrying a
+path, and records posted over a wire are an INLINE reference carrying none. Those
+are different inputs, and forcing the digests equal would mean fabricating a file
+reference for a submission that never touched a disk — the assertion-over-evidence
+this protocol exists to refuse. `records_digest()` covers the records a client
+submitted and excludes release-gate's own note about how they arrived, which is
+the comparison a reproduction actually needs.
 
 ---
 

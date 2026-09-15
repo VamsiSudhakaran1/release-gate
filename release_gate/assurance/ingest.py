@@ -389,20 +389,38 @@ def _release_gate_producer() -> Producer:
 
 # ── normalisation ────────────────────────────────────────────────────────────
 
-def _file_artifact(path: str | Path) -> Tuple[Artifact, EvidenceRecord, ContentReference, str]:
-    """The input file itself: hashed by us, so the digest is OBSERVED."""
-    reference, digest = file_content(path)
+def _file_artifact(path: str | Path, content: Optional[bytes] = None
+                   ) -> Tuple[Artifact, EvidenceRecord, ContentReference, str]:
+    """The input itself: hashed by us, so the digest is OBSERVED.
+
+    `content` supplies the bytes directly for an input that never touched a
+    disk — the incremental session, where the records arrive over a wire and
+    there is no file to stat. The subject still has to carry a digest, because
+    `subject.identified` is non-overridable and an approval that cannot name what
+    it bound to is unfalsifiable; for a session that digest is over the records
+    themselves, which is the same content addressing applied to the same bytes.
+
+    Hashed by release-gate either way, so the status stays OBSERVED rather than
+    becoming something a caller asserted.
+    """
     name = Path(path).name
+    if content is None:
+        reference, digest = file_content(path)
+        byte_length = Path(path).stat().st_size
+        note = "the input file's bytes, hashed by release-gate"
+    else:
+        reference, digest = inline_content(content, label=name)
+        byte_length = len(content)
+        note = "the submitted records' bytes, hashed by release-gate"
     artifact = Artifact(
         logical_id=f"file:{name}", artifact_kind=ArtifactKind.OTHER, digest=digest,
         digest_method=DigestMethod.SHA256_CONTENT, digest_status=DigestStatus.OBSERVED,
-        content_reference=reference, byte_length=Path(path).stat().st_size,
+        content_reference=reference, byte_length=byte_length,
         metadata={"role": "assurance-input"})
     record = EvidenceRecord.observed(
         EvidenceType.EXTERNAL_REFERENCE, source=str(path),
         producer=_release_gate_producer(), content_reference=reference, digest=digest,
-        applies_to_digest=digest,
-        coverage_note="the input file's bytes, hashed by release-gate",
+        applies_to_digest=digest, coverage_note=note,
         content={"role": "assurance-input", "filename": name})
     return artifact, record, reference, digest
 
@@ -1024,7 +1042,8 @@ def _eval_records(doc: Any, source: str, producer: Producer
     return evidence, claims, len(cases), skipped
 
 
-def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
+def normalise(doc: Any, detection: Detection, *, source: str,
+              content: Optional[bytes] = None) -> Normalisation:
     """Fold one document into records. Never raises on unmappable content."""
     producer = _document_producer(doc, detection, source)
     evidence: List[EvidenceRecord] = []
@@ -1039,7 +1058,7 @@ def normalise(doc: Any, detection: Detection, *, source: str) -> Normalisation:
     seen = 0
     mapped = 0
 
-    artifact, file_record, _reference, file_digest = _file_artifact(source)
+    artifact, file_record, _reference, file_digest = _file_artifact(source, content)
     artifacts.append(artifact)
     evidence.append(file_record)
 

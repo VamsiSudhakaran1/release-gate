@@ -2340,11 +2340,133 @@ ones.
 
 ---
 
+## 10e. The no-YAML default experience
+
+> **Implemented.** `release_gate/assurance/session.py` — `AssuranceSession`,
+> `records_digest`; `release_gate/assurance/organisation.py` —
+> `OrganisationConfig`; `VerifierRequired` in `methodology.py`;
+> `assure_normalisation()` in `zero_config.py`; `release-gate assure --config`
+> and `--diagnostics`.
+
+Two entry points must work with nothing configured, and both now do.
+
+```bash
+release-gate assure run.json          # one file, no config, exit 0/10/1
+```
+```text
+open session → add records → finalize → decision     # no files at all
+```
+
+### 10e.1 The CLI was broken, and not by configuration
+
+`release-gate assure run.json` **did not work** on any install where an optional
+native dependency failed to initialise. `cli.py` guards its optional imports with
+`except ImportError`, and a `cryptography` wheel whose Rust extension cannot load
+raises `pyo3_runtime.PanicException` — which derives from **BaseException**, so
+it is missed even by `except Exception`. One unusable optional backend took down
+the entire CLI, including the zero-config assurance path *that uses no
+cryptography at all*.
+
+The eight optional-feature guards now catch `BaseException`, re-raising
+`KeyboardInterrupt` and `SystemExit`, and record why each feature is unavailable.
+`release-gate assure --diagnostics` prints that list and says plainly that
+`assure` needs none of them.
+
+This was also the cause of 22 of the 25 test failures previously written off as
+environmental. The real environmental residue is 3 — the `release-gate` console
+script is not on `PATH` when running from a source tree.
+
+### 10e.2 The session is the same code as the file
+
+`AssuranceSession` accumulates records and calls `assure_normalisation()` — the
+function `assure()` calls after reading a file. One implementation, not two that
+agree until somebody edits one. `provisional()` runs the full analysis without
+sealing, which is `GET /required-evidence` on an open case: the steering signal a
+running agent reads to find out what is still missing.
+
+Finalize is a boundary. Records added afterwards are refused, because a decision
+names the exact state it was taken on and a case that kept accepting evidence
+after being decided would make its own approval unfalsifiable (Invariant 5).
+
+A session has no file, so two things had to be generalised rather than forked:
+`_file_artifact` takes optional bytes, and `_subject_for` reads the digest the
+ingest already computed instead of re-hashing the path. The second is a
+single-sourcing fix in its own right — there were two independent computations of
+one digest that had to agree forever.
+
+### 10e.3 Local parity, corrected
+
+Protocol spec §15 claimed a case built locally and a case built through the API
+from the same records produce **the same `case_digest`**. They do not, and making
+them would mean lying about provenance: release-gate records the input container
+as evidence in its own right, and a file on disk is a FILE reference with a path
+while records posted over a wire are an INLINE reference with none. Those are
+genuinely different inputs. Fabricating a file reference for a submission that
+never touched a disk is exactly the assertion-over-evidence this system refuses
+(Invariants 1 and 11).
+
+What is true, and what the claim was reaching for, is `records_digest()`: **the
+records the client submitted fold identically and the decision is the same.**
+That is the property a local reproduction needs to check a hosted decision.
+Parity holds for the same records under the same `source`, which is not a
+loophole — `source` is provenance, it flows into every derived evidence id, and
+two submissions from different places are different evidence.
+
+### 10e.4 Configuration improves assurance; it does not constitute it
+
+`OrganisationConfig` is JSON, optional, and covers the seven things an
+organisation may state: risk appetite, domain requirements, required verifiers,
+approval roles, custom capabilities, methodology selection, override rules.
+
+It is applied through `AssuranceMethodology.extend()`, which already enforces
+that an extension inherits every requirement and non-overridable condition and
+may only narrow what it credits — so configuration is structurally incapable of
+demanding less. Four properties, each enforced rather than documented:
+
+* **An empty config returns the very same methodology object**, so a case decided
+  with an empty config is byte-identical to one decided with none. Asserted by a
+  test, because the moment configuration changes an unconfigured run,
+  configuration has started constituting the product.
+* **It cannot lower a structural finding.** `decide()` reads analysis findings
+  directly and configuration never touches them. A config waiving every
+  requirement on a refuted case still gets BLOCK.
+* **It cannot waive a non-overridable condition** — `extend()` drops a permissive
+  override rule naming one.
+* **It cannot invent a methodology from nothing.** `apply_to(None)` returns
+  `None`. Config that assembled a yardstick from its own extras would let an
+  organisation's additions become the whole standard while looking like an
+  addition to one.
+
+Risk appetite is a **floor** on `LevelAssessment.required` (§10d) and there is
+deliberately no way to lower one: an organisation declaring that irreversible
+actions are a Level 0 question would be configuring away the analysis rather
+than configuring it.
+
+### 10e.5 No YAML, and no discovery
+
+Configuration is JSON. A `.yaml`/`.yml` path is refused with the reason, and
+`governance.yaml` remains supported as an **evidence producer** — its contents
+become DECLARED evidence, the right epistemic status for a file in which a team
+wrote down what it intends — but never as policy input here.
+
+Nothing walks the filesystem looking for configuration. `--config` names a file
+explicitly, because a gate that behaves differently depending on which directory
+it ran from is a gate whose verdict cannot be reproduced. The two specs that
+still referenced `.release-gate/methodology.yaml` have been corrected; that
+resolution order was never implemented and contradicted protocol spec §16.
+
+A misspelled key is **refused, not ignored**: a typo in a file whose whole job is
+to tighten a gate would otherwise silently not tighten it.
+
+---
+
 ## 11. Methodology behaviour
 
-* **Resolution order.** Explicit `--methodology` → repository
-  `.release-gate/methodology.yaml` → organisation methodology (hosted API) →
-  built-in default for the subject type → `NONE`.
+* **Resolution order.** Explicit `--methodology` → an organisation
+  configuration the caller named (`--config`, JSON) → built-in default for the
+  subject type → `NONE`. **Never YAML, and never discovered by walking the
+  filesystem**: a gate that behaves differently depending on which directory it
+  ran from is a gate whose verdict cannot be reproduced (§10e).
 * **`NONE` is legal and loud.** Structural analyses run; the sufficiency question
   answers `METHODOLOGY_REQUIRED`; the verdict cannot be PROMOTE for an
   irreversible high-consequence subject.

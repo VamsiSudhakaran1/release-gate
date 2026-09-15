@@ -24,19 +24,47 @@ from release_gate.checks.input_contract import InputContractCheck
 from release_gate.checks.fallback_declared import FallbackDeclaredCheck
 from release_gate.checks.identity_boundary import IdentityBoundaryCheck
 
+#: Why an optional feature is unavailable, keyed by feature name. Populated by
+#: the guards below and surfaced by `release-gate assure --diagnostics`, so a
+#: broken backend is diagnosable rather than silently absent.
+OPTIONAL_FAILURES: dict = {}
+
+
+def _unavailable(feature: str, exc: BaseException) -> bool:
+    """Record an optional feature that could not be imported. Always False.
+
+    Written to be called from `except BaseException`, which is deliberate and
+    not defensive sloppiness. These guards caught `ImportError` only, and a
+    native extension that fails to initialise does not raise one: a broken
+    `cryptography` wheel raises `pyo3_runtime.PanicException`, which derives
+    from BaseException and is therefore missed even by `except Exception`. The
+    result was that one unusable optional backend took down the entire CLI —
+    including `release-gate assure`, which uses no cryptography at all.
+
+    KeyboardInterrupt and SystemExit are re-raised by the callers before this is
+    reached; an optional import must never swallow those.
+    """
+    OPTIONAL_FAILURES[feature] = f"{type(exc).__name__}: {exc}".strip()
+    return False
+
+
 # Import Budget Simulation Engine
 try:
     from release_gate.pricing.budget_simulator import BudgetSimulationCheck
     BUDGET_SIMULATOR_AVAILABLE = True
-except ImportError:
-    BUDGET_SIMULATOR_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    BUDGET_SIMULATOR_AVAILABLE = _unavailable('budget_simulator', _exc)
 
 # Import init wizard
 try:
     from release_gate.init import InitWizard
     INIT_AVAILABLE = True
-except ImportError:
-    INIT_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    INIT_AVAILABLE = _unavailable('init', _exc)
 
 # Import Cryptographic Governance Validation (v0.5)
 try:
@@ -46,16 +74,20 @@ try:
         sign_and_lock_governance,
     )
     CRYPTO_AVAILABLE = True
-except ImportError:
-    CRYPTO_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    CRYPTO_AVAILABLE = _unavailable('crypto', _exc)
 
 # Import Impact Simulator and report renderer
 try:
     from release_gate.impact_simulator import ImpactSimulator
     from release_gate.report import render_terminal, render_html
     IMPACT_AVAILABLE = True
-except ImportError:
-    IMPACT_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    IMPACT_AVAILABLE = _unavailable('impact', _exc)
 
 # Import v0.6 release decision engine (scoring, regression, evals, traces, evidence)
 try:
@@ -65,29 +97,37 @@ try:
     from release_gate.trace_validator import TraceValidator
     from release_gate.evidence_pack import generate_evidence_pack, render_html_evidence
     V6_AVAILABLE = True
-except ImportError:
-    V6_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    V6_AVAILABLE = _unavailable('v6', _exc)
 
 # Import audit engine
 try:
     from release_gate.audit import build_report, render_terminal as render_audit_terminal
     AUDIT_AVAILABLE = True
-except ImportError:
-    AUDIT_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    AUDIT_AVAILABLE = _unavailable('audit', _exc)
 
 # Import integration hooks
 try:
     from release_gate.integrations import dispatch_notify
     INTEGRATIONS_AVAILABLE = True
-except ImportError:
-    INTEGRATIONS_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    INTEGRATIONS_AVAILABLE = _unavailable('integrations', _exc)
 
 # Import live agent runtime (Phase 2)
 try:
     from release_gate.agent import AgentClient, AgentSpecError, RuntimeProfile
     AGENT_RUNTIME_AVAILABLE = True
-except ImportError:
-    AGENT_RUNTIME_AVAILABLE = False
+except (KeyboardInterrupt, SystemExit):
+    raise
+except BaseException as _exc:
+    AGENT_RUNTIME_AVAILABLE = _unavailable('agent_runtime', _exc)
 
 
 GOVERNANCE_SCHEMA = {
@@ -1706,8 +1746,12 @@ def _run_assure_command():
     Usage:
       release-gate assure <file> [--json] [--full]
                                  [--methodology REF|FILE]
-                                 [--case-output FILE]
+                                 [--config FILE] [--case-output FILE]
       release-gate assure --list-methodologies
+      release-gate assure --diagnostics
+
+    No configuration is required for any of this. `--config` is an organisation
+    layer that can only tighten the bar; without it the command is complete.
 
     Exit: 0 PROMOTE · 10 HOLD · 1 BLOCK.
 
@@ -1726,6 +1770,18 @@ def _run_assure_command():
 
     argv = sys.argv
 
+    if '--diagnostics' in argv:
+        # Which optional backends are unavailable and why. A broken native
+        # dependency used to take the whole CLI down; now it is reported here
+        # and assurance runs regardless.
+        print("\nOptional features:\n")
+        if not OPTIONAL_FAILURES:
+            print("  all optional features imported cleanly\n")
+        for feature, reason in sorted(OPTIONAL_FAILURES.items()):
+            print(f"  {feature}: unavailable — {reason}")
+        print("\n  `release-gate assure` needs none of these.\n")
+        sys.exit(0)
+
     if '--list-methodologies' in argv:
         print("\nBuilt-in methodologies (pass one with --methodology):\n")
         for methodology in BUILTIN_METHODOLOGIES:
@@ -1740,12 +1796,26 @@ def _run_assure_command():
     target = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
     if not target:
         print("Usage: release-gate assure <file> [--json] [--full] "
-              "[--methodology REF] [--case-output FILE]")
+              "[--methodology REF] [--config FILE] [--case-output FILE]")
         print("       release-gate assure --list-methodologies")
         sys.exit(1)
 
+    # Optional organisation configuration. Explicitly named, never discovered:
+    # a gate that behaves differently depending on which directory it ran from
+    # is a gate whose verdict cannot be reproduced.
+    org = None
+    config_ref = _flag(argv, '--config')
+    if config_ref:
+        from release_gate.assurance.organisation import (
+            OrganisationConfig, OrganisationConfigError)
+        try:
+            org = OrganisationConfig.from_path(config_ref)
+        except OrganisationConfigError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+
     methodology = None
-    ref = _flag(argv, '--methodology')
+    ref = _flag(argv, '--methodology') or (org.methodology if org else None)
     if ref:
         path = _Path(ref)
         if path.is_file():
@@ -1773,6 +1843,9 @@ def _run_assure_command():
                 print("Run `release-gate assure --list-methodologies` to see the built-ins,")
                 print("or pass a path to a JSON methodology.")
                 sys.exit(1)
+
+    if org is not None and methodology is not None:
+        methodology = org.apply_to(methodology)
 
     try:
         outcome = assure(target, methodology=methodology)

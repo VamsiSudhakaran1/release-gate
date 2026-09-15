@@ -841,12 +841,32 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
 
 def _subject_for(path: Path, normalisation: Normalisation,
                  requested_action: str) -> AssuranceSubject:
-    reference, digest = file_content(path)
+    """The subject, digested from what the ingest already hashed.
+
+    Read off the normalisation's own input artifact rather than re-hashing the
+    path. Two reasons, and the second is why it is worth doing: re-hashing gave
+    two independent computations of one digest that had to agree forever, and it
+    assumed the input was a file at all — which an incremental session, whose
+    records arrive over a wire, is not. Same bytes, hashed once, by release-gate,
+    so the status stays OBSERVED in both shapes.
+    """
+    inputs = [a for a in normalisation.artifacts
+              if (a.metadata or {}).get("role") == "assurance-input"]
+    if inputs:
+        artifact = inputs[0]
+        reference, digest = artifact.content_reference, artifact.digest
+        basis = ("sha256 over the input's bytes, computed by release-gate at ingest")
+    else:
+        # A normalisation with no input artifact should not happen; re-deriving
+        # from the path is the honest fallback rather than a subject with no
+        # digest, which `subject.identified` would refuse anyway.
+        reference, digest = file_content(path)
+        basis = "sha256 over the input file's bytes, computed by release-gate"
     return AssuranceSubject(
         subject_type=subject_type_for(normalisation.detection.kind),
         requested_action=requested_action, content_reference=reference, digest=digest,
         digest_method=DigestMethod.SHA256_CONTENT, digest_status=DigestStatus.OBSERVED,
-        digest_basis="sha256 over the input file's bytes, computed by release-gate",
+        digest_basis=basis,
         metadata={"filename": path.name,
                   "detected_kind": normalisation.detection.kind.value})
 
@@ -1030,7 +1050,32 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     engine's output become its own input.
     """
     source = Path(path)
-    normalisation = ingest_path(source)
+    return assure_normalisation(
+        ingest_path(source), source_name=source.name, source_path=source,
+        methodology=methodology, objective=objective,
+        requested_decision=requested_decision, requested_action=requested_action,
+        consequence_registry=consequence_registry,
+        declared_consequence=declared_consequence)
+
+
+def assure_normalisation(normalisation: Normalisation, *, source_name: str,
+                         source_path: Optional[Path] = None,
+                         methodology: Optional[AssuranceMethodology] = None,
+                         objective: Optional[str] = None,
+                         requested_decision: Optional[str] = None,
+                         requested_action: Optional[str] = None,
+                         consequence_registry: Optional[ConsequenceRegistry] = None,
+                         declared_consequence: Optional[Any] = None
+                         ) -> AssuranceOutcome:
+    """Everything `assure` does after reading the file.
+
+    Split out so the incremental session and the one-shot file path are the same
+    code rather than two implementations that agree for now. The protocol spec
+    requires that a case built locally and a case built through the API from the
+    same records produce the same `case_digest` (§15); sharing this function is
+    what makes that structural instead of coincidental.
+    """
+    source = source_path if source_path is not None else Path(source_name)
 
     objective = objective or f"Assurance of {source.name}"
     requested_decision = requested_decision or (

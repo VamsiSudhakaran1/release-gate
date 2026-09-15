@@ -47,6 +47,17 @@ from release_gate.assurance.artifacts import (
     CurrencyStatus,
     VerificationCurrency,
 )
+from release_gate.assurance.organisation import (
+    ORGANISATION_SCHEMA_VERSION,
+    OrganisationConfig,
+    OrganisationConfigError,
+)
+from release_gate.assurance.session import (
+    SESSION_SCHEMA_VERSION,
+    AssuranceSession,
+    SessionError,
+    records_digest,
+)
 from release_gate.assurance.level import (
     LEVEL_SCHEMA_VERSION,
     AssuranceLevel,
@@ -203,6 +214,7 @@ from release_gate.assurance.methodologies import (
 )
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
+    VerifierRequired,
     AcceptedFinding,
     AdversarialReviewRequired,
     AssessmentStatus,
@@ -398,6 +410,7 @@ from release_gate.assurance.zero_config import (
     AssuranceOutcome,
     ZeroConfigError,
     assure,
+    assure_normalisation,
     decide,
     exit_code_for,
     render_text,
@@ -454,6 +467,7 @@ __all__ = [
     "AssuranceLevel",
     "AssuranceMethodology",
     "AssuranceOutcome",
+    "AssuranceSession",
     "AssuranceSubject",
     "AttemptOutcome",
     "AttentionCriticality",
@@ -601,7 +615,10 @@ __all__ = [
     "NoClaimInStatus",
     "NodeKind",
     "Normalisation",
+    "ORGANISATION_SCHEMA_VERSION",
     "Observation",
+    "OrganisationConfig",
+    "OrganisationConfigError",
     "OverrideRule",
     "PACKET_SCHEMA_VERSION",
     "PacketSection",
@@ -632,7 +649,9 @@ __all__ = [
     "RequirementResult",
     "ResultEquivalence",
     "RetentionReason",
+    "SESSION_SCHEMA_VERSION",
     "SectionKey",
+    "SessionError",
     "SignalStrength",
     "SimpleRecord",
     "SmtLibAdapter",
@@ -664,6 +683,7 @@ __all__ = [
     "VerifierError",
     "VerifierRegistry",
     "VerifierReport",
+    "VerifierRequired",
     "VersionBasis",
     "ZERO_CONFIG_RULESET_VERSION",
     "ZeroConfigError",
@@ -717,6 +737,7 @@ __all__ = [
     "offer_approval",
     "predicate_from_dict",
     "record_digest",
+    "records_digest",
     "render_packet",
     "render_text",
     "requirement_kind_for",

@@ -844,7 +844,8 @@ evidence of the assertion).
     case_c41d…/2.json
   approvals/
     appr_77bc….json                 signed; references case_id + case_digest
-  methodology.yaml                  optional, organisation or repo methodology
+  methodology.json                  optional, organisation or repo methodology
+  organisation.json                 optional, organisation configuration
 ```
 
 Properties: no database, no service, nothing required in git; dedup is free
