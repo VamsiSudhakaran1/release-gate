@@ -1849,6 +1849,65 @@ be authorised (Invariant 15).
 
 ## 9. Approval binding
 
+> **Implemented.** `release_gate/assurance/approval.py`. `AssuranceCase.with_approval()`
+> already kept approvals outside `case_digest`; this supplies the record and the check.
+
+An approval is the moment a person accepts responsibility for what a machine did.
+Everything else exists to make that moment informed; this makes it *specific* —
+bound to one state of one case, attributed to one party, and incapable of quietly
+outliving either.
+
+Four behaviours carry the weight, and the differences between them are the point:
+
+| condition | standing | why |
+|---|---|---|
+| the subject moved | `APPROVAL_INVALIDATED` | the human authorised a different thing; no re-check repairs it |
+| the case was revised | `APPROVAL_INVALIDATED` | `revise()` re-opens the argument and states the approval applies to the previous version only |
+| evidentiary collections moved | `APPROVAL_REVIEW_REQUIRED` | what was authorised is unchanged; what is *known about it* moved |
+| a verification target moved | attempts reported `SUPERSEDED` | already computed by `applicability()`; the check names them |
+| issued for another case | `APPROVAL_FOREIGN` | not out of date — used for something it was never given for |
+
+**Review-required is deliberately not fatal.** The thing authorised has not
+changed, so a person looking again may reasonably let the approval stand.
+Blocking outright would train people to re-approve reflexively, which is worse
+than asking.
+
+**"Relevant" is derived, not asserted.** Only the collections constituting the
+evidentiary state trigger review. Release-gate's own derived outputs — attention
+items, required evidence, coverage rows — move whenever it finds different things
+to say, and treating that as an evidence change would raise review on noise until
+nobody read the signal (Invariant 13). The same split that stopped §8a crying
+wolf.
+
+**A revision is not a replay.** `case_id` folds in the subject id, which folds in
+the subject's content digest — so revising the subject *always* produces a
+different case id, and reporting that as `APPROVAL_FOREIGN` would send a reviewer
+hunting an attacker when a colleague edited a file. Supersession tells them
+apart, and both links must name *this* approval's case or subject: a case that
+supersedes some other case is not a revision of what was approved here, and
+treating it as one would silence a genuine replay.
+
+**Release-gate cannot approve.** `AuthSource.RELEASE_GATE` is refused in the
+constructor — present in the enum so it can be refused by name rather than by
+omission. `ASSERTED` means the approval is attributable to a *claim* of identity,
+not an established one, and `identity_established` says so: signing establishes
+which party made a statement, never that the statement is right (Invariant 11).
+An API key proves possession of a key, which is weaker than a person
+authenticating, and is deliberately not counted as established.
+
+**An approval never rewrites a verdict.** It records `case_decision` beside
+`decision`, so approving over a HOLD or BLOCK is visible as
+`overrides_recommendation` — a person taking responsibility despite the
+recommendation, which is legitimate and sometimes necessary, and never a case
+that became clean because somebody signed it (Invariant 15).
+
+**Checking repairs nothing.** `check_approval` is pure: it never refreshes an
+approval, extends an expiry, or mutates a case. A re-check that could repair an
+approval would make the binding a formality. It reports *every* applicable
+condition, not only the one naming the standing — an approval both expired and
+bound to a moved subject has two problems, and a reader told about one would fix
+it and be surprised.
+
 ```text
 CaseBinding
   binding_algo      rg-bind-1
@@ -2022,7 +2081,7 @@ release_gate/assurance/
   policy.py              deterministic verdict; ADMISSION delegates to audit.apply_decision_mode
   attention.py           HumanAttentionSet, leverage computation, RequiredEvidence
   packet.py              ApprovalPacket: the eleven questions (§8a)
-  approval.py            BoundApproval, sign/verify (uses release_gate/crypto)
+  approval.py            BoundApproval + check_approval (§9); signing via release_gate/crypto
   store.py               content-addressed local evidence store
 ```
 
