@@ -2632,6 +2632,91 @@ disagreement nobody submitted leaves no trace for it to find.
 
 ---
 
+## 10h. Attestation chain (`AttestationChain`)
+
+> **Implemented.** `release_gate/assurance/attestation.py` — `LinkStatus`,
+> `ChainStatus`, `CustodyLink`, `SignatureMetadata`, `AttestationRef`,
+> `chain_from_case()`; unresolved-parent retention in `ingest`.
+
+The chain a decision rests on:
+
+```text
+agent event --digest--> tool output --digest--> verifier result
+            --target digest--> evidence pack --digest--> human approval
+```
+
+**Every one of those links already existed as a field** — `parent_evidence`,
+`applies_to_digest`, `target_digest`, `evidence_pack_digest`, and
+`ProvenanceStatus` already had `CHAIN_VERIFIED` and `BROKEN`. What did not exist
+is anything that *walks* them. This section is a traversal and a report over
+links other modules already record; no producer has to adopt a new format.
+
+### 10h.1 No blockchain, and the reason is not fashion
+
+A blockchain answers "how do mutually distrusting strangers agree on an ordering
+without a referee". That is not the question here. The question here is "can the
+person holding this evidence recompute the digests and see that nothing was
+swapped" — content addressing plus a traversal, with no consensus, ledger,
+network or token. Every link is verifiable offline by anyone with the bytes,
+which is strictly stronger than a chain of blocks nobody in the approval path can
+audit.
+
+### 10h.2 Two refusals, as properties rather than prose
+
+**A chain establishes integrity, not truth.** An unbroken, fully signed chain
+proves nothing was altered between the recorded steps and who put their name to
+each. It does not establish that the agent was honest, the tool correct or the
+verifier competent. `AttestationChain.establishes_truth` is an unconditional
+`False` property and appears in `to_dict()`, so nothing downstream can read a
+green chain as a green verdict (Invariant 11).
+
+**Signatures are recorded here and verified elsewhere.** This package is
+stdlib-only — the deterministic authoritative path imports no cryptography stack
+— so `SignatureMetadata` carries signer, algorithm and key id and reports
+`NOT_ASSESSED`. A `VALID` or `INVALID` state is accepted only when it names who
+checked it, because this module verifies nothing and an unattributed result has
+no standing. `establishes_correctness` is likewise unconditionally `False`: a
+signature says *who*, never *whether*. (The container this was built in has a
+`cryptography` wheel that cannot initialise at all, which made that an honest
+test rather than a hypothetical one.)
+
+### 10h.3 A missing link is UNLINKED, not BROKEN
+
+Evidence that never claimed a parent has not been tampered with — it is silent
+about its origin. Reporting that as a break would flood a case with alarms for
+the ordinary shape of unchained evidence, and the real breaks would be lost in
+them. So `LINKED` (a digest is named and resolves), `BROKEN` (named and does not
+resolve, or resolves to something else), `UNLINKED` (nothing named).
+
+### 10h.4 The signal that was being erased
+
+`parent_evidence` resolution read
+`tuple(id_map[p] for p in declared_parents if p in id_map)` — **a declared parent
+this case does not hold was silently filtered out, with no note.** A record
+claiming derivation from evidence that was never supplied is precisely "what was
+used is not what is here", and the walker reported `CONTINUOUS` over it.
+
+Unresolved parents are now retained on the record and noted at ingest, and the
+chain reports them as `BROKEN`.
+
+This also makes an id link a content link: `evidence_id` is
+`short_id("ev", digest_object(identity()))`, so a parent whose content changed
+hashes to a different id and the reference dangles. A dangling reference is
+therefore a real integrity finding rather than a bookkeeping slip.
+
+### 10h.5 What a bare case reports
+
+Release-gate hashes its own input and records it as evidence applying to its own
+digest, so the shortest possible chain is one hop that holds. `CONTINUOUS` on a
+bare case means *the bytes we read are the bytes we hashed* — and nothing more,
+which is why §10h.2 matters more than the status value does.
+
+`ToolIdentity` (name, version, family, binary digest) is carried on a link when a
+verifier says which build produced a result; a verifier that does not is recorded
+as a named verifier, which is weaker and reported as what it is.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

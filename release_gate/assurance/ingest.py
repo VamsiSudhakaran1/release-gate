@@ -611,6 +611,19 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
         payload = dict(row)
         payload.pop("record_type", None)
         payload.pop("parent_evidence", None)
+        # A declared parent that was never supplied is KEPT, not dropped. It used
+        # to be filtered out silently, which erased the one signal that matters
+        # for chain of custody: a record claiming derivation from evidence this
+        # case does not hold. The chain walker reported CONTINUOUS over exactly
+        # that. Recorded on the record so it survives to §10h, and noted so it is
+        # visible without one.
+        unresolved = tuple(p for p in declared_parents if p not in id_map)
+        if unresolved:
+            payload["unresolved_parent_evidence"] = list(unresolved)
+            notes.append(
+                f"an evidence record names {len(unresolved)} parent(s) this case "
+                f"does not hold ({', '.join(unresolved[:3])}); the custody link is "
+                "recorded as broken rather than dropped")
         declared_id = str(payload.get("evidence_id") or "").strip()
         supports = tuple(_as_ids(payload.get("supports_claims")))
         contradicts = tuple(_as_ids(payload.get("contradicts_claims")))
@@ -666,6 +679,12 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
     # provenance, so it is recorded rather than laundered out (Invariants 1, 11).
     solicited = str(payload.get("in_response_to") or "").strip()
     metadata = {"solicited_by": solicited} if solicited else {}
+    # Set by the ingest, not by the producer — its own `parent_evidence` key was
+    # consumed above. A named parent this case does not hold is the custody break
+    # §10h reports, and it has to survive onto the record to get there.
+    unresolved = payload.pop("unresolved_parent_evidence", None)
+    if unresolved:
+        metadata["unresolved_parent_evidence"] = list(unresolved)
 
     overlap = tuple(sorted(set(supports) & set(contradicts)))
     if not overlap:
