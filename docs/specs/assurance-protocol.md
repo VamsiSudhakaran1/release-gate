@@ -790,6 +790,84 @@ the moment of use rather than only at decision time.
 
 ---
 
+## 9a. The approval endpoint: read the bound state, acknowledge it, submit
+
+> **Implemented.** `release_gate/assurance/approval.py` —
+> `offer_approval()` / `submit_approval()`. The transport below is the binding;
+> the mechanism is transport-agnostic and lives in the library.
+
+```http
+GET  /api/v1/assurance/cases/{case_id}/approval-offer     # the read half
+POST /api/v1/assurance/cases/{case_id}/approve            # the write half
+```
+
+§7.3 already requires `If-Match` on `/approve`. That is optimistic concurrency on
+an *opaque* token, and it is not enough on its own. An ETag says "the case you
+read". It does not say **what the client took that case to be**, and a client that
+echoes a token it never looked inside has acknowledged nothing.
+
+So the write half requires three named values, and all three:
+
+```json
+{"acknowledged": {"case_version": 1,
+                  "subject_digest": "sha256:S1…",
+                  "evidence_pack_digest": "sha256:E1…"},
+ "decision": "APPROVED", "approver": "person://…", "scope": "deploy:staging"}
+```
+
+**A partial acknowledgement is a refusal, not a weaker acknowledgement.**
+Acknowledging the version but not the subject digest is precisely the gap this
+two-step exists to close, so it returns `400 INCOMPLETE_ACKNOWLEDGEMENT` naming
+the fields that were absent — never a lenient accept.
+
+### 9a.1 The read half returns exactly what would be approved
+
+`GET /approval-offer` returns the three acknowledgement values, the per-collection
+digests, the recommendation, and **the approval packet (§8a) in the same
+response**. One call rather than two, because a client that fetches the values
+and the document separately can straddle a change and present a human with a
+packet describing one state while acknowledging another.
+
+> **An offer is not a lock, and the payload says so** (`"is_a_lock": false`).
+> Optimistic concurrency reserves nothing: two clients may hold offers against
+> the same state, the first to submit wins, and the second is told the state
+> moved. An offer that *looked* like a lock would be worse than no offer, because
+> a client would stop checking.
+
+### 9a.2 There is no "approve latest"
+
+Not discouraged — unexpressible. `submit_approval` takes the acknowledgement as a
+required positional argument, and an empty one returns
+`INCOMPLETE_ACKNOWLEDGEMENT` rather than defaulting to current state. A read and
+a write that are not bound to the same version are a race with a human signature
+on the losing side.
+
+Note that "approve latest, atomically" reduces to this anyway: the only way to
+make the read and the write atomic is for the client to name the version it read
+and the server to check it at write time, which is what this is.
+
+### 9a.3 The acknowledgement is verified against the live case
+
+Never against the offer object the caller holds. An offer is a convenience for
+the human; treating it as the authority would let a fabricated one authorise
+anything. A forged offer whose digests do not match the case conflicts like any
+other stale read.
+
+### 9a.4 A conflict says whether the human must look again
+
+`409` / `CONFLICT` returns the current state and one further bit:
+
+| what moved | `evidentiary_change` | what the client should do |
+|---|---|---|
+| subject, evidence pack, or version | `true` | re-present the packet; the basis of the decision moved |
+| case digest only | `false` | re-acknowledge; release-gate found different things to say about the same evidence |
+
+The second case still conflicts — it is never silently accepted — but a coverage
+row changing should not force a person to re-read a packet describing evidence
+that did not move. Same evidentiary-versus-derived split as §9 and §8a.
+
+---
+
 ## 10. Case versioning and historical references
 
 ```http
@@ -843,7 +921,10 @@ surface consistent with `/api/audit`, `/api/verify`, `/api/dashboard`.
 | POST | `/cases/{id}/verification` | intrinsic | ignored | `assurance:write` | 200 |
 | POST | `/cases/{id}/completeness` | intrinsic | ignored | `assurance:write` | 200 |
 | POST | `/cases/{id}/finalize` | **key** | **required** | `assurance:decide` | 200 |
+| GET | `/cases/{id}/approval-offer` | — | — | `assurance:read` | 200 |
 | POST | `/cases/{id}/approve` | **key** | **required** | `assurance:approve` | 201 |
+
+> `/approve` additionally requires the three-field acknowledgement (§9a); `If-Match` alone is not sufficient, because an opaque token does not record what the client took the case to be.
 | POST | `/cases/{id}/revise` | **key** | **required** | `assurance:write` | 201 |
 
 ### Reads

@@ -62,13 +62,19 @@ from release_gate.assurance.canonical import digest_object, short_id
 
 __all__ = [
     "APPROVAL_SCHEMA_VERSION",
+    "ApprovalAcknowledgement",
     "ApprovalCheck",
     "ApprovalDecision",
     "ApprovalError",
+    "ApprovalOffer",
     "ApprovalStanding",
+    "ApprovalSubmission",
     "AuthSource",
     "BoundApproval",
+    "SubmissionOutcome",
     "check_approval",
+    "offer_approval",
+    "submit_approval",
 ]
 
 APPROVAL_SCHEMA_VERSION = 1
@@ -570,3 +576,272 @@ def _stale_verifications(case: Any) -> Tuple[str, ...]:
         return tuple(a.verification_id for a in graph.superseded_attempts())
     except Exception:
         return ()
+
+
+# ── the two-step: offer, then submit ─────────────────────────────────────────
+
+class SubmissionOutcome(str, Enum):
+    """What happened to an attempt to record an approval."""
+
+    ACCEPTED = "ACCEPTED"
+    #: The state moved between the read and the write. The client is handed the
+    #: current state so it can decide whether the change matters, re-present to
+    #: the human if it does, and try again.
+    CONFLICT = "CONFLICT"
+    #: Some acknowledgement field was absent. Not a weaker acknowledgement — a
+    #: refusal: acknowledging the version but not the subject digest is exactly
+    #: the hole this two-step exists to close.
+    INCOMPLETE_ACKNOWLEDGEMENT = "INCOMPLETE_ACKNOWLEDGEMENT"
+    #: The case is not in a state where an approval means anything.
+    REFUSED = "REFUSED"
+
+
+@dataclass(frozen=True)
+class ApprovalAcknowledgement:
+    """What the client asserts it read and understood it was approving.
+
+    Three values, all required. An opaque precondition token says "the case you
+    read"; naming the version, the subject and the evidence state says *what the
+    client took that case to be* — and a mismatch in any one of them is a client
+    approving something other than what it believes it is approving.
+    """
+
+    case_version: Optional[int] = None
+    subject_digest: Optional[str] = None
+    evidence_pack_digest: Optional[str] = None
+    case_digest: Optional[str] = None
+
+    @property
+    def complete(self) -> bool:
+        return (self.case_version is not None
+                and bool((self.subject_digest or "").strip())
+                and bool((self.evidence_pack_digest or "").strip()))
+
+    @property
+    def missing(self) -> Tuple[str, ...]:
+        absent = []
+        if self.case_version is None:
+            absent.append("case_version")
+        if not (self.subject_digest or "").strip():
+            absent.append("subject_digest")
+        if not (self.evidence_pack_digest or "").strip():
+            absent.append("evidence_pack_digest")
+        return tuple(absent)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"case_version": self.case_version,
+                "subject_digest": self.subject_digest,
+                "evidence_pack_digest": self.evidence_pack_digest,
+                "case_digest": self.case_digest,
+                "complete": self.complete, "missing": list(self.missing)}
+
+
+@dataclass(frozen=True)
+class ApprovalOffer:
+    """The read half: exactly what would be approved, before anything is accepted.
+
+    An offer is **not a lock**. Optimistic concurrency reserves nothing: two
+    clients may hold offers against the same state, the first to submit wins and
+    the second is told the state moved. An offer that looked like a lock would be
+    worse than no offer at all, because a client would stop checking.
+    """
+
+    case_id: str
+    case_version: int
+    subject_digest: str
+    case_digest: str
+    evidence_pack_digest: Optional[str] = None
+    collection_digests: Mapping[str, str] = field(default_factory=dict)
+    recommendation: Optional[str] = None
+    packet: Any = None
+    offered_at: str = field(default_factory=_utc_now)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "collection_digests",
+                           dict(self.collection_digests or {}))
+
+    @property
+    def required_acknowledgement(self) -> Tuple[str, ...]:
+        """Named so a client cannot discover the contract by trial and error."""
+        return ("case_version", "subject_digest", "evidence_pack_digest")
+
+    def acknowledgement(self) -> ApprovalAcknowledgement:
+        """The acknowledgement a client would send having read this offer.
+
+        A convenience for a client that genuinely read the offer — and not a
+        shortcut past the check, because submission verifies against the live
+        case and never against this object.
+        """
+        return ApprovalAcknowledgement(
+            case_version=self.case_version, subject_digest=self.subject_digest,
+            evidence_pack_digest=self.evidence_pack_digest,
+            case_digest=self.case_digest)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"record_type": "approval_offer",
+                "case_id": self.case_id, "case_version": self.case_version,
+                "subject_digest": self.subject_digest,
+                "case_digest": self.case_digest,
+                "evidence_pack_digest": self.evidence_pack_digest,
+                "collection_digests": dict(self.collection_digests),
+                "recommendation": self.recommendation,
+                "required_acknowledgement": list(self.required_acknowledgement),
+                "offered_at": self.offered_at,
+                # Stated in the payload so no client infers otherwise from the
+                # existence of an offer.
+                "is_a_lock": False,
+                "note": ("This offer reserves nothing. If the case moves before you "
+                         "submit, your submission conflicts and you will be handed "
+                         "the current state."),
+                "packet": (self.packet.to_dict() if self.packet is not None else None)}
+
+
+@dataclass(frozen=True)
+class ApprovalSubmission:
+    """What came of an attempt to record an approval."""
+
+    outcome: SubmissionOutcome
+    approval: Optional[BoundApproval] = None
+    reasons: Tuple[str, ...] = ()
+    current: Optional[ApprovalOffer] = None
+    mismatched: Tuple[str, ...] = ()
+    evidentiary_change: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "outcome", SubmissionOutcome(self.outcome))
+        object.__setattr__(self, "reasons", tuple(self.reasons))
+        object.__setattr__(self, "mismatched", tuple(sorted(self.mismatched)))
+
+    @property
+    def accepted(self) -> bool:
+        return self.outcome is SubmissionOutcome.ACCEPTED
+
+    @property
+    def human_must_re_read(self) -> bool:
+        """Whether the human has to look again, or only the client re-acknowledge.
+
+        A conflict where nothing evidentiary moved means release-gate found
+        different things to say about the same evidence — the thing the person
+        approved is unchanged, so re-acknowledging is honest. Where evidence
+        moved, the basis of their decision moved with it.
+        """
+        return self.outcome is SubmissionOutcome.CONFLICT and self.evidentiary_change
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"record_type": "approval_submission",
+                "outcome": self.outcome.value, "accepted": self.accepted,
+                "reasons": list(self.reasons),
+                "mismatched": list(self.mismatched),
+                "evidentiary_change": self.evidentiary_change,
+                "human_must_re_read": self.human_must_re_read,
+                "approval": self.approval.to_dict() if self.approval else None,
+                "current": self.current.to_dict() if self.current else None}
+
+
+def offer_approval(case: Any, outcome: Any = None) -> ApprovalOffer:
+    """Return the exact state an approval would bind to, before accepting one.
+
+    The read half of the two-step. Everything a client must acknowledge is here,
+    named, alongside the packet the human reads — so the values being
+    acknowledged and the document being read come from one snapshot rather than
+    two calls that could straddle a change.
+    """
+    state = case.binding_state()
+    inner = state.get("state") or {}
+    subject_state = inner.get("subject_state") or {}
+    packet = None
+    if outcome is not None:
+        try:
+            from release_gate.assurance.packet import build_packet
+            packet = build_packet(case, outcome)
+        except Exception:
+            packet = None
+    return ApprovalOffer(
+        case_id=str(state.get("case_id") or ""),
+        case_version=int(state.get("case_version") or 1),
+        subject_digest=str(subject_state.get("state_digest") or ""),
+        case_digest=str(state.get("case_digest") or ""),
+        evidence_pack_digest=str(inner.get("evidence_digest") or "") or None,
+        collection_digests={
+            kind: str((component or {}).get("fold_digest") or "")
+            for kind, component in (inner.get("collections") or {}).items()},
+        recommendation=(case.verdict.decision.value if case.verdict else None),
+        packet=packet)
+
+
+def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
+                    approver: str,
+                    decision: ApprovalDecision = ApprovalDecision.APPROVED,
+                    auth_source: AuthSource = AuthSource.ASSERTED,
+                    scope: str = "", comment: str = "",
+                    expires_at: Optional[str] = None) -> ApprovalSubmission:
+    """Record an approval, but only against the exact state the client acknowledged.
+
+    There is deliberately no way to express "approve the latest". The only
+    approval this function can record is an approval of one named state, because
+    a read and a write that are not bound to the same version are a race with a
+    human signature on the losing side.
+
+    The acknowledgement is verified against the **live case**, never against any
+    offer object the caller happens to be holding. An offer is a convenience for
+    the human; treating it as the authority would let a fabricated one authorise
+    anything.
+    """
+    from release_gate.assurance.case import EVIDENCE_KINDS
+
+    current = offer_approval(case)
+
+    if not acknowledgement.complete:
+        return ApprovalSubmission(
+            outcome=SubmissionOutcome.INCOMPLETE_ACKNOWLEDGEMENT,
+            current=current, mismatched=acknowledgement.missing,
+            reasons=("the client did not acknowledge "
+                     + ", ".join(acknowledgement.missing)
+                     + "; a partial acknowledgement is not a weaker one, it is the "
+                       "gap between what was read and what would be signed",))
+
+    if getattr(case, "verdict", None) is None:
+        return ApprovalSubmission(
+            outcome=SubmissionOutcome.REFUSED, current=current,
+            reasons=("this case has no verdict; there is nothing yet for a human to "
+                     "accept responsibility for",))
+
+    mismatched: List[str] = []
+    if acknowledgement.case_version != current.case_version:
+        mismatched.append("case_version")
+    if acknowledgement.subject_digest != current.subject_digest:
+        mismatched.append("subject_digest")
+    if acknowledgement.evidence_pack_digest != current.evidence_pack_digest:
+        mismatched.append("evidence_pack_digest")
+    # Optional, and checked when supplied: a client that read the case digest is
+    # entitled to have it enforced too.
+    if (acknowledgement.case_digest is not None
+            and acknowledgement.case_digest != current.case_digest):
+        mismatched.append("case_digest")
+
+    if mismatched:
+        evidentiary = ("subject_digest" in mismatched
+                       or "evidence_pack_digest" in mismatched
+                       or "case_version" in mismatched)
+        return ApprovalSubmission(
+            outcome=SubmissionOutcome.CONFLICT, current=current,
+            mismatched=mismatched, evidentiary_change=evidentiary,
+            reasons=("the case moved between the read and this submission ("
+                     + ", ".join(mismatched) + "); the current state is returned so "
+                     "you can decide whether the change matters"
+                     + (", and it does — what the person approved has changed"
+                        if evidentiary else
+                        ", and only release-gate's own output moved: the evidence "
+                        "and the subject are unchanged"),))
+
+    try:
+        approval = BoundApproval.for_case(
+            case, approver=approver, scope=scope, decision=decision,
+            auth_source=auth_source, comment=comment, expires_at=expires_at)
+    except ApprovalError as exc:
+        return ApprovalSubmission(outcome=SubmissionOutcome.REFUSED, current=current,
+                                  reasons=(str(exc),))
+    return ApprovalSubmission(
+        outcome=SubmissionOutcome.ACCEPTED, approval=approval, current=current,
+        reasons=(f"bound to case {approval.case_id} v{approval.case_version} at "
+                 f"{approval.case_digest}",))
