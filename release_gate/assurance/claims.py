@@ -155,12 +155,29 @@ def _utc_now() -> str:
 
 
 def link_evidence(claims: Iterable[Claim],
-                  evidence: Mapping[str, EvidenceRecord]) -> List[Claim]:
+                  evidence: Mapping[str, EvidenceRecord],
+                  disputed: Optional[List[Tuple[str, str, str]]] = None) -> List[Claim]:
     """Fold each record's claim references back onto the claims themselves.
 
     Evidence declares which claims it supports or contradicts; a claim written
     before that evidence existed cannot have listed it. Both directions end up on
     the claim so the status calculus has one place to look.
+
+    **When the two accounts disagree**, the record's own wins. A claim listing
+    `ev_9f2c` as supporting it while `ev_9f2c` says it contradicts that claim is
+    two parties disagreeing about one piece of evidence — and the record's
+    producer is speaking first-hand about what it produced, while the claim's
+    author is speaking about somebody else's record (Invariant 1). Folding both
+    accounts onto one claim would build a `Claim` that lists one record on both
+    sides, which `Claim` rightly refuses; before this, that refusal propagated out
+    of `ClaimGraph.__init__`, was swallowed by the caller's `except Exception`,
+    and the case lost its entire claim graph — taking contradiction detection,
+    claim status and criticality with it. The loudest disagreement in a case
+    silently disabled the machinery that exists to report disagreements.
+
+    `disputed` collects `(claim_id, evidence_id, detail)` for every such
+    disagreement so the caller can report it. Passing nothing keeps the old
+    signature working and loses only the reporting, never the resolution.
     """
     materialised = list(claims)
     supporting: Dict[str, List[str]] = defaultdict(list)
@@ -176,17 +193,40 @@ def link_evidence(claims: Iterable[Claim],
 
     linked: List[Claim] = []
     for claim in materialised:
+        # Where a record's own account puts it on the other side from the claim's,
+        # the claim's listing of it is dropped and the disagreement is recorded.
+        declared_for = set(supporting.get(claim.claim_id, ()))
+        declared_against = set(contradicting.get(claim.claim_id, ()))
+        drop_from_support = set(claim.supporting_evidence) & declared_against
+        drop_from_against = set(claim.contradicting_evidence) & declared_for
+        for evidence_id in sorted(drop_from_support | drop_from_against):
+            side = "contradicting" if evidence_id in drop_from_support else "supporting"
+            listed = "supporting" if evidence_id in drop_from_support else "contradicting"
+            if disputed is not None:
+                disputed.append((
+                    claim.claim_id, evidence_id,
+                    f"{claim.claim_id} lists {evidence_id} as {listed} evidence and "
+                    f"{evidence_id} says it is {side}; the record's own account is "
+                    "first-hand and was taken, and the disagreement is itself "
+                    "something a reviewer should see"))
+
+        base_support = tuple(e for e in claim.supporting_evidence
+                             if e not in drop_from_support)
+        base_against = tuple(e for e in claim.contradicting_evidence
+                             if e not in drop_from_against)
         extra_support = [e for e in supporting.get(claim.claim_id, ())
-                         if e not in claim.supporting_evidence]
+                         if e not in base_support]
         extra_against = [e for e in contradicting.get(claim.claim_id, ())
-                         if e not in claim.contradicting_evidence]
-        if not extra_support and not extra_against:
+                         if e not in base_against]
+        if (not extra_support and not extra_against
+                and base_support == claim.supporting_evidence
+                and base_against == claim.contradicting_evidence):
             linked.append(claim)
             continue
         linked.append(dataclasses.replace(
             claim,
-            supporting_evidence=claim.supporting_evidence + tuple(extra_support),
-            contradicting_evidence=claim.contradicting_evidence + tuple(extra_against)))
+            supporting_evidence=base_support + tuple(extra_support),
+            contradicting_evidence=base_against + tuple(extra_against)))
     return linked
 
 
@@ -407,11 +447,14 @@ class ClaimGraph:
         # advance which records will arrive. Linking happens here rather than in
         # one construction path, or the same inputs would mean different things
         # depending on how the graph was built.
+        disputed: List[Tuple[str, str, str]] = []
         self._claims: Dict[str, Claim] = {
-            c.claim_id: c for c in link_evidence(claims, self._evidence)}
+            c.claim_id: c for c in link_evidence(claims, self._evidence, disputed)}
         self._resolved: Set[str] = set(resolved_contradictions)
         self.notes: Tuple[str, ...] = tuple(notes)
-        self._anomalies: List[ClaimAnomaly] = []
+        self._anomalies: List[ClaimAnomaly] = [
+            ClaimAnomaly("EVIDENCE_SIDE_DISPUTED", detail, (claim_id,))
+            for claim_id, _evidence_id, detail in disputed]
         self._assessments: Dict[str, ClaimAssessment] = {}
         self._compute()
 

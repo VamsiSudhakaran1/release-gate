@@ -33,7 +33,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple
 
 from release_gate.assurance.canonical import (
     CanonicalisationError,
@@ -696,6 +696,45 @@ def default_case_type(subject_type: SubjectType) -> CaseType:
         SubjectType.INFRASTRUCTURE_CHANGE: CaseType.INFRASTRUCTURE_CHANGE,
     }
     return mapping.get(subject_type, CaseType.GENERAL_DECISION)
+
+
+def declared_digests(case: "AssuranceCase") -> Dict[str, Set[str]]:
+    """Every content digest declared under each artifact handle.
+
+    A set per handle, never a single value, because one logical artifact declared
+    twice with different digests is not a case where the second supersedes the
+    first — it is a case that cannot say which content it is about. Collapsing
+    that to the last record read answers a question nobody can answer, and hides
+    the collision that is itself the finding.
+    """
+    out: Dict[str, Set[str]] = {}
+    for record in case.records("artifacts"):
+        payload = record.to_dict() if hasattr(record, "to_dict") else {}
+        logical = str(payload.get("logical_id") or payload.get("artifact_id") or "")
+        digest = str(payload.get("digest") or "")
+        if logical and digest:
+            out.setdefault(logical, set()).add(digest)
+    return out
+
+
+def held_digests(case: "AssuranceCase",
+                 kinds: Sequence[str] = ("artifacts", "claims", "evidence",
+                                         "verification")) -> Set[str]:
+    """Every content digest this case actually holds, across collections.
+
+    The denominator for "does this reference point at anything we have". Not just
+    artifacts: a verifier may legitimately name a claim or a piece of evidence by
+    its digest, and treating only artifact digests as real would call those
+    honest references unanchored.
+    """
+    out: Set[str] = set()
+    for kind in kinds:
+        for record in case.records(kind):
+            payload = record.to_dict() if hasattr(record, "to_dict") else {}
+            digest = str(payload.get("digest") or "")
+            if digest:
+                out.add(digest)
+    return out
 
 
 class AssuranceCaseBuilder:

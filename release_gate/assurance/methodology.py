@@ -60,6 +60,8 @@ from release_gate.assurance.case import (
     AssuranceCase,
     CaseType,
     MethodologyRef,
+    declared_digests,
+    held_digests,
 )
 from release_gate.assurance.expectation import CoverageState
 from release_gate.assurance.records import Presence
@@ -1195,21 +1197,12 @@ class AppliesToCurrentState(Predicate):
         }[self.scope]
 
     def evaluate(self, case: AssuranceCase) -> _Finding:
-        # Every digest declared under each handle, not the last one seen. A case
-        # that names one logical artifact with two different digests is not a case
-        # where the second supersedes the first — it is a case that cannot say
-        # which content it is about, and collapsing it to the last record read
-        # would answer a question nobody can answer. The `artifact` scope reports
-        # the collision in its own words; the others take the union as `known`, so
-        # evidence bound to either declared content is not mis-named as stale when
-        # the real defect is upstream of it.
-        declared: Dict[str, Set[str]] = {}
-        for record in case.records("artifacts"):
-            payload = record.to_dict() if hasattr(record, "to_dict") else {}
-            logical = str(payload.get("logical_id") or payload.get("artifact_id") or "")
-            digest = str(payload.get("digest") or "")
-            if logical and digest:
-                declared.setdefault(logical, set()).add(digest)
+        # A set of digests per handle, never the last one seen — `declared_digests`
+        # states why. The `artifact` scope reports a handle carrying two contents
+        # in its own words; the others take the union as `known`, so evidence bound
+        # to either declared content is not mis-named as stale when the real defect
+        # is upstream of it.
+        declared = declared_digests(case)
         conflicted = sorted(logical for logical, digests in declared.items()
                             if len(digests) > 1)
         if not declared and self.scope in ("evidence", "artifact"):
@@ -1220,17 +1213,10 @@ class AppliesToCurrentState(Predicate):
 
         records, incomplete, _total = _records(case, self.collection)
         known = {d for digests in declared.values() for d in digests}
-        # Every content digest this case actually holds, across collections — not
-        # just the artifacts. A verifier may legitimately name a claim or a piece
+        # Wider than `known`: a verifier may legitimately name a claim or a piece
         # of evidence by its digest, and treating only artifact digests as real
         # would call those honest references unanchored.
-        held = set(known)
-        for kind in ("claims", "evidence", "verification"):
-            for record in case.records(kind):
-                payload = record.to_dict() if hasattr(record, "to_dict") else {}
-                value = str(payload.get("digest") or "")
-                if value:
-                    held.add(value)
+        held = held_digests(case)
         stale: List[str] = []
         unanchored: List[str] = []
         unbound: List[str] = []

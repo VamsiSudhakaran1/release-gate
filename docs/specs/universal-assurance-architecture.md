@@ -3422,6 +3422,119 @@ says so rather than implying otherwise.
 
 ---
 
+## 10q. Evidence quality without opaque judgment (`FactSheet`)
+
+> **Implemented.** `release_gate/assurance/quality.py` — `EvidenceFact`,
+> `FactState`, `FactPolarity`, `FactFinding`, `FactSheet`, `facts_for()`,
+> `sheets_for_case()`, `model_assisted_evidence()`. Shared digest helpers moved
+> to `case.declared_digests()` / `case.held_digests()`. One defect this pass
+> found is fixed in `claims.link_evidence()`.
+
+There is no number in this module. No score, grade, tier, percentage,
+confidence or star rating, and no way to reconstruct one by counting.
+`establishes_quality`, `ranks_evidence` and `combines_into_a_score` are
+properties returning `False` unconditionally, so anything relying on the
+opposite fails rather than quietly getting a default.
+
+The reason is not squeamishness about numbers. A score is a claim release-gate
+cannot support, and worse, one that cannot be argued with: told "this evidence
+scores 0.82", a reviewer can only accept it or distrust the system. Told the
+eleven facts, they can disagree with any line, go and look, or notice that one
+of them is the only one that matters here.
+
+### 10q.1 Eleven facts, four states
+
+| fact | holding means | read from |
+|---|---|---|
+| `PROVENANCE_AVAILABLE` | somebody is named | `evidence.provenance_status` |
+| `DIGEST_MATCHES` | the binding names content the case holds | `case.held_digests` |
+| `INDEPENDENT_ROOT_EXISTS` | a second lineage exists | `analysis.independence` |
+| `FORMAL_VERIFIER_PASSED` | a formal method returned PASSED | `analysis.verification_graph` |
+| `REPLICATION_SUCCEEDED` | a second path could have been wrong differently | `analysis.replication` |
+| `CONTRADICTION_UNRESOLVED` | a disagreement is open *(detracting)* | `analysis.contradictions` |
+| `TARGET_CHANGED` | what this is about has moved *(detracting)* | `case.declared_digests` |
+| `COVERAGE_KNOWN` | what it does and does not cover is stated | `evidence.coverage_status` |
+| `COUNTEREXAMPLE_UNRESOLVED` | something stands unanswered *(detracting)* | `analysis.counterexamples` |
+| `VERIFIER_TRUSTED` | somebody ruled this source may be relied on | `evidence.trust` |
+| `COMPLETENESS_ESTABLISHED` | all of it demonstrably arrived | a caller-supplied `StreamLedger` |
+
+Four states, and the last two are not interchangeable: `HOLDS`,
+`DOES_NOT_HOLD` (looked; it is not so), `NOT_ASSESSED` (the input needed to ask
+was not there) and `NOT_APPLICABLE` (the question does not arise for this
+subject). A fact nobody could ask is never rendered as a fact that failed —
+that conflation is how a sparse case comes to look like a bad one.
+
+Every finding carries a `basis` a reviewer can check and a `read_from` naming
+the derivation that answered. A fact whose provenance *inside* release-gate is
+untraceable would be the same opaque judgement one level down: a reader who
+cannot see which derivation answered cannot tell a finding from a default.
+
+### 10q.2 Polarity is not weight
+
+Each fact declares whether its holding is reassuring or concerning, so a render
+can group what stands behind a subject against what stands against it. That is
+presentation. The polarities are never counted, compared or summed, there is no
+`net`, `balance` or `total`, and two sheets have no ordering between them —
+eight weak supporting facts must never outweigh one unresolved counterexample
+(Invariant 12), and a score assembled by addition is still a score.
+
+`to_dict()` states `"score": null`, `"grade": null` and
+`"composite_score": null` rather than merely omitting them, so a consumer
+looking for a number finds an explicit refusal instead of a gap it might fill in
+itself. This follows `AttentionRanking`, which made the same choice for the same
+reason.
+
+### 10q.3 Models may classify; they may not write facts
+
+`model_assisted_evidence()` is the seam. What it produces is an ordinary
+`DERIVED` evidence record naming the model that produced it, and each half of
+that matters. It **is** evidence: a model reading a diff and saying "this
+touches the settlement path" is useful, and discarding it would lose something
+real. It **stays** `DERIVED`: the epistemic status is not a parameter, and
+`epistemic_status`, `status` and `verified` are all refused as arguments. A
+model's confidence, however expressed, is recorded in the content where a reader
+can see it, and moves nothing.
+
+No fact is ever written by a model. Facts are read from structural derivations,
+so a model can add evidence to a case but cannot change what the case's facts
+say — including about its own record, which gets a sheet like any other and
+shows its thinness in the same vocabulary rather than behind a warning banner.
+What changes a model's standing is independent verification of its output, which
+arrives as a verification record against it: a different party, a named method,
+a result. Not a better adjective on the same record.
+
+### 10q.4 A disagreement that disabled the machinery for reporting disagreements
+
+Driving the facts against real cases found one defect, and it was the worst kind
+this system has: silence exactly where the most was to say.
+
+A claim whose author lists `ev_9f2c` as *supporting* it, where `ev_9f2c` itself
+says it *contradicts* that claim, is two parties disagreeing about one piece of
+evidence — as loud a signal as a case can carry. `link_evidence()` folded both
+accounts onto the claim, producing a `Claim` listing one record on both sides.
+`Claim` rightly refuses that. The refusal propagated out of
+`ClaimGraph.__init__`, was swallowed by the caller's bare `except Exception`,
+and the case came out with `claim_graph = None` — losing contradiction
+detection, claim status, criticality and every claim-level coverage analysis at
+once. The case still decided, and every claim-level check reported nothing.
+
+The record's own account now wins: its producer is speaking first-hand about
+what it produced, while the claim's author is speaking about somebody else's
+record (Invariant 1). The disagreement is not quietly resolved — it is recorded
+as an `EVIDENCE_SIDE_DISPUTED` anomaly on the claim graph, because which party
+was overruled is itself something a reviewer should see.
+
+### 10q.5 What this is not
+
+It is not a gate. A fact sheet informs; a methodology decides, and nothing in
+this module fires a rule or changes a verdict. It is not an analysis either —
+every fact is read off a derivation another module already produced, which is
+precisely what lets it be honest about `NOT_ASSESSED`: where the analysis
+produced nothing there is nothing to read, and the fact says so rather than
+guessing.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
