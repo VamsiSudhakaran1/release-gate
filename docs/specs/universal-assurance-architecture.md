@@ -3204,6 +3204,89 @@ invalidates the eval, leaves the proof **provably** unaffected, and reports
 
 ---
 
+## 10o. Trust boundaries (`TrustSurface`)
+
+> **Implemented.** `release_gate/assurance/trust.py` — `IntegrityStatus`,
+> `Threat`, `Detectability`, `TrustBoundary`, `TrustSurface`,
+> `boundaries_from_case()`, `assess_threats()`, `trust_surface()`.
+
+Everything upstream of release-gate can be wrong, and wrong in ways that need
+different answers. Eight failures, and they are not interchangeable.
+
+### 10o.1 Five axes, and deliberately no score
+
+| axis | question |
+|---|---|
+| **source** | who or what emitted this |
+| **provenance** | what establishes that they emitted it |
+| **trust** | whether anyone decided to rely on them |
+| **integrity** | whether what arrived is what they sent |
+| **completeness** | whether all of it arrived |
+
+`IntegrityStatus` is new — the other four already existed, scattered. It is
+distinct from provenance because a record can be signed by exactly the right
+party and truncated in transit, and one with no attribution at all can arrive
+byte-perfect.
+
+**`TrustBoundary` has no `score`, no `level`, no `ok`** — asserted by a test that
+scans for them. A signed record from an unvetted verifier and an unsigned
+assertion from a trusted vendor would land on the same number while being
+opposite situations, and the number is what a reader carries forward. A boundary
+that cannot be summarised in one value is one that has to be read.
+
+The independence runs in every direction: strong provenance does not establish
+trust (Invariant 11), intact integrity does not establish completeness — a
+perfectly transmitted subset is still a subset — and trust does not establish
+integrity, since deciding to rely on a producer says nothing about whether this
+delivery was tampered with.
+
+### 10o.2 The threat model says what it cannot see
+
+The valuable half of a threat model is the half that says *not this one*. Each
+threat carries a `Detectability`, and two of the four values are admissions.
+
+| threat | detectability | why |
+|---|---|---|
+| human approves stale state | **DETECTED** | approval binds to an exact digest |
+| verification applies to old artifact | **DETECTED** | target digests and the dependency index |
+| telemetry incomplete | DETECTABLE_IF_SUPPLIED | a hole in a numbered sequence is structural; an unnumbered stream has no shape for one to show in |
+| orchestrator omits failures | DETECTABLE_IF_SUPPLIED | needs an enumeration from a party other than the producer |
+| agent lies | MITIGATED_ONLY | **there is no structural signal in a well-formed falsehood** |
+| verifier compromised | MITIGATED_ONLY | a compromised verifier emits well-formed passing results |
+| source spoofed | MITIGATED_ONLY | a signature records who signed; absence of one proves nothing either way |
+| tool output poisoned | **OUTSIDE_VISIBILITY** | release-gate has no model of what the tool *should* have reported |
+
+A model that graded everything "handled" would be worse than none, because a
+reader would stop looking (Invariant 10).
+
+### 10o.3 One producer removes the mitigation
+
+`MITIGATED_ONLY` means the threat is reduced by **corroboration** rather than
+caught. So when every record in a case comes from one producer, those threats are
+not mitigated at all, and the surface says so:
+
+> All evidence comes from one producer, so the threats that are only mitigated by
+> corroboration are not mitigated here at all: a lie, a compromised verifier or
+> poisoned tool output would be internally consistent and invisible.
+
+Measured: with one producer all three mitigated-only threats record that their
+mitigation is absent; adding a second independent producer restores it.
+
+A supplied completeness ledger (§10g) sharpens the model further — a ledger
+reporting `KNOWN_GAPS` upgrades telemetry incompleteness from
+*detectable-if-supplied* to **detected**, and a self-certified stream is recorded
+as an observation against the omission threat.
+
+### 10o.4 Integrity, read honestly
+
+A digest release-gate **hashed itself** at ingest is `VERIFIED`. A digest a
+producer supplied alongside its own content is `DECLARED` — it establishes that
+the producer is consistent with itself and nothing more. No digest at all is
+`NOT_ASSESSED`, never "fine". Within a producer the worst status wins, because a
+boundary describes a party and one broken delivery is a fact about them.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
