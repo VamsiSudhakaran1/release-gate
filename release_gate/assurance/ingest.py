@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from release_gate.assurance.artifacts import Artifact, ArtifactKind
-from release_gate.assurance.canonical import digest_object
+from release_gate.assurance.canonical import digest_object, is_digest
 from release_gate.assurance.capabilities import CapabilitySurface, declared_from_document
 from release_gate.assurance.consequence import (
     ConsequenceDescriptor, descriptors_from_mapping,
@@ -686,13 +686,41 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
     if unresolved:
         metadata["unresolved_parent_evidence"] = list(unresolved)
 
+    # What the producer says this evidence was produced against. Dropped
+    # silently until now, which blinded every check that asks "is this evidence
+    # about the current state": RG-CLAIM-007, RG-SW-007 and the `applies_to` hop
+    # of the custody chain all read this field, and for envelope-submitted
+    # evidence it was always None. A producer declaring what its result applies
+    # to had that declaration discarded without a note.
+    applies_to = str(payload.get("applies_to_digest") or "").strip()
+    state: Dict[str, Any] = {}
+    if applies_to:
+        if is_digest(applies_to):
+            state["applies_to_digest"] = applies_to
+        else:
+            notes.append(
+                f"a record from {producer.producer_id} declares applies_to_digest "
+                f"{applies_to[:32]!r}, which is not a sha256 content digest; it "
+                "cannot be compared to anything and was not recorded")
+
+    # A producer's clock is a producer's claim. `EvidenceRecord.timestamp` stays
+    # what release-gate knows — when the record arrived here — because a field
+    # release-gate populates must mean something release-gate observed, and a
+    # forged production time written into it would read as ours. But the
+    # producer's claim is not discarded either: it is kept beside the observed
+    # one, as a declaration, so a reviewer can see a result stamped next year or
+    # last decade for what it is. Nothing derives from it (Invariants 1, 2, 13).
+    declared_at = str(payload.get("timestamp") or "").strip()
+    if declared_at:
+        metadata["declared_timestamp"] = declared_at
+
     overlap = tuple(sorted(set(supports) & set(contradicts)))
     if not overlap:
         return [EvidenceRecord.from_producer(
             payload, evidence_type=_evidence_type_of(payload), source=source,
             producer=producer, status=EpistemicStatus.DECLARED,
             parent_evidence=parents, supports_claims=supports,
-            contradicts_claims=contradicts, metadata=metadata,
+            contradicts_claims=contradicts, metadata=metadata, **state,
             coverage_note=str(payload.get("coverage_note") or ""))]
 
     notes.append(

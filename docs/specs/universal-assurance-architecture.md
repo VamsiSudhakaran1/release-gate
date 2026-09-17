@@ -3287,6 +3287,141 @@ boundary describes a party and one broken delivery is a fact about them.
 
 ---
 
+## 10p. Anti-gaming — eighteen attacks, run
+
+> **Implemented.** `tests/test_assurance_anti_gaming.py` — every attack below is
+> a test, including the six release-gate cannot see. Three defects this pass
+> found are fixed in `release_gate/assurance/ingest.py` (`_build_evidence`) and
+> `release_gate/assurance/methodology.py` (`AppliesToCurrentState`).
+
+§10o modelled the threats. This section is what happened when they were actually
+run against the engine, from the attacker's side: the input is what someone
+trying to get a decision through would submit, and the result is what release-gate
+did about it. The distinction matters, because a check written by the person who
+wrote the fixture tends to be tested on input shaped to pass it.
+
+Three outcomes are possible, and conflating them is itself a failure mode:
+
+* **CAUGHT** — a named requirement or analysis fires, with words describing what
+  actually happened.
+* **REFUSED STRUCTURALLY** — nothing detects the lie, and it buys nothing anyway,
+  because the structure never converts the submitted thing into support. Worth
+  having; not the same as detection, and not written as though it were.
+* **UNSUPPORTED** — release-gate cannot tell. Listed in §10p.3, as a test.
+
+### 10p.1 What the attacks did
+
+| # | attack | outcome | what stopped it |
+|---|---|---|---|
+| 1 | 300 agents copying one source | CAUGHT | independence derives lineage; one root stays one root |
+| 2 | selective omission, numbered stream | CAUGHT | `KNOWN_GAPS` — the sequence has a hole in it |
+| 2′ | selective omission, unnumbered stream | CAUGHT | `COMPLETENESS_UNKNOWN`, never "no gaps" |
+| 3 | dangerous tool under a harmless name | CAUGHT | surface `bounded=False`: an unrecognised name is unknown capability, not absent capability |
+| 4 | approval issued for another case | CAUGHT | `APPROVAL_FOREIGN` |
+| 4′ | approval of an undecided case | CAUGHT | refused: nothing yet to take responsibility for |
+| 5 | artifact modified after verification | **CAUGHT — defect fixed** | `RG-SW-007`; see §10p.2 |
+| 6 | circular evidence | CAUGHT | `DEPENDENCY_CYCLE` anomaly |
+| 7 | agent self-identifying as independent verifier | REFUSED STRUCTURALLY | envelope evidence is `DECLARED`; declaring is not verifying, so it never enters the verification collection |
+| 8 | evidence flooding (5,000 records) | CAUGHT | nothing converts count into confidence; `unverified_critical_claims` still names the one claim that matters |
+| 9 | claim fragmentation (50 shards) | CAUGHT | fifty unsupported shards are fifty unsupported claims |
+| 10 | fake timestamps (future, past, reordered) | **CAUGHT — defect fixed** | no finding moves; see §10p.2 |
+| 11 | replayed evidence ×50 | CAUGHT | identity is content, so a replay collides with what it copies |
+| 12 | verifier result bound to the wrong digest | **CAUGHT — defect fixed** | `RG-SW-006`; see §10p.2 |
+| 13 | forged completeness declaration | CAUGHT | `PARTIALLY_COMPLETE` — a producer's account of its own output |
+| 14 | producer-written enumeration | CAUGHT | `enumeration_independent=False` forbids `COMPLETE` |
+| 15 | cross-case evidence reuse | CAUGHT | `RG-SW-007`: the borrowed proof names a digest this case lacks |
+| 15′ | borrowed evidence re-labelled with this digest | REFUSED STRUCTURALLY | nothing detects it; it buys nothing, because a self-declared result is not a verification |
+| 16 | unrelated proof reference | CAUGHT | attestation chain `BROKEN` |
+| 17 | evidence arriving after the packet was read | CAUGHT | `APPROVAL_REVIEW_REQUIRED`: the subject is unchanged, what is known about it is not |
+| 18 | semantic mutation behind one filename | **CAUGHT — defect fixed** | `RG-SW-005`; see §10p.2 |
+
+### 10p.2 Three defects, and what they had in common
+
+Each was a **false SATISFIED**: a check reporting that it had looked and found
+nothing, on a case where the thing it looks for was present. That is the worst
+failure mode this system has, worse than a crash, because a reviewer reads it as
+assurance.
+
+**`applies_to_digest` was dropped at ingest.** A producer declaring what its
+result was produced against had that declaration discarded, silently, for every
+record submitted through the envelope. `RG-CLAIM-007`, `RG-SW-007` and the
+`applies_to` hop of the custody chain all read that field, so all three reported
+clean on evidence produced against a superseded state. Attack 5 was invisible:
+`RG-SW-007` said *"every evidence record applies to the current state"* about
+evidence bound to a digest nothing in the case carried. Fixed in `_build_evidence`,
+which now records the digest, or notes plainly that a malformed one could not be
+compared to anything.
+
+**One handle, two contents, collapsed to the last one read.** `AppliesToCurrentState`
+built `current[logical_id] = digest` in a loop, so an artifact declared twice with
+different digests kept whichever record came last. Attack 18 — the same filename
+over changed content, which is the whole reason a digest exists — produced a
+*stale-evidence* finding about a downstream record rather than naming the
+collision. Now every digest per handle is kept, the `artifact` scope reports the
+collision in its own words, and the evidence scope takes the union so an honest
+record is not mis-named as stale when the defect is upstream of it.
+
+**A verification whose target the case did not hold was skipped.** The loop
+flagged an attempt only when its target was present *and* its digest differed.
+An attempt naming a target nothing in the case carried fell through both
+conditions and was never counted — and the finding then reported *"every
+verification record applies to the current state"*. That is exactly attack 12: a
+genuine proof, genuinely passing, pointed at something else. Such an attempt is
+now `unanchored` — not stale, which would imply it once applied — and an attempt
+naming no digest at all is counted separately rather than read as agreement.
+
+A fourth change is not a defect fix but an epistemic one. A producer's declared
+timestamp was dropped and release-gate's own ingest time written in its place,
+so a forged clock became indistinguishable from an observed one. The declared
+value is now kept beside the observed one as `metadata.declared_timestamp`:
+release-gate's field still says what release-gate saw, and the producer's claim
+is visible as a claim. Nothing derives from it — which is why attack 10 changes
+no finding at all.
+
+### 10p.3 What release-gate cannot see
+
+A threat model that graded everything "handled" would be worse than none, because
+a reader would stop looking. These six are held as a test
+(`test_unsupported_threats_are_named`) so that moving one out of the list has to
+be a deliberate edit with evidence behind it.
+
+* **A producer that lies consistently.** Fabricated evidence internally
+  consistent with everything else submitted contradicts nothing, so nothing
+  detects it. What limits it is structural: a self-declared result never becomes
+  a verification, so the lie has to survive an independent check to buy anything.
+* **A compromised verifier.** Release-gate weighs a verifier's output and cannot
+  distinguish a correct verifier from a subverted one emitting the same shape.
+  Tool identity and pinning narrow this to *which binary said so*, not *was the
+  binary honest*.
+* **Collusion between parties modelled as independent.** Independence is derived
+  from evidence lineage. Two producers coordinating out of band leave no trace in
+  the lineage.
+* **Omission by a producer that never declared a stream.** Completeness is
+  assessed against what a source said it would send. A source silent about its own
+  existence yields `COMPLETENESS_UNKNOWN` — honest, and not detection.
+* **Semantics.** Release-gate compares digests, not meanings. Whether a difference
+  matters is a question for a verifier, and whether the verifier asked the right
+  question is outside the gate entirely.
+* **A human approving with full knowledge.** An approval is an authorization.
+  Release-gate records who bound themselves to which state; it does not, and
+  cannot, assess whether that was wise (Invariant 15).
+
+### 10p.4 The property that does the work
+
+Across all eighteen, one structural fact carries more weight than any individual
+check: **nothing submitted can promote itself.** Evidence arriving through the
+envelope is `DECLARED`, whoever sends it and however it is labelled; only a
+verifier report or release-gate's own analysis produces `VERIFIED`. So the
+flooding, the fragmentation, the renamed tool, the self-certified independence
+and the consistently-told lie all converge on the same wall: they add records,
+and records are not verifications.
+
+That is also the limit. An attacker who compromises a real verifier, or who can
+make a real verifier answer the wrong question, is inside the wall — and §10p.3
+says so rather than implying otherwise.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

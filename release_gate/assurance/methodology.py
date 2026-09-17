@@ -46,7 +46,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Set, Tuple)
 
 from release_gate.assurance.canonical import (
     CanonicalisationError,
@@ -1194,22 +1195,45 @@ class AppliesToCurrentState(Predicate):
         }[self.scope]
 
     def evaluate(self, case: AssuranceCase) -> _Finding:
-        current: Dict[str, str] = {}
+        # Every digest declared under each handle, not the last one seen. A case
+        # that names one logical artifact with two different digests is not a case
+        # where the second supersedes the first — it is a case that cannot say
+        # which content it is about, and collapsing it to the last record read
+        # would answer a question nobody can answer. The `artifact` scope reports
+        # the collision in its own words; the others take the union as `known`, so
+        # evidence bound to either declared content is not mis-named as stale when
+        # the real defect is upstream of it.
+        declared: Dict[str, Set[str]] = {}
         for record in case.records("artifacts"):
             payload = record.to_dict() if hasattr(record, "to_dict") else {}
             logical = str(payload.get("logical_id") or payload.get("artifact_id") or "")
             digest = str(payload.get("digest") or "")
             if logical and digest:
-                current[logical] = digest
-        if not current and self.scope in ("evidence", "artifact"):
+                declared.setdefault(logical, set()).add(digest)
+        conflicted = sorted(logical for logical, digests in declared.items()
+                            if len(digests) > 1)
+        if not declared and self.scope in ("evidence", "artifact"):
             return _Finding(
                 RequirementOutcome.NOT_ASSESSED,
                 "no artifact carries a digest, so whether anything was produced "
                 "against a superseded state cannot be asked", {"artifacts": 0})
 
         records, incomplete, _total = _records(case, self.collection)
-        known = set(current.values())
+        known = {d for digests in declared.values() for d in digests}
+        # Every content digest this case actually holds, across collections — not
+        # just the artifacts. A verifier may legitimately name a claim or a piece
+        # of evidence by its digest, and treating only artifact digests as real
+        # would call those honest references unanchored.
+        held = set(known)
+        for kind in ("claims", "evidence", "verification"):
+            for record in case.records(kind):
+                payload = record.to_dict() if hasattr(record, "to_dict") else {}
+                value = str(payload.get("digest") or "")
+                if value:
+                    held.add(value)
         stale: List[str] = []
+        unanchored: List[str] = []
+        unbound: List[str] = []
 
         if self.scope == "verification":
             attempts = _attempts_of(case)
@@ -1222,8 +1246,27 @@ class AppliesToCurrentState(Predicate):
                 digest = attempt.target_digest or ""
                 target = getattr(attempt, "target", None)
                 logical = target.target_id if target is not None else ""
-                if digest and logical in current and current[logical] != digest:
-                    stale.append(attempt.verification_id)
+                if not digest:
+                    # Nothing to compare. Counted so the observation says how much
+                    # of the verification could be checked at all, and never read
+                    # as "applies to the current state".
+                    unbound.append(attempt.verification_id)
+                elif logical in declared:
+                    # Membership, not equality against a chosen digest: where one
+                    # handle carries two contents there is no "the" current digest
+                    # to compare with, and picking one would make staleness depend
+                    # on which record happened to sort last. A check naming either
+                    # declared content is not stale — the collision itself is the
+                    # finding, and `RG-SW-005` is where it is reported.
+                    if digest not in declared[logical]:
+                        stale.append(attempt.verification_id)
+                elif digest not in held:
+                    # The check names a digest, and nothing in this case carries
+                    # it. That is the shape of a result produced elsewhere and
+                    # pointed at this decision: not stale — never anchored. Saying
+                    # SATISFIED here would report that a check applies to a state
+                    # the case has no way to connect it to (Invariant 2).
+                    unanchored.append(attempt.verification_id)
         elif self.scope == "evidence":
             for record in (r for r in records if r.get("record_type") == "evidence"):
                 applies = str(record.get("applies_to_digest") or "")
@@ -1237,8 +1280,26 @@ class AppliesToCurrentState(Predicate):
                     stale.append(str(payload.get("logical_id") or ""))
 
         observed = {"scope": self.scope, "stale": stale[:12], "count": len(stale),
-                    "artifacts": len(current),
+                    "artifacts": len(declared), "conflicted": conflicted[:12],
+                    "conflicted_count": len(conflicted),
+                    "unanchored": unanchored[:12], "unanchored_count": len(unanchored),
+                    "unbound_count": len(unbound),
                     "materialisation_incomplete": incomplete}
+
+        # A handle covering two contents is reported before staleness, and only on
+        # the artifact scope. It is the more basic defect — "which of these is the
+        # thing?" precedes "is the thing still what it was" — and a name held
+        # constant over changed content is the whole of the attack, so it is said
+        # plainly rather than folded into a staleness count.
+        if self.scope == "artifact" and conflicted:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(conflicted)} artifact handle(s) are declared with more than "
+                "one digest: " + ", ".join(conflicted[:4]) + ". The same name over "
+                "different content is precisely what a digest exists to catch, and "
+                "until one of them is named as the subject nothing can say which "
+                "content this decision is about", observed)
+
         if stale:
             return _Finding(
                 RequirementOutcome.UNSATISFIED,
@@ -1246,6 +1307,33 @@ class AppliesToCurrentState(Predicate):
                 "state: " + ", ".join(stale[:4]) +
                 ". What the argument rests on has moved since it was established",
                 observed)
+
+        if unanchored:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(unanchored)} verification(s) name a digest nothing in this "
+                "case carries: " + ", ".join(unanchored[:4]) + ". A check that "
+                "cannot be connected to anything here has not been shown to be "
+                "about this decision, whatever it says it proved",
+                observed)
+
+        # Saying "every record applies" while some named nothing to apply to would
+        # read the silence as agreement, which is the one thing this predicate must
+        # not do. Where nothing could be compared at all, the honest answer is that
+        # the question was not reached.
+        if self.scope == "verification" and unbound:
+            if len(unbound) == len(_attempts_of(case)):
+                return _Finding(
+                    RequirementOutcome.NOT_ASSESSED,
+                    f"all {len(unbound)} verification(s) name no target digest, so "
+                    "whether any applies to the current state cannot be asked",
+                    observed)
+            return _Finding(
+                RequirementOutcome.SATISFIED,
+                "every anchored verification applies to the current state; "
+                f"{len(unbound)} named no target digest and could not be checked",
+                observed)
+
         return _Finding(
             RequirementOutcome.SATISFIED,
             f"every {self.scope} record applies to the current state", observed)
