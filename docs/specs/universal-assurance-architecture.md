@@ -3045,6 +3045,86 @@ dangerous for the API of an analysis whose silence means "all clear".
 
 ---
 
+## 10m. Assurance delta (`compare`)
+
+> **Implemented.** `release_gate/assurance/progress.py` — `QueryDelta`,
+> `AssuranceProgress`, `diff_query()`, `compare()`.
+
+A frontier case does not get read twice. It gets read once and then *watched*,
+and a watcher needs four things: the counts moved this way, these resolved and
+here is why, these are new, and this is what I can no longer see.
+
+**The state was already defined.** §10l made the eleven questions
+machine-readable, so "what changed" is the diff of those answers between two
+readings — not a second definition of assurance state that would drift from the
+first. This is a different axis from `AssuranceDelta` (§10, PROMPT 27), which
+compares *ledgers*: digests, collection counts, which collections moved. That
+answers "did the record change"; this answers "did the argument get better".
+
+### 10m.1 The lie this module refuses
+
+A row that was there and is gone now means one of two completely different
+things:
+
+* the thing **resolved** — the claim got verified, the contradiction was
+  answered, the artifact was re-verified at its current digest; or
+* the analysis **stopped running**, so the row is not gone, it is *invisible*.
+
+Reporting the second as the first manufactures progress out of a coverage
+regression. *"3 contradictions resolved"* when contradiction detection simply did
+not run this time is the most flattering possible way to describe getting worse.
+
+So `FOUND → NOT_ASSESSED` reports `lost_visibility` and **never** `resolved`;
+`AssuranceProgress.regressed` is true when it happens; and the rendered line says
+the findings are *"invisible rather than resolved"*. It is a branch rather than a
+filter, so it cannot later be simplified away.
+
+The mirror matters too. `NOT_ASSESSED → FOUND` is not new breakage — it is newly
+*visible* breakage that may have been there all along, and calling it
+"introduced" would blame this run for what the last one could not see.
+
+### 10m.2 Keeping the narrative short
+
+`blockers`, `missing_evidence` and `hold_resolution` are derived views of the
+findings underneath them, so one real change shows up in all three. Itemising
+every query turned **two** real changes into **nine** lines, each a different
+phrasing of the same two — which is the rereading this module exists to prevent.
+
+Only the queries that name a *thing* are itemised: a claim, a contradiction, an
+artifact, a verifier failure. The derived views still contribute counts, so the
+movement stays visible without the echo, and `resolved_everywhere` keeps the full
+diff for a consumer that wants it.
+
+### 10m.3 Row identity, not row equality
+
+A claim that gained a verification must not read as one row vanishing and an
+unrelated one appearing. Each query declares its key fields, and a row is matched
+on those. Two defects came out of getting this wrong: rows were compared by
+equality, so any added field read as churn; and `blockers` emits two row shapes —
+one with `rule_id`, one with `reason` — so joining both key fields produced keys
+like `contradictions.resolved|` and `|contradictions.resolved: …` that read as
+two different things. The key now joins only the fields a row actually carries.
+
+### 10m.4 What it reads like
+
+```text
+  unverified_critical_claims: 1 → 0
+  blockers: 4 → 2
+  missing_evidence: 6 → 2
+  open_contradictions: 1 → 0
+
+Resolved (2):
+  C-184 — now carries a passed verification
+  contra_41e9b147… — contradiction resolved
+
+New (1):
+  C-184 — single_root_claims
+```
+
+An unchanged case renders one line: *"No assurance-relevant state changed."*
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
