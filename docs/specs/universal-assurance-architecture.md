@@ -3125,6 +3125,85 @@ An unchanged case renders one line: *"No assurance-relevant state changed."*
 
 ---
 
+## 10n. Result mutation detection (`DependencyIndex`)
+
+> **Implemented.** `release_gate/assurance/mutation.py` — `DependencyKind`,
+> `Dependency`, `MutationEvent`, `VerificationDependencies`, `DependencyIndex`,
+> `InvalidationReport`, `dependencies_from_case()`.
+
+A proof is edited, a dataset regenerated, a config flag flipped, an answer
+revised. Some checks that passed yesterday are now about a thing that no longer
+exists. **Most are not.** Invalidating everything is safe and useless;
+invalidating nothing is cheap and dangerous.
+
+### 10n.1 Three answers, not two
+
+The instinct is *invalidated* and *unaffected*. That is one bucket short, and the
+missing one is the important one.
+
+| outcome | when | meaning |
+|---|---|---|
+| `INVALIDATED` | it declared a dependency on what changed | re-run it |
+| `UNAFFECTED` | it declared dependencies and this is not one | **provably** unrelated, leave it alone |
+| `UNDETERMINED` | it declared nothing | not fine, not broken — **unknown** |
+
+A verification that declared nothing cannot be judged either way. The dataset
+changed; did this check read the dataset? Nobody knows. Calling that "unaffected"
+is how a stale verification survives a mutation and goes on being counted as a
+passed check. Calling it "invalidated" throws away good work to avoid thinking,
+which is the blunt instrument the requirement rules out.
+
+One undeclared check makes the whole report imprecise, and the note says the
+blast radius is **a lower bound** rather than an answer.
+
+### 10n.2 The gradient this creates
+
+Precision is available to those who say what they used. A verifier that declares
+its inputs is spared when unrelated things move; one that does not is flagged
+every time *anything* moves. Silence is not free, which is the only pressure
+release-gate can apply here — because it cannot observe what a verifier read, only
+what the verifier said it read, which is DECLARED (Invariant 1).
+
+That limit is worth stating plainly: a check that depended on a dataset and did
+not mention it will be reported unaffected when that dataset changes — correctly
+given what was said, and wrongly given what happened. The defence is not to
+guess; it is that an undeclared dependency costs `UNDETERMINED` on every
+mutation.
+
+### 10n.3 Matching, and why both keys
+
+A mutation hits a dependency on **either** a logical-id match or a digest match.
+Logical id alone would miss a thing renamed between runs; digest alone would miss
+a mutation whose previous digest nobody recorded. Either is enough, because a
+false invalidation costs a re-run and a missed one costs a wrong verdict.
+
+Lookup is indexed by digest and logical id, not a sweep of every verification per
+event — the quadratic §10i measures elsewhere, which would turn a routine config
+change into a stall.
+
+### 10n.4 Refusals
+
+* A dependency **without a digest** is refused: it could never be compared to
+  anything and would silently never invalidate.
+* A dependency with **no logical id** is refused: an anonymous digest cannot be
+  matched against a mutation of anything in particular.
+* A `MutationEvent` whose two digests are **equal** is refused: an event that
+  records no mutation would invalidate work for nothing.
+
+### 10n.5 Reading a real case
+
+`dependencies_from_case()` folds `target_digest` as a `TARGET` dependency,
+`input_state` as an `OTHER` one, and richer declarations from an attempt's
+`result.dependencies` — so a verifier that knows what it read can say so without
+a new record type. A malformed dependency is skipped without losing the others
+the same attempt declared.
+
+Measured on a case with an eval and a Lean proof: changing `corpus-v3`
+invalidates the eval, leaves the proof **provably** unaffected, and reports
+`precise: True`.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
