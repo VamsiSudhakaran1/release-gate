@@ -89,6 +89,11 @@ class SectionKey(str, Enum):
     NOT_ASSESSED = "NOT_ASSESSED"                # 9  what was never looked at?
     RECOMMENDATION = "RECOMMENDATION"            # 10 what does release-gate say?
     BINDING = "BINDING"                          # 11 what exactly does this bind to?
+    #: A domain plugin's section, appended after the eleven. It is one key rather
+    #: than one per domain so that the core order is fixed: whatever is
+    #: installed, a reviewer's questions 1 to 11 are the same questions in the
+    #: same places, and anything a domain adds comes after them.
+    DOMAIN = "DOMAIN"                            # 12+ what does this domain add?
 
 
 #: The question each section answers, in the reviewer's words rather than the
@@ -106,9 +111,19 @@ _QUESTION: Mapping[SectionKey, str] = {
     SectionKey.NOT_ASSESSED: "What has not been assessed?",
     SectionKey.RECOMMENDATION: "What does Release-Gate recommend?",
     SectionKey.BINDING: "What exact digests will approval bind to?",
+    SectionKey.DOMAIN: "What does this domain add?",
 }
 
-_ORDER: Tuple[SectionKey, ...] = tuple(SectionKey)
+#: The core eleven, in the order a reviewer asks them. `DOMAIN` is deliberately
+#: not here: it is appended after the eleven, zero or more times, by whatever
+#: domain plugins are installed. Keeping it out of `_ORDER` is what makes "the
+#: packet must answer all eleven" a check on the eleven rather than on whatever
+#: the enum happens to contain.
+_ORDER: Tuple[SectionKey, ...] = tuple(k for k in SectionKey if k is not SectionKey.DOMAIN)
+
+#: Public name for the same thing, for callers that need to assert the core set
+#: has not moved.
+CORE_SECTIONS: Tuple[SectionKey, ...] = _ORDER
 
 
 @dataclass(frozen=True)
@@ -132,6 +147,8 @@ class PacketSection:
 
     @property
     def number(self) -> int:
+        """Position in the packet. Domain sections share key 12 and are numbered
+        by the packet that holds them, since several may be installed."""
         return _ORDER.index(self.key) + 1
 
     @property
@@ -373,6 +390,15 @@ class ApprovalPacket:
 
     def section(self, key: SectionKey) -> PacketSection:
         return next(s for s in self.sections if s.key is SectionKey(key))
+
+    @property
+    def core_sections(self) -> Tuple[PacketSection, ...]:
+        """The eleven, in order, whatever is installed alongside them."""
+        return tuple(s for s in self.sections if s.key is not SectionKey.DOMAIN)
+
+    @property
+    def domain_sections(self) -> Tuple[PacketSection, ...]:
+        return tuple(s for s in self.sections if s.key is SectionKey.DOMAIN)
 
     @property
     def authorises(self) -> bool:
@@ -798,12 +824,18 @@ def _binding_section(case: Any) -> PacketSection:
 
 
 def build_packet(case: Any, outcome: Any = None, *,
-                 previous: Any = None) -> ApprovalPacket:
+                 previous: Any = None, plugins: Any = None) -> ApprovalPacket:
     """Answer the eleven questions against one sealed case.
 
     `outcome` supplies the analysis views the case does not itself hold. Where it
     is absent the sections fall back to what the case carries and say so, rather
     than omitting themselves.
+
+    `plugins` is a `PluginRegistry` whose domain sections are **appended** after
+    the eleven. Appended, never merged: the reviewer's eleven questions are the
+    same eleven in the same order whatever is installed, and a domain that could
+    edit section 3 could quietly answer "what supports it" on the reviewer's
+    behalf. A domain may add a twelfth question.
     """
     analysis = getattr(outcome, "analysis", None)
     delta = compare_cases(previous, case)
@@ -831,6 +863,8 @@ def build_packet(case: Any, outcome: Any = None, *,
         _recommendation_section(case, outcome),
         _binding_section(case),
     )
+    if plugins is not None:
+        sections = sections + tuple(plugins.sections_for(case, outcome))
     state = case.binding_state()
     return ApprovalPacket(
         sections=sections, case_digest=state.get("case_digest"),

@@ -7,6 +7,7 @@ import json
 import pytest
 
 from release_gate.assurance.packet import (
+    CORE_SECTIONS,
     ApprovalPacket, AssuranceDelta, PacketSection, SectionKey, build_packet,
     compare_cases, render_packet)
 from release_gate.assurance.records import MaterialisationBasis
@@ -17,7 +18,11 @@ from release_gate.assurance.records import MaterialisationBasis
 class TestTheElevenQuestions:
 
     def test_every_section_is_present(self, packet):
-        assert [s.key for s in packet.sections] == list(SectionKey)
+        """The core eleven, in order. DOMAIN is not one of them — it is appended
+        zero or more times by whatever plugins are installed, so asserting
+        against the whole enum would make the core set depend on them."""
+        assert [s.key for s in packet.sections] == list(CORE_SECTIONS)
+        assert SectionKey.DOMAIN not in CORE_SECTIONS
 
     def test_they_are_numbered_in_the_order_a_reviewer_asks(self, packet):
         assert [s.number for s in packet.sections] == list(range(1, 12))

@@ -3651,6 +3651,130 @@ evidence is weighed by a methodology that had to say in advance what it credits.
 
 ---
 
+## 10s. Domain plugins (`DomainPlugin`)
+
+> **Implemented.** `release_gate/assurance/plugin.py` — `DomainPlugin`,
+> `VocabularyTerm`, `DomainSection`, `PluginRegistry`, `Installation`,
+> `CORE_PREDICATE_KINDS`. Plus `SectionKey.DOMAIN` and `CORE_SECTIONS` in
+> `packet.py`, which close the one capability that had no seam at all.
+
+Six of the seven things a domain contributes already had a home. What was
+missing was a way to say *here is a domain* rather than making an author find
+six registration calls, and one seam that did not exist.
+
+### 10s.1 What existed, measured before building
+
+| capability | before | seam |
+|---|---|---|
+| methodologies | ✅ | `MethodologyRegistry.register` — refuses content drift under a fixed version |
+| consequence classifiers | ✅ | `ConsequenceRegistry.register` — its precedence table already named a "Domain plugins" tier |
+| evidence expectations | ✅ | `EvidenceExpectation` on the methodology |
+| domain rules | ✅ | `Requirement` over the closed predicate algebra |
+| verification types | ⚠️ | `accepted_verification_types` takes strings, so a custom one worked but was defined nowhere |
+| claim types | ⚠️ | `ClaimType.OTHER` — a domain's vocabulary collapsed to "OTHER" |
+| **report sections** | ❌ | `SectionKey` was a closed enum and `build_packet` a fixed tuple |
+
+`AssuranceMethodology.provenance` already listed `"plugin"` as a value. The
+concept was anticipated throughout; nothing assembled it.
+
+### 10s.2 A bundle, not a second resolution path
+
+Installing a `DomainPlugin` delegates to the registries that already own each
+capability. A methodology registered through a plugin is the same object, in the
+same registry, as one registered directly — `registry.methodologies.resolve()`
+finds it. Nothing here re-implements what those registries do, and there is no
+plugin-private lookup that could diverge from the shared one.
+
+`PluginRegistry` keeps only the record of who contributed what, which is a
+different question: *what did finance add* is not *resolve this ref*, and both
+now have exactly one answer.
+
+### 10s.3 A plugin extends and can never weaken
+
+Enforced, not documented:
+
+* A **core predicate kind** cannot be redefined. Redefining `verification_present`
+  would change what that check means for every methodology in the process,
+  including ones the domain has nothing to do with.
+* A **requirement id** already claimed is refused. Two rules under one id means
+  the stricter can be replaced by the laxer and nobody sees it happen.
+* A **core section** cannot be answered by a domain. A domain may add a twelfth
+  question; it may not answer the reviewer's third on their behalf. Tested
+  against all eleven.
+* **Vocabulary is namespaced** under the domain id, so `finance:MATERIALITY_REVIEW`
+  and `legal:MATERIALITY_REVIEW` are different terms and neither shadows a core
+  one.
+* A **refused plugin changes nothing**. Every collision check runs before
+  anything registers, because a partial install is the worst outcome available:
+  half a domain, with no record of which half.
+* A **domain cannot be edited in place** under one version, the same rule
+  methodologies have and for the same reason.
+
+Every term must state what it **does not** establish, or it is refused at
+construction. `verifiers._FAMILY_COVERAGE` applies exactly this discipline to
+machine checks, and a domain adding `DUAL_CONTROL` to the vocabulary is making
+the same kind of claim: without its limits travelling with it, the term reads as
+stronger than it is and the reader has nothing to push back on (Invariant 8).
+
+### 10s.4 Order independence, and the bug that broke it
+
+`PluginRegistry.installed` reports in domain-id order, never installation order,
+so a caller cannot come to depend on who registered first. Installing two
+plugins in either order produces identical summaries — which is tested, and
+which failed the first time it was.
+
+`_PREDICATE_TYPES` is process-global. The first implementation snapshotted "core
+kinds" per registry at construction, so a registry built *after* a plugin had
+installed captured that plugin's kinds as core — and then refused the very
+plugin that registered them. Installation order decided the outcome, which is
+the one thing this module promises it does not (Invariant 4).
+`CORE_PREDICATE_KINDS` is now a module-level snapshot taken at import, before any
+plugin can run, and a kind already in the global table is accepted when it is the
+same class and refused when it is a different one.
+
+The same global has a consequence worth stating: code iterating
+`_PREDICATE_TYPES` sees plugin kinds. A core test asserting "every built-in
+predicate maps to a requirement kind" was reading the live table — true only
+while nothing could extend it — and now reads `CORE_PREDICATE_KINDS`, which is
+what its name always meant.
+
+### 10s.5 The core stays domain-neutral
+
+Checked by reading the source, not promised in a docstring: no core module
+carries domain-specific knowledge, and no built-in methodology claims a roadmap
+domain. "Financial impact" is deliberately *not* treated as finance leaking in —
+every domain has one, so it is a dimension of consequence. HIPAA is not a
+dimension of anything; it is a statute one domain lives under, and it belongs in
+a plugin.
+
+No domain from the roadmap ships here. A healthcare or aerospace methodology
+validated against no real standard would be fiction wearing a regulator's name.
+What ships is the contract, proven by a reference plugin in the test suite that
+exercises all seven capabilities against a real case — a domain rule that
+actually decides, a consequence model that actually contributes, a section that
+actually reaches the packet.
+
+### 10s.6 Two traps a plugin author will hit
+
+Both were hit while building the reference plugin, and are documented at the
+seam rather than discovered again:
+
+* `case.records("evidence")` holds release-gate's own derived records — the
+  consequence profile, the independence profile, the input artifact it hashed —
+  alongside producer evidence. A rule counting rows there counts the engine's
+  output as a party's.
+* The ingest preserves the whole submitted payload under the record's `content`,
+  so a producer's own `content` key lands one level deeper than its author
+  expects. Nothing is lost; it is not where a first guess looks.
+
+A plugin is an object, not a file. There is no dynamic import, no entry-point
+scan and no path turning configuration into executing code: a caller constructs
+a `DomainPlugin` and installs it. Anything that let a config file name a module
+to import would make "what is release-gate running" unanswerable, which is the
+opposite of what an assurance engine is for.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

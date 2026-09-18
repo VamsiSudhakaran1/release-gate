@@ -246,8 +246,16 @@ class TestDispatchTable:
         assert unmapped == set()
 
     def test_every_built_in_predicate_has_a_requirement_kind(self):
-        from release_gate.assurance.methodology import _PREDICATE_TYPES
-        unmapped = {k for k in _PREDICATE_TYPES
+        """The CORE set, not the live table.
+
+        `_PREDICATE_TYPES` is process-global and a domain plugin registers into
+        it, so reading it here would make this test depend on whether a plugin
+        test ran first — and would demand that a domain's predicate map to a
+        core requirement kind, which is not the core's business to insist on.
+        `CORE_PREDICATE_KINDS` is the snapshot taken before any plugin can run.
+        """
+        from release_gate.assurance.plugin import CORE_PREDICATE_KINDS
+        unmapped = {k for k in CORE_PREDICATE_KINDS
                     if requirement_kind_for_predicate(k)
                     is EvidenceRequirementKind.UNSPECIFIED}
         assert unmapped == {"predicate"} or unmapped == set()
