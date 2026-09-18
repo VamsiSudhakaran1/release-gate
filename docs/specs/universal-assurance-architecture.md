@@ -3535,6 +3535,122 @@ guessing.
 
 ---
 
+## 10r. Model-assisted semantic processing (`SemanticProposal`)
+
+> **Implemented.** `release_gate/assurance/semantic.py` — `SemanticTask`,
+> `SemanticProposal`, `ProposalDisposition`, `DeterministicOutcome`,
+> `DETERMINISTIC_COUNTERPART`, `deterministic_first()`, `model_identity()`,
+> `proposals_to_records()`. Plus `ModelVerificationStance` in `methodology.py`
+> and `ToolFamily.LANGUAGE_MODEL`, which close a real hole described in §10r.4.
+
+Some questions release-gate needs answered are not decidable by structure.
+Whether two claims say the same thing, which of forty thousand records bear on
+one lemma, whether a paragraph of prose contradicts a measurement — these are
+reading problems, and a model is good at them where digest comparison is
+useless. Refusing the help would not make the engine more rigorous; it would
+make it blind to things a reviewer sees at a glance.
+
+What the help must not do is decide. One shape governs the module:
+
+> **A model proposes; the deterministic path disposes.**
+
+### 10r.1 Seven tasks, and what structure can already do
+
+| task | deterministic counterpart | what structure cannot reach |
+|---|---|---|
+| claim extraction | *none* | there is no structural way to read a proposition out of prose |
+| claim clustering | `Claim.equivalent_to` (declared) | two claims nobody linked stay unlinked however alike they read |
+| duplicate candidate | statement equality | two statements differing by a word are invisible to it |
+| evidence retrieval | `supports_claims` / `contradicts_claims` | evidence that bears on a claim without saying so |
+| contradiction candidate | `detect_contradictions` | records whose *prose* conflicts while their links agree |
+| explanation | *none* | rendering findings is structural; writing for a reader is not |
+| summarisation | *none* | compaction (§10j) reduces deterministically; prose is a different act |
+
+`deterministic_first()` runs the structural answer before reporting the
+proposal, and the result is `AGREES`, `EXTENDS`, `NO_COUNTERPART` or `NOT_RUN`.
+`EXTENDS` is deliberately not `DISAGREES`: for every counterpart here, "found
+nothing" means *outside what I can see*, not *not so*, and a model reaching past
+a method's blind spot is the case for asking it.
+
+`AGREES` moves a proposal to `CONFIRMED_DETERMINISTICALLY` — and
+`establishes_truth` stays `False`. What was confirmed is that two methods agree,
+not that the thing is so.
+
+### 10r.2 A proposal is a candidate, permanently
+
+`applied` returns `False` unconditionally, at every disposition. It is not a
+mutable flag that starts false: the moment one exists, the next reader assumes a
+confirmed proposal was applied and stops checking. There is no
+`ProposalDisposition` value meaning "applied automatically", and a clustering
+proposal does not make two claims equivalent — `Claim.equivalent_to` is
+"declared, never inferred", including by a model.
+
+Every proposal names what the model read. `read_from` is required and a
+proposal without it is refused at construction. A model saying "these two claims
+are duplicates" is worth considering; saying so without naming the two claims is
+an opinion with nothing under it, and no confidence value substitutes for the
+link (Invariant 1).
+
+`read_from` also becomes the record's `parent_evidence`, which puts model output
+where the independence analysis can see it. Measured: forty model readings of
+one source, each reporting 0.99 confidence, yield **one** independent root and
+`HIGH` concentration. Without that ancestry they would have read as forty
+independent validations — the echo chamber of §10o, arriving through the door
+this module opens.
+
+### 10r.3 Confidence is recorded and never read
+
+`model_reported_confidence` travels with the proposal because hiding it would be
+dishonest; the producer said it, and a reviewer may want to know. Nothing
+compares it, sorts on it, thresholds it, or lets it change a state. There is no
+ordering over proposals and no "best candidate", because a mechanism that acts
+above 0.9 has made a model's self-assessment authoritative. Tested directly: a
+proposal at 0.01 and the same proposal at 0.99 produce identical verdicts,
+identical requirement outcomes and identical fact sheets.
+
+A model's output is `DERIVED` in process and `DECLARED` over the wire, and the
+direction matters. `epistemic_status` is a field a producer may not set, so the
+same content posted as JSON arrives as a declaration — weaker than what
+`proposals_to_records()` returns, not stronger. A model's output can lose
+standing crossing the boundary; it can never gain it.
+
+### 10r.4 Silence used to mean yes
+
+Checking the last requirement — that a methodology must state whether
+model-based verification is accepted — found that the opposite was true by
+construction.
+
+`AssuranceMethodology.admits()` returns `True` for any method when
+`accepted_verification_types` is empty, and `CROSS_MODEL_REVIEW` is a method.
+So every methodology that had never considered models was crediting them:
+`GENERAL_AGENT_ACTION_V1.admits("CROSS_MODEL_REVIEW") is True` was an asserted,
+tested behaviour. `VerificationPresent(methods=())` had the identical hole, and
+`admits()` had no production caller at all — a question nothing in the engine
+asked.
+
+`ModelVerificationStance` is now an explicit field defaulting to `UNSTATED`, and
+`UNSTATED` means no *for model methods only*. An empty list still means "any
+method" for machine checks, which is the documented reading and a legitimate
+choice. Three values rather than two, because "we considered it and said no" and
+"nobody asked" are different facts about a methodology and a reader should see
+which one they have. The stance is covered by the methodology digest, so it
+cannot be flipped without the change being detectable, and an extension inherits
+it rather than resetting to silence.
+
+The change is surgical: `software-agent-assurance`, which enumerates its methods,
+is unaffected; `general-autonomous-action`, which did not, went from crediting a
+model's review to refusing it.
+
+### 10r.5 What this is not
+
+There is no LLM client here, no network call and no prompt template —
+`release_gate/assurance/` remains import-pure, and a caller supplies the model's
+output. There is no confidence threshold anywhere. There is no path by which a
+model's reading enters the authoritative decision: it enters as evidence, and
+evidence is weighed by a methodology that had to say in advance what it credits.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

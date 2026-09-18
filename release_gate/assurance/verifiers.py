@@ -80,6 +80,13 @@ class ToolFamily(str, Enum):
     COMPILER = "COMPILER"
     TEST_FRAMEWORK = "TEST_FRAMEWORK"
     DOMAIN_VALIDATOR = "DOMAIN_VALIDATOR"
+    #: A language model. It gets an identity here like any other tool, because
+    #: the questions are the same ones — which one, which version, was that
+    #: established or asserted — and a separate identity type would have to
+    #: answer them again, differently. What it does NOT get is the default
+    #: method: a model's reading maps to CROSS_MODEL_REVIEW, which a methodology
+    #: must name explicitly before it counts as verification.
+    LANGUAGE_MODEL = "LANGUAGE_MODEL"
     OTHER = "OTHER"
 
 
@@ -88,6 +95,7 @@ _FAMILY_METHOD: Mapping[ToolFamily, VerificationMethod] = {
     ToolFamily.SMT_SOLVER: VerificationMethod.FORMAL_PROOF,
     ToolFamily.MODEL_CHECKER: VerificationMethod.FORMAL_PROOF,
     ToolFamily.PROPERTY_CHECKER: VerificationMethod.PROPERTY_TEST,
+    ToolFamily.LANGUAGE_MODEL: VerificationMethod.CROSS_MODEL_REVIEW,
     ToolFamily.TYPE_CHECKER: VerificationMethod.TYPE_CHECKER,
     ToolFamily.COMPILER: VerificationMethod.COMPILER,
     ToolFamily.TEST_FRAMEWORK: VerificationMethod.TEST_SUITE,
@@ -130,6 +138,19 @@ _FAMILY_COVERAGE: Mapping[ToolFamily, Tuple[Tuple[str, ...], Tuple[str, ...]]] =
     ToolFamily.DOMAIN_VALIDATOR: (
         ("the rules the validator encodes",),
         ("anything the rule set does not mention")),
+    ToolFamily.LANGUAGE_MODEL: (
+        # Nothing in the "covers" column, and that is the entry rather than an
+        # omission. Every other family here establishes something about the
+        # artifact: a proof holds, the types check, the suite passed. A model
+        # read the material and reported what it read, which is a fact about the
+        # reading. Writing anything in the left column would be the overstatement
+        # this table exists to prevent.
+        (),
+        ("whether the reading is correct — a model reporting agreement is a "
+         "reading, not a check",
+         "anything the model was not shown",
+         "reproducibility: the same prompt to the same model may read differently",
+         "independence from whatever produced the material it read")),
     ToolFamily.OTHER: ((), ("nothing is recorded about what this result covers",)),
 }
 

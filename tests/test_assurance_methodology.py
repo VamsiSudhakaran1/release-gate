@@ -5,6 +5,7 @@ config file: it evaluates itself, it is honest when it cannot see enough of the
 case, and it cannot change underneath a case that was already argued against it.
 """
 
+import dataclasses
 import json
 
 import pytest
@@ -34,6 +35,7 @@ from release_gate.assurance.methodology import (
     MethodologyError,
     MethodologyRegistry,
     MinimumRecords,
+    ModelVerificationStance,
     NoUnresolved,
     OverrideRule,
     Requirement,
@@ -395,7 +397,50 @@ def test_a_methodology_says_which_verification_it_credits():
 
 
 def test_a_methodology_with_no_list_credits_any_typed_method():
-    assert GENERAL_AGENT_ACTION_V1.admits("CROSS_MODEL_REVIEW") is True
+    """An empty list still means "any method" — for machine checks."""
+    assert GENERAL_AGENT_ACTION_V1.accepted_verification_types == ()
+    assert GENERAL_AGENT_ACTION_V1.admits("TEST_SUITE") is True
+    assert GENERAL_AGENT_ACTION_V1.admits("STATIC_ANALYSIS") is True
+
+
+def test_an_unstated_methodology_does_not_credit_a_models_review():
+    """The one exception, and the reason it is one.
+
+    "Any method" used to include a model reading the work, so every methodology
+    that had never considered models was crediting them — a default deciding
+    something a methodology's author would want to decide. Silence now means no
+    for model methods, and the stance says which kind of no it is.
+    """
+    assert (GENERAL_AGENT_ACTION_V1.model_verification
+            is ModelVerificationStance.UNSTATED)
+    assert GENERAL_AGENT_ACTION_V1.admits("CROSS_MODEL_REVIEW") is False
+    assert "unstated position" in GENERAL_AGENT_ACTION_V1.model_verification_note
+
+
+def test_a_methodology_that_accepts_model_review_says_so():
+    accepting = dataclasses.replace(
+        GENERAL_AGENT_ACTION_V1, version="1.0.1",
+        model_verification=ModelVerificationStance.ACCEPTED)
+    assert accepting.admits("CROSS_MODEL_REVIEW") is True
+    assert "says so explicitly" in accepting.model_verification_note
+
+
+def test_a_considered_refusal_reads_differently_from_silence():
+    refusing = dataclasses.replace(
+        GENERAL_AGENT_ACTION_V1, version="1.0.1",
+        model_verification=ModelVerificationStance.REJECTED)
+    assert refusing.admits("CROSS_MODEL_REVIEW") is False
+    assert "answered no" in refusing.model_verification_note
+    # Same answer, different fact about the methodology — and the digests differ,
+    # so a stance cannot be flipped without the change being detectable.
+    assert refusing.digest != GENERAL_AGENT_ACTION_V1.digest
+
+
+def test_naming_a_model_method_in_the_list_is_itself_an_explicit_statement():
+    listed = dataclasses.replace(
+        GENERAL_AGENT_ACTION_V1, version="1.0.1",
+        accepted_verification_types=("TEST_SUITE", "CROSS_MODEL_REVIEW"))
+    assert listed.admits("CROSS_MODEL_REVIEW") is True
 
 
 # ── overrides ───────────────────────────────────────────────────────────────

@@ -46,8 +46,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence,
-                    Set, Tuple)
+from typing import (Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional,
+                    Sequence, Set, Tuple)
 
 from release_gate.assurance.canonical import (
     CanonicalisationError,
@@ -333,7 +333,8 @@ class VerificationPresent(Predicate):
     collection: str = "verification"
 
     def describe(self) -> str:
-        methods = ", ".join(self.methods) if self.methods else "any accepted method"
+        methods = ", ".join(self.methods) if self.methods else (
+            "any accepted method except a model's review, which must be named")
         return f"at least {self.minimum} verification(s) of type: {methods}"
 
     def evaluate(self, case: AssuranceCase) -> _Finding:
@@ -345,12 +346,33 @@ class VerificationPresent(Predicate):
         records, incomplete, total = _records(case, self.collection)
         allowed = set(self.methods)
         typed = [r for r in records if r.get(FIELD_VERIFICATION_METHOD)]
+        # An unnamed method set means "any method" — except a model reading the
+        # work, which has to be named. Before this, a requirement that had never
+        # considered models credited one, which is the same default-to-yes the
+        # methodology's `admits()` had (Invariant 8: verification is typed, and
+        # "a model looked at it" is a type with its own standing).
         matching = [r for r in typed
-                    if not allowed or r.get(FIELD_VERIFICATION_METHOD) in allowed]
+                    if (r.get(FIELD_VERIFICATION_METHOD) in allowed
+                        if allowed else
+                        r.get(FIELD_VERIFICATION_METHOD)
+                        not in MODEL_VERIFICATION_METHODS)]
+        model_only = [r for r in typed
+                      if r.get(FIELD_VERIFICATION_METHOD) in MODEL_VERIFICATION_METHODS
+                      and r not in matching]
         untyped = len(records) - len(typed)
         observed = {"matching": len(matching), "minimum": self.minimum,
                     "records_held": len(records), "total_count": total,
-                    "untyped_records": untyped}
+                    "untyped_records": untyped,
+                    "model_review_not_credited": len(model_only)}
+        if model_only and len(matching) < self.minimum:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(matching)} admissible verification(s), {self.minimum} expected; "
+                f"{len(model_only)} model review(s) were not counted because this "
+                "requirement does not name a model method as admissible. A model "
+                "reading the work is a reading, and whether it counts is a "
+                "methodology's decision to state rather than a default to inherit",
+                observed)
         if untyped and len(matching) < self.minimum:
             # Invariant 8: an untyped "verified" is not a verification. Say that,
             # rather than counting it or silently ignoring it.
@@ -2054,6 +2076,35 @@ class OverrideRule:
                    notes=data.get("notes", ""))
 
 
+class ModelVerificationStance(str, Enum):
+    """Whether this methodology credits a model's reading as verification.
+
+    Three values, and `UNSTATED` is the default because it has to be: silence
+    used to mean yes. `accepted_verification_types` empty means "any method", and
+    `CROSS_MODEL_REVIEW` is a method — so every methodology that had not thought
+    about models was accepting them, including the general-action profile. That
+    is the one place where a default of convenience decides something a
+    methodology's author would want to decide themselves.
+
+    `UNSTATED` now means no for model methods and changes nothing for the rest.
+    A methodology that wants a model's review to count says `ACCEPTED` and owns
+    that; one that wants the refusal on the record says `REJECTED`. The
+    difference between the last two is visible to a reader, which is the point —
+    "we considered it and said no" and "nobody asked" are different facts about
+    a methodology (Invariant 3).
+    """
+
+    ACCEPTED = "ACCEPTED"    # a model's reading counts, and the methodology says so
+    REJECTED = "REJECTED"    # considered and refused, on the record
+    UNSTATED = "UNSTATED"    # nobody said; treated as no, and reported as unstated
+
+
+#: Verification methods that are a model reading something. Named here rather
+#: than inferred from the string, so adding a method to the enum cannot silently
+#: widen what counts as a machine check.
+MODEL_VERIFICATION_METHODS: FrozenSet[str] = frozenset({"CROSS_MODEL_REVIEW"})
+
+
 @dataclass(frozen=True)
 class AcceptedFinding:
     """A structural HOLD this methodology does not treat as disqualifying.
@@ -2189,6 +2240,7 @@ class AssuranceMethodology:
     requirements: Tuple[Requirement, ...] = ()
     criticality_rules: Tuple[CriticalityRule, ...] = ()
     accepted_verification_types: Tuple[str, ...] = ()
+    model_verification: ModelVerificationStance = ModelVerificationStance.UNSTATED
     accepted_findings: Tuple[AcceptedFinding, ...] = ()
     minimum_evidence_expectations: Tuple[EvidenceExpectation, ...] = ()
     independence_requirements: Tuple[IndependenceRequirement, ...] = ()
@@ -2298,9 +2350,35 @@ class AssuranceMethodology:
         return case.case_type in self.case_types
 
     def admits(self, verification_method: str) -> bool:
-        """Is this a verification type this methodology will credit? (Invariant 8)"""
+        """Is this a verification type this methodology will credit? (Invariant 8)
+
+        An empty `accepted_verification_types` still means "any method" — that is
+        the documented reading and a methodology may legitimately decline to
+        enumerate. It no longer extends to a model reading the work, because for
+        those the default was deciding something an author would want to decide:
+        a methodology that had never considered models was crediting them.
+        """
+        if verification_method in MODEL_VERIFICATION_METHODS:
+            # Named explicitly or not at all. An enumeration that lists a model
+            # method is itself an explicit statement, so both routes work; what
+            # cannot happen is silence being read as yes.
+            return (self.model_verification is ModelVerificationStance.ACCEPTED
+                    or verification_method in self.accepted_verification_types)
         return (not self.accepted_verification_types
                 or verification_method in self.accepted_verification_types)
+
+    @property
+    def model_verification_note(self) -> str:
+        """What this methodology says about models, in words, for a packet."""
+        if self.model_verification is ModelVerificationStance.ACCEPTED:
+            return ("this methodology credits a model's review as verification, and "
+                    "says so explicitly")
+        if self.model_verification is ModelVerificationStance.REJECTED:
+            return ("this methodology was asked whether a model's review counts as "
+                    "verification and answered no")
+        return ("this methodology does not state whether a model's review counts as "
+                "verification, so it does not count; that is an unstated position "
+                "rather than a considered refusal")
 
     def acceptance_for(self, rule_id: str,
                        stated_consequence: Mapping[str, str] = _EMPTY_MAP
@@ -2404,6 +2482,10 @@ class AssuranceMethodology:
             requirements=tuple(self.requirements) + tuple(add_requirements),
             criticality_rules=tuple(self.criticality_rules) + tuple(add_criticality_rules),
             accepted_verification_types=accepted,
+            # Inherited, never reset: an extension that dropped the parent's
+            # ACCEPTED would tighten (fine), but one that dropped a REJECTED back
+            # to UNSTATED would read the same and mean something weaker.
+            model_verification=self.model_verification,
             accepted_findings=tuple(self.accepted_findings),
             minimum_evidence_expectations=(tuple(self.minimum_evidence_expectations)
                                            + tuple(add_evidence_expectations)),
@@ -2430,6 +2512,10 @@ class AssuranceMethodology:
             "requirements": [r.to_dict() for r in self.requirements],
             "criticality_rules": [r.to_dict() for r in self.criticality_rules],
             "accepted_verification_types": list(self.accepted_verification_types),
+            # Covered by the digest: whether a model's reading counts is part of
+            # what a methodology IS, and a stance that could be flipped without
+            # changing the digest would be a standard nobody could pin.
+            "model_verification": self.model_verification.value,
             "accepted_findings": [a.to_dict() for a in self.accepted_findings],
             "minimum_evidence_expectations": [e.to_dict()
                                               for e in self.minimum_evidence_expectations],
@@ -2459,6 +2545,8 @@ class AssuranceMethodology:
             "description": self.description,
             "applies_to_case_types": [c.value for c in self.case_types],
             "accepted_verification_types": list(self.accepted_verification_types) or ["ANY"],
+            "model_verification": self.model_verification.value,
+            "model_verification_note": self.model_verification_note,
             "requirements": [
                 {"requirement_id": r.requirement_id, "expects": r.predicate.describe(),
                  "description": r.description, "effect": r.effect.value,
@@ -2484,6 +2572,8 @@ class AssuranceMethodology:
             criticality_rules=tuple(CriticalityRule.from_dict(r)
                                     for r in data.get("criticality_rules", ())),
             accepted_verification_types=tuple(data.get("accepted_verification_types", ())),
+            model_verification=ModelVerificationStance(
+                data.get("model_verification") or ModelVerificationStance.UNSTATED.value),
             accepted_findings=tuple(AcceptedFinding.from_dict(a)
                                     for a in data.get("accepted_findings", ())),
             minimum_evidence_expectations=tuple(
