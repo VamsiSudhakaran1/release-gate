@@ -703,6 +703,44 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
                 f"{applies_to[:32]!r}, which is not a sha256 content digest; it "
                 "cannot be compared to anything and was not recorded")
 
+    # Where the bytes live, when they do not live here. A producer declaring
+    # `content_reference` — an object store key, a URL, a trace backend — had that
+    # declaration dropped until now, along with any digest beside it, which left
+    # no way at all to submit externally-held evidence through the envelope. That
+    # is the same silent drop `applies_to_digest` suffered, and it defeats the
+    # rule that large raw evidence is referenced rather than carried: the handle
+    # is the whole point of the reference.
+    #
+    # The digest is DECLARED, never OBSERVED: release-gate did not fetch those
+    # bytes and hash them, the producer says that is what they hash to. That is
+    # usable, it is recorded, and it is not evidence we verified anything
+    # (Invariant 1) — the same reading `_artifact_from` gives a declared digest.
+    reference_row = payload.get("content_reference")
+    if isinstance(reference_row, Mapping):
+        locator = str(reference_row.get("locator") or "").strip()
+        raw_kind = str(reference_row.get("kind") or "EXTERNAL").strip().upper()
+        if locator:
+            try:
+                kind = ReferenceKind(raw_kind)
+            except ValueError:
+                kind = ReferenceKind.EXTERNAL
+                notes.append(
+                    f"a record from {producer.producer_id} declares content "
+                    f"reference kind {raw_kind!r}, which is not one release-gate "
+                    "models; it was recorded as EXTERNAL and the locator kept")
+            declared_digest = str(payload.get("digest") or "").strip()
+            if declared_digest and not is_digest(declared_digest):
+                notes.append(
+                    f"a record from {producer.producer_id} declares digest "
+                    f"{declared_digest[:32]!r}, which is not a sha256 content "
+                    "digest; the reference was kept and the digest was not")
+                declared_digest = ""
+            state["content_reference"] = ContentReference(
+                kind=kind, locator=locator,
+                detail=dict(reference_row.get("detail") or {}))
+            if declared_digest:
+                state["digest"] = declared_digest
+
     # A producer's clock is a producer's claim. `EvidenceRecord.timestamp` stays
     # what release-gate knows — when the record arrived here — because a field
     # release-gate populates must mean something release-gate observed, and a

@@ -3775,6 +3775,123 @@ opposite of what an assurance engine is for.
 
 ---
 
+## 10t. Assurance Evidence Pack v3 (`AssuranceEvidencePack`)
+
+> **Implemented.** `release_gate/assurance/pack.py` — `AssuranceEvidencePack`,
+> `PackSection`, `SectionState`, `ExternalReference`, `SECTION_KEYS`,
+> `build_pack()`, `verify_pack()`. Plus a content-reference fix in
+> `ingest.py::_build_evidence` described in §10t.5.
+
+The pack that shipped before this one belongs to the `governance.yaml` era:
+`release_gate/evidence_pack.py` renders a readiness score and dimension bars to
+JSON, Markdown and HTML from a scoring dict. It still serves that path and is
+untouched. What it cannot do is answer the question an auditor arrives with six
+weeks later — *what exactly was decided, on what evidence, and is this still
+that?* — because a score is not a thing anyone can re-check.
+
+V3 is the same job computed over an `AssuranceCase`.
+
+### 10t.1 Twenty-four fields, sixteen sections
+
+Identity travels at the top level: case id, version and digest; objective;
+requested authorization; methodology ref and digest; engine version; schema
+version; the case's timestamps and the pack's own. Sixteen named sections carry
+the rest, each with a state, a digest and a count:
+
+`evidence_graph` · `execution_graph` · `claim_graph` · `artifact_manifest` ·
+`critical_claims` · `assumptions` · `verification` · `replications` ·
+`counterexamples` · `contradictions` · `coverage` · `completeness` ·
+`human_attention` · `required_evidence` · `verdict` · `approval_state`
+
+`SECTION_KEYS` is a constant, so "is this pack complete" is a comparison rather
+than a count and a pack missing one is refused at construction. A section that
+is simply not there reads as one that was fine.
+
+### 10t.2 Two subject digests, because they are not interchangeable
+
+`subject_digest` is content identity. `subject_state_digest` is identity plus
+metadata — what the human saw, and the only thing an approval binds to. They
+differ on every real case and the pack carries both, labelled. Carrying one and
+calling it "the subject digest" is a mistake this codebase has already made once
+(§10p), and it costs an approval that cannot be checked.
+
+### 10t.3 Absent, empty and not-assessed are three answers
+
+`SectionState` has three values and the third is not a convenience.
+`ABSENT` is a finding — the component was derivable and there was nothing to
+derive it from. `NOT_ASSESSED` is the absence of one — an input the caller never
+supplied. A section that is not `PRESENT` must carry a note or it is refused at
+construction, because an unexplained absence reads as an oversight rather than a
+fact about the case.
+
+Two sections earn `NOT_ASSESSED` routinely. `completeness` is caller-supplied —
+`AnalysisResult` has no such field, a ledger is built from the event stream a
+caller holds, and reading it off the analysis would leave the section
+permanently unassessed with nothing to say it was unreachable (the dead branch
+§10q describes). `approval_state` distinguishes "the collection was never
+supplied" from "it was supplied and nobody has approved", and only the second is
+a fact about the decision.
+
+### 10t.4 Everything is a digest or a handle
+
+The pack never carries raw evidence, so there is no size threshold to tune and
+no way for it to grow with what it describes. Measured: ten evidence records
+produce an 12.5 KB pack and five thousand produce 11 KB. Digests are **folded**
+from each component's own `digest()` rather than recomputed, so a section and
+the object it describes are provably the same thing; where a component exposes
+none, the pack digests its serialised form and the section records
+`digest_source: serialised`, because an auditor comparing two packs should be
+able to see which kind of commitment they hold.
+
+`built_at` is excluded from `pack_digest`. Building the same pack twice from one
+sealed case gives one digest, which is what lets two parties show they are
+holding the same artefact.
+
+**The pack is signable and does not sign.** `assurance/` may not import a crypto
+library, and `attestation.py` already set the reason: a valid signature over an
+incomplete manifest is a valid signature, so verifying one here would not change
+what the pack establishes. `verify_pack()` answers the question that *is*
+answerable — does this content still hash to the digest it carries, does every
+`PRESENT` section carry one, is any section missing — and states in its own
+result what it does not establish. A signature over `pack_digest` is applied
+outside and travels as recorded metadata.
+
+### 10t.5 A drop that made the requirement unmeetable
+
+"Large raw evidence should be referenced externally" could not be done at all
+before this pass. A producer declaring `content_reference` — an object store
+key, a URL, a trace backend — had that declaration dropped silently at ingest,
+along with any digest beside it, so envelope-submitted evidence always arrived
+with `content_reference: null` and `digest: None`. The same silent drop
+`applies_to_digest` suffered in §10p, in the field that carries the handle.
+
+`_build_evidence` now keeps both. The digest is `DECLARED`, never `OBSERVED` —
+release-gate did not fetch those bytes and hash them, the producer says that is
+what they hash to — which is the reading `_artifact_from` already gives a
+declared digest. An unrecognised reference kind is recorded as `EXTERNAL` with
+the locator kept and a note; a malformed digest is refused with a note while the
+reference survives, because losing the handle over a bad hash would be the worse
+trade. `ExternalReference.resolvable` is the pack's word for whether a handle
+can be checked against anything: a locator alone says where to look, and a
+locator with a digest says whether what you found is what was argued.
+
+### 10t.6 A pack is not an approval
+
+`authorises`, `establishes_truth` and `bounds_completeness` all return `False`
+unconditionally, and every section states `bounds_completeness: False` in its own
+serialised form. A pack records that an approval happened, who made it and what
+it bound to. The act was a person's, and a document that could stand in for it is
+exactly the substitution Invariant 15 exists to prevent.
+
+One absence in the pack is worth reading as a finding about the engine rather
+than the case. `AnalysisResult` declares an `evidence_graph` field that nothing
+populates, so it is `ABSENT` on every pack. The note says that plainly instead
+of the plausible-sounding "this case carries no evidence-to-evidence relations",
+which would be a statement about the case that is not so — the kind of confident
+wrong answer this artefact exists to avoid.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
