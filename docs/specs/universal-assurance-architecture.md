@@ -4200,6 +4200,125 @@ validates the packet before reading anything from it.
 
 ---
 
+## 10x. Verdict semantics (`VerdictStatement`)
+
+> **Implemented.** `release_gate/assurance/verdict.py` — `VerdictStatement`,
+> `explain_verdict()`, `VerdictError`, `VERDICT_SCHEMA_VERSION`. The three
+> universal definitions live on `Decision` in `case.py`, next to the verdicts
+> themselves.
+
+PROMOTE, HOLD and BLOCK are unchanged, and so are their exit codes: **0 · 10 ·
+1**. What this section adds is that the three now *state* what they mean, in one
+place, in a form code can read.
+
+### 10x.1 The definitions live on `Decision`
+
+`Decision.definition` carries the universal wording; `Decision.does_not_mean`
+carries PROMOTE's four readings; `Decision.exit_code` delegates to
+`zero_config.exit_code_for` so the CI contract keeps exactly one copy.
+
+| verdict | definition | exit |
+|---|---|---|
+| `PROMOTE` | Evidence is sufficient under the active AssuranceMethodology and known coverage for the case to proceed to its next authorization boundary. | 0 |
+| `HOLD` | More evidence, verification, methodology or resolution is required. | 10 |
+| `BLOCK` | Known evidence demonstrates a non-overridable violation, or invalidates the candidate under the active methodology. | 1 |
+
+`Decision.PROMOTE.does_not_mean` carries the four, verbatim:
+
+> that the action will be executed automatically · that the result is true ·
+> that the result is safe · that human approval already exists
+
+Both halves of each definition matter. PROMOTE is bounded twice — by the active
+methodology *and* by known coverage — so a PROMOTE over a thin methodology or a
+large `NOT_ASSESSED` surface is a narrow statement, not a broad one. HOLD names
+four distinct causes, and "methodology" among them is the one that is not about
+evidence at all: the case may be unarguable rather than unproven. BLOCK has two
+independent clauses, and the second — *invalidates the candidate* — is why a
+BLOCK does not require a policy rule behind it.
+
+### 10x.2 The four refusals are properties, not prose
+
+`authorises_execution` · `establishes_truth` · `establishes_safety` ·
+`human_approval_exists`
+
+All four return `False` unconditionally, on every `VerdictStatement`, PROMOTE
+included, and all four appear in `to_dict()` so a consumer reading the payload
+finds them rather than having to know them.
+
+A paragraph saying "PROMOTE does not mean execute" is skippable by the code that
+matters. A property is not: anything built on the opposite fails at the
+assertion. This is the same device as `Approval.authorises`, `FactSheet`'s
+`combines_into_a_score` and `SemanticProposal.establishes_truth` (§10q, §10r) —
+by now the house form for a refusal that has to survive contact with a caller who
+wants the other answer.
+
+The fourth is the load-bearing one for this sequence. PROMOTE is a
+*recommendation that a case has reached an authorization boundary*. The crossing
+is §10w's three actions, taken by a person, recorded against an exact state
+digest. A verdict has never been a signature and now says so in a field.
+
+### 10x.3 A HOLD that names nothing is a shrug
+
+`resolution_is_actionable` reads the outcome's `RequiredEvidenceSet` rather than
+assuming one exists. `is_a_shrug` is its complement on a HOLD.
+
+"More evidence is required" without saying which is the answer this engine was
+built to stop giving, and the definition's "HOLD should normally return Required
+Evidence" is a *normally*, not an invariant — so the gap is reported as a fact
+about the case rather than suppressed or asserted away. Both properties are
+`False` on PROMOTE and BLOCK, where the question does not arise: a PROMOTE has
+nothing to resolve, and a BLOCK is not resolved by supplying more.
+
+### 10x.4 BLOCK claims non-overridability, so it is asked
+
+The definition calls a BLOCK *non-overridable*. Whether every reason behind a
+given BLOCK actually meets that is a question the methodology can already answer
+— `can_override()` and `non_overridable_conditions` have been there since §11 —
+and `explain_verdict()` asks it, partitioning `fired_rules` into
+`overridable_reasons` and `non_overridable_reasons`.
+
+`can_override` reads silence as no, which is the conservative direction: a rule
+nobody wrote a waiver for stands. Without a methodology argument both lists stay
+empty rather than being guessed, because "no methodology permits waiving this"
+and "nobody asked" are different facts and only the first is about the case.
+
+`block_is_fully_non_overridable` is not a defect signal. A BLOCK resting on a
+structural invalidation is a BLOCK under the definition's second clause whatever
+any methodology says about waivers. It is the difference between "nobody may
+proceed" and "somebody with the right role may" — and a reader should not have to
+guess which one they are holding.
+
+**This reporting deliberately does not change the verdict.** Converting an
+overridable BLOCK into a HOLD would alter decisions across every existing case
+and every pinned exit code. This module's job is to say what a verdict means, not
+to re-decide it.
+
+### 10x.5 An unattributed verdict is refused
+
+`VerdictStatement.__post_init__` raises `VerdictError` on empty `fired_rules`,
+and `explain_verdict()` raises on a case with no verdict at all.
+
+A PROMOTE, HOLD or BLOCK that cannot name what produced it is precisely the
+opaque judgement §10q refuses to manufacture for evidence quality; it is no more
+acceptable at the top of the pipeline than in the middle of it. And a statement
+invented for an undecided case would be a decision nobody made, presented in the
+one place people read decisions.
+
+### 10x.6 Read against real output
+
+| case | verdict | exit | statement |
+|---|---|---|---|
+| single-agent demo (§10v) | `PROMOTE` | 0 | four refusals `False`; all four "does not mean" lines present |
+| the same, declared `IRREVERSIBLE` | `HOLD` | 10 | `resolution_is_actionable` — one named requirement, `case:RG-VERIF-001 -> formal_verification` |
+| frontier demo (§10u), 400 workers | `BLOCK` | 1 | `block_is_fully_non_overridable`; non-overridable reasons `contradictions.resolved`, `counterexamples.resolved` |
+
+The HOLD row is the one worth reading twice. The same subject, the same
+evidence, the same methodology — only the declared consequence changed — and the
+verdict moved because the bar moved. That is the bounded-by-methodology clause of
+the PROMOTE definition doing visible work.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

@@ -110,9 +110,64 @@ class CaseState(str, Enum):
 
 
 class Decision(str, Enum):
+    """The three verdicts, and what each one means.
+
+    The meanings live here rather than in prose elsewhere because a verdict
+    travelling to an API client, a CI job or a packet has to carry them: every
+    misuse of this system begins with someone reading PROMOTE as permission.
+    """
+
     PROMOTE = "PROMOTE"
     HOLD = "HOLD"
     BLOCK = "BLOCK"
+
+    @property
+    def definition(self) -> str:
+        return _DECISION_DEFINITION[self]
+
+    @property
+    def does_not_mean(self) -> Tuple[str, ...]:
+        """What this verdict is NOT. Empty for none of them.
+
+        PROMOTE carries four, and they are the four things people actually read
+        into it. A verdict that stated only what it meant would be read as
+        meaning more.
+        """
+        return _DECISION_DOES_NOT_MEAN.get(self, ())
+
+    @property
+    def exit_code(self) -> int:
+        """0 PROMOTE · 10 HOLD · 1 BLOCK.
+
+        Delegates to `zero_config.exit_code_for` rather than restating the
+        mapping: two copies of a CI contract drift, and the one that drifts is
+        the one nobody is running.
+        """
+        from release_gate.assurance.zero_config import exit_code_for
+        return exit_code_for(self)
+
+
+_DECISION_DEFINITION: Mapping[Decision, str] = {
+    Decision.PROMOTE: (
+        "Evidence is sufficient under the active AssuranceMethodology and known "
+        "coverage for the case to proceed to its next authorization boundary."),
+    Decision.HOLD: (
+        "More evidence, verification, methodology or resolution is required."),
+    Decision.BLOCK: (
+        "Known evidence demonstrates a non-overridable violation, or invalidates "
+        "the candidate under the active methodology."),
+}
+
+#: The four readings of PROMOTE that this system exists to prevent. Held as data
+#: so they can travel with the verdict and be asserted on, rather than as a
+#: paragraph a caller can skip.
+_DECISION_DOES_NOT_MEAN: Mapping[Decision, Tuple[str, ...]] = {
+    Decision.PROMOTE: (
+        "that the action will be executed automatically",
+        "that the result is true",
+        "that the result is safe",
+        "that human approval already exists"),
+}
 
 
 #: Legal state transitions. Absent edges are refused, including every backward

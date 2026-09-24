@@ -535,6 +535,12 @@ from release_gate.assurance.ingest import (
     ingest_path,
     normalise,
 )
+from release_gate.assurance.verdict import (
+    VERDICT_SCHEMA_VERSION,
+    VerdictError,
+    VerdictStatement,
+    explain_verdict,
+)
 from release_gate.assurance.verification import (
     VERIFICATION_SCHEMA_VERSION,
     Applicability,
@@ -921,9 +927,12 @@ __all__ = [
     "TrustDecision",
     "TrustStatus",
     "TrustSurface",
+    "VERDICT_SCHEMA_VERSION",
     "VERIFICATION_SCHEMA_VERSION",
     "VERIFIER_SCHEMA_VERSION",
     "VIEW_SCHEMA_VERSION",
+    "VerdictError",
+    "VerdictStatement",
     "VerificationAttempt",
     "VerificationCurrency",
     "VerificationDependencies",
@@ -993,6 +1002,7 @@ __all__ = [
     "events_from_otlp",
     "events_to_records",
     "exit_code_for",
+    "explain_verdict",
     "extend_vocabulary",
     "external_content",
     "facts_for",
