@@ -666,8 +666,13 @@ def _failures_section(outcome: Any, analysis: Any) -> PacketSection:
     # on is never dropped to shorten the list.
     load_bearing = [b for b in branches if relevant(b)]
     other = [b for b in branches if not relevant(b)]
+    # `locus.key` — the name a person would use for where it broke. It was
+    # `b.failure_point`, which no FailedBranch has, so building a packet raised
+    # on any case carrying a failed branch: the last document before a human acts
+    # was unavailable exactly when the case had failures in it. The attention
+    # path never touched this, which is how it went unseen.
     rows = ([{"label": b.branch_id,
-              "detail": f"{b.failure_point} — bears on "
+              "detail": f"{b.locus.key or b.outcome.value} — bears on "
                         f"{', '.join(b.bears_on_claims[:3])}"}
              for b in load_bearing]
             + [{"label": p.key, "detail": f"{p.count} attempt(s) died here"}

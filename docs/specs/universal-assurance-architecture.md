@@ -4112,6 +4112,94 @@ empty.
 
 ---
 
+## 10w. The approval view (`ApprovalView`)
+
+> **Implemented.** `release_gate/assurance/approval_view.py` — `ApprovalView`,
+> `ApprovalAction`, `ActionOffer`, `REQUIRED_DISPLAYS`, `build_view()`,
+> `render_view()`. One packet defect it found is fixed in `packet.py`.
+
+The packet answers eleven reviewer questions (§9). This is the layer that puts
+those answers in the order **one** question demands:
+
+> What exactly am I taking responsibility for if I click Approve?
+
+It is a view, not a second packet. The eleven sections keep their order and
+their numbering, so a domain plugin's twelfth question still lands where §10s put
+it; what changes is the reading order and the fact that each action arrives bound
+to exact state.
+
+### 10w.1 Nine displays, and the order is the argument
+
+`subject` · `expected_effect` · **`unresolved`** · `critical_evidence` ·
+`coverage` · `completeness` · `not_assessed` · `subject_digest` · `case_state`
+
+`REQUIRED_DISPLAYS` is a constant, so "is anything missing" is a comparison and a
+view lacking one is refused at construction. A display that is simply absent
+reads as one with nothing in it.
+
+`unresolved` sits third — **above** the evidence for the decision, because a
+reviewer who reads the case for something before the case against it has already
+been led. The render puts it above the actions too, so nothing offered can be
+clicked before the problems have been passed.
+
+Two of the nine repeat lessons this sequence paid for. `subject_digest` shows
+both digests apart: content identity, and the state an approval actually attaches
+to. `completeness` with no ledger supplied reads `NOT_ASSESSED` with the words
+"this is an unanswered question, not a clean answer" — because `AnalysisResult`
+has no completeness field and silence there would read as nothing wrong.
+
+### 10w.2 Un-burying is a constructor error
+
+`ApprovalView.__post_init__` refuses to build if anything blocking or on the
+critical path is missing from the unresolved block. A rendering convention drifts
+the first time someone adds a section; a constructor error does not.
+
+The first version of that guard was wrong in an instructive way. It treated the
+`unresolved` display's own item list as evidence the items were shown — so a view
+constructed with `unresolved=()` passed the check while rendering an empty block,
+because the guard was agreeing with itself rather than with the document. It now
+checks against exactly what `render_view` iterates.
+
+### 10w.3 Three actions, each bound
+
+| action | on the record | what it carries |
+|---|---|---|
+| `APPROVE` | `APPROVED` | the acknowledgement `submit_approval` verifies against the live case |
+| `REJECT` | `REJECTED` | the same digests, so a later submission can be compared with what was refused |
+| `REQUEST_EVIDENCE` | `DEFERRED` | the required-evidence protocol — a work order an external verifier can act on |
+
+`REQUEST_EVIDENCE` is not a fourth decision type. It is a deferral with a work
+order attached, which is what makes a hold something other than a shrug — and
+offering it beside the other two is what stops declining from looking like
+obstruction. All three must be offered together or the view is refused.
+
+Each action states what taking it means, or `ActionOffer` refuses to construct: a
+button whose consequence is not stated is one a person cannot be held to. Where
+release-gate recommends against the action, `APPROVE` carries the sentence
+"approving over that is a decision you are recorded as having made".
+
+`authorises` returns `False` unconditionally. The view presents; the act is a
+person's.
+
+### 10w.4 Two defects, one of them mine
+
+**The packet crashed on any case carrying a failed branch.** `_failures_section`
+read `FailedBranch.failure_point`, which no `FailedBranch` has — it is
+`locus.key`. So `build_packet` raised on exactly the cases that have failures in
+them, and the last document before a human acts was unavailable when it was most
+needed. The frontier demo (§10u) never surfaced it because the attention path
+does not build a packet.
+
+**And a view that rendered every section as a stated absence.**
+`AssuranceOutcome.packet` is a method; taking it as an attribute yielded a bound
+method that is truthy and has no `section`, and a `_section` helper catching
+`AttributeError` turned that into "this section was not produced" on every one.
+A wiring bug presented as a fact about the case, on the one surface where that is
+least affordable. `_section` now catches only `StopIteration`, and `build_view`
+validates the packet before reading anything from it.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
