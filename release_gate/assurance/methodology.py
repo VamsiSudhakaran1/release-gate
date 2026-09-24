@@ -2275,11 +2275,21 @@ class OverrideDecision:
     reason: str
     requires_role: str = ""
     requires_rationale: bool = True
+    #: Whether this methodology defines the requirement at all.
+    #:
+    #: `permitted` is False either way, which is the conservative answer and the
+    #: right one. But "I define this and chose not to make it waivable" and "I
+    #: have never heard of this" are different facts, and a caller that cannot
+    #: tell them apart will report the second as the first — claiming a
+    #: methodology forbade something it was never asked. Unknown is first-class
+    #: here as everywhere else (Invariant 3).
+    recognised: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return {"requirement_id": self.requirement_id, "permitted": self.permitted,
                 "reason": self.reason, "requires_role": self.requires_role,
-                "requires_rationale": self.requires_rationale}
+                "requires_rationale": self.requires_rationale,
+                "recognised": self.recognised}
 
 
 # ── the methodology ─────────────────────────────────────────────────────────
@@ -2465,6 +2475,22 @@ class AssuranceMethodology:
             return None
         return max(matches, key=lambda c: _CRITICALITY_ORDER[c])
 
+    def recognises(self, requirement_id: str) -> bool:
+        """Whether this methodology defines the requirement being asked about.
+
+        Read from `all_requirements()`, which is already the authority `extend`
+        validates override rules against — so "an id you may write a waiver for"
+        and "an id this methodology has a position on" are the same set by
+        construction rather than by two lists agreeing.
+
+        `accepted_findings` rule ids are deliberately not in it. An acceptance
+        says a structural finding is tolerated under a consequence ceiling; it
+        does not make that finding one of this methodology's requirements, and
+        `extend` already refuses an override rule naming one.
+        """
+        return any(r.requirement_id == requirement_id
+                   for r in self.all_requirements())
+
     def can_override(self, requirement_id: str) -> OverrideDecision:
         """May this requirement be waived? Default is no.
 
@@ -2480,6 +2506,14 @@ class AssuranceMethodology:
         rule = next((r for r in self.override_rules
                      if r.requirement_id == requirement_id), None)
         if rule is None:
+            if not self.recognises(requirement_id):
+                return OverrideDecision(
+                    requirement_id, False,
+                    f"{self.ref_string} does not define {requirement_id}, so it has "
+                    "no position on waiving it. The answer is still no — nothing "
+                    "here permits it — but this is the wrong authority to have "
+                    "asked, not a refusal by this one",
+                    recognised=False)
             return OverrideDecision(
                 requirement_id, False,
                 f"{self.ref_string} declares no override rule for {requirement_id}; "

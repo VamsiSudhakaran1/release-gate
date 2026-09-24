@@ -447,3 +447,79 @@ def test_ten_records_from_one_producer_do_not_make_two_groups():
     result = requirement.evaluate(b.build())
     assert result.outcome is RequirementOutcome.UNSATISFIED
     assert result.observed["independent_groups"] == 1
+
+
+# ── the arrival stamp is not part of the content address ─────────────────────
+
+class TestArrivalStampIsNotIdentity:
+    """A timestamp release-gate stamps because nobody supplied one says when
+    this process read the input. It is not a fact about the evidence, and
+    putting it in a content address made the address vary with the clock."""
+
+    def test_an_unsupplied_timestamp_is_marked_as_stamped_on_arrival(self):
+        record = _declared(content={"exit_code": 0})
+        assert record.stamped_on_arrival
+        assert record.timestamp  # still recorded, just not identity
+
+    def test_a_supplied_timestamp_is_not(self):
+        record = _declared(content={"exit_code": 0},
+                           timestamp="2026-03-01T09:00:00Z")
+        assert not record.stamped_on_arrival
+
+    def test_an_arrival_stamp_is_kept_out_of_identity(self):
+        assert _declared(content={"a": 1}).identity()["timestamp"] is None
+
+    def test_a_supplied_timestamp_stays_in_identity(self):
+        record = _declared(content={"a": 1}, timestamp="2026-03-01T09:00:00Z")
+        assert record.identity()["timestamp"] == "2026-03-01T09:00:00Z"
+
+    def test_two_identical_records_stamped_apart_share_an_id(self):
+        """The property that was broken: the same evidence ingested twice a
+        second apart produced two different records."""
+        one = _declared(content={"exit_code": 0})
+        two = _declared(content={"exit_code": 0})
+        object.__setattr__(two, "timestamp", "2099-01-01T00:00:00Z")
+        assert one.evidence_id == two.evidence_id
+
+    def test_a_declared_production_time_still_distinguishes_evidence(self):
+        """The same suite passing today and last March are two pieces of
+        evidence — which is why only the arrival stamp is dropped."""
+        march = _declared(content={"a": 1}, timestamp="2026-03-01T09:00:00Z")
+        today = _declared(content={"a": 1}, timestamp="2026-09-01T09:00:00Z")
+        assert march.evidence_id != today.evidence_id
+
+    def test_the_record_still_carries_when_it_arrived(self):
+        payload = _declared(content={"a": 1}).to_dict()
+        assert payload["timestamp"]
+        assert payload["stamped_on_arrival"] is True
+
+    def test_it_round_trips_to_the_same_id(self):
+        record = _declared(content={"a": 1})
+        assert EvidenceRecord.from_dict(record.to_dict()).evidence_id == \
+            record.evidence_id
+
+    def test_a_payload_without_the_flag_is_read_the_old_way(self):
+        """Records written before the flag existed keep the ids they were
+        stored under."""
+        record = _declared(content={"a": 1}, timestamp="2026-03-01T09:00:00Z")
+        payload = dict(record.to_dict())
+        payload.pop("stamped_on_arrival")
+        assert EvidenceRecord.from_dict(payload).evidence_id == record.evidence_id
+
+
+class TestStripClocksAgreesWithIdentity:
+
+    def test_an_arrival_timestamp_is_stripped(self):
+        from release_gate.assurance.records import strip_clocks
+        assert "timestamp" not in strip_clocks(_declared(content={"a": 1}).to_dict())
+
+    def test_a_supplied_timestamp_is_not(self):
+        from release_gate.assurance.records import strip_clocks
+        record = _declared(content={"a": 1}, timestamp="2026-03-01T09:00:00Z")
+        assert strip_clocks(record.to_dict())["timestamp"] == "2026-03-01T09:00:00Z"
+
+    def test_a_case_is_re_derivable_from_its_own_input(self):
+        """A case digest that moved with the clock could not be re-derived, so
+        an approval or override bound to one went stale whenever CI re-ran."""
+        from release_gate.demos.single_agent import run
+        assert len({run().case.case_digest for _ in range(12)}) == 1

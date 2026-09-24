@@ -192,9 +192,15 @@ CLOCK_FIELDS: frozenset = frozenset({
 def record_digest(record: CaseRecord) -> str:
     """Content digest of one record, through the canonical form.
 
-    Clock fields are excluded — see `CLOCK_FIELDS`. A record's `timestamp` is
-    NOT excluded: for a piece of evidence, when a verification ran is part of
-    what it establishes, and `EvidenceRecord.identity()` says so explicitly.
+    Clock fields are excluded — see `CLOCK_FIELDS`. A `timestamp` a producer
+    supplied is NOT excluded: when a verification ran is part of what it
+    establishes, and `EvidenceRecord.identity()` says so explicitly.
+
+    A `timestamp` release-gate stamped on arrival is excluded, because it is a
+    fact about this run rather than about the record. Records carrying one say
+    so with `stamped_on_arrival`, and leaving it in made a collection's fold
+    digest — and therefore the case digest an approval binds to — change when
+    the same input was ingested a second later.
     """
     return digest_object(strip_clocks(_record_dict(record)))
 
@@ -208,11 +214,17 @@ def strip_clocks(data: Mapping[str, Any]) -> Dict[str, Any]:
     legitimately carries as data.
     """
     out: Dict[str, Any] = {}
+    arrival = bool(data.get("stamped_on_arrival"))
     for key, value in data.items():
         if key in CLOCK_FIELDS:
             continue
+        if key == "timestamp" and arrival:
+            continue
         if isinstance(value, Mapping):
-            out[key] = {k: v for k, v in value.items() if k not in CLOCK_FIELDS}
+            nested_arrival = bool(value.get("stamped_on_arrival"))
+            out[key] = {k: v for k, v in value.items()
+                        if k not in CLOCK_FIELDS
+                        and not (k == "timestamp" and nested_arrival)}
         elif isinstance(value, (list, tuple)):
             out[key] = [
                 {k: v for k, v in item.items() if k not in CLOCK_FIELDS}

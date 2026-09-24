@@ -4319,6 +4319,180 @@ the PROMOTE definition doing visible work.
 
 ---
 
+## 10y. Human override (`Override`, `AuthorizationState`)
+
+> **Implemented.** `release_gate/assurance/override.py` — `Override`,
+> `OverrideRequest`, `OverrideReview`, `UnresolvedIssue`, `Authorization`,
+> `AuthorizationState`, `request_override()`, `unresolved_issues()`,
+> `authorisation_of()`. Plus `AssuranceMethodology.recognises()`, an
+> `override_id` on `BoundApproval`, an `override` display on `ApprovalView`, and
+> two engine defects fixed in `evidence.py` and `records.py`.
+
+Experts sometimes proceed knowing what is unresolved. A system that cannot
+express that will be worked around by people who turn the gate off — which loses
+the record too. So this models it, under four constraints that are the point.
+
+### 10y.1 Only where the methodology permits
+
+`AssuranceMethodology.can_override()` and `non_overridable_conditions` have been
+the authority since §11. This is the first thing that asks them, per named
+requirement.
+
+No built-in methodology declares an override rule, so out of the box nothing is
+waivable. That is the correct default — `can_override` reads silence as no — and
+it makes the whole feature opt-in by an organisation that writes a waiver rule
+and owns having written it. `methodology` is a required argument with no default:
+"only where the methodology permits" has no meaning without one, and a default
+would make the permissive case the easy one to reach by accident.
+
+### 10y.2 Never a silent conversion, and the verdict is preserved
+
+Nothing in this module returns a verdict, mutates one, or offers a PROMOTE.
+
+| property | value | |
+|---|---|---|
+| `Override.converts_verdict` | `False` | a HOLD that was overridden is still a HOLD |
+| `Override.resolves_issues` | `False` | every named issue is still open |
+| `Override.establishes_truth` | `False` | for the same reason a verdict does not |
+| `Override.authorises` | `False` | it makes an authorisation permissible; the act is a person's |
+
+`machine_verdict` is a required field, `effective_decision` returns it unchanged,
+and constructing an `Override` over a PROMOTE raises — a waiver on a case that
+did not need one is indistinguishable, later, from a case that did. The exit code
+is untouched: an overridden HOLD still exits 10.
+
+### 10y.3 A separate authorization state
+
+`AuthorizationState` is its own type beside `Decision` (what the engine found)
+and `ApprovalDecision` (what the person did).
+
+`NOT_AUTHORISED` · `AUTHORISED` · `AUTHORISED_BY_OVERRIDE` · `OVERRIDE_REFUSED` ·
+`REFUSED`
+
+None of its values is a verdict — asserted in a test, not just intended.
+`NOT_AUTHORISED` is the default and the only one a machine can reach alone:
+`authorisation_of()` on a PROMOTE with no approval returns it, which is §10x.2's
+fourth refusal expressed as a state rather than a sentence.
+
+`AUTHORISED_BY_OVERRIDE` is deliberately not a flag on `AUTHORISED`. A reader
+asking whether something proceeded on clean evidence or on a person's judgement
+gets the answer from the value.
+
+Approving over a HOLD *without* an override stays legal — it always was, and
+`overrides_recommendation` has always recorded it. It reads `AUTHORISED` with a
+note that the methodology was never asked. `proceeds_under_override` on the
+approval is what distinguishes the two.
+
+### 10y.4 Name everything, or the waiver covers a smaller case
+
+An override granted over three of five open issues is one whose holder was asked
+about a smaller case than they have — §10p's selective-omission attack arriving
+through the front door. So `request_override` derives the open set from the case
+and refuses a request that names less than all of it (`REFUSED_UNDER_NAMED`).
+Naming *extra* ids waives nothing: only issues the case actually holds are put to
+the methodology.
+
+`unresolved_issues()` reads three sources because they are three id namespaces
+and none contains the others:
+
+* the **methodology assessment's** unmet requirements — the only ids in the
+  methodology's own vocabulary, so the only ones it can be asked to waive;
+* the **attention set**, which carries the prose a person reads;
+* the verdict's **`fired_rules`** — but only on an adverse verdict. On a PROMOTE
+  those are the reasoning that produced it, and reporting them as open issues
+  read a cleared case as a held one.
+
+### 10y.5 "I forbade this" and "I have never heard of this"
+
+Measuring the first real case found that `can_override` answered `permitted=False`
+for both, indistinguishably. They are different facts: a requirement a methodology
+defines and chose not to make waivable is a considered silence; an id outside its
+vocabulary means the wrong authority was asked. Two callers now depend on the
+difference.
+
+`OverrideDecision.recognised` carries it, set from
+`AssuranceMethodology.recognises()` — which reads `all_requirements()`, already
+the authority `extend` validates override rules against, so "an id you may write
+a waiver for" and "an id this methodology has a position on" are the same set by
+construction. `accepted_findings` rule ids are deliberately outside it: an
+acceptance tolerates a structural finding under a consequence ceiling, which is a
+decision made in advance, not a requirement to be waived at the gate.
+
+This corrects §10x too. `block_is_fully_non_overridable` was counting a reason
+the methodology never defined as one it refused, claiming a BLOCK was
+unwaivable on the strength of an unasked question. It now requires
+`unrecognised_reasons` to be empty as well. The frontier BLOCK still reports
+`True`, because `contradictions.resolved` and `counterexamples.resolved` really
+are in that methodology's `non_overridable_conditions`.
+
+A case is normally held by a mix: methodology requirements, structural findings
+and policy rules. Requiring every one to be waivable would make the feature dead
+on arrival. So a grant needs at least one issue a methodology permitted and no
+recognised requirement refused; the rest are recorded on the override as
+`unauthorised_issues`, `fully_authorised` reads `False`, and `render()` marks
+each line `waived` or `NOT AUTHORISED`. Disclosed, never dropped.
+
+### 10y.6 The record, and what it binds to
+
+Seven required things — approver, reason, the issues, scope, subject digest, case
+digest, timestamp — plus the preserved verdict, the role claimed, and one
+`OverrideDecision` payload per waived issue so a reader can see which rule
+permitted each rather than take the grant on trust.
+
+It binds to exact state like an approval, through the same `binding_of(case)`
+reader both now share, so neither can end up bound to a differently-computed
+version of the same state. `submit_approval(..., override=...)` refuses one
+granted against a different state or one that has lapsed, and carries its id onto
+the approval. That id joins `BoundApproval.identity()` only when non-empty:
+approving on clean evidence and approving under a granted override are different
+acts and should not share an id, but adding the key unconditionally would have
+changed the digest of every approval ever recorded.
+
+`build_view(..., override=)` adds a tenth display, not a fourth action. An
+override is a precondition for approving, not a button beside APPROVE — offering
+it as an action would put "proceed anyway" on the same row as "approve", which is
+the one place a person should have to arrive deliberately.
+
+### 10y.7 Two defects, found by asking what an override binds to
+
+An override binds to a case digest. Checking that it survived a re-run turned up
+a determinism failure in the demo — intermittent, about 2% of adjacent runs — and
+underneath it a content-addressing bug.
+
+**`evidence_id` was a content address computed over a wall clock.**
+`EvidenceRecord.identity()` includes `timestamp`, justified in its own docstring:
+when a verification ran is part of what it establishes. True — of a timestamp the
+*producer* declared. But §10p decided that `EvidenceRecord.timestamp` holds when
+the record arrived *here*, because a field release-gate populates must mean
+something release-gate observed. So for every ingested record the value was this
+process's clock, and it was inside the identity digest. The same input ingested a
+second apart produced different evidence ids, a different evidence fold digest
+and a different case digest. A case could not be re-derived from its own input,
+identical submissions did not deduplicate (§10p's evidence-flooding and
+fragmentation threats, arriving by accident), ancestry cluster ids moved with it,
+and an approval or override bound to a case digest went stale the moment CI ran
+the gate again.
+
+Records now carry `stamped_on_arrival`, and `identity()` holds an arrival stamp
+out while keeping a supplied one in. The producer's own claimed time is
+untouched — ingest keeps it in `metadata["declared_timestamp"]`, which is part of
+identity, so evidence stamped last March is still distinct from evidence stamped
+today. `to_dict` still carries the arrival time, after the identity spread, so
+nothing loses when release-gate saw the record; `from_dict` honours the flag and
+recomputes the same id, and a payload predating the flag is read the old way so
+stored records keep the ids they were stored under.
+
+**And the same distinction was missing from `strip_clocks`.** §10n deliberately
+left `timestamp` out of `CLOCK_FIELDS`, citing that same `identity()` docstring —
+so the fold digest kept moving even after identity stopped. It now drops a
+`timestamp` on a record that says it was stamped on arrival, and keeps a supplied
+one. Two fixes, one distinction, and each was verified load-bearing by reverting
+it alone and watching a different test fail.
+
+Adjacent-run digest mismatches: **9 in 400 before, 0 in 300 after.**
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

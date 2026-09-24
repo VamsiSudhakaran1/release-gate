@@ -72,6 +72,7 @@ __all__ = [
     "AuthSource",
     "BoundApproval",
     "SubmissionOutcome",
+    "binding_of",
     "check_approval",
     "offer_approval",
     "submit_approval",
@@ -149,6 +150,33 @@ _SEVERITY: Tuple[ApprovalStanding, ...] = (
 )
 
 
+def binding_of(case: Any) -> Dict[str, Any]:
+    """The exact state any human act on this case must bind to.
+
+    One reader, so an approval and an override cannot end up bound to
+    differently-computed versions of the same state. The digests are read from
+    the case and never accepted from a caller: a binding a caller could choose
+    is a binding to whatever the caller wanted it to be.
+    """
+    state = case.binding_state()
+    inner = state.get("state") or {}
+    subject_state = inner.get("subject_state") or {}
+    return {
+        "case_id": str(state.get("case_id") or ""),
+        "case_version": int(state.get("case_version") or 1),
+        "case_digest": str(state.get("case_digest") or ""),
+        "subject_id": str(subject_state.get("subject_id") or ""),
+        # The state an act attaches to, not the subject's content identity. The
+        # two are different digests and conflating them is how an approval
+        # survives a change it should not have survived.
+        "subject_digest": str(subject_state.get("state_digest") or ""),
+        "evidence_pack_digest": str(inner.get("evidence_digest") or "") or None,
+        "bound_collections": {
+            kind: str((component or {}).get("fold_digest") or "")
+            for kind, component in (inner.get("collections") or {}).items()},
+    }
+
+
 @dataclass(frozen=True)
 class BoundApproval:
     """One human act, bound to one exact state of one case."""
@@ -175,6 +203,10 @@ class BoundApproval:
     timestamp: str = field(default_factory=_utc_now)
     expires_at: Optional[str] = None
     comment: str = ""
+    #: The `Override` that made approving this permissible, where one was
+    #: granted. Empty means none was — which is not the same as none being
+    #: needed, and `overrides_recommendation` is what says which.
+    override_id: str = ""
     schema_version: int = APPROVAL_SCHEMA_VERSION
 
     approval_id: str = field(default="", init=False)
@@ -211,15 +243,25 @@ class BoundApproval:
                            short_id("appr", digest_object(self.identity())))
 
     def identity(self) -> Dict[str, Any]:
-        """What makes this a distinct act of authorisation."""
-        return {"schema_version": APPROVAL_SCHEMA_VERSION,
-                "case_id": self.case_id, "case_version": self.case_version,
-                "approver": self.approver, "scope": self.scope,
-                "subject_digest": self.subject_digest,
-                "case_digest": self.case_digest,
-                "evidence_pack_digest": self.evidence_pack_digest,
-                "decision": self.decision.value, "timestamp": self.timestamp,
-                "auth_source": self.auth_source.value}
+        """What makes this a distinct act of authorisation.
+
+        `override_id` joins it only when there is one. Approving on clean
+        evidence and approving under a granted override are different acts and
+        should not share an id — but adding the key unconditionally would change
+        the digest of every approval ever recorded, so it appears when it says
+        something and is absent when it does not.
+        """
+        identity = {"schema_version": APPROVAL_SCHEMA_VERSION,
+                    "case_id": self.case_id, "case_version": self.case_version,
+                    "approver": self.approver, "scope": self.scope,
+                    "subject_digest": self.subject_digest,
+                    "case_digest": self.case_digest,
+                    "evidence_pack_digest": self.evidence_pack_digest,
+                    "decision": self.decision.value, "timestamp": self.timestamp,
+                    "auth_source": self.auth_source.value}
+        if self.override_id:
+            identity["override_id"] = self.override_id
+        return identity
 
     # ── standing ────────────────────────────────────────────────────────────
 
@@ -249,6 +291,18 @@ class BoundApproval:
         return (self.authorises
                 and self.case_decision is not None
                 and self.case_decision != "PROMOTE")
+
+    @property
+    def proceeds_under_override(self) -> bool:
+        """Whether a methodology was asked, and said yes, before this was given.
+
+        The companion to `overrides_recommendation`: that one says a person went
+        ahead of the recommendation, this one says something permitted them to.
+        An approval where the first is True and this is False is someone
+        proceeding on their own authority, which is allowed and is not the same
+        thing.
+        """
+        return bool(self.override_id)
 
     @property
     def expiry_basis(self) -> str:
@@ -287,6 +341,8 @@ class BoundApproval:
                 "decision": self.decision.value,
                 "case_decision": self.case_decision,
                 "overrides_recommendation": self.overrides_recommendation,
+                "override_id": self.override_id,
+                "proceeds_under_override": self.proceeds_under_override,
                 "comment": self.comment,
                 "auth_source": self.auth_source.value,
                 "identity_established": self.identity_established,
@@ -311,6 +367,7 @@ class BoundApproval:
             auth_source=AuthSource(str(data.get("auth_source") or "ASSERTED").upper()),
             timestamp=str(data.get("timestamp") or _utc_now()),
             expires_at=(str(data["expires_at"]) if data.get("expires_at") else None),
+            override_id=str(data.get("override_id") or ""),
             comment=str(data.get("comment") or ""))
 
     @classmethod
@@ -324,21 +381,15 @@ class BoundApproval:
         approval whose binding a caller could choose is an approval that binds to
         whatever the caller wanted it to.
         """
-        state = case.binding_state()
-        inner = state.get("state") or {}
-        subject_state = inner.get("subject_state") or {}
-        collections = {
-            kind: str((component or {}).get("fold_digest") or "")
-            for kind, component in (inner.get("collections") or {}).items()}
+        bound = binding_of(case)
         return cls(
-            case_id=str(state.get("case_id") or ""),
-            case_version=int(state.get("case_version") or 1),
+            case_id=bound["case_id"], case_version=bound["case_version"],
             approver=approver, scope=scope, decision=decision,
-            subject_id=str(subject_state.get("subject_id") or ""),
-            subject_digest=str(subject_state.get("state_digest") or ""),
-            case_digest=str(state.get("case_digest") or ""),
-            evidence_pack_digest=str(inner.get("evidence_digest") or "") or None,
-            bound_collections=collections,
+            subject_id=bound["subject_id"],
+            subject_digest=bound["subject_digest"],
+            case_digest=bound["case_digest"],
+            evidence_pack_digest=bound["evidence_pack_digest"],
+            bound_collections=bound["bound_collections"],
             case_decision=(case.verdict.decision.value if case.verdict else None),
             auth_source=auth_source, **kwargs)
 
@@ -356,6 +407,10 @@ class BoundApproval:
         if self.overrides_recommendation:
             lines.append(f"  OVERRIDE: release-gate recommended "
                          f"{self.case_decision}; this approval proceeds anyway")
+            lines.append("  " + (f"permitted by override {self.override_id}"
+                                 if self.override_id else
+                                 "no override is on record; nothing was asked "
+                                 "whether these requirements may be waived"))
         if self.comment:
             lines.append(f"  comment: {self.comment}")
         return "\n".join(lines)
@@ -774,7 +829,8 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
                     decision: ApprovalDecision = ApprovalDecision.APPROVED,
                     auth_source: AuthSource = AuthSource.ASSERTED,
                     scope: str = "", comment: str = "",
-                    expires_at: Optional[str] = None) -> ApprovalSubmission:
+                    expires_at: Optional[str] = None,
+                    override: Any = None) -> ApprovalSubmission:
     """Record an approval, but only against the exact state the client acknowledged.
 
     There is deliberately no way to express "approve the latest". The only
@@ -786,6 +842,12 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
     offer object the caller happens to be holding. An offer is a convenience for
     the human; treating it as the authority would let a fabricated one authorise
     anything.
+
+    An `override` is optional and is never required: approving over a HOLD has
+    always been allowed and has always been recorded as such. Supplied, it is
+    checked to bind to this same state — an override granted against a different
+    case, or against this one before it moved, permits nothing here — and its id
+    is carried on the approval.
     """
     from release_gate.assurance.case import EVIDENCE_KINDS
 
@@ -834,10 +896,29 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
                         ", and only release-gate's own output moved: the evidence "
                         "and the subject are unchanged"),))
 
+    override_id = ""
+    if override is not None:
+        if not override.binds_to(case):
+            moved = ", ".join(override.stale_against(case))
+            return ApprovalSubmission(
+                outcome=SubmissionOutcome.REFUSED, current=current,
+                mismatched=tuple(override.stale_against(case)),
+                reasons=("the override supplied was granted against a different "
+                         f"state ({moved} moved); it permits nothing here. An "
+                         "override that carried over would waive requirements "
+                         "against evidence nobody checked it against",))
+        if override.expired():
+            return ApprovalSubmission(
+                outcome=SubmissionOutcome.REFUSED, current=current,
+                reasons=(f"the override expired at {override.expires_at}; a lapsed "
+                         "waiver is not a weaker waiver",))
+        override_id = override.override_id
+
     try:
         approval = BoundApproval.for_case(
             case, approver=approver, scope=scope, decision=decision,
-            auth_source=auth_source, comment=comment, expires_at=expires_at)
+            auth_source=auth_source, comment=comment, expires_at=expires_at,
+            override_id=override_id)
     except ApprovalError as exc:
         return ApprovalSubmission(outcome=SubmissionOutcome.REFUSED, current=current,
                                   reasons=(str(exc),))

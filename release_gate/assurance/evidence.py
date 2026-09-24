@@ -326,7 +326,7 @@ class EvidenceRecord:
     content_reference: Optional[ContentReference] = None
     digest: Optional[str] = None
     source_identity: str = "unauthenticated"
-    timestamp: str = field(default_factory=_utc_now)
+    timestamp: str = ""
     parent_evidence: Tuple[str, ...] = ()
     supports_claims: Tuple[str, ...] = ()
     contradicts_claims: Tuple[str, ...] = ()
@@ -341,10 +341,17 @@ class EvidenceRecord:
     schema_version: int = EVIDENCE_SCHEMA_VERSION
 
     evidence_id: str = field(default="", init=False)
+    #: True when release-gate stamped the timestamp on arrival because nobody
+    #: supplied one. Such a stamp is a fact about this process, not about the
+    #: evidence, and it is kept out of `identity()` for that reason.
+    stamped_on_arrival: bool = field(default=False, init=False)
 
     # ── construction ────────────────────────────────────────────────────────
 
     def __post_init__(self) -> None:
+        if not (self.timestamp or "").strip():
+            object.__setattr__(self, "timestamp", _utc_now())
+            object.__setattr__(self, "stamped_on_arrival", True)
         object.__setattr__(self, "evidence_type", EvidenceType(self.evidence_type))
         object.__setattr__(self, "epistemic_status", EpistemicStatus(self.epistemic_status))
         object.__setattr__(self, "provenance_status", ProvenanceStatus(self.provenance_status))
@@ -432,9 +439,21 @@ class EvidenceRecord:
     def identity(self) -> Dict[str, Any]:
         """Everything that makes this a distinct piece of evidence.
 
-        `timestamp` is included, unlike a subject's creation time: when a
-        verification ran is part of what it establishes. The same test suite
-        passing today and passing last March are two pieces of evidence.
+        A **supplied** `timestamp` is included, unlike a subject's creation time:
+        when a verification ran is part of what it establishes, and the same test
+        suite passing today and passing last March are two pieces of evidence.
+
+        A timestamp release-gate stamped on arrival is not. It records when this
+        process read the input, which is a fact about the run and not about the
+        evidence — and putting it in a content address made the address vary with
+        the clock. The same input ingested twice a second apart produced two sets
+        of evidence ids, two fold digests and two case digests, so a case could
+        not be re-derived from its own input, identical submissions did not
+        deduplicate, and an approval or override bound to a case digest went
+        stale the moment CI ran the gate again. The producer's own claimed time
+        is unaffected: ingest keeps it in `metadata["declared_timestamp"]`, which
+        is part of this identity, so evidence stamped last March is still
+        distinct from evidence stamped today.
         """
         return {
             "schema_version": self.schema_version,
@@ -442,7 +461,7 @@ class EvidenceRecord:
             "source": self.source,
             "source_identity": self.source_identity,
             "producer": self.producer.to_dict(),
-            "timestamp": self.timestamp,
+            "timestamp": (None if self.stamped_on_arrival else self.timestamp),
             "epistemic_status": self.epistemic_status.value,
             "verification_method": (self.verification_method.value
                                     if self.verification_method else None),
@@ -571,6 +590,12 @@ class EvidenceRecord:
             "independence_group": self.independence_fingerprint(),
             "independence_basis": self.independence_basis,
             **self.identity(),
+            # After the spread on purpose. `identity()` holds an arrival stamp
+            # out of the content address; the record still has to carry it, or a
+            # reader loses when release-gate saw this. The flag says which kind
+            # of time this is, and `from_dict` uses it to recompute the same id.
+            "timestamp": self.timestamp,
+            "stamped_on_arrival": self.stamped_on_arrival,
         }
 
     @classmethod
@@ -590,7 +615,13 @@ class EvidenceRecord:
             content_reference=ContentReference.from_dict(reference) if reference else None,
             digest=data.get("digest"),
             source_identity=data.get("source_identity", "unauthenticated"),
-            timestamp=data.get("timestamp") or _utc_now(),
+            # A payload that says its timestamp was stamped on arrival is read
+            # back as unsupplied, so the id recomputes to the same value. A
+            # payload without the flag predates it and is read the old way: its
+            # timestamp counts, and records written before this change keep the
+            # ids they were stored under.
+            timestamp=("" if data.get("stamped_on_arrival")
+                       else (data.get("timestamp") or "")),
             parent_evidence=tuple(data.get("parent_evidence", ())),
             supports_claims=tuple(data.get("supports_claims", ())),
             contradicts_claims=tuple(data.get("contradicts_claims", ())),

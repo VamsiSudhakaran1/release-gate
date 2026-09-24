@@ -64,13 +64,18 @@ class VerdictStatement:
     overridable_reasons: Tuple[str, ...] = ()
     #: Reasons the methodology names as never waivable.
     non_overridable_reasons: Tuple[str, ...] = ()
+    #: Reasons the methodology does not define at all. Not the same as refusing
+    #: them: the answer is still no, but it is no from an authority that was
+    #: never asked a question it could answer, and reporting that as a refusal
+    #: would credit the methodology with a position it does not hold.
+    unrecognised_reasons: Tuple[str, ...] = ()
     methodology_ref: Optional[str] = None
     schema_version: int = VERDICT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "decision", Decision(self.decision))
         for name in ("fired_rules", "reasons", "overridable_reasons",
-                     "non_overridable_reasons"):
+                     "non_overridable_reasons", "unrecognised_reasons"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(self, "required_evidence",
                            tuple(dict(r) for r in self.required_evidence))
@@ -145,8 +150,15 @@ class VerdictStatement:
         about waivers — but it is the difference between "nobody may proceed" and
         "somebody with the right role may", and a reader should not have to guess
         which one they have.
+
+        Also `False` where the methodology does not define a reason at all. That
+        is not a refusal by it, and claiming the BLOCK is non-overridable on the
+        strength of an unasked question would be asserting more than was
+        established.
         """
-        return self.decision is Decision.BLOCK and not self.overridable_reasons
+        return (self.decision is Decision.BLOCK
+                and not self.overridable_reasons
+                and not self.unrecognised_reasons)
 
     def note(self) -> str:
         lines = [f"{self.decision.value}: {self.definition}"]
@@ -169,6 +181,12 @@ class VerdictStatement:
                     f"{len(self.overridable_reasons)} of the reasons behind this "
                     "BLOCK are ones the methodology would permit waiving: "
                     + ", ".join(self.overridable_reasons[:4]))
+            elif self.unrecognised_reasons:
+                lines.append(
+                    f"{len(self.unrecognised_reasons)} of the reasons behind this "
+                    "BLOCK are ones the active methodology does not define, so it "
+                    "has not refused them — it was never asked: "
+                    + ", ".join(self.unrecognised_reasons[:4]))
             else:
                 lines.append(
                     "Every reason behind this BLOCK is one the active methodology "
@@ -196,6 +214,7 @@ class VerdictStatement:
             "is_a_shrug": self.is_a_shrug,
             "overridable_reasons": list(self.overridable_reasons),
             "non_overridable_reasons": list(self.non_overridable_reasons),
+            "unrecognised_reasons": list(self.unrecognised_reasons),
             "block_is_fully_non_overridable": self.block_is_fully_non_overridable,
             # Stated in the record, for every verdict. A consumer reading this
             # payload should find the refusals rather than have to know them.
@@ -237,12 +256,20 @@ def explain_verdict(outcome: Any, *, methodology: Any = None) -> VerdictStatemen
 
     overridable: list = []
     non_overridable: list = []
+    unrecognised: list = []
     if methodology is not None and verdict.decision is Decision.BLOCK:
         for rule_id in verdict.fired_rules:
             decision = methodology.can_override(rule_id)
             # `can_override` already reads silence as no, which is the
             # conservative direction: a rule nobody wrote a waiver for stands.
-            (overridable if decision.permitted else non_overridable).append(rule_id)
+            # Three buckets rather than two, because a rule the methodology does
+            # not define is not one it refused.
+            if decision.permitted:
+                overridable.append(rule_id)
+            elif not decision.recognised:
+                unrecognised.append(rule_id)
+            else:
+                non_overridable.append(rule_id)
 
     return VerdictStatement(
         decision=verdict.decision,
@@ -251,5 +278,6 @@ def explain_verdict(outcome: Any, *, methodology: Any = None) -> VerdictStatemen
         required_evidence=requirements,
         overridable_reasons=tuple(overridable),
         non_overridable_reasons=tuple(non_overridable),
+        unrecognised_reasons=tuple(unrecognised),
         methodology_ref=(methodology.ref_string if methodology is not None
                          else getattr(getattr(case, "methodology", None), "ref", None)))

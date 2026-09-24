@@ -270,13 +270,18 @@ def _item(item: Any) -> Dict[str, Any]:
 
 
 def build_view(outcome: Any, *, completeness: Any = None,
-               attention_limit: int = 8) -> ApprovalView:
+               attention_limit: int = 8, override: Any = None) -> ApprovalView:
     """Assemble the view from what the engine already produced.
 
     `completeness` is a `StreamLedger`, supplied by the caller for the same
     reason `facts_for` and `build_pack` take one: `AnalysisResult` has no such
     field, and reading it off the analysis would leave the display permanently
     silent with nothing to say it was unreachable.
+
+    `override` adds a tenth display rather than a fourth action. An override is
+    a precondition for approving, not a button beside APPROVE: offering it as an
+    action would put "proceed anyway" on the same row as "approve", which is the
+    one place a person should have to arrive deliberately.
     """
     case = getattr(outcome, "case", None)
     if case is None or not getattr(case, "case_id", ""):
@@ -367,6 +372,37 @@ def build_view(outcome: Any, *, completeness: Any = None,
              "case_digest": offer.case_digest,
              "evidence_pack_digest": offer.evidence_pack_digest}
 
+    approve_caution = ("release-gate recommends " + recommendation
+                       + ("; approving over that is a decision you are recorded "
+                          "as having made" if recommendation != "PROMOTE" else ""))
+    if override is not None:
+        stale = override.stale_against(case)
+        if stale:
+            displays["override"] = {
+                "title": "Override on record",
+                "applies": False,
+                "note": ("an override was granted against a different state ("
+                         + ", ".join(stale) + " moved). It does not carry over, "
+                         "and nothing here is permitted by it"),
+                "override": override.to_dict()}
+            approve_caution += ("; the override you were shown no longer applies "
+                                "to this state")
+        else:
+            displays["override"] = {
+                "title": "Override on record",
+                "applies": True,
+                "note": (f"{override.approver} recorded a decision to proceed over "
+                         f"{len(override.issues)} unresolved issue(s). The verdict "
+                         f"is still {override.machine_verdict}; those issues are "
+                         "still open; approving accepts that"),
+                "waived": list(override.waived),
+                "not_authorised": list(override.unauthorised),
+                "fully_authorised": override.fully_authorised,
+                "override": override.to_dict()}
+            approve_caution += ("; you approve under override "
+                                f"{override.override_id}, over "
+                                f"{len(override.issues)} issue(s) that remain open")
+
     actions = (
         ActionOffer(
             action=ApprovalAction.APPROVE,
@@ -376,9 +412,7 @@ def build_view(outcome: Any, *, completeness: Any = None,
                    "else: if any of them moves, it stops applying rather than "
                    "carrying over"),
             binds_to=binds,
-            caution=("release-gate recommends " + recommendation
-                     + ("; approving over that is a decision you are recorded as "
-                        "having made" if recommendation != "PROMOTE" else ""))),
+            caution=approve_caution),
         ActionOffer(
             action=ApprovalAction.REJECT,
             decision=ApprovalDecision.REJECTED,
