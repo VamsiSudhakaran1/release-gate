@@ -820,6 +820,32 @@ GENERAL_AUTONOMOUS_ACTION_V1 = AssuranceMethodology(
                        "email is a reminder or a termination notice. The operator "
                        "states the stakes; this profile then holds them to it.")),
 
+        # RG-ACT-004 EVIDENCE_AGAINST_SUPERSEDED_CONTENT
+        # Fires when: a record names an applies_to_digest no current artifact has.
+        # Does not fire when: it matches, or no record names one.
+        # NOT_ASSESSED when: no artifact carries a digest to compare against.
+        #
+        # The research and software profiles have carried this from the start; the
+        # profile governing the most ordinary case did not, and the gap showed up
+        # the first time a single-agent case was driven end to end. A migration
+        # whose file was edited after its tests ran promoted, with the drift
+        # reported as an advisory nobody had to act on. That is the attack from
+        # §10p.1 row 5, arriving through the profile most cases actually use.
+        #
+        # HOLD rather than BLOCK, matching RG-SW-007: evidence about the previous
+        # content is still evidence about the previous content, and an operator
+        # who knows why may still proceed — but not without being told.
+        Requirement(
+            requirement_id="RG-ACT-004",
+            description="no evidence in use was produced against superseded content",
+            predicate=AppliesToCurrentState(scope="evidence"),
+            effect=RequirementEffect.HOLD,
+            remedy="re-run the checks against the current content, or record why the "
+                   "earlier state is the one that matters",
+            rationale=("This profile promotes on the action's own record. A check "
+                       "bound to content the action has since moved past is a record "
+                       "of a different action.")),
+
         # RG-ACT-003 COVERAGE_UNSTATED
         # Fires when: the overall dimension is absent.
         # Does not fire when: coverage is stated, whatever it says.

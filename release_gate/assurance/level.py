@@ -177,7 +177,14 @@ _PREDICATE_LEVEL: Mapping[str, AssuranceLevel] = {
     "subject_identified": AssuranceLevel.ATTRIBUTED,
     "consequence_declared": AssuranceLevel.ATTRIBUTED,
     "record_field_required": AssuranceLevel.ATTRIBUTED,
-    "applies_to_current_state": AssuranceLevel.ORCHESTRATED,
+    # L1, not L2, by this module's own definition of L1: "who produced this,
+    # WHAT IT BINDS TO, and on whose authority". A single agent that edits its
+    # own file after testing it has broken the binding without a second agent
+    # anywhere in the story, so asking whether evidence still applies to current
+    # content does not imply a multi-agent workflow. It sat at L2 until the
+    # single-agent profile needed it, which would have pushed the ordinary
+    # one-agent case up two levels for asking a Level 1 question.
+    "applies_to_current_state": AssuranceLevel.ATTRIBUTED,
     "expectation_declared": AssuranceLevel.ORCHESTRATED,
     "verification_present": AssuranceLevel.CORROBORATED,
     "independence_threshold": AssuranceLevel.CORROBORATED,

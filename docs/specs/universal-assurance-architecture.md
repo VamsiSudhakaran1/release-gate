@@ -4015,6 +4015,103 @@ evidence.
 
 ---
 
+## 10v. The single-agent demonstration
+
+> **Implemented.** `release_gate/demos/single_agent.py` — run it with
+> `python -m release_gate.demos.single_agent`. Three engine changes it forced
+> are described in §10v.3.
+
+§10u answers "does this hold up at ten thousand workers". This one answers the
+question that decides whether the product is usable at all: **can the engine say
+yes?** Every demonstration before it produced HOLD or BLOCK.
+
+One coding agent writes a migration, runs its suite, runs a dry-run against a
+restored copy, and asks to apply it. There is no claim graph, no replication, no
+adversarial review and no independent producer, because one agent doing one task
+has none of those by construction — and a system that demanded them would mean
+the ordinary case can never be promoted however careful it was, penalising a
+case for being small.
+
+### 10v.1 What the engine reported
+
+```
+Submission (what an approval would bind to):  migration-run.jsonl
+Action requested:              apply migration.sql to prod-eu
+Distinct tools called:         5
+Artifacts:                     3   (migration.sql, rollback.sql, dry-run-report.txt)
+Capabilities exercised:        CODE_MODIFICATION, DATABASE_READ,
+                               DATABASE_WRITE, FILESYSTEM, SHELL
+Checks the agent reports:      TEST_SUITE, SIMULATION
+…bound to content held:        2 of 2
+Declared consequence:          REVERSIBLE · SINGLE_SUBJECT · data MODIFIED
+Unresolved findings:           0
+
+PROMOTE
+
+Ready for human authorization.
+```
+
+Three lines are deliberately not what a first draft would have written. The
+subject is the **submission**, not `migration.sql`, because that is what the
+zero-config path binds an approval to and naming the file would describe
+something the approval does not cover. "Distinct tools called: 5" rather than
+"12 tool calls", because an execution graph is a graph and twelve calls to five
+tools are five nodes — reporting the edge count as a call count would be the
+demo inventing a figure. And the checks are what the agent *reports* running,
+which is not the same as verification having happened.
+
+### 10v.2 The acceptance is shown, never hidden
+
+`RG-PROV-002` (one producer) and `RG-VERIF-001` (nothing independently verified)
+are true by construction at this scale. `GENERAL_AUTONOMOUS_ACTION_V1` accepts
+both — and only while the declared consequence stays inside `_BOUNDED_ACTION`.
+The report prints the acceptance in full, including the sentence "The finding
+stands and is shown; this methodology does not treat it as disqualifying here",
+so the person signing knows what they are signing on.
+
+The verdict is sensitive in every direction, which is what makes the PROMOTE
+worth anything: raise reversibility to IRREVERSIBLE or scope to ORGANISATION and
+the acceptances are withdrawn; invoke a tool nothing can classify and the case
+holds; edit the migration after its checks ran and it holds.
+
+### 10v.3 What driving the ordinary case surfaced
+
+**Records that were used were reported as unmapped.** An `execution` record built
+the execution graph and a `consequence` record set the profile's load-bearing
+declaration — and both were counted as skipped, producing `RG-COV-002: 2
+record(s) in the input could not be mapped` and holding a submission that was
+complete. The pre-passes consumed them before the record loop ran, and the loop
+did not know.
+
+**The most ordinary profile had no staleness check.** The research and software
+profiles carry three `AppliesToCurrentState` requirements between them;
+`GENERAL_AUTONOMOUS_ACTION_V1` had none. A migration whose file was edited after
+its tests ran promoted, with the drift reported as `RG-DRIFT-005` — an advisory
+nobody had to act on. That is §10p's artifact-mutation attack arriving through
+the profile most cases actually use. `RG-ACT-004` closes it, HOLD rather than
+BLOCK, matching `RG-SW-007`.
+
+**A Level 1 question was classified as Level 2.** Adding that requirement pushed
+the general profile's required level from ATTRIBUTED to ORCHESTRATED, because
+`applies_to_current_state` sat at L2 — which would have meant the ordinary
+one-agent case needed a multi-agent profile for asking whether its evidence still
+applied. L1 is defined in that module as "who produced this, **what it binds
+to**, and on whose authority": a single agent editing its own file has broken the
+binding with no second agent in the story. Reclassified.
+
+**A declared verification method was dropped, and the fix for it was wrong.**
+An agent saying it ran a test suite had that discarded at ingest — the third
+field in this family after `applies_to_digest` (§10p) and `content_reference`
+(§10t). The obvious fix, carrying it onto the record, was refused by
+`EvidenceRecord`: "a method without a verified or refuted finding implies a
+verification that did not happen". The model is right and routing around it would
+have let an agent self-certify, which §10r exists to prevent. The declaration is
+kept beside the record in metadata, the way a producer's declared timestamp is —
+visible to a reviewer, read by nothing, and the verification collection stays
+empty.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

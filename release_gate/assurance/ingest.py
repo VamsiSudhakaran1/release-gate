@@ -541,7 +541,9 @@ def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
     return found
 
 
-def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
+def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
+                      execution: Any = None,
+                      declared_consequence: Sequence[Any] = ()
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  List[CounterexampleAttempt], List[FailedBranch],
                                  List[AdversarialFinding],
@@ -595,6 +597,18 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer
                 mapped += 1
             elif record_type == "expectation":
                 expectations.append(_expectation_from(row, producer))
+                mapped += 1
+            elif record_type == "execution" and execution is not None:
+                # Folded by `_execution_from` before this loop ran. Counting it
+                # skipped reported a record as unmapped that had built the
+                # execution graph the whole case rests on, and the resulting
+                # "records could not be mapped" finding held cases whose
+                # submissions were complete.
+                mapped += 1
+            elif record_type == "consequence" and declared_consequence:
+                # Same: read by `_consequence_from` before this loop. A
+                # submission stating what its action would do was told its
+                # statement could not be mapped.
                 mapped += 1
             elif record_type in ENVELOPE_RECORD_TYPES:
                 skip(f"{record_type} records are not folded by the zero-config path")
@@ -740,6 +754,28 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
                 detail=dict(reference_row.get("detail") or {}))
             if declared_digest:
                 state["digest"] = declared_digest
+
+    # How the producer says it checked this — kept beside the record, never ON
+    # it. `EvidenceRecord` refuses `verification_method` on a DECLARED record
+    # because "a method without a verified or refuted finding implies a
+    # verification that did not happen", and everything arriving through the
+    # envelope is DECLARED. That constraint is right and this must not route
+    # around it: an agent naming a method would otherwise be self-certifying,
+    # which is the thing §10r exists to prevent.
+    #
+    # So it goes in metadata, the way a producer's declared timestamp does. A
+    # reviewer can see that the agent says it ran a test suite; nothing reads it
+    # as a check having happened, and it was silently discarded before this.
+    declared_method = str(payload.get("verification_method") or "").strip().upper()
+    if declared_method:
+        try:
+            VerificationMethod(declared_method)
+        except ValueError:
+            notes.append(
+                f"a record from {producer.producer_id} declares verification method "
+                f"{declared_method!r}, which release-gate does not model")
+        else:
+            metadata["declared_verification_method"] = declared_method
 
     # A producer's clock is a producer's claim. `EvidenceRecord.timestamp` stays
     # what release-gate knows — when the record arrived here — because a field
@@ -1182,7 +1218,8 @@ def normalise(doc: Any, detection: Detection, *, source: str,
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
         ev, cl, art, cex, fbr, adv, exp, mapped, skipped, env_notes = \
-            _envelope_records(doc, source, producer)
+            _envelope_records(doc, source, producer, execution=execution,
+                              declared_consequence=declared_consequence)
         expectations.extend(exp)
         failed_branches.extend(fbr)
         evidence.extend(ev)
