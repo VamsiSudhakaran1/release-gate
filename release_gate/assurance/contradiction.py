@@ -357,8 +357,16 @@ class ContradictionLedger:
             for c in self._held)
 
     def digest(self) -> str:
-        return digest_object({"contradictions": [c.to_dict() for c in self._held],
-                              "schema_version": CONTRADICTION_SCHEMA_VERSION})
+        """Clock-free, for the reason `records.CLOCK_FIELDS` gives.
+
+        A ledger digest travels inside coverage rows, so a `detected_at` in here
+        moves a case digest two levels up: the same input assured a second later
+        looked like a different case.
+        """
+        from release_gate.assurance.records import strip_clocks
+        return digest_object({
+            "contradictions": [strip_clocks(c.to_dict()) for c in self._held],
+            "schema_version": CONTRADICTION_SCHEMA_VERSION})
 
     def summary(self) -> Dict[str, Any]:
         return {"total": len(self._held), "open": len(self.open()),

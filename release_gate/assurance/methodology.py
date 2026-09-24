@@ -86,6 +86,58 @@ _EMPTY_MAP: Mapping[str, str] = MappingProxyType({})
 FIELD_VERIFICATION_METHOD = "verification_method"
 FIELD_EPISTEMIC_STATUS = "epistemic_status"
 FIELD_INDEPENDENCE_GROUP = "independence_group"
+
+#: The same two facts under the names `VerificationAttempt` uses. Both record
+#: types land in the `verification` collection — an `EvidenceRecord` carries
+#: `verification_method` and `independence_group`, while an attempt from a
+#: verifier report carries `method` and `independence_lineage` — and the
+#: predicates below read whichever the record in hand actually has.
+#:
+#: This existed as a silent mismatch: every predicate read only the evidence
+#: spelling, so a real Lean or Coq report satisfied nothing. A case with
+#: forty-four passing theorem-prover attempts reported "44 record(s) claim
+#: verification without naming a method", and `verification.machine_checked` —
+#: BLOCK and non-overridable in the research methodology — could never be met by
+#: the verifier path at all. It failed safe, and it made the capability
+#: unusable.
+FIELD_ATTEMPT_METHOD = "method"
+FIELD_ATTEMPT_LINEAGE = "independence_lineage"
+FIELD_OPEN = "open"
+
+
+def _is_open(record: Mapping[str, Any]) -> bool:
+    """Whether this record is still outstanding, as the record itself says.
+
+    A record that states `open` is believed over an inference from `resolved`:
+    the two differ for anything that is neither, and those are exactly the
+    records a blunt reading gets wrong.
+    """
+    if FIELD_OPEN in record and record.get(FIELD_OPEN) is not None:
+        return bool(record.get(FIELD_OPEN))
+    return not record.get(FIELD_RESOLVED)
+
+
+def _method_of(record: Mapping[str, Any]) -> str:
+    """A record's verification method, under either spelling."""
+    return str(record.get(FIELD_VERIFICATION_METHOD)
+               or record.get(FIELD_ATTEMPT_METHOD) or "")
+
+
+def _independence_of(record: Mapping[str, Any]) -> str:
+    """A record's independence attribution, under either spelling.
+
+    An attempt's lineage is a tuple; its first entry is the group. Joining the
+    whole tuple would make two attempts sharing a group but differing deeper
+    look like different groups, which would overstate independence — the one
+    direction this must never err in (Invariant 6).
+    """
+    group = record.get(FIELD_INDEPENDENCE_GROUP)
+    if group:
+        return str(group)
+    lineage = record.get(FIELD_ATTEMPT_LINEAGE) or ()
+    if isinstance(lineage, str):
+        return lineage
+    return str(lineage[0]) if lineage else ""
 FIELD_RESOLVED = "resolved"
 FIELD_DIMENSION = "dimension"
 
@@ -345,19 +397,18 @@ class VerificationPresent(Predicate):
                             "of any type is on record", {"presence": coll.presence.value})
         records, incomplete, total = _records(case, self.collection)
         allowed = set(self.methods)
-        typed = [r for r in records if r.get(FIELD_VERIFICATION_METHOD)]
+        typed = [r for r in records if _method_of(r)]
         # An unnamed method set means "any method" — except a model reading the
         # work, which has to be named. Before this, a requirement that had never
         # considered models credited one, which is the same default-to-yes the
         # methodology's `admits()` had (Invariant 8: verification is typed, and
         # "a model looked at it" is a type with its own standing).
         matching = [r for r in typed
-                    if (r.get(FIELD_VERIFICATION_METHOD) in allowed
+                    if (_method_of(r) in allowed
                         if allowed else
-                        r.get(FIELD_VERIFICATION_METHOD)
-                        not in MODEL_VERIFICATION_METHODS)]
+                        _method_of(r) not in MODEL_VERIFICATION_METHODS)]
         model_only = [r for r in typed
-                      if r.get(FIELD_VERIFICATION_METHOD) in MODEL_VERIFICATION_METHODS
+                      if _method_of(r) in MODEL_VERIFICATION_METHODS
                       and r not in matching]
         untyped = len(records) - len(typed)
         observed = {"matching": len(matching), "minimum": self.minimum,
@@ -409,8 +460,8 @@ class IndependenceThreshold(Predicate):
                             f"{self.collection} was never supplied",
                             {"presence": coll.presence.value})
         records, incomplete, total = _records(case, self.collection)
-        grouped = [r for r in records if r.get(FIELD_INDEPENDENCE_GROUP)]
-        groups = {r[FIELD_INDEPENDENCE_GROUP] for r in grouped}
+        grouped = [r for r in records if _independence_of(r)]
+        groups = {_independence_of(r) for r in grouped}
         ungrouped = len(records) - len(grouped)
         observed = {"records_held": len(records), "total_count": total,
                     "independent_groups": len(groups), "minimum": self.minimum_groups,
@@ -452,8 +503,17 @@ class NoUnresolved(Predicate):
                 f"{self.collection} is not evidence that none exist",
                 {"presence": coll.presence.value})
         records, incomplete, total = _records(case, self.collection)
-        unresolved = [r for r in records if not r.get(FIELD_RESOLVED)]
-        untracked = [r for r in records if FIELD_RESOLVED not in r]
+        # `open` where a record states it, `not resolved` otherwise. The two are
+        # not the same question and the difference is not academic: a
+        # counterexample search that ran and found nothing is NOT_APPLICABLE —
+        # neither open nor resolved, because there is nothing to resolve — and
+        # reading only `resolved` counted every clean search as an outstanding
+        # problem. Seven searches, one of which found something, reported as
+        # seven unresolved. Contradictions carry no `open` field and a superseded
+        # one reports resolved, so the fallback is right for them.
+        unresolved = [r for r in records if _is_open(r)]
+        untracked = [r for r in records
+                     if FIELD_RESOLVED not in r and FIELD_OPEN not in r]
         observed = {"records_held": len(records), "total_count": total,
                     "unresolved": len(unresolved), "untracked": len(untracked)}
         return _absence_outcome(

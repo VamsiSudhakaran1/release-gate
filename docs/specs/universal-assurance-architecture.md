@@ -3892,6 +3892,129 @@ wrong answer this artefact exists to avoid.
 
 ---
 
+## 10u. The frontier research demonstration
+
+> **Implemented.** `release_gate/demos/frontier_research.py` —
+> `ResearchScenario`, `FrontierRun`, `build_normalisation()`, `run()`,
+> `render()`. Run it with `python -m release_gate.demos.frontier_research`.
+> Three engine defects it found are fixed in `completeness.py`,
+> `methodology.py` and `records.py`, described in §10u.3.
+
+Appendix B.3 described a frontier case in prose. This is that case, generated
+and put through the unmodified engine.
+
+**Nothing is solved.** The subject is a candidate result with a fabricated
+identifier. No theorem is proved, no prover is run, and the report ends by
+saying the engine has not evaluated whether the result is true — it reports what
+the evidence establishes and what it does not, which is the only statement it is
+in a position to make (Invariant 10).
+
+**The demo lives outside `assurance/`.** It is a consumer of the public API like
+any other client, which keeps the core domain-neutral and means that if the demo
+needs something the engine cannot do, that is a finding about the engine rather
+than a reason to add a hook. Three such findings came out of building it.
+
+### 10u.1 What the engine reported
+
+```
+Workers observed:                10,254
+Records seen at ingest:       2,287,131
+Claims in final dependency graph: 2,420
+Critical claims:                     48
+Critical verification:           44 / 48
+Independent verification:        40 / 48
+Formal verification:             38 / 48
+Open contradictions:                  1
+Load-bearing assumptions unresolved:  1
+Open counterexamples:                 1
+Execution completeness:  COMPLETENESS_UNKNOWN
+Largest single lineage:   8,913 of 10,254 workers
+Lineage concentration:             HIGH
+VERDICT: BLOCK
+```
+
+Eight things for a person to read, out of fourteen the engine raised and two and
+a quarter million records it saw. The full run takes about three seconds.
+
+Every figure is read from an engine object. `render()` contains no literal
+number — enforced by a test that greps its source — and each line is re-derived
+independently in `tests/test_demo_frontier_research.py` and compared. A report
+that drifts from the engine is worse than none, because it reads exactly like a
+true one.
+
+### 10u.2 Eleven phenomena, generated and detected
+
+Each is put in deliberately and each is asserted on what the engine *concluded*,
+never on what the generator wrote. Ten thousand workers are counted by the
+independence analysis, not by the scenario. The 8,913-worker echo chamber
+collapses to one ancestry cluster because the copies declare their parent, not
+because anything is told they are copies. The hidden contradiction falls out of
+evidence pointing both ways at one claim. The stale formal check is found by
+comparing the digest the prover ran against with what the case now holds. The
+unstated assumption surfaces as a claim depending on something described
+nowhere — and the engine reports that if it fails, 53 claims collapse including
+the conclusion.
+
+Criticality is derived, not declared: the scenario marks one conclusion as root
+and lays out edges, and the engine decides what those edges make load-bearing.
+
+### 10u.3 Three defects the demo found
+
+Driving the real thing end to end surfaced what fixtures had not.
+
+**A methodology requirement no verifier report could ever satisfy.**
+`VerificationAttempt` serialises `method` and `independence_lineage`; the
+methodology predicates read `verification_method` and `independence_group`. Both
+record types land in the `verification` collection, and the predicates only knew
+the evidence spelling. A case with forty-four passing theorem-prover attempts
+reported *"44 record(s) claim verification without naming a method"*, and
+`verification.machine_checked` — BLOCK and non-overridable in the research
+methodology — could not be met through the verifier path at all. It failed safe
+and made the flagship capability unusable. The predicates now read either
+spelling.
+
+**Clean searches counted as outstanding problems.** `NoUnresolved` read
+`resolved`, so a counterexample search that ran and found nothing —
+`NOT_APPLICABLE`, neither open nor resolved — counted as unresolved. Seven
+searches, one of which found something, reported as seven. The predicate now
+prefers a record's own `open` where it states one, which is also what the ledger
+uses; contradictions carry no `open` field and a superseded one reports resolved,
+so the fallback stays right for them.
+
+**A ledger that called itself COMPLETE over a stream nothing could be detected
+in.** `unknown_completeness_sources` has always reported a stream with no
+sequence numbering — "a hole would leave no trace" — while `StreamLedger.status`
+folded to `COMPLETE` anyway. Two halves of one module disagreeing about the same
+fact, with the fold being the optimistic one. `COMPLETE` is now guarded by four
+conditions rather than three.
+
+### 10u.4 A fourth, and the largest
+
+The demo's determinism test failed, and the cause was not the demo.
+
+**The same input assured one second later produced a different `case_digest`.**
+Records the engine derives — a contradiction it detected, a coverage row it
+wrote — stamp themselves with the engine's clock, and the collection folds
+covered those stamps. §15 requires that a case built locally and one built
+through the API from the same records produce the same digest; that could never
+hold, because two runs always straddle time. A re-assurance of identical input
+looked like a changed case to an approval. The digest was unusable as the thing
+two parties compare.
+
+`records.CLOCK_FIELDS` now excludes clock fields from a record's digest, for the
+reason `CaseVerdict.digest_component` already excluded `decided_at` and
+`AssuranceSubject` already excluded `created_at`: identity is content, not clock.
+The exclusion is deliberately narrow — a contradiction's status, a resolution, a
+coverage verdict all still move the digest, because those are what the record is
+for, and a test asserts that resolving a contradiction changes it.
+
+`evidence.timestamp` is **not** excluded, and that is not an oversight:
+`EvidenceRecord.identity()` says when a verification ran is part of what it
+establishes, so the same suite passing today and last March are two pieces of
+evidence.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

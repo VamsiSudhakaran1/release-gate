@@ -167,9 +167,60 @@ class SimpleRecord:
                 **dict(self.payload)}
 
 
+#: Field names that record WHEN something was observed rather than WHAT was
+#: observed. Excluded from a record's digest for the reason `CaseVerdict
+#: .digest_component` excludes `decided_at` and `AssuranceSubject` excludes
+#: `created_at`: identity is content, not clock.
+#:
+#: Without this the same input assured one second apart produced two different
+#: `case_digest`s. Records the engine derives — a contradiction it detected, a
+#: coverage row it wrote — stamp themselves with the engine's clock, so the fold
+#: over a collection moved on every run. That defeated §15's requirement that a
+#: case built locally and one built through the API agree, made a re-assurance of
+#: identical input look like a changed case to an approval, and made a case
+#: digest unusable as the thing two parties compare.
+#:
+#: Deliberately narrow: only clocks. Anything else a record says — a
+#: contradiction's status, a resolution, a coverage verdict — must still move the
+#: digest, because those are what the record is FOR.
+CLOCK_FIELDS: frozenset = frozenset({
+    "created_at", "updated_at", "decided_at", "detected_at", "attempted_at",
+    "occurred_at", "observed_at", "built_at", "generated_at", "assessed_at",
+})
+
+
 def record_digest(record: CaseRecord) -> str:
-    """Content digest of one record, through the canonical form."""
-    return digest_object(_record_dict(record))
+    """Content digest of one record, through the canonical form.
+
+    Clock fields are excluded — see `CLOCK_FIELDS`. A record's `timestamp` is
+    NOT excluded: for a piece of evidence, when a verification ran is part of
+    what it establishes, and `EvidenceRecord.identity()` says so explicitly.
+    """
+    return digest_object(strip_clocks(_record_dict(record)))
+
+
+def strip_clocks(data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Drop clock fields, at the top level and one nesting down.
+
+    One level down rather than arbitrarily deep: the nested case is a record
+    embedding another record's serialisation, which is where these actually
+    appear. Walking the whole tree would also strip a clock that some payload
+    legitimately carries as data.
+    """
+    out: Dict[str, Any] = {}
+    for key, value in data.items():
+        if key in CLOCK_FIELDS:
+            continue
+        if isinstance(value, Mapping):
+            out[key] = {k: v for k, v in value.items() if k not in CLOCK_FIELDS}
+        elif isinstance(value, (list, tuple)):
+            out[key] = [
+                {k: v for k, v in item.items() if k not in CLOCK_FIELDS}
+                if isinstance(item, Mapping) else item
+                for item in value]
+        else:
+            out[key] = value
+    return out
 
 
 def _record_dict(record: CaseRecord) -> Dict[str, Any]:

@@ -310,8 +310,21 @@ class StreamLedger:
         return any(s.self_certified for s in self.streams)
 
     @property
+    def uncheckable_streams(self) -> Tuple[str, ...]:
+        """Streams with no shape in which a gap could show.
+
+        A stream that arrived without sequence numbers cannot be checked for
+        holes: whatever was dropped from it left no trace, so "no gap detected"
+        is a statement about the detector rather than the stream.
+        `unknown_completeness_sources` has always reported these; the fold used
+        to disagree with it and call the whole ledger COMPLETE.
+        """
+        return tuple(sorted(s.stream_id for s in self.streams
+                            if not s.observed_sequences and not s.counter_readings))
+
+    @property
     def status(self) -> StreamCompleteness:
-        """The fold. `COMPLETE` is guarded by three conditions, not one."""
+        """The fold. `COMPLETE` is guarded by four conditions, not one."""
         if self.gaps:
             return StreamCompleteness.KNOWN_GAPS
         if not self.expected_streams:
@@ -325,6 +338,11 @@ class StreamLedger:
             # list the counted party wrote, which is exactly what an omission
             # looks like from the inside.
             return StreamCompleteness.PARTIALLY_COMPLETE
+        if self.uncheckable_streams:
+            # The conservative fold this class documents: one stream nothing
+            # could be detected in makes the whole record one whose completeness
+            # was not established, because the decision rests on the union.
+            return StreamCompleteness.COMPLETENESS_UNKNOWN
         return StreamCompleteness.COMPLETE
 
     def note(self) -> str:
@@ -348,6 +366,19 @@ class StreamLedger:
             return (f"{len(self.gaps)} gap(s) were positively detected. What is "
                     "held describes part of what happened, and the missing part is "
                     "named rather than assumed absent.")
+        if not self.expected_streams:
+            # The more fundamental reason, and so the one reported first: without
+            # an enumeration you do not know a missing stream was ever expected.
+            return ("Nothing states what should have been here, so arrival cannot "
+                    "be checked against anything. No gap was observed; that is not "
+                    "the same as there being none.")
+        if self.uncheckable_streams:
+            return (f"{len(self.uncheckable_streams)} stream(s) arrived with no "
+                    "sequence numbering — "
+                    + ", ".join(self.uncheckable_streams[:4])
+                    + " — so a hole in them would leave no trace. Every stream the "
+                      "enumeration names did arrive. No gap was observed in these; "
+                      "that is a fact about the detector, not about the stream.")
         return ("Nothing states what should have been here, so arrival cannot be "
                 "checked against anything. No gap was observed; that is not the "
                 "same as there being none.")
@@ -369,6 +400,7 @@ class StreamLedger:
                 "enumeration_independent": self.enumeration_independent,
                 "enumeration_source": self.enumeration_source,
                 "any_self_certified": self.any_self_certified,
+                "uncheckable_streams": list(self.uncheckable_streams),
                 "gaps": list(self.gaps), "notes": list(self.notes),
                 "schema_version": COMPLETENESS_SCHEMA_VERSION}
 
