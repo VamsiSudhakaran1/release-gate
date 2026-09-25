@@ -8,10 +8,12 @@ code window* to a model you configure, and gets back
 Design invariants (non-negotiable):
   * OPT-IN. Nothing here runs unless the caller asks (`--verify`). The static
     audit never makes a network call.
-  * BRING-YOUR-OWN MODEL. It talks to an OpenAI-compatible ``/chat/completions``
-    endpoint you point it at — your OpenAI/Together/Groq key, OR a LOCAL model
-    (Ollama / vLLM / llama.cpp) via a base-URL override. Point it at localhost
-    and it stays fully air-gapped.
+  * BRING-YOUR-OWN MODEL, ANY PROVIDER. The wire format is data, not code
+    (``release_gate.assurance.model_neutral``): OpenAI, Anthropic, Google,
+    Ollama and everything OpenAI-compatible are handled without a proxy, and a
+    provider nobody has written down yet is one ``ModelDialect`` away. No vendor
+    SDK is imported. Point it at a LOCAL model (Ollama / vLLM / llama.cpp) and it
+    stays fully air-gapped.
   * NEVER CALLS HOME. Requests go ONLY to your configured endpoint. release-gate
     servers are never contacted; there is no telemetry.
   * ADVISORY, NOT THE GATE. The deterministic static decision remains the CI
@@ -26,8 +28,17 @@ Config (env):
                       endpoint (e.g. http://localhost:11434/v1) for a local model
   RG_VERIFY_API_KEY   API key (falls back to OPENAI_API_KEY). Not required when
                       BASE_URL is localhost / 127.0.0.1.
+  RG_VERIFY_DIALECT   optional — name the wire format explicitly
+                      (openai_chat / anthropic_messages /
+                      google_generate_content / ollama_native /
+                      openai_responses). Inferred from BASE_URL when unset.
   RG_VERIFY_CORPUS    optional path to append verdicts to (JSONL) — the
                       calibration corpus. Defaults to .release-gate-verify.jsonl
+
+The default BASE_URL is one vendor's, which is a documented convenience and not a
+requirement: set BASE_URL and nothing reaches it. `resolve_transport` reports
+which endpoint and dialect were resolved, so where data would go is checkable
+before it goes.
 """
 
 from __future__ import annotations
@@ -127,23 +138,47 @@ def _build_messages(finding: Dict[str, Any], context: str) -> List[Dict[str, str
 
 # ─────────────────────────── model call (OpenAI-compatible) ─────────────────
 
+def resolve_transport(config: Dict[str, str]):
+    """Which wire format this endpoint speaks, and whether anyone established it.
+
+    `RG_VERIFY_DIALECT` names one explicitly; otherwise the base URL is matched
+    against known providers. An unrecognised endpoint still gets the
+    OpenAI-compatible dialect — that is the de facto standard and the useful
+    default — but the resolution carries `recognised=False`, so a caller can say
+    so rather than implying the provider was identified.
+    """
+    from release_gate.assurance.model_neutral import resolve_dialect
+    return resolve_dialect(config.get("base_url", ""),
+                           named=os.environ.get("RG_VERIFY_DIALECT", "").strip())
+
+
 def _call_llm(config: Dict[str, str], messages: List[Dict[str, str]],
               timeout: int = 45) -> str:
-    """POST to an OpenAI-compatible /chat/completions endpoint. Stdlib only."""
-    body = json.dumps({
-        "model": config["model"],
-        "messages": messages,
-        "temperature": 0,          # best-effort determinism
-        "max_tokens": 300,
-    }).encode()
-    headers = {"Content-Type": "application/json", "User-Agent": "release-gate-verify"}
-    if config.get("api_key"):
-        headers["Authorization"] = f"Bearer {config['api_key']}"
-    req = urllib.request.Request(config["base_url"] + "/chat/completions",
-                                 data=body, headers=headers)
+    """POST to whichever dialect this endpoint speaks. Stdlib only.
+
+    The wire format is data (`release_gate.assurance.model_neutral`), so OpenAI,
+    Anthropic, Google, Ollama and anything OpenAI-compatible all work without a
+    proxy, and a provider nobody has written down yet is a `ModelDialect` away.
+    No vendor SDK is imported here or anywhere else.
+    """
+    from release_gate.assurance.model_neutral import build_request, extract_text
+
+    dialect = resolve_transport(config).dialect
+    system = "\n\n".join(m["content"] for m in messages
+                          if m.get("role") == "system")
+    user = "\n\n".join(m["content"] for m in messages
+                        if m.get("role") != "system")
+    plan = build_request(dialect, base_url=config["base_url"],
+                         model=config["model"], user=user, system=system,
+                         api_key=config.get("api_key", ""),
+                         temperature=0,      # best-effort determinism
+                         max_tokens=300)
+    headers = {**plan.headers, "User-Agent": "release-gate-verify"}
+    req = urllib.request.Request(plan.url, data=json.dumps(plan.body).encode(),
+                                 headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"]
+    return extract_text(dialect, data)
 
 
 def _parse_verdict(text: str) -> Dict[str, str]:

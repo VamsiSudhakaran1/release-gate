@@ -4972,6 +4972,136 @@ Two smaller ones, both found by checking that a guard actually bites:
 
 ---
 
+## 10ac. Model independence (`ModelDialect`, `resolve_dialect`)
+
+> **Implemented.** `release_gate/assurance/model_neutral.py` — `ModelDialect`,
+> `DIALECTS`, `DialectResolution`, `RequestPlan`, `SystemPlacement`,
+> `resolve_dialect()`, `build_request()`, `extract_text()`. Plus `llm_verify.py`
+> routed through it, and one false-clean fixed in `pricing/budget_simulator.py`.
+
+Two axes: the models release-gate **assesses**, and the models it **optionally
+uses**. The first was already independent. The second was not.
+
+### 10ac.1 What was measured
+
+| | |
+|---|---|
+| provider references in `release_gate/assurance/` (54 modules) and `demos/` | **zero** |
+| `model_identity()` | already `ToolIdentity`, no model-specific type |
+| `llm_verify` wire formats spoken | **one** — OpenAI `/chat/completions` |
+| pricing with a model named but unknown | `FAIL` — correct |
+| pricing with **no model named** | **`PASS`**, as `gpt-4-turbo` / `openai` |
+
+The deterministic core is genuinely provider-free, and a test now keeps it that
+way across every module.
+
+**Provider awareness is not provider dependence.** `audit.py` holds the literal
+string `"import openai"` as a *detection pattern* — the scanner recognising which
+framework the audited repo uses. That is the product working. A substring search
+cannot tell it from a real import, so the guard walks the AST. It also permits a
+vendor import guarded by `try/except` — `pricing/resolver.py` reads LiteLLM's
+cost map when the user already has it and returns `None` otherwise, which is
+§10aa's optional-backend pattern, not a dependency. An unguarded one would be.
+
+### 10ac.2 "OpenAI-compatible" is a standard, not independence
+
+One wire format covered OpenAI, Together, Groq, Fireworks, OpenRouter, Ollama,
+vLLM and llama.cpp — a wide slice, and still one vendor's shape. Anthropic wants
+`/v1/messages`, an `x-api-key` header, a version header, the system prompt as a
+**top-level field** and the text at `content[0].text`. Google wants
+`:generateContent`, the model in the path, the key in the query string,
+`contents[].parts[]`, and the text at `candidates[0].content.parts[0].text`. A
+future system wants something nobody has written down.
+
+So the shaping is **data**. `ModelDialect` is a row naming the path, the auth
+header and scheme, where the system instruction goes, what the turns key is
+called, and where the reply text lives. Five dialects ship —
+`openai_chat`, `anthropic_messages`, `google_generate_content`, `ollama_native`,
+`openai_responses` — and a custom provider is a `ModelDialect` a caller
+constructs, tested end to end with an invented in-house service.
+
+`openai_responses` is in there on purpose: a second shape from the same vendor is
+the argument for dialects being data. A provider can change its mind without that
+becoming a code change.
+
+`build_request` returns a `RequestPlan` rather than performing the call, which is
+what keeps this module inside a package that makes no network calls — and lets a
+caller show a user exactly what would leave before anything does.
+
+`SystemPlacement` has four values because getting it wrong does not error: the
+instruction is silently dropped or buried in the user turn, and the model answers
+a different question than the one asked.
+
+### 10ac.3 No provider is privileged
+
+`ModelDialect.establishes_truth` → `False`, on every dialect. A model's answer is
+DERIVED whatever produced it (§10r), there is no flag that promotes one, and a
+test asserts the epistemic status is identical across a frontier model, a local
+7B and an invented future system. The day a provider list starts deciding
+epistemic status is the day it starts deciding verdicts.
+
+### 10ac.4 An unrecognised provider is a refusal, not a default
+
+`DialectResolution` carries `recognised`, the same distinction §10z drew between
+"I refused this" and "I have never heard of this". A known vendor host resolves
+with `recognised=True`; a corporate gateway or a bare `localhost` resolves to the
+OpenAI-compatible dialect with `recognised=False` and the basis says *"that is a
+guess"*. With `allow_fallback=False` an unrecognised endpoint yields **no dialect
+at all** — the honest mode for anything that would act on the reply.
+
+`extract_text` fails loudly on a mismatch, naming the path and where it broke,
+because the alternative failure mode is not an exception: it is a plausible
+string pulled from whichever field happened to parse.
+
+`build_request` refuses an empty model: *"release-gate has no default model and
+will not pick one: a model nobody chose is a provider nobody chose."*
+
+### 10ac.5 Three defects, all mine, all found by measuring
+
+**Every endpoint resolved to `openai_chat` with `recognised=True`** — including
+Anthropic's and Google's own base URLs. The hint list contained `/v1` and
+`localhost`, which match nearly everything, and `openai_chat` was first. So the
+resolver confidently misidentified one vendor as another, which is the exact
+failure its own docstring warns about. Fixed by ordering the list specific →
+generic with `openai_chat` last, and cutting the hints to exact vendor hosts plus
+`/chat/completions`. A bare `localhost` is now honestly *unrecognised*: anything
+can be behind it.
+
+**The credential leaked into the showable view.** `RequestPlan.to_dict()`
+redacted headers, and Google carries the key in the query string — so the
+"safe to show" rendering printed the key in the field most likely to be pasted
+into a ticket. The URL is redacted too now.
+
+**A false-clean in cost.** An unconfigured agent was priced against
+`gpt-4-turbo`/`openai` and returned **PASS**, while a genuinely-named custom
+model returned FAIL. Naming your own model failed the gate; naming nothing passed
+it, on a number invented from a vendor nobody chose. The file's own comment says
+*"Never let unknown cost silently pass"* and the default defeated it. An unnamed
+model is now `_unnamed_model_result`: not assessed, not a pass, and it says to
+name one — any provider, a local model, or a custom price.
+
+A fourth was in my own test, which searched for `"import openai"` as a substring
+and flagged the scanner's detection patterns. That is what led to the AST guard
+and to the awareness-versus-dependence distinction above, so the naive version
+was worth writing.
+
+### 10ac.6 What is still not covered
+
+**Signed-request providers.** Bedrock (SigV4) and Vertex (GCP auth) are a
+credentials problem, not a dialect one: the request shape is expressible here, the
+signing is not, and signing inside a package that makes no network calls and
+imports no SDK is not something to improvise. The route today is an
+OpenAI-compatible gateway in front of them, which is how most deployments already
+reach them. Stated rather than left to be discovered.
+
+**The default base URL is still one vendor's.** That is a shipped, documented
+convenience and changing it silently would send someone's data somewhere new, so
+it stays. `resolve_transport` reports the endpoint and dialect it resolved, and
+`RG_VERIFY_DIALECT` names one explicitly, so where data would go is checkable
+before it goes.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

@@ -70,8 +70,13 @@ class BudgetSimulator:
             if not simulation:
                 return self._no_simulation_result()
             
-            # Extract parameters
-            model = agent.get('model', 'gpt-4-turbo')
+            # Extract parameters. No default model: substituting one priced an
+            # unconfigured agent against a vendor the user never named and
+            # returned PASS on that number, while a genuinely-named custom model
+            # correctly returned FAIL. Naming your own model failed the gate and
+            # naming nothing passed it, which inverts the file's own rule that
+            # unknown cost must never silently pass.
+            model = str(agent.get('model') or '').strip()
 
             # v0.6: optional `model:` block resolves pricing from a source chain
             # (static / custom / locked / openrouter / litellm) instead of only
@@ -92,6 +97,9 @@ class BudgetSimulator:
                 else:
                     # Never let unknown cost silently pass.
                     return self._unresolved_pricing_result(model, resolved)
+
+            if not model:
+                return self._unnamed_model_result()
 
             requests_per_day = simulation.get('requests_per_day', 1000)
             tokens = simulation.get('tokens_per_request', {})
@@ -293,6 +301,25 @@ class BudgetSimulator:
             'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         }
     
+    def _unnamed_model_result(self) -> Dict:
+        """No model was named, so cost was not assessed.
+
+        Deliberately not a PASS. release-gate is model-independent, which means it
+        has no default model to fall back on: a cost estimated against a model
+        nobody chose is a number about a provider nobody chose, and a gate that
+        passed on it would be reporting a budget as safe on the strength of an
+        assumption.
+        """
+        return {
+            'status': 'FAIL',
+            'error': 'No model named, so cost was not assessed',
+            'reason': ('release-gate does not assume a provider. Name the model '
+                       'under `agent.model`, or supply a `model:` block with '
+                       'pricing — any provider, a local model, or a custom entry.'),
+            'available_models': list(self.pricing.keys()),
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        }
+
     def _unknown_model_result(self, model: str) -> Dict:
         """Return result for unknown model"""
         return {
