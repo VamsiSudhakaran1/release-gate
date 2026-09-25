@@ -4816,6 +4816,162 @@ package's own front door.
 
 ---
 
+## 10ab. Privacy and data minimisation (`RedactionPolicy`, `Minimisation`)
+
+> **Implemented.** `release_gate/assurance/privacy.py` — `DataClass`,
+> `Disposition`, `Residency`, `RedactionPolicy`, `Redaction`, `Minimisation`,
+> `IngestionScope`, `minimise()`, `metadata_only_policy()`, `residency_of()`.
+
+### 10ab.1 The tension, and the resolution
+
+§10p classifies **selective evidence omission as an attack**: an agent that
+submits the flattering half of its record has defeated the gate. This section
+requires **selective ingestion and redaction as features**. They are the same
+operation.
+
+The difference is not in what is removed. It is in what is said about the
+removal:
+
+* **Declared, digest-committed minimisation** names the class withheld, commits
+  to the digest of what was removed, and reports what became unassessable. What
+  remains is a narrower case, and it reads as narrower.
+* **Silent dropping** produces a case that reads exactly like one where the
+  content never existed. That is the attack, whatever the intention behind it.
+
+Before this section, the engine did the silent kind — which is the finding below.
+
+### 10ab.2 What was measured first
+
+| | |
+|---|---|
+| prompt / completion / identifier text reaching the case, across OTLP, Langfuse, Arize and promptfoo | **none** |
+| the same, in the evidence pack — the thing that leaves | **none** |
+| a verdict reached with every sensitive key stripped | **yes**, unchanged |
+| the case *stating* that a prompt was present and withheld | **no** |
+| "prompt present but dropped" vs "prompt absent" | different case digests, **no reviewer-visible difference** |
+
+So "proprietary chain-of-thought and raw prompts never leave" was already true —
+**by accident of how four adapters happen to be written**, not by contract.
+Nothing stopped a fifth adapter, or a §10s domain plugin, from retaining content.
+`TestAdaptersRetainNothing` makes it a contract, asserted against the outcome and
+the pack for every adapter.
+
+The second gap was the epistemic one. The adapters discarded prompt content and
+nothing recorded that there had been any, so a reviewer could not tell *"no
+prompt was sent to this model"* from *"a prompt was sent and we did not look at
+it."* Both are legitimate states. They are not the same state.
+
+### 10ab.3 Withheld is not absent
+
+`Disposition` has five values and two of them carry the whole section:
+
+| | |
+|---|---|
+| `RETAINED` | travels inline; the deployment accepted that |
+| `DIGESTED` | only a digest travels — comparable, unreadable |
+| `REFERENCED` | a locator plus a digest; the bytes stay in a private backend |
+| `WITHHELD` | present, deliberately not sent, **reported as a gap** |
+| `ABSENT` | was never there |
+
+`Minimisation.withheld_reads_as_absent` → `False`, unconditionally, and
+`__post_init__` refuses a record placing one class in both lists: *"one says
+content was there and did not travel, the other says there was none; reporting
+both would leave a reader unable to tell which happened."*
+
+A policy also **cannot declare a class `ABSENT`**. Absence is a finding about a
+document, not a decision about one — a policy able to declare content absent
+could make a withholding look like an emptiness.
+
+Each withheld class emits an `EvidenceExpectation` with `assessed=False` — the
+mechanism the case already uses for a dimension nothing could reach — so it lands
+in coverage as `content.prompt` NOT_ASSESSED, beside every other gap, rather than
+in a privacy report read separately from the verdict (Invariants 3 and 9).
+
+### 10ab.4 A redaction commits to what it removed
+
+`content_digest` is required for `WITHHELD` and `DIGESTED`, and its absence is
+refused: *"that is a deletion, not a redaction: nobody can later show that what
+was withheld was one particular thing rather than whatever is convenient to claim
+now."* Without it, §10p's threat model applies to the redaction itself.
+
+The commitment is what makes minimisation reproducible. The same document and
+policy yield the same digests; changing the prompt moves the prompt's digest and
+**leaves the reasoning digest alone** — both directions tested, because a
+commitment that moved with unrelated content would not identify anything.
+`RedactionPolicy` is itself content-addressed, so a pack carrying
+`policy_digest` lets a reviewer check the document was minimised the way the
+record claims.
+
+A `WITHHELD` redaction must also state its **cost**, or it is refused: *"something
+became unassessable, and a withholding whose consequence is unstated reads as
+free."* `SECRET` is the one named exception, held as data rather than as a
+relaxation: a credential is not evidence, no assurance question is answered by
+reading one, and listing a cost of "nothing" under a heading that says NOT
+ASSESSABLE would be a contradiction a reader has to resolve.
+
+### 10ab.5 What this does not do
+
+There is no PII detector, no secret scanner, no classifier. Which fields carry
+proprietary content is a question about a customer's data, answerable by them,
+and a heuristic that guessed would produce exactly the failure that matters:
+content that looked safe to a regex and was not.
+
+A policy names **classes**, not field patterns — `gen_ai.prompt`,
+`input.messages[].content` and `llm.input_messages` are three spellings of
+`PROMPT`, and a policy written against spellings lapses silently when one
+changes. `extra_fields` extends the table for a house telemetry shape without
+replacing it. An unmentioned class defaults to `RETAINED`, which is the
+permissive direction on purpose: a policy that silently withheld classes nobody
+asked about would minimise more than its author declared, and the record would
+credit them with a decision they did not make.
+
+### 10ab.6 Residency, and selective ingestion
+
+`Residency` states what crosses a trust boundary, rather than implying it.
+`LOCAL_ONLY` and `SELF_HOSTED` cross nothing. `PRIVATE_CLOUD` deliberately does
+not overclaim — *"nothing outside a tenancy the customer controls, subject to
+that cloud's own operator access."* `VENDOR_HOSTED` says a minimisation policy
+belongs in front of it.
+
+`IngestionScope` is selective ingestion, with `excluded_reads_as_clean` →
+`False`: a scope narrows what a case is *about*, never what it claims to have
+looked at, and that is the whole difference between scoping and the omission
+attack. An exclusion must name who declared it, because *"an exclusion nobody
+owns is indistinguishable from evidence that never arrived."* Exclusions emit
+NOT_ASSESSED expectations the same way withheld classes do.
+
+### 10ab.7 One defect, and it was mine
+
+**The first minimiser reported zero redactions on an OTLP export while passing
+every prompt straight through.**
+
+OTLP — the dominant trace format — carries attributes as a list of
+`{"key": "gen_ai.prompt", "value": {"stringValue": …}}` pairs. The sensitive
+content sits under a key literally named `value`, and its class is named by a
+*sibling*. A walker keying on dict keys alone matches nothing. It worked on
+Langfuse, Arize and promptfoo, which are keyed, and on the demo documents, which
+carry no prompt content at all — so every convenient test passed.
+
+A minimiser that reports success while leaking everything is strictly worse than
+no minimiser, because it manufactures the confidence. `_attribute_pair` handles
+the pair shape and both paths now route through one `_record`, so a keyed field
+and an OTLP pair cannot commit to differently-computed digests.
+
+Two smaller ones, both found by checking that a guard actually bites:
+
+* **Minimisation was not idempotent.** A second pass re-digested the digest
+  envelope, so `content_digest` moved on every run and stopped matching the
+  content it committed to. A pipeline where an agent minimises and a gateway
+  minimises again is an ordinary deployment, not a mistake.
+* **Two of my own tests passed for the wrong reason.** One compared
+  `redactions[0]` against itself — the list is sorted by class name, so it read
+  the chain-of-thought digest while the prompt was what changed. The other tested
+  idempotence on a document with no `DIGESTED` field, which is idempotent whether
+  the guard exists or not. Both now select by class and parametrise over a
+  document that exercises the path, and removing either guard fails three tests.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
