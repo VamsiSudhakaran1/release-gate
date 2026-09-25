@@ -244,6 +244,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("plugin", "plugin", "PLUGIN_SCHEMA_VERSION", 1),
         _ref("ports", "ports", "PORTS_SCHEMA_VERSION", 1),
         _ref("privacy", "privacy", "PRIVACY_SCHEMA_VERSION", 1),
+        _ref("producers", "producers", "PRODUCERS_SCHEMA_VERSION", 1,
+             note="the seven evidence lanes and what each cannot establish, "
+                  "plus the scanner's measured per-rule credibility"),
         _ref("progress", "progress", "PROGRESS_SCHEMA_VERSION", 1),
         _ref("quality", "quality", "QUALITY_SCHEMA_VERSION", 1),
         _ref("query", "query", "QUERY_SCHEMA_VERSION", 1),

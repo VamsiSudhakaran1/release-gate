@@ -1349,7 +1349,9 @@ def _audit_records(doc: Mapping[str, Any], source: str,
     and fails produces a claim with evidence against it rather than a missing
     claim.
     """
-    producer = Producer.release_gate("audit")
+    # The report arrived as a document. Attributing it to an in-process run
+    # would credit a file with having been produced here.
+    producer = Producer.release_gate("audit", in_process=False)
     claims = claims if claims is not None else []
     mapped = 0
 

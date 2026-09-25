@@ -5456,6 +5456,123 @@ only evidence that kind of guard ever gives.
 
 ---
 
+## 10ag. The scanner as an Evidence Producer (`EvidenceLane`)
+
+> **Implemented.** `release_gate/assurance/producers.py` — `EvidenceLane`,
+> `LANES`, `EvidenceProducer`, `RuleCredibility`, `CREDIBILITY`,
+> `credibility_for()`, `lane_for()`. Plus one provenance correction in
+> `Producer.release_gate` and the audit fold.
+
+The scanner is **preserved exactly**: 139 rule ids, the benchmark corpus, the
+precision-first tier system, `audit.py` / `agent_analysis.py` / `rules.py` /
+`verify.py` untouched. What changes is what it is *described as*.
+
+    Agent Code Scanner ───┐
+    Runtime Trace ─────────┤
+    Formal Verifier ───────┤
+    Tests ─────────────────┤
+    Evals ─────────────────┤
+    Human Review ──────────┤
+    External Evidence ─────┤
+                          ▼
+                    Assurance Case
+
+### 10ag.1 What was measured
+
+| | |
+|---|---|
+| distinct `RG-*` rule ids | **139** |
+| benchmark corpus | **93 labeled cases**, per-rule TP/FP/FN |
+| an audit report reaches a case | **yes** — `AUDIT_REPORT`, findings become `STATIC_FINDING` |
+| rule ids preserved into evidence | **yes**, in `content.rule_id` |
+| benchmark data reachable from a case | **no** — a README |
+| a hand-written `audit.json` | `producer=release-gate/audit`, `kind=release_gate`, **`identity_basis="in-process"`** |
+
+Two of my own probes were wrong and worth recording. The first said rule ids were
+lost — it searched `outcome.to_dict()`, which does not carry evidence content;
+they are preserved. The second nearly flagged the safeguard fold's `DERIVED`
+status as an overstatement, until reading it showed the reasoning is right and
+already documents two past defects: a safeguard release-gate *looked for and did
+not find* genuinely is release-gate's own observation.
+
+### 10ag.2 Repositioning is only real if the lanes differ
+
+Each producer states what it **cannot** establish, and a lane that lists nothing
+is refused at construction — *"the one that lists none is the one a reviewer will
+weight hardest."*
+
+Two properties fall out, and both are computed from the lane rather than
+declared per-row:
+
+**`establishes_runtime_behaviour` is `True` for the runtime trace and nothing
+else.** A static finding is a claim about *code*. `eval(resp)` being reachable
+from model output is a fact about the program text; whether that line executed,
+how often, on what input, are facts about an execution. This is not a demotion of
+the scanner — it sees every path including the ones no run took, and a trace sees
+only the paths a run took. Neither subsumes the other, and a case holding both is
+stronger than one holding either.
+
+**`establishes_correctness` is `True` for the formal verifier and nothing else**,
+and even there bounded: *"a proof about a model is a proof about the model."*
+Tests and evals sample. A scanner pattern-matches. A human reads.
+
+The trace lane is also the one marked **not independent of its subject** — an
+agent's trace of itself is the agent's account of itself.
+
+### 10ag.3 Credibility travels beside a finding, never inside it
+
+The benchmark is real evidence about a **rule**: 93 labeled cases, per-rule true
+and false positives, and a documented limitation the corpus keeps on purpose
+(taint is intra-procedural; cross-function flows are deliberately missed rather
+than inferred). It was a Markdown file with no path into a case.
+
+`RuleCredibility` makes it reachable, transcribed as literals and checked against
+`RESULTS.md` by a test — the drift shape §10ae uses, for the same reason: the
+pure layer reads no files, and two copies of a number drift.
+
+`predicts_this_finding` is unconditionally `False`. Precision is how a rule
+behaved against a corpus, and the corpus is not this codebase. Nothing folds it
+into a score, and a test flushes `CREDIBILITY` entirely and asserts the verdict
+does not move — a decision that changed because a benchmark file changed would
+make the deterministic path depend on a measurement.
+
+**Sixteen of the 139 rules carry data; the other 123 report as unmeasured** —
+`credibility_for` returns `None`, not a default. A rule nobody benchmarked is a
+rule nobody benchmarked, and a caller that cannot tell *"measured at 100%"* from
+*"never measured"* will report the second as the first.
+
+### 10ag.4 An ingested report is a document, not an in-process run
+
+The finding this repositioning surfaced.
+
+`Producer.release_gate(component)` set `identity_basis="in-process"`, which is a
+factual claim that this process ran the scanner. The audit fold used it for a
+report read **from a file** — so a hand-written `audit.json` was attributed to
+`release-gate/audit` with `kind=release_gate` and release-gate's own identity
+basis, on the strength of its filename. That is the self-attestation family from
+§10p arriving on the audit path, and it is exactly what "reposition as an
+Evidence Producer" exposes: when a producer's *output document* is ingested, the
+producer is asserted by the document and not established here.
+
+`release_gate(component, in_process=False)` now yields `kind=EXTERNAL` and
+`identity_basis="ingested-document: attributed to release-gate by the document,
+not established here"`. An actual in-process run still says `in-process`.
+
+**The finding's epistemic status is deliberately unchanged.** An audit report is
+still release-gate's ruleset speaking about code, and the fold's DERIVED /
+DECLARED split is argued in place. What changed is only that the record stopped
+claiming a provenance it did not have — blast radius measured at zero, with the
+whole suite passing but for the protocol guard.
+
+### 10ag.5 The protocol guard fired again
+
+`producers.py` introduced `PRODUCERS_SCHEMA_VERSION`, and §10ae's drift guard
+failed the build until it joined `rg.assurance.v1`. Second prompt running, second
+catch. That is what the guard is for, and it is the only evidence such a guard
+ever gives.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

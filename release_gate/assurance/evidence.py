@@ -232,10 +232,30 @@ class Producer:
                    attested_by=data.get("attested_by"))
 
     @classmethod
-    def release_gate(cls, component: str) -> "Producer":
-        """release-gate's own analysis, identified by component."""
-        return cls(producer_id=f"release-gate/{component}", kind=ProducerKind.RELEASE_GATE,
-                   identity_basis="in-process")
+    def release_gate(cls, component: str, *, in_process: bool = True) -> "Producer":
+        """release-gate's own analysis, identified by component.
+
+        `in_process=False` for output that arrived as a **document**. The
+        distinction is a factual one and it was being got wrong: an `audit.json`
+        handed to the ingest was attributed to `release-gate/audit` with
+        `identity_basis="in-process"`, which asserts that this process ran the
+        scanner. It did not — it parsed JSON somebody supplied, and a
+        hand-written file inherited release-gate's own producer kind and identity
+        basis on the strength of its filename (Invariant 1, and the
+        self-attestation family in §10p).
+
+        The finding's epistemic status is unchanged: an audit report is still
+        release-gate's ruleset speaking about code, and the audit fold's existing
+        DERIVED/DECLARED split is argued in place. What changes is that the
+        record no longer claims a provenance it does not have.
+        """
+        return cls(
+            producer_id=f"release-gate/{component}",
+            kind=(ProducerKind.RELEASE_GATE if in_process
+                  else ProducerKind.EXTERNAL),
+            identity_basis=("in-process" if in_process
+                            else "ingested-document: attributed to release-gate "
+                                 "by the document, not established here"))
 
 
 @dataclass(frozen=True)
