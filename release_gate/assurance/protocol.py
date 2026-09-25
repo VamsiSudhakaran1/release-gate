@@ -228,6 +228,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("contradiction", "contradiction", "CONTRADICTION_SCHEMA_VERSION", 1),
         _ref("counterexample", "counterexample", "COUNTEREXAMPLE_SCHEMA_VERSION", 1),
         _ref("criticality", "criticality", "CRITICALITY_SCHEMA_VERSION", 1),
+        _ref("declaration", "declaration", "DECLARATION_SCHEMA_VERSION", 1,
+             note="a governance.yaml read as what a team wrote down about its "
+                  "own system; DECLARED evidence, never policy input"),
         _ref("evidence_graph", "evidence_graph", "GRAPH_SCHEMA_VERSION", 1),
         _ref("execution", "execution_graph", "EXECUTION_SCHEMA_VERSION", 1),
         _ref("expectation", "expectation", "EXPECTATION_SCHEMA_VERSION", 1),

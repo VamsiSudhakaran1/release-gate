@@ -1357,8 +1357,17 @@ def _audit_records(doc: Mapping[str, Any], source: str,
 
     findings = [f for f in (doc.get("code_findings") or []) if isinstance(f, Mapping)]
     safeguards = doc.get("safeguards") or {}
-    safeguard_items = [(str(name), value) for name, value in safeguards.items()
-                       if isinstance(value, Mapping)] if isinstance(safeguards, Mapping) else []
+    # A plain boolean counts. `audit.py` emits the {present, status, evidence}
+    # mapping, but `_sg_present` documents the bare-bool shape as supported and
+    # a governance.yaml writes exactly that (`kill_switch: true`). Requiring a
+    # Mapping dropped every bool-shaped safeguard silently, so a document
+    # declaring `kill_switch: false` was indistinguishable from one that
+    # declared nothing — the omission family, on the governance path.
+    safeguard_items = ([(str(name), value if isinstance(value, Mapping)
+                         else {"present": bool(value)})
+                        for name, value in safeguards.items()
+                        if isinstance(value, (Mapping, bool))]
+                       if isinstance(safeguards, Mapping) else [])
 
     dimension_claims: List[str] = []
 

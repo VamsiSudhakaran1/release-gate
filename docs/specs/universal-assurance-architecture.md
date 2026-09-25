@@ -5573,6 +5573,109 @@ ever gives.
 
 ---
 
+## 10ah. Governance repositioned (`Declaration`)
+
+> **Implemented.** `release_gate/assurance/declaration.py` — `Declaration`,
+> `DeclaredSafeguard`, `DeclaredBudget`, `read_declaration()`,
+> `declaration_evidence()`. Plus one shape fix in the ingest's safeguard fold.
+
+`governance.yaml` was the centre of the product that came before this one, and it
+still works unchanged. What moves is where it sits:
+
+|  |  |
+|---|---|
+| `governance.yaml` | what a team wrote down about its own system. DECLARED, optional, organisation-specific, absent from most cases. Says nothing about what a decision needs. |
+| methodology | what a class of decision is argued against. Versioned, content-addressed, inside `case_digest` (§11). |
+
+**Not a rename.** Renaming governance to methodology would keep the same thing at
+the centre under a better word. They have different lifecycles — a governance
+file changes when a team changes its deployment, a methodology when a field
+changes its mind about what an argument needs — and conflating them would let the
+system under assessment set the bar it is assessed against. A test asserts a
+`Declaration` has no `requirements`, no `case_types`, no `digest` and nothing
+that evaluates itself against a case.
+
+### 10ah.1 What was measured
+
+| | |
+|---|---|
+| `assure()` with vs without a `governance.yaml` in the working directory | **identical `case_digest`** |
+| governance reads in `release_gate/assurance/` | **none** — prose only |
+| `organisation.py`'s claim that governance is "supported as an *evidence producer*" | **nothing implemented it** |
+| audit `safeguards` as `{present: true}` / `{present: false}` | attestation / contradicting finding — correct |
+| the same as a **plain bool** | **no evidence at all** |
+
+So *"default AssuranceCase functionality must not depend on it"* already held —
+and is now measured by digest rather than assumed. The real gap ran the other
+way: governance was **claimed** to be an evidence producer with no path from a
+governance file into a case. The only route was indirect — run the scanner, which
+reads the file, emits a report, and ingest *that*.
+
+The bool hole was a symptom of the same absence. A `governance.yaml` writes
+`kill_switch: true`; the ingest's `safeguard_items` filter required a Mapping, so
+a bool-shaped safeguard vanished and `kill_switch: false` was indistinguishable
+from silence — §10p's omission family, on the governance path. Both shapes now
+behave identically, and a test asserts they agree.
+
+**A near-miss worth recording.** Reading `present = bool(value.get("present"))`
+against a fixture where I had written `{"status": "present"}`, I nearly "fixed"
+working code. The scanner's real shape is `present` (`audit.py:1239`). Checking
+the producer showed the ingest was right and the fixture was invented.
+
+### 10ah.2 A declaration is a claim, not a guarantee
+
+`kill_switch: true` establishes that somebody wrote `kill_switch: true`. Whether
+one exists, works, or was reachable during the run are questions for the lanes
+that can see a system rather than a file (§10ag).
+
+* `DeclaredSafeguard.establishes_the_safeguard` → `False`
+* `Declaration.is_policy_input` → `False` — the methodology decides whether a
+  declaration is enough; one that set its own sufficiency bar would be the system
+  under assessment grading its own paper
+* `Declaration.constrains_the_verdict` → `False`
+* `Declaration.is_required` → `False` — most cases have no governance file, and
+  one without is not a case with a gap
+* `DeclaredBudget` reports `enforced_by_release_gate: false` — a ceiling a team
+  set for itself is a number they chose
+
+Declared `fail_on` and `warn_on` preferences are **recorded, not applied**: worth
+having on the record that a team said which failures matter to them, and still
+not a requirement of the case.
+
+### 10ah.3 Three states, not two
+
+`_presence` returns `True`, `False`, or **`None`** — and the third is the one
+that matters. `governance.yaml` writes plain booleans, an audit report writes
+`{present: ...}`, and a block of settings with no presence flag
+(`rate_limit: {type: token-bucket}`) declares *configuration* without declaring
+presence.
+
+Reading that third case as absent would report a team as having said something
+they did not, so it lands in `configured_without_stating` and produces **no
+attestation**: a team writing settings for a rate limiter has not claimed one is
+in place, and manufacturing the claim would put words in the record.
+
+### 10ah.4 The reader parses nothing
+
+`read_declaration` takes an already-parsed mapping, never a path or a string —
+the pure layer reads no files and imports no YAML, the arrangement §10ad uses for
+SAML and for the same reason. A string is refused by name. Unknown keys are
+recorded and otherwise ignored: a governance file is a team's own document and
+may carry anything, and refusing one over an unmodelled key would turn an
+optional input into a blocking one.
+
+Evidence produced from it carries `kind=EXTERNAL` and
+`identity_basis="declared-document"` — the §10ag correction applied here from the
+start, rather than attributing a customer's file to release-gate.
+
+**A second near-miss, same family as the first.** My static test for "the
+assurance layer reads no governance file" was a regex, and it flagged
+`source: str = "governance.yaml"` — a default parameter naming where a mapping
+came from, not a path anything opens. It walks the AST for reader calls now. That
+is three prompts running where a substring check read text instead of meaning.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
