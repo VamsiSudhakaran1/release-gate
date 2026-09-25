@@ -5102,6 +5102,134 @@ before it goes.
 
 ---
 
+## 10ad. Orchestrator independence (`OrchestratorProfile`)
+
+> **Implemented.** `release_gate/assurance/orchestration.py` —
+> `OrchestratorProfile`, `PROFILES`, `ProfileResolution`, `StepReading`,
+> `identify()`, `read_execution()`. Plus `InputKind.ORCHESTRATOR_EXPORT` and the
+> execution-reconstruction path in `ingest.py`.
+
+Release-gate consumes evidence. It does not run agents, schedule work, or hold an
+opinion about how a system should be built — so the framework that produced a run
+is a fact about the input, never a dependency of the engine.
+
+### 10ad.1 What was measured
+
+| | |
+|---|---|
+| orchestrator references in `assurance/` and `adapters/` | **zero** |
+| LangGraph, OpenAI Agents, CrewAI, AutoGen, Temporal exports | all **`UNRECOGNISED`** |
+| what was extracted from them | *"nothing in it could be mapped to evidence, claims or execution"* — **0** execution nodes |
+| existing adapters | 4, each a **module** — a code path per platform |
+| `ExecutionNodeKind` | already `AGENT / TASK / TOOL / ACTION / MODEL_CALL / VERIFIER / HUMAN / UNOBSERVED` |
+| `ExecutionEdgeType` | already `SPAWNED / DELEGATED / CALLED / …` |
+
+It degraded honestly — no crash, nothing invented — and **no named orchestrator
+was supported**. The important half is the last two rows: **the neutral
+vocabulary was already right.** A CrewAI crew delegating to an agent, a LangGraph
+node writing state, an AutoGen turn calling a tool and a Temporal activity all
+land in it without extending it. What was missing was only the reading.
+
+### 10ad.2 The shape is data
+
+An `OrchestratorProfile` names where the steps live, which keys carry the id, the
+parent and the label, and how that framework's vocabulary maps onto the neutral
+one. Adding a framework adds a **row**; a private framework is a profile its
+owner writes and passes in; a future one is a profile nobody has written yet.
+
+There is no code path per orchestrator, because a code path per orchestrator is
+how a consumer becomes a dependent. That is the difference from the four platform
+adapters, which are modules — and the reason this did not become a fifth through
+ninth.
+
+Readings emit the flat records `ExecutionGraphBuilder.add_span_record` already
+takes, so **parent/child survives**. Read as a linear spine, a run would lose
+exactly the delegation structure these frameworks exist to express.
+
+Five profiles ship:
+
+| profile | framework | where its steps live | steps become |
+|---|---|---|---|
+| `openai_agents` | OpenAI Agents SDK | `traces[].spans[]` | AGENT · TOOL · MODEL_CALL · VERIFIER |
+| `langgraph` | LangGraph checkpoint | `metadata.writes{}` | TASK per node |
+| `crewai` | CrewAI crew output | `tasks_output[]` | TASK, parented by agent |
+| `autogen` | AutoGen conversation | `chat_history[]` | HUMAN · AGENT · TOOL |
+| `temporal` | Temporal workflow history | `events[]` | AGENT · TASK · ACTION · EXTERNAL_SYSTEM |
+
+Two needed shapes the first reader did not have:
+
+* **OpenAI Agents** puts the kind *and* the label inside one nested `span_data`
+  mapping. A single resolution order read `"Planner"` where the kind belonged and
+  mapped **0 of 4** spans. `_first` now takes a `prefer` order — `type` for the
+  kind, `name` for the label.
+* **LangGraph** keys its steps by node name: `metadata.writes` is a *mapping*,
+  not a list. Read as one row, two nodes collapsed into one and the node name —
+  the only label a checkpoint carries — was lost. The path token `{}` expands a
+  mapping's entries into rows carrying their key.
+
+Both were found by using real export shapes. Invented fixtures would have hidden
+both.
+
+`crewai` shows the vocabulary paying off: `agent` is read as the parent, which
+reconstructs delegation without the framework emitting an edge — and because
+those agents never arrive as steps of their own, the graph marks them
+**`UNOBSERVED`**, which is precisely that kind's meaning: *referenced by
+something that arrived; never itself arrived.*
+
+### 10ad.3 An export is the orchestrator's account of itself
+
+`OrchestratorProfile.establishes_correctness` → `False`, on every profile.
+Release-gate did not watch the run. A framework reporting `"status": "completed"`
+is making a claim about its own behaviour, and frameworks are built to report
+success — treating that as observation would put the thing being assessed in
+charge of the assessment (Invariant 1). A Temporal history in which every
+activity completed does not PROMOTE, and that is a test.
+
+Each profile carries `inherent_gaps` onto every reading, the §10z pattern:
+Temporal's *"a replayed workflow produces the same history, so the history alone
+does not distinguish a run from a replay"*; AutoGen's *"a message claiming a tool
+ran is not a record of it running"*; OpenAI Agents' *"a handoff span records that
+control moved, not whether the receiving agent was entitled to it."* They reach
+the graph's completeness notes rather than a report read separately.
+
+### 10ad.4 A step that cannot be mapped is counted
+
+The adapters have carried that rule from the start — *never invent a step, report
+the gap* — and it is §10ab's withheld-versus-absent again. A step whose kind the
+profile does not map is **not** assigned a neutral default: it goes into
+`StepReading.unmapped` with the framework's own word for it, and the count
+reaches the graph. A reading that silently discarded what it did not understand
+would report a smaller run than the one that happened.
+
+`StepReading.complete` is the number that keeps it honest, and `False` is
+ordinary rather than a failure.
+
+### 10ad.5 An unknown framework is refused, not guessed
+
+`identify` returns no profile below the same 50% floor the platform adapters use,
+and `read_execution` without one raises: reading one framework's export with
+another's key names produces a run that is *plausible and wrong*, and unlike a
+crash, that gets a verdict. A pairwise test asserts no framework is mistaken for
+another — §10ac's lesson, applied before it could repeat.
+
+An unrecognised export is still a case: the file is hashed and recorded, and the
+structure is reported as unread rather than as an empty run.
+
+### 10ad.6 One guard needed a correction
+
+§10ac's provider guard fired on `openai_agents` — an **orchestrator** whose name
+contains a provider's. That is a different axis: release-gate reads the OpenAI
+Agents SDK's export the same way it reads LangGraph's, and neither makes it
+depend on a model vendor. The guard now exempts the two **shape registries**
+(`model_neutral.py`, `orchestration.py`) and strips that one spelling elsewhere,
+with a companion test so the exemption list cannot quietly grow to a third.
+
+Two of my own tests also read the wrong accessor — `graph.notes` where the notes
+live on `graph.completeness.notes`, and the evidence collection's derived
+profiles, which carry no epistemic status. The code was right both times.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

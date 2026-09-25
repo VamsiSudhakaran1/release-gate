@@ -58,7 +58,9 @@ from release_gate.assurance.evidence import (
     EpistemicStatus, EvidenceRecord, EvidenceType, Producer, ProducerKind,
     VerificationMethod, file_content, inline_content,
 )
-from release_gate.assurance.execution_graph import ExecutionGraph
+from release_gate.assurance.execution_graph import (
+    ExecutionGraph, ExecutionGraphBuilder,
+)
 from release_gate.assurance.subject import (
     ContentReference, DigestMethod, DigestStatus, ReferenceKind, SubjectType,
 )
@@ -99,6 +101,11 @@ class InputKind(str, Enum):
     ASSURANCE_ENVELOPE = "ASSURANCE_ENVELOPE"
     AUDIT_REPORT = "AUDIT_REPORT"
     VERIFIER_REPORT = "VERIFIER_REPORT"
+    #: An agent framework's own export — LangGraph, OpenAI Agents, CrewAI,
+    #: AutoGen, Temporal, or any framework described by an `OrchestratorProfile`.
+    #: One kind for all of them, because the orchestrator is a fact about the
+    #: input rather than a mode the engine runs in.
+    ORCHESTRATOR_EXPORT = "ORCHESTRATOR_EXPORT"
     UNRECOGNISED = "UNRECOGNISED"
 
 
@@ -302,6 +309,16 @@ def detect_document(doc: Any, *, filename: str = "") -> Detection:
     if score:
         native.append((InputKind.VERIFIER_REPORT, score,
                        "a registered verifier adapter recognised this output"))
+    try:
+        from release_gate.assurance.orchestration import identify
+        found = identify(doc)
+        if found.profile is not None:
+            native.append((InputKind.ORCHESTRATOR_EXPORT, found.confidence,
+                           found.basis))
+    except Exception:
+        # An orchestrator profile that cannot read a document must not stop the
+        # document being read some other way.
+        pass
 
     try:
         from release_gate.adapters import detect as adapter_detect
@@ -458,6 +475,27 @@ def _execution_from(doc: Any, detection: Detection) -> Tuple[Optional[ExecutionG
                         "first was reconstructed and the rest counted as execution "
                         "evidence")
                 return ExecutionGraph.from_native_trace(traces[0]), notes
+        if detection.kind is InputKind.ORCHESTRATOR_EXPORT:
+            from release_gate.assurance.orchestration import read_execution
+            reading = read_execution(doc)
+            if reading.records:
+                builder = ExecutionGraphBuilder()
+                for record in reading.records:
+                    builder.add_span_record(record)
+                builder.note(
+                    f"read from a {reading.profile_name} export: "
+                    f"{reading.mapped} of {reading.seen} step(s) mapped")
+                if reading.unmapped:
+                    # Counted, never dropped: a reading that discarded what it
+                    # did not understand would report a smaller run than the one
+                    # that happened.
+                    builder.note(
+                        f"{len(reading.unmapped)} step(s) carried a kind this "
+                        "profile does not map and were counted rather than "
+                        "guessed into the graph")
+                for gap in reading.gaps:
+                    builder.note(f"{reading.profile_name}: {gap}")
+                return builder.build(), notes
         if detection.kind in (InputKind.LANGFUSE_EXPORT, InputKind.ARIZE_EXPORT):
             from release_gate.adapters import convert
             converted = convert(doc, source=detection.adapter)

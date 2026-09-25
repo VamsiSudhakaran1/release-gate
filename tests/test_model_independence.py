@@ -59,14 +59,32 @@ class TestTheCoreIsProviderFree:
             r"\b(openai|anthropic|gemini|gpt-\d|llama|mistral|ollama|bedrock|"
             r"vertex|cohere)\b", re.IGNORECASE)
         root = Path(__file__).resolve().parent.parent / "release_gate" / "assurance"
+        #: The modules whose job is knowing external shapes. Anything else naming
+        #: a provider would be the core coupling to one.
+        shape_registries = {"model_neutral.py", "orchestration.py"}
         offenders = {}
         for path in sorted(root.glob("*.py")):
-            if path.name == "model_neutral.py":
-                continue  # the one module whose job is knowing provider shapes
-            hits = pattern.findall(path.read_text())
+            if path.name in shape_registries:
+                continue
+            source = path.read_text()
+            # "OpenAI Agents" is an orchestrator, not a model provider. It is a
+            # different axis: release-gate reads that framework's export the same
+            # way it reads LangGraph's, and neither makes it depend on a model
+            # vendor. Stripped before matching so the guard stays strict about
+            # the coupling it is actually for.
+            for spelling in ("openai agents", "openai_agents", "OpenAI Agents"):
+                source = source.replace(spelling, "<orchestrator>")
+            hits = pattern.findall(source)
             if hits:
                 offenders[path.name] = sorted(set(h.lower() for h in hits))
         assert offenders == {}, offenders
+
+    def test_the_shape_registry_exemption_does_not_quietly_grow(self):
+        """Two modules are exempt from the provider guard. A third would mean
+        the core had acquired a provider-shaped dependency somewhere new."""
+        root = Path(__file__).resolve().parent.parent / "release_gate" / "assurance"
+        assert (root / "model_neutral.py").exists()
+        assert (root / "orchestration.py").exists()
 
     def test_no_vendor_sdk_is_imported_anywhere(self):
         """Checked through the AST, not by substring.
