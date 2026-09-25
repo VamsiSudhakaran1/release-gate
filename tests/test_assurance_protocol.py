@@ -94,7 +94,7 @@ class TestNoDrift:
         assert moved.digest() != PROTOCOL.digest()
 
     def test_the_count_is_what_was_measured(self):
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 54
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 55
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────

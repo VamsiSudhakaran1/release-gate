@@ -311,12 +311,23 @@ class AttentionItem:
     leverage: int = 1
     rule_ids: Tuple[str, ...] = ()
     refs: Tuple[str, ...] = ()
+    #: What each finding's predicate actually measured, keyed by rule id.
+    #:
+    #: Carried rather than collapsed, because for a finding about an *absence*
+    #: it is the only thing that supports the item at all: `RG-VERIF-001` names
+    #: no record — its whole content is `{"verification_records": 0}`, a count
+    #: that was taken. Grouping used to drop it, so an absence finding reached a
+    #: reviewer with "(none recorded)" under supporting evidence, which reads as
+    #: "unsupported" when the truth is "supported by a measurement of nothing".
+    observed: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reason", AttentionReason(self.reason))
         object.__setattr__(self, "effect", RequirementEffect(self.effect))
         object.__setattr__(self, "rule_ids", tuple(self.rule_ids))
         object.__setattr__(self, "refs", tuple(self.refs))
+        object.__setattr__(self, "observed",
+                           {k: dict(v) for k, v in dict(self.observed).items()})
         for name in ("depends_on", "supporting_evidence", "contradicting_evidence",
                      "resolving_evidence"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
@@ -353,7 +364,8 @@ class AttentionItem:
             f"[{self.reason.value}] {self.summary}",
             block("WHY IT MATTERS", self.why_it_matters),
             block("WHAT DEPENDS ON IT", self.depends_on),
-            block("SUPPORTING EVIDENCE", self.supporting_evidence),
+            block("SUPPORTING EVIDENCE",
+                  self.supporting_evidence or self._measured()),
             block("CONTRADICTING EVIDENCE", self.contradicting_evidence),
             block("STATUS", self.status),
             block("EPISTEMIC STATUS", self.epistemic_status),
@@ -361,6 +373,20 @@ class AttentionItem:
             block("WHAT WOULD RESOLVE IT", self.resolving_evidence),
             f"  RANKED BY: {self.ranking.explain()}",
         ])
+
+    def _measured(self) -> str:
+        """The observations, for a reader, when no record is cited.
+
+        Shown only in that case: where evidence records exist they are what the
+        reviewer wants, and appending counts to them is noise. Where they do not,
+        this is the difference between "nobody checked" and "checked, found
+        none" — and Invariant 3 turns on that difference.
+        """
+        if not self.observed:
+            return ""
+        parts = [f"{rule} measured " + ", ".join(f"{k}={v}" for k, v in seen.items())
+                 for rule, seen in sorted(self.observed.items()) if seen]
+        return "; ".join(parts)
 
     @property
     def record_type(self) -> str:
@@ -389,7 +415,8 @@ class AttentionItem:
                 "ranking": self.ranking.to_dict(),
                 "undroppable": self.undroppable,
                 "leverage": self.leverage,
-                "rule_ids": list(self.rule_ids), "refs": list(self.refs)}
+                "rule_ids": list(self.rule_ids), "refs": list(self.refs),
+                "observed": {k: dict(v) for k, v in self.observed.items()}}
 
 
 @dataclass(frozen=True)
@@ -787,6 +814,7 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
             reason=_reason_of(reason_source), effect=worst.effect,
             focus=focus, focus_kind=kind,
             summary=summary, why_it_matters=worst.detail, remedy=worst.remedy,
+            observed={f.rule_id: dict(f.observed) for f in findings if f.observed},
             depends_on=depends, supporting_evidence=supporting,
             contradicting_evidence=contradicting,
             status=("BLOCKING" if worst.effect is RequirementEffect.BLOCK
@@ -830,6 +858,8 @@ def build_attention(case: AssuranceCase, analysis: AnalysisResult,
                     summary=f"{result.description} — {result.outcome.value}",
                     why_it_matters=result.detail,
                     remedy=result.remedy or "satisfy the requirement",
+                    observed=({result.requirement_id: dict(result.observed)}
+                              if result.observed else {}),
                     status=result.outcome.value,
                     epistemic_status=("NOT_ASSESSED"
                                       if result.outcome is RequirementOutcome.NOT_ASSESSED

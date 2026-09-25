@@ -5785,6 +5785,147 @@ against the source object rather than against itself.
 
 ---
 
+### 10aj. Rule architecture — one taxonomy, two kinds, seven questions
+
+Thirty-one families, seven aliases, and a registry that refuses a rule id it
+cannot place. `release_gate/assurance/rules_registry.py`.
+
+#### 10aj.1 Eight of the nine proposed families already existed
+
+The brief proposed `RG-SWARM`, `RG-CLAIM`, `RG-EVIDENCE`, `RG-VERIFY`,
+`RG-APPROVAL`, `RG-LINEAGE`, `RG-ARTIFACT`, `RG-COVERAGE` and `RG-ATTEST`.
+Measured against the existing taxonomy, they split three ways:
+
+| Proposed | Status | Resolves to |
+|---|---|---|
+| `RG-CLAIM` | already a family, under that exact name | itself |
+| `RG-VERIFY` | `RG-VERIF` spelled longer | `RG-VERIF` |
+| `RG-COVERAGE` | `RG-COV` spelled longer | `RG-COV` |
+| `RG-LINEAGE` | where a thing came from | `RG-PROV` |
+| `RG-ATTEST` | who vouches for it | `RG-PROV` |
+| `RG-ARTIFACT` | artifact integrity over time | `RG-DRIFT` |
+| `RG-EVIDENCE` | what was expected and did not arrive | `RG-EXPECT` |
+| `RG-SWARM` | corroboration across producers | `RG-REPL` |
+| `RG-APPROVAL` | **genuinely absent** | new family |
+
+Adding the middle seven as *second* families would leave two names for one
+concern, and a reviewer grepping either would find half the rules — worse than
+either name alone. They are registered as **aliases**, so the proposed
+vocabulary resolves without a single rule id moving. Renaming `RG-VERIF` outright
+would have touched thirty references in the package and thirty-three in the
+tests; renaming a scanner family would additionally invalidate the benchmark's
+per-rule table, which reports true and false positives against seventeen rule
+ids by name. Aliasing costs one dictionary.
+
+`RG-APPROVAL` is registered and **deliberately empty**. The approval, override
+and identity work (§10y, §10z) produces records and refusals, not findings, so
+there is nothing to alias it to and nothing to put in it. Inventing rules to
+populate a new namespace would be manufacturing findings.
+
+#### 10aj.2 Two notations, both real
+
+A methodology names its requirements `contradictions.resolved`, not
+`RG-CONTRA-001`, because they are the methodology's own vocabulary rather than
+release-gate's catalogue. Seven dotted roots are registered beside the
+hyphenated families — `subject`, `contradictions`, `counterexamples`,
+`coverage`, `evidence`, `independence`, `verification` — and `owns` splits on the
+first dot for those and the last hyphen for the rest. A registry that knew only
+one notation would refuse half of what fires, which is how this was found.
+
+#### 10aj.3 Not every rule is a finding
+
+`RG-ZC-*` are the clauses of the decision procedure itself: the verdict names
+them to say *how* it reached PROMOTE, HOLD or BLOCK. They are not raised against
+the case, so they appear in `fired_rules` and in neither the assessment nor the
+attention set.
+
+Asking a decision clause "what evidence proves it" the way one asks a finding
+produced `NOT_ASSESSED` five times over — which reads as five holes in the
+assessment when the rule is simply a different kind of thing. `RuleKind` makes
+the distinction explicit (`FINDING` by default, `POLICY` for one family), and a
+policy rule answers the first five from the verdict that cites it:
+
+* **triggering fact** — what the clause states, and the decision it produced
+* **proving evidence** — the reasons the verdict records. Not a paraphrase:
+  `CaseVerdict.digest_component` already treats the reasons as part of what was
+  approved, so re-wording them changes what was approved
+* **epistemic status** — `DERIVED`, naming the ruleset that derived it
+* **affects** — the decision itself, as one of the grounds it rests on
+* **resolution** — a remedy where the clause raises an issue (`RG-ZC-001`:
+  supply a methodology), `NOT_APPLICABLE` where it reports a state
+  (`RG-ZC-004`: every requirement is met — there is nothing to resolve)
+
+A clause that did not fire answers `NOT_APPLICABLE`, not `NOT_ASSESSED`: it is an
+absence, not a gap.
+
+`POLICY_RULES` is written as literals and `rules_registry` imports nothing from
+`zero_config`, so the table *can* disagree with the engine. That is what makes
+the drift test worth its cost — a table derived from the code could never catch
+a drift, which §10ae learned the hard way. A test compares the two sets and an
+AST check confirms the independence, because a comment saying so is not a
+guarantee.
+
+#### 10aj.4 A finding about an absence is proved by a measurement
+
+`RG-VERIF-001` — *nothing in this case was verified* — names no evidence record,
+because the record is what is missing. It reached a reviewer with
+`SUPPORTING EVIDENCE: (none recorded)`, which reads as *unsupported* when the
+truth is *supported by a measurement of nothing*.
+
+The measurement existed the whole time. Every finding in both demo runs carries
+`observed`: `RG-VERIF-001` carries `{"verification_records": 0}`, a count that
+was taken. `build_attention` grouped findings onto items and dropped the field.
+So the fix is at the boundary that lost it, not in the reader that noticed:
+`AttentionItem` now carries `observed` keyed by rule id, the render falls back to
+it **only** where no evidence record exists — appending counts to real evidence
+would be noise — and the reviewer reads
+`RG-VERIF-001 measured verification_records=0`.
+
+This is not the first boundary in this architecture found dropping a field the
+producing code had already computed — `applies_to_digest` at ingest (§10p) and
+`content_reference` on a stored artifact (§10t) were the same shape. The pattern
+is consistent enough to name: where a reader reports "unknown", check what the
+producer recorded before concluding the engine does not know.
+
+#### 10aj.5 An acceptance is a position, and the report has to say so
+
+`AssuranceMethodology.recognises` deliberately excludes accepted findings: an
+acceptance says a structural finding is tolerated under a consequence ceiling, it
+does not make that finding one of the methodology's requirements, and `extend`
+refuses a waiver naming one. That is correct and stays.
+
+It nonetheless left question six answering *"the methodology has no position on
+it"* about `RG-VERIF-001` on a verdict whose own reasons read *"RG-VERIF-001:
+accepted by general-autonomous-action@1.0.0"*. Two parts of the engine
+disagreeing, with the less informative half reaching the reviewer.
+
+The authority is not what changed; the sentence is. Question six now carries
+`accepted_by` and `accepted_because` — the methodology's own rationale,
+unspliced, because paraphrasing a stated reason into a sentence of ours is how it
+quietly becomes our reading of it. The acceptance is read
+consequence-conditioned, exactly as `decide()` reads it, so an acceptance whose
+ceiling does not hold for this case is not reported as being in force.
+
+Question seven stays about override and gains one key, `accepted_not_waived`, so
+a reader cannot mistake the promote for a waiver. An acceptance is decided in
+advance and applies to everyone; an override is one person deciding to proceed
+anyway. Only the second needs an approver (§10z).
+
+#### 10aj.6 Three states, not two
+
+Questions six and seven have three answers each, because a methodology that was
+never asked holds no position and recording that as a refusal credits it with an
+opinion it does not have — the `recognised` distinction from §10y, reused.
+`Answer.NOT_APPLICABLE` is the state that stops an honest report overstating a
+gap: a met requirement has nothing to resolve, and a clause that did not fire
+bore on nothing.
+
+Measured on both demo runs — twenty rule ids on a BLOCK, ten on a PROMOTE — every
+rule answers all seven. It answered twenty-five of thirty before the two fixes
+above.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
