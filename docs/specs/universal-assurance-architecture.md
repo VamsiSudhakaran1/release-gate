@@ -5676,6 +5676,115 @@ is three prompts running where a substring check read text instead of meaning.
 
 ---
 
+## 10ai. Score reassessment, and eight dimensions (`DimensionProfile`)
+
+> **Implemented.** `release_gate/assurance/dimensions.py` — `Dimension`,
+> `DIMENSIONS`, `Standing`, `DimensionReading`, `DimensionProfile`,
+> `profile_of()`. The 0–100 score, `SAFEGUARDS` and the thresholds are
+> **unchanged**.
+
+### 10ai.1 The evaluation
+
+The score was measured before anything was built:
+
+| | |
+|---|---|
+| all safeguards present, no findings | score **100**, PROMOTE |
+| all safeguards present, one high finding | score **100**, HOLD |
+| all safeguards present, three high findings | score **100**, **BLOCK** |
+| `loop_boundary` safeguard weight | **0** — missing it leaves the score at 100 |
+| missing `eval_evidence` | **90** — exactly the PROMOTE threshold |
+
+The **decision** is already non-compensatory: findings hard-gate it whatever the
+checklist says, and that works. The **score** is not. It sits at 100 while the
+verdict is BLOCK, and it carries a member it can never express.
+
+**Verdict: keep it, scoped, and do not extend it.** It does one job well —
+ranking safeguard-checklist completeness across repositories, which is what the
+badge and the outreach paths need and what it was built for. It is not an
+assurance signal and should not be read as one. Nothing about its computation,
+weights or thresholds changed here, and the measured rows above are pinned as
+regression guards rather than as criticism.
+
+### 10ai.2 What replaces it for assurance is not another number
+
+Eight dimensions, side by side, and **there is no total**.
+
+| dimension | read from | fatal when |
+|---|---|---|
+| `VERIFICATION_COVERAGE` | `VerificationGraph` | a verification no longer applies to current content |
+| `EVIDENCE_COMPLETENESS` | `StreamLedger` | — qualified or not assessed |
+| `LINEAGE_COVERAGE` | reconstructed artifacts | — qualified or not assessed |
+| `INDEPENDENCE` | `IndependenceProfile` | the ancestry graph contains a cycle |
+| `CONTRADICTION_STATE` | `ContradictionLedger` | an unresolved contradiction on a critical claim |
+| `CRITICAL_CLAIM_COVERAGE` | `CriticalitySet` | a critical claim rests on a broken chain |
+| `ARTIFACT_INTEGRITY` | subject and artifact digests | — qualified or not assessed |
+| `METHODOLOGY_SATISFACTION` | `MethodologyAssessment` | a blocking requirement is unmet |
+
+Each reading carries one of four standings — `SOUND`, `QUALIFIED`, `FATAL`,
+`NOT_ASSESSED` — and no weighted blend, composite grade, letter or
+percentage-of-dimensions-passed exists anywhere.
+
+A new blended number would be the old mistake with better inputs. The failure of
+a score is that it lets a strong showing on seven dimensions pay for a fatal one
+on the eighth, and no choice of weights repairs that — averaging *is* the defect
+rather than a detail of it. A test asserts the payload contains no `score`,
+`total`, `overall`, `grade`, `rating`, `average`, `weighted` or `percentage` key,
+and `Standing` values are deliberately words so there is nothing to add up.
+
+`DimensionReading.detail` carries **counts**, because counts are what a reviewer
+checks. It carries no normalised fraction: a `0.82` beside a `0.41` is an
+invitation to average them, and there is no defensible exchange rate between an
+unresolved contradiction and a missing signature.
+
+### 10ai.3 Critical conditions are gates
+
+`Standing.FATAL` on any dimension is fatal against any background.
+`combines_into_a_score` and `is_compensatory` are both unconditionally `False` —
+§10q's refusal on `FactSheet`, applied one level up, because the temptation is
+stronger here: eight tidy readings look like they are asking to be averaged.
+
+A `FATAL` reading **must say why**, or it is refused at construction: *"a
+dimension that ends a case has to name what ended it, or a reviewer is told the
+answer and not the reason."* A profile missing any of the eight is refused too —
+one left out reads as one with nothing against it, which is exactly the
+compensation this prevents.
+
+Read against the frontier demo, two dimensions are fatal (`CRITICAL_CLAIM_COVERAGE`,
+`METHODOLOGY_SATISFACTION`) while three others read `SOUND`, and the render says
+plainly that no standing on the others offsets them.
+
+### 10ai.4 Unassessed is not zero
+
+A dimension nothing could reach reads `NOT_ASSESSED`. A zero is a measurement and
+an absence is not; a profile that scored an unexamined dimension as zero would
+report ignorance as failure, which is the same error as reporting it as success,
+in the other direction (Invariant 3).
+
+The single-agent demo makes the point better than the argument does: it
+**PROMOTEs with four of eight dimensions `NOT_ASSESSED`** — nothing verified, no
+completeness ledger, independence undeterminable, no critical claims identified.
+A blended score would have averaged those away or counted them zero. Here they
+are four lines a reviewer reads, and they do not defeat the case either.
+
+### 10ai.5 Nothing is computed here
+
+All eight already exist on a decided outcome: `VerificationGraph`, the coverage
+collection, artifact lineage, `IndependenceProfile`, `ContradictionLedger`,
+`CriticalitySet`, the subject's digest status, `MethodologyAssessment`. This
+module reads them and puts them next to each other.
+
+Reading them turned up a trap worth naming. `VerificationGraph.attempts` is a
+**property** while `invalidated` and `not_run` are **methods**; so are
+`ContradictionLedger.open`, `CriticalitySet.critical` and `broken_chains`.
+Guessing wrong raises `'method' object is not iterable`, which is the loud
+failure — the quiet one is a caller that catches it and reports an empty
+collection, turning *"I read this wrong"* into *"there were none"*. A single
+`_rows` helper decides property-or-method once, and a test checks a real count
+against the source object rather than against itself.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
