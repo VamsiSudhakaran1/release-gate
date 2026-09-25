@@ -5230,6 +5230,125 @@ profiles, which carry no epistemic status. The code was right both times.
 
 ---
 
+## 10ae. The versioned protocol (`rg.assurance.v1`)
+
+> **Implemented.** `release_gate/assurance/protocol.py` — `PROTOCOL`,
+> `AssuranceProtocol`, `SchemaRef`, `Consequence`, `Compatibility`,
+> `CompatibilityDecision`, `read_compatibility()`, `speaks()`.
+
+### 10ae.1 Fifty numbers is not a protocol
+
+| | |
+|---|---|
+| `*_SCHEMA_VERSION` constants | **47**, two already off 1 (`PACK`=3, `VERIFICATION`=2) |
+| `*_MODEL_VERSION` constants | **3**, one already at 3 (`METHODOLOGY`) |
+| namespace | **none** |
+| schemas that refuse a newer version on read | **2 of 50** — evidence and claims |
+| `subject` and `case`, two of the eight named | no `*_SCHEMA_VERSION`; governed by `*_MODEL_VERSION` |
+
+Two vocabularies, fifty constants, no coordination. *Does this deployment speak
+the format I hold?* had fifty answers and no way to combine them, and two schemas
+had already moved without anything recording that they had.
+
+`rg.assurance.v1` is a **manifest**: every schema, the exact version of each,
+content-addressed so drift is detectable rather than discovered. A reader asks
+once.
+
+The eight a consumer writes against, with the constant that actually governs
+each:
+
+| schema | constant | v1 | consequence |
+|---|---|---|---|
+| `rg.assurance.v1/event` | `EVENT_SCHEMA_VERSION` | 1 | payload |
+| `rg.assurance.v1/evidence` | `EVIDENCE_SCHEMA_VERSION` | 1 | payload |
+| `rg.assurance.v1/subject` | `SUBJECT_MODEL_VERSION` | 1 | **digest-bearing** |
+| `rg.assurance.v1/case` | `CASE_MODEL_VERSION` | 1 | **digest-bearing** |
+| `rg.assurance.v1/claim` | `CLAIM_SCHEMA_VERSION` | 1 | payload |
+| `rg.assurance.v1/verification` | `VERIFICATION_SCHEMA_VERSION` | **2** | payload |
+| `rg.assurance.v1/approval_packet` | `PACKET_SCHEMA_VERSION` | 1 | payload |
+| `rg.assurance.v1/required_evidence` | `REQUIRED_EVIDENCE_SCHEMA_VERSION` | 1 | payload |
+
+Forty-two more travel with the protocol as members. Fifty in total, eight core,
+three digest-bearing.
+
+### 10ae.2 Not every bump costs the same
+
+The finding that matters, and it was latent.
+
+A `*_SCHEMA_VERSION` governs a serialised payload. Bumping it changes what a
+reader must understand, and an older reader either copes or refuses — either way
+the failure is visible at the moment of reading.
+
+A `*_MODEL_VERSION` sits **inside an identity or binding digest**.
+`CASE_MODEL_VERSION` is in `AssuranceCase.binding_state()`;
+`SUBJECT_MODEL_VERSION` is in `AssuranceSubject.identity()`. Bumping either
+changes `case_digest` and `subject_digest` — the exact values every
+`BoundApproval` (§10z) and every `Override` (§10y) binds to.
+
+So a schema revision made to add one field **silently unseats every
+authorisation recorded in that deployment**. Nothing says so when it happens: the
+code runs, the tests that pin no digest pass, and it surfaces later as approvals
+that no longer apply to cases nobody changed.
+
+`Consequence` writes that down. Three schemas are `DIGEST_BEARING` — `subject`,
+`case`, `methodology` — each must declare `EXACT` compatibility (a `SchemaRef`
+that does not is refused at construction), each carries a note saying why, and
+`bumping_a_digest_bearing_version_is_backward_compatible` is unconditionally
+`False`. The hazard is demonstrated rather than asserted: a test bumps
+`CASE_MODEL_VERSION`, watches the case digest move, and restores it.
+
+### 10ae.3 A version match is not a semantic match
+
+`a_version_match_is_a_semantic_match` → `False`, on the protocol and in every
+`CompatibilityDecision`.
+
+Two documents at `rg.assurance.v1/evidence` parse the same way. Whether their
+producers meant the same thing by `epistemic_status` is a question about the
+producers, not about the schema. The protocol says a reader will not choke; that
+is all it has ever said, and saying more is how a compatibility claim becomes an
+assurance claim.
+
+`read_compatibility` gives the one answer forty-eight schemas were not asking: a
+newer version is refused by name, an older one reads where `BACKWARD` is declared
+and is marked `lossy`, an older *digest-bearing* one is refused because reading
+it as current would compute a different digest for the same content, and a
+non-comparable identifier (`rg-structural-2` against `rg-structural-1`) is
+refused rather than treated as a match.
+
+### 10ae.4 The guard is what makes compatibility deliberate
+
+Both directions:
+
+* **A module cannot bump silently.** The manifest declares what v1 means; a test
+  checks each module against that declaration. Bumping `VERDICT_SCHEMA_VERSION`
+  fails until someone edits the manifest — and editing it is the deliberate act.
+* **A new schema cannot skip registration.** Every `*_SCHEMA_VERSION` /
+  `*_MODEL_VERSION` in the package must appear in the manifest, so a new module
+  joins the protocol or fails.
+
+**The first version of the first guard was a tautology.** `_schemas()` read each
+version *from the module that owns it*, which made the manifest incapable of
+disagreeing with the code: bumping `VERDICT_SCHEMA_VERSION` to 2 passed every
+drift test, because the guard compared the module against itself. Caught by
+bumping a version and watching the guard not bite — the same check that caught a
+hollow test in §10ab and §10ad. The manifest now holds literals.
+
+A third guard falls out of the shape: `AssuranceProtocol.__post_init__` refuses a
+protocol that pins a core schema twice (*"a schema with two versions in one
+protocol has no version"*) or omits one (*"a consumer would write against it and
+then find it unversioned"*).
+
+### 10ae.5 What is not built
+
+No migration engine, no transcoders, no negotiation handshake, no wire format. No
+version was bumped, and `schema_version` was **not** retrofitted onto `subject`
+or `case` — adding a field to either changes the digests this section exists to
+show are load-bearing, which is exactly the mistake it is for making deliberate.
+Those two are versioned by the `*_MODEL_VERSION` constants they already carry,
+and the manifest names the real constant rather than inventing a parallel one.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
