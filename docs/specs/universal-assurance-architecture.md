@@ -5926,6 +5926,169 @@ above.
 
 ---
 
+### 10ak. Precision benchmark v2 — an assurance corpus, and what it may claim
+
+Sixteen constructed cases, scored by class, with the scope written as refusals
+rather than prose. `release_gate/assurance/corpus.py`, `benchmark/assurance.py`,
+`benchmark/ASSURANCE.md`.
+
+#### 10ak.1 The existing benchmark measures the wrong layer to speak for this one
+
+`benchmark/run.py` scores the **scanner**: 93 code snippets in, rule ids out,
+100% precision and recall. §10ag repositioned that scanner as one Evidence
+Producer among seven — which means its figure is a statement about one producer,
+not about assurance. The two benchmarks are therefore separate files with
+separate corpora and separate scope statements, and `RESULTS.md` now opens by
+saying what it does not cover. Merging them is how a reader comes to read one
+number as covering both.
+
+#### 10ak.2 Ground truth is the construction, never the outcome
+
+A benchmark that scored *"did release-gate correctly judge this release safe"*
+would need release-gate to hold a truth about release safety. It does not, and
+Invariant 10 forbids claiming one.
+
+Every case here is **constructed**, so its evidence structure is known by
+construction rather than by judgement. That is the ground truth: whether the
+engine correctly reports the structure it was handed. A case labelled
+`invalid_release` means *a case whose evidence structure carries a named defect
+that was put there*, never *a release that was actually bad*.
+
+`BenchmarkScope` states the rest as unconditional `False` properties, because
+the brief this was built under ends "do not publish broader claims than
+benchmark scope supports" and a scope that can be argued into a wider claim is
+not a scope: `measures_release_safety`, `measures_the_scanner`,
+`generalises_to_unseen_shapes`, `is_a_third_party_audit`,
+`establishes_that_a_promote_was_correct`. All false, all the time, and the scope
+object travels with the result rather than living in a footnote.
+
+#### 10ak.3 Three classes, because precision is not meaningful for every case
+
+| Class | Asks | Meaningful |
+|---|---|---|
+| `DETECTION` | a named defect is present — did the right rule fire? | recall |
+| `QUIET` | nothing is wrong — did it stay quiet? | false positives |
+| `BEHAVIOUR` | what did it *do*? | a pass/fail assertion |
+
+`unknown_completeness` is the case that forces the distinction. Its correct
+outcome is `UNKNOWN`, which has no positive class at all — scoring it as a
+detection would let a detection rate rise by declining to answer, which is the
+opposite of Invariant 3. Averaging a detection rate together with *"correctly
+said it did not know"* is exactly the over-claim the classes exist to prevent.
+
+A `—` in the results is a question that does not apply. It is deliberately not
+rendered as 100%.
+
+#### 10ak.4 The first precision figure could not come out wrong
+
+The first version reported per-class precision and printed **100%** for
+`DETECTION`. It was vacuous: a false positive was only ever counted against a
+`QUIET` case, so detection-class precision was `1.0` by construction — a number
+that can only ever be perfect.
+
+The naive repair is worse. Counting *any* unexpected finding as a false positive
+would punish the engine for being right: a failed verification legitimately
+produces a contradiction and a replication disagreement too, and those siblings
+are correct.
+
+So precision moved to the **case** level, where the clean cases can break it: *of
+the cases the gate stopped, how many had a defect built in?* `ClassScore.precision`
+now returns `None` unconditionally, with the reason in its docstring, so the
+vacuous number cannot come back by accident.
+
+Two further honesty constraints on the numbers:
+
+* **A false positive is a *blocking or holding* finding, not any finding.**
+  "Nothing declared what this system is permitted to do" is a true statement
+  about a case with no manifest; counting it against a clean case would make the
+  corpus reward silence.
+* **A finding the methodology accepted is not a false positive.** The
+  single-agent profile accepts `RG-VERIF-001` because one agent doing one task
+  has no independent check by construction. The finding still stands and is
+  still shown — scoring it would mark the engine wrong for reporting something
+  true that the methodology had already weighed (§10aj).
+
+**Detection and gating are separate columns.** Three of the nine detection cases
+— `false_independence`, `fake_verifier`, `missing_provenance` — are found and
+promoted anyway, because the rules they raise are advisory. That is a reportable
+property of the engine rather than a corpus failure, and a table showing
+detection alone would let a rule that fires read as a rule that stopped
+something.
+
+#### 10ak.5 The defect the corpus was built to find
+
+A CI plan declares five jobs. Measured across the range:
+
+| Arrived | Coverage state | `RG-EXPECT-001` | Verdict |
+|---|---|---|---|
+| 5 of 5 | `OBSERVED` | silent | PROMOTE |
+| 4 of 5 | `KNOWN_MISSING` | fires | HOLD |
+| 1 of 5 | `KNOWN_MISSING` | fires | HOLD |
+| **0 of 5** | `EXPECTED` | **silent** | **PROMOTE** |
+
+**Losing the last record flipped HOLD to PROMOTE.** The worst case was the only
+one that promoted.
+
+The state machine was right. `EXPECTED` and `KNOWN_MISSING` are deliberately
+different — "this dimension has not started" is not the same message as "some of
+it did not arrive" — and `known_missing` was correctly computed as 5 the whole
+time. The defect was in the analyser: `RG-EXPECT-001` read only
+`ledger.known_missing()`, and nothing anywhere read `EXPECTED`. Total omission
+had a documented state and no reader, which is the strongest form of the one
+thing Invariant 13 names as a threat.
+
+The fix reads both states and keeps the distinction in the finding's detail
+rather than minting a second rule for something the family already means
+(§10aj's own principle). No existing test changed, which is worth saying
+plainly: **3,619 tests passed either way.** The suite had no opinion about this
+because no case in it had ever declared a denominator that went entirely unmet.
+That is what a corpus is for.
+
+#### 10ak.6 Four constructions were wrong before the engine was
+
+Written honestly, because the ratio matters when reading the result. The corpus
+found one engine defect and four faults of my own:
+
+* `parents` on an evidence record does nothing; the ingest reads
+  `parent_evidence`. Independence analysis correctly reported "no contributor has
+  recorded ancestry" — and the docstring at that exact spot already described the
+  scenario I was failing to build.
+* A counterexample with `result: NOT_FOUND` cannot be `status: RESOLVED`, and the
+  engine said so in a sentence better than the one I would have written.
+* `CI_CONFIG` is not an `ExpectationSourceKind`; the record was rejected with a
+  note and the rejection surfaced as `RG-COV-002`.
+* `verification_method` in an envelope is kept as a *declaration* and never
+  credited, because a producer naming its own method is self-certification
+  (§10r). My "valid release" was trying to verify itself.
+
+The last one is a standing limitation rather than a mistake to fix, so
+`ASSURANCE.md` publishes it: **no envelope-only case can carry an admissible
+verification.** "Valid release" here means structurally sound and
+self-consistent, never *verified*. Admissible verification reaches a case
+through a verifier adapter, which is a different input kind.
+
+#### 10ak.7 The scorer can fail
+
+A benchmark that cannot come out wrong measures nothing, so the test file breaks
+each expectation deliberately and checks the score moves: a wrong expected rule
+scores a miss and drops recall; an unregistered rule id is **refused** rather
+than scored, reusing §10aj's family registry, because an expectation naming a
+rule that cannot exist would read as an engine failure forever; a wrong expected
+decision fails; a genuinely broken case reclassified as `QUIET` produces a false
+positive and drops precision below 1.0; a behaviour check that raises fails
+rather than passes.
+
+The engine fix is load-bearing under the same discipline: reverting it takes the
+corpus from 16/16 to 15/16, and the case that fails is the one the defect was
+found in.
+
+Every case runs through `ingest.normalise` and `zero_config.assure_normalisation`
+— the path the CLI takes — and the two scale cases reuse the shipped demos
+rather than reimplementing them. A corpus that built its own ten-thousand-agent
+workflow would be scoring a second generator, not the product.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

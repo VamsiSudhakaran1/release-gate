@@ -507,7 +507,19 @@ def _analyse_expectation(ledger: Optional[CoverageLedger]) -> List[Finding]:
     if ledger is None or not len(ledger):
         return findings
 
-    missing = ledger.known_missing()
+    # Both states where a denominator stands and evidence is absent. `EXPECTED`
+    # means *none* of it arrived and `KNOWN_MISSING` means *some* did, and the
+    # ledger keeps them apart because they are different messages to a reader.
+    # Reading only the second is what this rule used to do, and the effect was an
+    # inversion: a CI plan declaring five jobs held the case when four arrived
+    # and promoted it when none did. The worst case was the only one that went
+    # quiet, because the state machine routed it down a branch nothing read
+    # (Invariant 13 — evidence omission is a threat, and total omission most of
+    # all). The distinction is preserved in the detail rather than by dropping
+    # half the finding.
+    started = ledger.known_missing()
+    never_started = ledger.in_state(CoverageState.EXPECTED)
+    missing = list(started) + list(never_started)
     if missing:
         total = sum(r.known_missing or 0 for r in missing)
         findings.append(Finding(
@@ -517,12 +529,15 @@ def _analyse_expectation(ledger: Optional[CoverageLedger]) -> List[Finding]:
                     f"{len(missing)} dimension(s)",
             detail="; ".join(r.basis for r in missing[:4])[:700]
                    + ". This is evidence known to be absent, which is a different "
-                     "and much stronger fact than evidence nobody looked for.",
+                     "and much stronger fact than evidence nobody looked for."
+                   + (f" {len(never_started)} of these dimension(s) received "
+                      "nothing at all." if never_started else ""),
             remedy="supply the missing evidence, or record why the expectation no "
                    "longer applies",
             refs=tuple(r.dimension for r in missing[:12]),
             observed={"known_missing_total": total,
                       "dimensions": [r.dimension for r in missing[:12]],
+                      "nothing_arrived": [r.dimension for r in never_started[:12]],
                       "named": [i for r in missing for i in r.known_missing_ids[:4]]}))
 
     unknown = [r for r in ledger.unknown() if not r.over_count]

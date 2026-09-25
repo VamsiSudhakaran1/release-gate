@@ -4,6 +4,8 @@
 
 **Corpus:** 93 labeled cases (43 vulnerable · 50 clean look-alikes).
 
+> **Scope.** This benchmark measures the **static scanner** — code in, rule ids out. It says nothing about the assurance layer: whether a case's evidence contradicts itself, whether an approval still binds, whether coverage was reported. That is measured separately, over a separate corpus, in [`ASSURANCE.md`](ASSURANCE.md). Reading the precision figure below as a statement about release-gate as a whole would be a broader claim than this corpus supports.
+
 | Metric | Value |
 |---|---|
 | Precision | **100.0%** |

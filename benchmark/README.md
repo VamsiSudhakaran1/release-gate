@@ -1,16 +1,28 @@
-# release-gate accuracy benchmark
+# release-gate benchmarks
 
-**Accuracy demonstrated, not asserted.** This is a reproducible precision/recall
-harness over a labeled corpus — so a reviewer can check the tool's error rate
-today instead of taking the README's word for it.
+**Accuracy demonstrated, not asserted.** Two reproducible harnesses over two
+labeled corpora, kept apart because they measure two different layers.
+
+| | Unit | Corpus | Results |
+|---|---|---|---|
+| **Scanner** (`run.py`) | a code snippet | `cases.yaml`, 93 cases | [`RESULTS.md`](RESULTS.md) |
+| **Assurance** (`assurance.py`) | an assurance case | `release_gate/assurance/corpus.py`, 16 cases | [`ASSURANCE.md`](ASSURANCE.md) |
 
 ```bash
-python benchmark/run.py          # human report
-python benchmark/run.py --json   # machine output
+python benchmark/run.py          # the scanner: human report
 python benchmark/run.py --md     # regenerate RESULTS.md
+
+python benchmark/assurance.py    # the assurance layer: human report
+python benchmark/assurance.py --md   # regenerate ASSURANCE.md
 ```
 
-See [`RESULTS.md`](RESULTS.md) for the current numbers.
+**They are deliberately not merged.** The scanner benchmark asks *does this
+snippet contain this vulnerability*; the assurance benchmark asks *does
+release-gate correctly report the structure of the evidence it was given*.
+Neither figure carries over to the other layer, and putting them in one table
+is how a reader comes to believe it does.
+
+The rest of this file is about the scanner benchmark.
 
 ## How it works
 

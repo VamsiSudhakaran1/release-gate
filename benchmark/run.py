@@ -148,6 +148,14 @@ def render_md(res: dict) -> str:
          f"**Corpus:** {res['cases']} labeled cases "
          f"({res['vulnerable']} vulnerable · {res['clean']} clean look-alikes).",
          "",
+         "> **Scope.** This benchmark measures the **static scanner** — code in, "
+         "rule ids out. It says nothing about the assurance layer: whether a "
+         "case's evidence contradicts itself, whether an approval still binds, "
+         "whether coverage was reported. That is measured separately, over a "
+         "separate corpus, in [`ASSURANCE.md`](ASSURANCE.md). Reading the "
+         "precision figure below as a statement about release-gate as a whole "
+         "would be a broader claim than this corpus supports.",
+         "",
          "| Metric | Value |", "|---|---|",
          f"| Precision | **{res['precision']:.1%}** |",
          f"| Recall | **{res['recall']:.1%}** |",
