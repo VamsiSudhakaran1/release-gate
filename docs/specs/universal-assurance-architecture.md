@@ -4655,6 +4655,167 @@ every approval already recorded keeps its id.
 
 ---
 
+## 10aa. Production architecture (`Deployment`, the four ports)
+
+> **Implemented.** `release_gate/assurance/ports.py` — `CaseStore`,
+> `ObjectStore`, `EventLog`, `WorkQueue` protocols, their stdlib-only local
+> implementations, `StoredCase`, `WorkUnit`, `Deployment`, `PortBinding`,
+> `local_profile()`, `enterprise_profile()`. Plus
+> `tests/test_production_boundary.py`, which measures the boundary rather than
+> describing it.
+
+Local use is a CLI and a file. Enterprise use is an API, a durable metadata
+store, an external object store, event ingestion and workers. Both run the same
+engine, and what keeps that true is that the engine depends on protocols rather
+than on backends.
+
+### 10aa.1 What the review measured
+
+Not claimed — run, in a sealed subprocess with every third-party module blocked.
+
+| | |
+|---|---|
+| third-party packages reached by `release_gate.assurance` | **zero** |
+| decision path with all three base dependencies blocked | **runs**: verdict, exit code, 84 rendered lines |
+| approval view, verdict statement and identity, sealed | **run** |
+| CLI import with `cryptography` blocked | **succeeds**, records `crypto` in `OPTIONAL_FAILURES` |
+| CLI import with `jsonschema` blocked | **succeeds** — imported lazily at two call sites |
+| CLI import with `yaml` blocked | **fails** — hard, module-level |
+
+So the declared base is three dependencies and the *effective* base is one. The
+other two are already optional in behaviour: `jsonschema` is imported inside the
+functions that use it, and `cryptography` sits behind the `_unavailable()` guard.
+
+One suspected leak turned out not to be one. `bcrypt` — pinned in the `[api]`
+extra — appears in the CLI's import graph, which looks like an enterprise
+dependency crossing the line. It is not: `cryptography` pulls it in itself.
+Worth recording because the `[api]` extra pins `bcrypt==4.0.1` exactly while
+`cryptography` floats its own requirement, which is a pin that can conflict.
+
+**Recommendation, not applied here.** `cryptography` is the heaviest thing in the
+base install — native, needing `cffi`, and the one dependency whose breakage is
+not hypothetical: this sequence watched a container lose `_cffi_backend` and the
+entire test suite stop *collecting*. The code already treats it as optional. The
+declaration does not. Moving it to a `[crypto]` extra would make
+`pip install release-gate` two pure-Python dependencies and remove the toolchain
+requirement. It is left as a recommendation because it changes the install
+contract: anyone running `validate-and-lock` today would need the extra, and that
+is the product's call rather than a refactor to make quietly.
+
+### 10aa.2 The gap worth closing
+
+The engine had **no persistence or transport seam at all**. Everything in memory,
+from one file. That is correct for local use and it is why enterprise integration
+was the risk: the first Postgres-backed deployment had two options, and both were
+bad — import `psycopg2` into the deterministic core, or fork the engine.
+
+`ports.py` is the seam. Five ports — four with a protocol, plus the API, which is
+a transport in front of the same engine rather than something the engine calls
+out to:
+
+| `Port` | protocol | local binding | enterprise |
+|---|---|---|---|
+| `API` | — | not bound; the CLI is the interface | the hosted API |
+| `CASE_STORE` | `CaseStore` | `LocalFileCaseStore` | PostgreSQL, DynamoDB, … |
+| `OBJECT_STORE` | `ObjectStore` | `LocalFileObjectStore` | S3-compatible |
+| `EVENT_LOG` | `EventLog` | not bound; one file, read once | Kafka, Kinesis, SQS |
+| `WORK_QUEUE` | `WorkQueue` | not bound; everything inline | a worker pool |
+
+Stdlib-only local implementations, and nothing that knows how to talk to a real
+backend. A Postgres `CaseStore` or an
+S3 `ObjectStore` is an adapter written *outside* this package, where a driver
+dependency belongs, and passed in. `enterprise_profile()` names PostgreSQL, S3
+and Kafka as **labels for a report**; a test greps the module for `psycopg2`,
+`boto3`, `kafka`, `celery`, `redis`, `sqlalchemy`, `httpx` and `pymongo` imports
+to keep it that way.
+
+### 10aa.3 A store is not an authority
+
+The invariant the module exists to protect (Invariant 11). Retrieving a case from
+a database does not make it the case that was argued.
+
+* `CaseStore.retrieval_establishes_validity` → `False`, on every implementation.
+  A row came back; that is all. `StoredCase.matches(case)` re-checks the digests.
+* `StoredCase` deliberately holds the **binding state**, not a case object.
+  Rehydrating a case from a row would make the store the authority on what it
+  contains. This is enough to answer "what was decided, against what, by whom",
+  and not enough to be mistaken for the case.
+* Keyed `case_id@case_version`, never `case_id` alone. A store that overwrote v1
+  with v2 would silently re-point every approval issued against v1.
+* `ObjectStore.put` computes the digest rather than accepting one;
+  `get(digest)` **re-digests what it read** and raises on mismatch. A test
+  overwrites a stored object and asserts the read fails: *"a locator whose
+  contents are not what was argued is worse than a missing one, because it reads
+  as resolved."* A missing object raises as a coverage gap, not a clean read.
+* `LocalFileCaseStore` refuses a key containing a path separator, and writes
+  through a temp file and an atomic rename — a reader catching a half-written
+  case would see truncated evidence, which reads as evidence having been absent.
+
+### 10aa.4 Delivery is at least once
+
+`EventLog.delivery_is_exactly_once` → `False`, unconditionally. No queue worth
+deploying offers otherwise, and a consumer written as though it did will
+double-count.
+
+Folding a duplicate harmlessly is possible **because records are
+content-addressed**: the same evidence submitted twice carries the same
+`evidence_id`, so a fold keyed on it converges. That property was not free — §10y
+found it broken, with ingest-time wall clocks inside the content address — and
+at-least-once ingestion is what fixing it bought. A test appends two
+independently-constructed identical records and asserts two rows, one id.
+
+### 10aa.5 A worker is a producer
+
+`WorkQueue.results_are_verified` → `False`, unconditionally. What comes back from
+a pool is DECLARED like anything else from outside; a pool that marked its own
+output verified would be self-attestation with a job queue in front of it.
+
+`WorkUnit.unit_id` is derived from the payload, so the same work submitted twice
+is one unit — the queue's half of the idempotence the event log needs. A claim
+can be lost and a unit run twice, which is the reason the id is content-derived
+rather than a sequence number. Completing work nobody claimed is refused: *"a
+result for work nobody took is a result from somewhere unaccounted for."*
+
+### 10aa.6 A deployment states what it cannot do
+
+`Deployment` is this review made executable.
+
+Every `Port` must appear in the bindings, bound or not — *"a port left out of the
+list reads as one nobody thought about, which is exactly what it is."* And every
+bound `PortBinding` **must** state non-empty `limitations`: every backend has
+them, and the binding that claims none is the one a reader will trust furthest.
+
+`local_profile()` binds two ports and names three as absent: no API (no remote
+submission, no authentication because there is no server), no event log (a case
+is a snapshot of the file as read; evidence produced after that is reported
+through coverage, not included), no work queue (the counted-but-not-materialised
+path is what makes large inputs tractable locally, not fan-out).
+
+`Deployment.decides_differently` → `False`, unconditionally. Ports are I/O. A
+deployment that decided differently would mean the authoritative path was not
+deterministic after all, and the verdict would be a property of the
+infrastructure rather than of the evidence (Invariant 4).
+
+### 10aa.7 The boundary is a test, not a paragraph
+
+`tests/test_production_boundary.py` runs the engine in a subprocess with every
+base and extra dependency blocked — a subprocess rather than a fixture, because
+`sys.modules` is already populated by the time a test runs and an in-process
+guard would pass on whatever was already imported.
+
+It includes a test that the seal itself bites (`import yaml` must fail), because
+a guard that cannot fail is not a guard. Both halves were verified load-bearing
+by breaking them: removing the object store's read-side digest check fails the
+tamper test, and adding `import psycopg2` to `ports.py` fails all four sealed
+tests.
+
+That last part matters more than it looks. Before `ports.py` was exported from
+`release_gate.assurance`, a smuggled import in it was caught by one test; once
+exported, the broadest guard catches it too. The boundary is now enforced at the
+package's own front door.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
