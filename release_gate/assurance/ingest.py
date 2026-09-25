@@ -609,6 +609,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     id_map: Dict[str, str] = {}
     claim_rows: List[Tuple[Mapping[str, Any], Producer]] = []
     evidence_rows: List[Tuple[Mapping[str, Any], Producer]] = []
+    seen_artifacts: Set[str] = set()
+    absorbed_artifacts = 0
 
     for row in doc:
         if not isinstance(row, Mapping):
@@ -622,7 +624,15 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             elif record_type == "claim":
                 claim_rows.append((row, producer))
             elif record_type == "artifact":
-                artifacts.append(_artifact_from(row, producer))
+                built_artifact = _artifact_from(row, producer)
+                if built_artifact.record_id in seen_artifacts:
+                    # Same discipline as evidence and claims. An artifact id is
+                    # content-addressed, so a repeat here is byte-identical by
+                    # construction — nothing is chosen between.
+                    absorbed_artifacts += 1
+                else:
+                    seen_artifacts.add(built_artifact.record_id)
+                    artifacts.append(built_artifact)
                 mapped += 1
             elif record_type == "counterexample":
                 counterexamples.append(_counterexample_from(row, producer))
@@ -656,7 +666,14 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             skip(f"record rejected: {type(exc).__name__}")
             notes.append(f"a {record_type} record was rejected: {exc}")
 
-    for row, producer, declared_parents in _ordered_evidence(evidence_rows, notes):
+    if absorbed_artifacts:
+        notes.append(
+            f"{absorbed_artifacts} artifact row(s) repeated a content digest "
+            "already held and were absorbed; they are counted as mapped")
+
+    ordered_rows, absorbed_evidence = _ordered_evidence(evidence_rows, notes)
+    mapped += absorbed_evidence
+    for row, producer, declared_parents in ordered_rows:
         # Resolved here, not at sort time: the ordering guarantees every parent has
         # already been built and entered in the map by the time its child is.
         resolved_parents = tuple(id_map[p] for p in declared_parents if p in id_map)
@@ -697,13 +714,31 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                 id_map[declared_id] = built[0].evidence_id
         mapped += 1
 
+    # Claims collapse on their declared id exactly as evidence does, and for the
+    # same two reasons: a producer that states one claim twice has stated one
+    # claim, and a redelivered batch must not reach the collection builder as a
+    # duplicate. The builder refuses duplicate ids on purpose — evidence must
+    # not be counted twice — but that refusal is fatal to the whole run, so a
+    # retried delivery used to take the gate down rather than be absorbed.
+    seen_claims: Set[str] = set()
     for row, producer in claim_rows:
+        declared = str(row.get("claim_id") or row.get("id") or "").strip()
+        if declared and declared in seen_claims:
+            mapped += 1
+            continue
         try:
             claims.append(_claim_from(row, producer, id_map))
+            if declared:
+                seen_claims.add(declared)
             mapped += 1
         except Exception as exc:
             skip("record rejected: " + type(exc).__name__)
             notes.append(f"a claim record was rejected: {exc}")
+    repeated_claims = len(claim_rows) - len(claims)
+    if repeated_claims > 0 and seen_claims:
+        notes.append(
+            f"{repeated_claims} claim row(s) repeated a claim_id already seen and "
+            "were absorbed into the first record under that id")
 
     return (evidence, claims, artifacts, counterexamples, branches, adversarial,
             expectations, mapped, skipped, notes)
@@ -864,8 +899,13 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
 
 def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],
                       notes: List[str]
-                      ) -> List[Tuple[Mapping[str, Any], Producer, Tuple[str, ...]]]:
-    """Evidence rows in ancestry order, with parent references resolved.
+                      ) -> Tuple[List[Tuple[Mapping[str, Any], Producer,
+                                            Tuple[str, ...]]], int]:
+    """Evidence rows in ancestry order, plus how many repeats were absorbed.
+
+    The count is returned rather than left implicit because the caller adds it
+    to `records_mapped`: a row folded into an existing record *mapped*, and
+    counting it as unmapped is what made a redelivery look like a loss.
 
     An `evidence_id` is derived from content at the boundary, and content includes
     `parent_evidence`, so a record's id depends on its parents' ids. Parents must
@@ -881,10 +921,36 @@ def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],
     Rows left over after the sort are in a declaration cycle and are emitted in
     file order with a note, rather than being dropped.
     """
+    # Rows sharing a declared `evidence_id` collapse to ONE, and the first wins.
+    # That is not an accident of using a dict: it is the guarantee that a replay
+    # buys no extra record. Fifty copies of one test result, each restamped with
+    # a fresh clock, are fifty rows the producer has given one name — and a
+    # producer cannot multiply its own corroboration by saying the same thing
+    # again (`test_restamping_a_replay_does_not_multiply_it`).
+    #
+    # First wins rather than last. The dict previously kept whichever arrived
+    # latest, which let a later copy quietly replace an earlier one; the rest of
+    # this function already says references "resolve to the first record", so
+    # this now matches what it claims.
+    #
+    # The collapse is *counted*. Absorbed rows used to be neither mapped nor
+    # skipped, so `records_mapped` came out below `records_seen` and the
+    # record_mapping coverage row reported a shortfall for records that had not
+    # gone missing — which made a redelivered batch degrade the verdict.
     indexed = {}
+    absorbed = 0
     for position, (row, producer) in enumerate(rows):
         declared = str(row.get("evidence_id") or "").strip()
-        indexed[declared or f"__row_{position}"] = (position, row, producer)
+        key = declared or f"__row_{position}"
+        if key in indexed:
+            absorbed += 1
+            continue
+        indexed[key] = (position, row, producer)
+    if absorbed:
+        notes.append(
+            f"{absorbed} evidence row(s) repeated an evidence_id already seen and "
+            "were absorbed into the first record under that id; they are counted "
+            "as mapped, not as evidence that failed to arrive")
 
     pending = {key: [p for p in _as_ids(row.get("parent_evidence")) if p in indexed]
                for key, (_pos, row, _prod) in indexed.items()}
@@ -919,7 +985,7 @@ def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],
         for key in sorted(leftover, key=lambda k: indexed[k][0]):
             _position, row, producer = indexed[key]
             ordered.append((row, producer, tuple(_as_ids(row.get("parent_evidence")))))
-    return ordered
+    return ordered, absorbed
 
 
 def _as_ids(value: Any) -> List[str]:

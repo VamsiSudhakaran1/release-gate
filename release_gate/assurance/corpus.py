@@ -455,12 +455,15 @@ def _approval_stops_binding(run: "CaseRun") -> Tuple[bool, str]:
     """
     if run.standing is None:
         return False, "no approval was taken, so nothing was checked"
-    binds = bool(getattr(run.standing, "binds", False))
-    conditions = [c.value for c in getattr(run.standing, "conditions", ())]
-    return not binds, ("the approval still binds to the revised case"
-                       if binds else
-                       "the approval no longer binds: " + ", ".join(conditions or
-                                                                    ["(no reason given)"]))
+    # `ApprovalCheck.valid`, read by name. This was written as
+    # `getattr(standing, "binds", False)` — an attribute that does not exist, so
+    # the default made `not binds` true and the check passed whatever the
+    # approval was doing. A guard that cannot fail is not a guard.
+    still_valid = run.standing.valid
+    conditions = [c.value for c in run.standing.conditions]
+    return not still_valid, (
+        "the approval still binds to the revised case" if still_valid else
+        "the approval no longer binds: " + ", ".join(conditions or ["(unnamed)"]))
 
 
 def _approval_says_why_it_stopped(run: "CaseRun") -> Tuple[bool, str]:

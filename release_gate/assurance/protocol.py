@@ -227,6 +227,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("consequence", "consequence", "CONSEQUENCE_SCHEMA_VERSION", 1),
         _ref("contradiction", "contradiction", "CONTRADICTION_SCHEMA_VERSION", 1),
         _ref("counterexample", "counterexample", "COUNTEREXAMPLE_SCHEMA_VERSION", 1),
+        _ref("chaos_report", "chaos", "CHAOS_SCHEMA_VERSION", 1,
+             note="fault injection over the evidence path, and which of the "
+                  "three recoveries each fault's nature permits"),
         _ref("corpus_case", "corpus", "CORPUS_SCHEMA_VERSION", 1,
              note="the assurance benchmark corpus: constructed cases whose "
                   "structure is known, and what may be claimed from scoring them"),

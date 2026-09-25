@@ -6089,6 +6089,145 @@ workflow would be scoring a second generator, not the product.
 
 ---
 
+### 10al. Chaos and fault injection — three recoveries, and which one applies
+
+Thirteen faults injected into the evidence path, each declaring the recovery its
+nature permits. `release_gate/assurance/chaos.py`.
+
+#### 10al.1 "Deterministic recovery" is three promises, not one
+
+§10ak scored *cases*: is the reported structure the built one. This scores
+*arrival*: the same evidence, delivered badly, and whether what a person is asked
+to authorise survives the delivery.
+
+A fault absorbed, a fault reported and a fault refused are all recoveries.
+Calling them all "handled" is how silent data loss passes a chaos test, so each
+fault declares its class and the harness checks that one:
+
+* **`IDENTICAL`** — same case digest, same verdict, same findings. Available
+  only when the evidence genuinely did not change.
+* **`DECLARED`** — something differs and the difference is *stated*.
+* **`REFUSED`** — the engine declines. A recovery, not a failure: it is what
+  keeps a decision bound to the state it was taken on (Invariant 5).
+
+`IDENTICAL` is not the best answer. An approval that still bound after its case
+moved would be `IDENTICAL` and catastrophic. A `Fault` whose expected recovery is
+anything short of `IDENTICAL` must carry a `why`, enforced in `__post_init__`, so
+*"it told us"* never becomes the unexamined answer to everything.
+
+What no recovery may be is **quieter**. A fault that loses evidence and produces
+a smaller, cleaner, more confident case is the shape §10ak found in the coverage
+ledger, and these faults were chosen to look for its siblings at the arrival
+boundary.
+
+| Fault | Recovery | What establishes it |
+|---|---|---|
+| clock skew | `IDENTICAL` | no skewed clock is adopted; every producer claim kept beside ours |
+| restart | `IDENTICAL` | a resumed session's digest equals an uninterrupted one's |
+| duplicate case | `IDENTICAL` | content addressing — the same evidence *is* the same case |
+| ingestion interruption | `DECLARED` | truncated at 2, 4 and 5 of 6 records; none promote |
+| duplicate batches | `DECLARED` | evidence, findings and verdict identical; the digest commits to the bytes |
+| reordered events | `DECLARED` | verdict, findings and record *values* stable |
+| missing telemetry | `DECLARED` | `execution_reconstruction` reads NOT_ASSESSED; the case blocks |
+| concurrent mutation | `DECLARED` | three writes, three digests, three case ids; none absorbed |
+| subject mutation during review | `DECLARED` | `MUTATED`, and `unchanged` reads false |
+| external evidence unavailable | `DECLARED` | `UNVERIFIABLE` for a missing resolver, a refused connection and a timeout |
+| approval during update | `REFUSED` | `APPROVAL_INVALIDATED`; the revision carries no approvals |
+| verifier arriving late | `REFUSED` | `SessionError`; the evidence opens the next case instead |
+| stale digest | `REFUSED` | the approval stops counting and says why |
+
+#### 10al.2 A meta-guard, because a fault that changes nothing proves nothing
+
+Every result carries `perturbed`, and a test asserts none is false. A fault that
+left its input alone would recover `IDENTICAL` every time and measure nothing —
+which is the failure mode of most chaos suites.
+
+#### 10al.3 The defect: a redelivered batch took the gate down
+
+At-least-once delivery is how every real queue behaves. A redelivered batch:
+
+* **crashed the run** for claims and artifacts — `RecordCollectionBuilder`
+  refuses a duplicate `record_id`, and that refusal is fatal to the whole case;
+* **degraded the verdict** for evidence — `_ordered_evidence` collapsed rows on
+  their declared id but counted the collapsed rows as neither mapped nor skipped,
+  so `records_mapped` came out below `records_seen`, the `record_mapping`
+  coverage row reported a shortfall for records that had not gone missing, and
+  the case dropped from PROMOTE to HOLD.
+
+The same fault, two outcomes, decided by whether a collection's ids happen to be
+content-derived.
+
+**The first fix was too broad, and a test caught it.** Absorbing byte-identical
+duplicates inside `RecordCollectionBuilder` looked like the general repair. It
+broke `test_restamping_a_replay_does_not_multiply_it`: fifty copies of one test
+result, each restamped with a fresh clock, are *not* byte-identical, and the
+dict-keyed collapse in `_ordered_evidence` was the mechanism stopping a replay
+from multiplying its own corroboration. Six other tests encoded the builder's
+refusal as a deliberate invariant.
+
+So the repair moved to the layer where the fault enters. The collapse stays and
+is now **counted**; claims and artifacts collapse the same way rather than
+reaching the builder as duplicates; and the builder's refusal — a real invariant,
+protecting a real attack — is left exactly as it was. Two lessons worth keeping:
+the narrow fix at the entry point beat the general one at the core, and the test
+that stopped me was an anti-gaming test I had not read first.
+
+While fixing the accounting the collapse also changed from **last wins** to
+**first wins**, matching what the surrounding code already claimed: a later copy
+no longer quietly replaces an earlier one.
+
+#### 10al.4 The other defect: an unreachable store crashed the re-check
+
+`AssuranceSubject.recheck` documents that "anything we cannot confirm is
+UNVERIFIABLE" — and a resolver that raised propagated instead, turning *"is this
+still the thing?"* into an exception in the one path that asks it. A flaky object
+store would have taken down approval checking.
+
+Now caught and reported as `UNVERIFIABLE`, naming the failure: "the store was
+unreachable" and "the reference resolves to nothing" are different problems with
+different fixes, and collapsing them would lose the distinction. `UNCHANGED` was
+never reachable here, which is the part that matters.
+
+#### 10al.5 Reordering moves what cites a position, not what states a fact
+
+Reordering the input yields a different case digest. Three of the eight records
+in the evidence collection move, and all three cite *where* something was rather
+than *what* it was: the record committing to the input bytes, the capability
+surface read out of those bytes, and the consequence record, whose provenance
+reads `envelope:chaos.jsonl#5` — a line number that genuinely changes when the
+document is reordered. (The fault's `ids_moved` counts only the last of the
+three, because the first two are release-gate's own derived records and are
+filtered out before the producer-evidence comparison.)
+
+This is a real tension between two things the architecture wants: content
+addressing, and provenance a reader can follow back to a line. It is not resolved
+here and it is not hidden: the fault reports how many record identities moved
+*and* proves that with positional citations set aside every producer record's
+values are unchanged, so a reader can see exactly what the movement consists of.
+The verdict and the finding set are identical across five orderings.
+
+The same reasoning covers `duplicate_batches`. Its evidence is absorbed exactly —
+same records, same findings, same verdict — and its case digest differs because a
+batch delivered twice is not the same document. Claiming an identical digest
+would mean the case pretending it received something it did not.
+
+#### 10al.6 What was already right
+
+Eleven of the thirteen needed no change, and the ones that held are the ones that
+were designed to. Clock skew was settled by §10ah: a producer's clock is a claim,
+kept beside release-gate's own rather than adopted, and 2099, 1970 and outright
+garbage all leave the case digest alone. Two runs of one document a year apart
+produce the same digest, which is the property `stamped_on_arrival` exists for.
+Finalize refuses a late record, a revision inherits no approval, and a moved
+subject stops an approval counting — all three are Invariant 5 doing its job.
+
+Nothing here is timed, threaded or slept. "Concurrent mutation" is two writers
+against one base state, because the question is whether their work stays
+distinguishable — and a race that only sometimes reproduces proves nothing either
+way.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

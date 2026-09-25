@@ -449,7 +449,22 @@ class AssuranceSubject:
                 MutationStatus.UNVERIFIABLE, None, None,
                 "subject has no digest, so mutation cannot be detected at all")
 
-        observed = self._observe(resolver=resolver, items=items)
+        try:
+            observed = self._observe(resolver=resolver, items=items)
+        except Exception as exc:
+            # An object store that is down, a revoked credential, an I/O error.
+            # `UNVERIFIABLE` is what this method promises for anything it cannot
+            # confirm, and an exception is the loudest form of "cannot confirm" —
+            # letting it propagate turned "is this still the thing?" into a
+            # crash in the approval path, which is the one place that question is
+            # asked. The failure is named rather than swallowed, because "the
+            # store was unreachable" and "the reference resolves to nothing" are
+            # different problems with different fixes.
+            return MutationCheck(
+                MutationStatus.UNVERIFIABLE, self.digest, None,
+                f"content could not be re-read from {self.content_reference.kind.value} "
+                f"reference {self.content_reference.locator!r}: "
+                f"{type(exc).__name__}: {exc}")
         if observed is None:
             return MutationCheck(
                 MutationStatus.UNVERIFIABLE, self.digest, None,
