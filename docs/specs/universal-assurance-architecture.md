@@ -4493,6 +4493,168 @@ Adjacent-run digest mismatches: **9 in 400 before, 0 in 300 after.**
 
 ---
 
+## 10z. Enterprise identity (`IdentityClaim`, `Attribution`)
+
+> **Implemented.** `release_gate/assurance/identity.py` — `IdentityClaim`,
+> `IdentityProvider`, `ProofKind`, `IdentityAdapter` + `ADAPTERS`, `Attribution`,
+> `attribution_of()`, `auth_source_for()`, `claim_from()`. Plus
+> `BoundApproval.approver_identity` and `attributable_to`.
+
+**This is not an IAM, and the module cannot become one.** Nothing here
+authenticates: no token verification, no signature check, no JWKS fetch, no
+assertion parsing, no user store, no session, no login flow, no permission model.
+The assurance layer is stdlib-only and makes no network calls, and that is the
+design rather than a gap in it — a recorder that quietly re-derived its inputs
+would be asserting the thing it was supposed to be citing. A test greps the
+module's own source for `jwt`, `jose`, `urllib`, `socket`, `xml`, `cryptography`
+and `hmac` imports, so the property is enforced rather than intended.
+
+### 10z.1 Four separable things
+
+An identity arrives as a **claim** from a host boundary — the hosted API, the
+GitHub Action, the CLI, an enterprise gateway — and what gets written down is:
+
+| | |
+|---|---|
+| **who** | `issuer` + `subject`, in the issuer's own namespace, never re-keyed |
+| **how** | `EpistemicStatus` — VERIFIED, OBSERVED, DECLARED, REFUTED, NOT_ASSESSED |
+| **who established it** | `verified_by` |
+| **what nobody checked** | `unverified_aspects` |
+
+Identity is not a special epistemology, so it does not get a private one. The
+three orthogonal axes already carrying evidence carry this: `EpistemicStatus` for
+how it was established, `ProvenanceStatus` for whether the proof chain holds, and
+`TrustDecision` for whether an issuer is accepted — which already refuses to
+exist without a named decider. `ProducerKind` names the principal, so an identity
+established at a boundary can ride on the evidence that boundary produced through
+`as_producer()` rather than through a second vocabulary for the same fact.
+
+The third column is the one that is easy to lose. A signature release-gate
+validated and a signature a platform validated are different facts, and only one
+of them is ours. `verified_by` is that difference, and a `VERIFIED` claim that
+names nobody is refused — as is a `DECLARED` claim that names somebody, which is
+a contradiction in the other direction.
+
+`DECLARED` is the default, so a boundary that checked something has to say so.
+That is the right way round: the cost of silence falls on the strong claim.
+
+### 10z.2 Two refusals define the boundary
+
+`IdentityClaim.authenticates` → `False`. Release-gate records an identity someone
+else established; it never establishes one.
+
+`IdentityClaim.establishes_authority` → `False`. Knowing who someone is says
+nothing about what they may do — provenance is not trust (Invariant 11). This is
+the one violated in practice, because an authenticated caller *feels* authorised.
+
+Both are in `to_dict()`, and `IdentityAdapter.to_dict()` carries `verifies:
+false` because the thing that reads an assertion is where someone would look for
+a verifier. `IdentityProvider.RELEASE_GATE` exists so it can be refused by name,
+and `adapter_for` refuses it too.
+
+### 10z.3 Adapters are data
+
+`IdentityAdapter` is a row naming which keys carry the subject, the issuer, the
+audience, the timestamps and the attributes worth keeping — so adding a provider
+adds a row, not a code path, and `ADAPTERS` is built from the one list so the
+enum and the registry cannot drift into two lists that disagree. A test asserts
+every provider but `UNKNOWN` (no assertion shape) and `RELEASE_GATE` (not a
+provider) has one.
+
+Seventeen adapters cover the named integrations: generic **OIDC**, **SAML**
+(already-parsed attributes — nothing here reads XML, because parsing untrusted
+XML is a different job with a different threat model and belongs at a boundary
+that already has a hardened parser), **GitHub Actions / App / user**, **GitLab CI
+/ user**, **AWS IAM**, **GCP IAM**, **Azure Entra**, generic **enterprise IdP**,
+**service account**, **mTLS**, **SSH**, **GPG**, **API key** and
+**self-asserted**.
+
+Each carries `inherent_gaps` — what that provider's assertion structurally cannot
+establish — onto every claim it produces, because a gap that depends on someone
+remembering to mention it is a gap that goes unmentioned. GitHub Actions: "`actor`
+names who triggered the run, which is not who reviewed it." GitLab CI: "an
+unprotected ref means the job could be run from a branch anyone can push." Entra:
+"`oid` is unique within a tenant, so a claim without its `tid` is ambiguous."
+
+No token is retained. A token is a credential, and keeping one would turn an
+audit record into a secret; `assertion_digest` lets the raw assertion be cited
+without being stored.
+
+### 10z.4 A pipeline token is not a person
+
+The central case. A workflow OIDC token proves a workflow ran. It does not make a
+decision anyone is answerable for.
+
+`IDENTITY_SCHEMA_SERVICE_PROVIDERS` holds the providers whose principal is a
+workload by construction, so `is_a_person` is a lookup rather than a judgement
+made afresh at each call site — and a claim from one of them that declares
+`ProducerKind.HUMAN` **raises**. That is the laundering case: a pipeline token
+dressed as a human approver is how a machine comes to hold an approval nobody
+made (Invariant 15).
+
+A cloud identity may be either, and which one has to come off the assertion
+rather than from the issuer's name — an ARN alone does not say, and a
+`.gserviceaccount.com` address is shaped like a person's.
+
+**Three states, not two.** `principal_stated` is False when nobody said, and
+`machine_self_authorisation` reads `is_a_service` rather than `not is_a_person` —
+found while reading real output, where a self-asserted human was being reported
+as a workload. Not established to be a person is not the same as being a machine,
+and reporting it as one would be a determination nobody made. The same applies on
+the approval: `approver_is_a_person` is `None`, not `False`, when no claim was
+supplied.
+
+A workload approving is **reported, not refused**: release-gate cannot know
+whether a given deployment legitimately authorises through a service account. But
+it is reported every time.
+
+### 10z.5 Attribution is not a boolean
+
+"Approval must be attributable" is not a yes-or-no, so `Attribution` is not one.
+It carries a handle (`provider:issuer:subject` — three parts, because a subject
+string is only meaningful inside the issuer that minted it), what established it,
+and the gaps.
+
+`reattributable` is the practical test: could someone look this up in that issuer
+months later? A bare string cannot.
+
+`trusted_issuers` is a **caller-supplied allowlist**, not a policy this module
+holds an opinion about, and an issuer outside it becomes a gap rather than a
+failure — release-gate is not the thing that decides which IdP an organisation
+federates with, and refusing here would be that decision made by the wrong
+system. Passing none leaves the question unasked, and that is reported as unasked
+rather than as a pass.
+
+`links_identities` → `False`. `alice@corp` in Okta and `alice-gh` on GitHub are
+two identities even when one human is behind both. Deciding they are one person
+is identity management — somebody else's system, and not one to improvise inside
+an audit record.
+
+### 10z.6 The bridge, and why it is narrower than the claim
+
+`auth_source_for()` maps a claim onto the `AuthSource` approvals have always
+carried, through one mapping so the new vocabulary and the serialised one cannot
+drift. It is deliberately lossy in one direction:
+
+* an **unestablished** claim maps to `ASSERTED` whatever provider it came from,
+  because `AuthSource.identity_established` is a frozenset membership test and an
+  unverified OIDC token satisfying it would be the whole boundary defeated by a
+  missing signature check;
+* an **OBSERVED** claim maps to `PLATFORM_SSO` rather than the provider's full
+  strength — mapping it to `SIGNED_TOKEN` would put "a signature was checked" on
+  a record whose `verified_by` is empty. Caught by reading real output.
+
+A test asserts `approval.identity_established == claim.established` across
+verified, workload, unverified and self-asserted claims, so the two cannot answer
+differently.
+
+`BoundApproval.approver_identity` is optional — a CLI run against a local file
+has no identity provider and should not have to invent one — and joins
+`identity()` only when present, the same conditional as §10y's `override_id`, so
+every approval already recorded keeps its id.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

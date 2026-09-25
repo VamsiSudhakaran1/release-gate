@@ -150,6 +150,18 @@ _SEVERITY: Tuple[ApprovalStanding, ...] = (
 )
 
 
+def _identity_from(data: Any) -> Any:
+    """Rebuild an approver's identity claim, without importing at module level.
+
+    Deferred because `identity` imports `approval` for `AuthSource`, and a
+    top-level import here would close that circle.
+    """
+    if not data:
+        return None
+    from release_gate.assurance.identity import IdentityClaim
+    return IdentityClaim.from_dict(data)
+
+
 def binding_of(case: Any) -> Dict[str, Any]:
     """The exact state any human act on this case must bind to.
 
@@ -207,6 +219,11 @@ class BoundApproval:
     #: granted. Empty means none was — which is not the same as none being
     #: needed, and `overrides_recommendation` is what says which.
     override_id: str = ""
+    #: The `IdentityClaim` this approver was established by, where a host
+    #: supplied one. `approver` is a display string; this is what an auditor can
+    #: look up in an issuer months later. Optional, because a CLI run against a
+    #: local file has no identity provider and should not have to invent one.
+    approver_identity: Any = None
     schema_version: int = APPROVAL_SCHEMA_VERSION
 
     approval_id: str = field(default="", init=False)
@@ -261,6 +278,12 @@ class BoundApproval:
                     "auth_source": self.auth_source.value}
         if self.override_id:
             identity["override_id"] = self.override_id
+        if self.approver_identity is not None:
+            # Same conditional as `override_id`, for the same reason: an approval
+            # established by a named identity is a different act from one taken
+            # on a bare string, but adding the key unconditionally would change
+            # the digest of every approval ever recorded.
+            identity["approver_identity"] = self.approver_identity.claim_id
         return identity
 
     # ── standing ────────────────────────────────────────────────────────────
@@ -291,6 +314,30 @@ class BoundApproval:
         return (self.authorises
                 and self.case_decision is not None
                 and self.case_decision != "PROMOTE")
+
+    @property
+    def attributable_to(self) -> str:
+        """What this approval can be traced back to.
+
+        The identity's provider-scoped handle when one was supplied, and the bare
+        approver string otherwise — which is a name somebody typed, and says so
+        through `identity_established` being False.
+        """
+        if self.approver_identity is not None:
+            return self.approver_identity.attributable_to
+        return self.approver
+
+    @property
+    def approver_is_a_person(self) -> Optional[bool]:
+        """Whether a person is behind this. `None` when no identity was supplied.
+
+        `None` rather than `False`: a missing identity claim means nobody said,
+        and reporting that as "not a person" would be a determination this record
+        does not hold.
+        """
+        if self.approver_identity is None:
+            return None
+        return self.approver_identity.is_a_person
 
     @property
     def proceeds_under_override(self) -> bool:
@@ -343,6 +390,11 @@ class BoundApproval:
                 "overrides_recommendation": self.overrides_recommendation,
                 "override_id": self.override_id,
                 "proceeds_under_override": self.proceeds_under_override,
+                "attributable_to": self.attributable_to,
+                "approver_is_a_person": self.approver_is_a_person,
+                "approver_identity": (self.approver_identity.to_dict()
+                                      if self.approver_identity is not None
+                                      else None),
                 "comment": self.comment,
                 "auth_source": self.auth_source.value,
                 "identity_established": self.identity_established,
@@ -368,12 +420,14 @@ class BoundApproval:
             timestamp=str(data.get("timestamp") or _utc_now()),
             expires_at=(str(data["expires_at"]) if data.get("expires_at") else None),
             override_id=str(data.get("override_id") or ""),
+            approver_identity=_identity_from(data.get("approver_identity")),
             comment=str(data.get("comment") or ""))
 
     @classmethod
     def for_case(cls, case: Any, *, approver: str, scope: str = "",
                  decision: ApprovalDecision = ApprovalDecision.APPROVED,
                  auth_source: AuthSource = AuthSource.ASSERTED,
+                 identity: Any = None,
                  **kwargs: Any) -> "BoundApproval":
         """Bind an approval to a sealed case's exact current state.
 
@@ -391,7 +445,7 @@ class BoundApproval:
             evidence_pack_digest=bound["evidence_pack_digest"],
             bound_collections=bound["bound_collections"],
             case_decision=(case.verdict.decision.value if case.verdict else None),
-            auth_source=auth_source, **kwargs)
+            auth_source=auth_source, approver_identity=identity, **kwargs)
 
     def render(self) -> str:
         lines = [f"{self.decision.value} by {self.approver} at {self.timestamp}",
@@ -403,6 +457,7 @@ class BoundApproval:
                  + ("" if self.identity_established
                     else " — attributable to a claim of identity, not an "
                          "established one"),
+                 f"  attributable to: {self.attributable_to}",
                  f"  {self.expiry_basis}"]
         if self.overrides_recommendation:
             lines.append(f"  OVERRIDE: release-gate recommended "
@@ -830,7 +885,8 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
                     auth_source: AuthSource = AuthSource.ASSERTED,
                     scope: str = "", comment: str = "",
                     expires_at: Optional[str] = None,
-                    override: Any = None) -> ApprovalSubmission:
+                    override: Any = None,
+                    identity: Any = None) -> ApprovalSubmission:
     """Record an approval, but only against the exact state the client acknowledged.
 
     There is deliberately no way to express "approve the latest". The only
@@ -842,6 +898,11 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
     offer object the caller happens to be holding. An offer is a convenience for
     the human; treating it as the authority would let a fabricated one authorise
     anything.
+
+    An `identity` is optional too, and is an `IdentityClaim` a host boundary
+    established. Supplied, the approval becomes traceable to an issuer and a
+    subject rather than to a string; `auth_source` should be derived from it with
+    `identity.auth_source_for` so the two cannot disagree.
 
     An `override` is optional and is never required: approving over a HOLD has
     always been allowed and has always been recorded as such. Supplied, it is
@@ -918,7 +979,7 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
         approval = BoundApproval.for_case(
             case, approver=approver, scope=scope, decision=decision,
             auth_source=auth_source, comment=comment, expires_at=expires_at,
-            override_id=override_id)
+            override_id=override_id, identity=identity)
     except ApprovalError as exc:
         return ApprovalSubmission(outcome=SubmissionOutcome.REFUSED, current=current,
                                   reasons=(str(exc),))
