@@ -5349,6 +5349,113 @@ and the manifest names the real constant rather than inventing a parallel one.
 
 ---
 
+## 10af. Observability without becoming observability (`AssuranceStatus`)
+
+> **Implemented.** `release_gate/assurance/status.py` — `AssuranceStatus`,
+> `Readout`, `READOUTS`, `SourceSystem`, `SOURCE_SYSTEMS`, `SourceLink`,
+> `LinkResolution`, `status_of()`, `link_for()`. Plus trace-id retention in
+> `execution_graph.py`.
+
+### 10af.1 What was measured
+
+| | |
+|---|---|
+| all seven readouts available | **yes**, scattered across six objects |
+| a single surface exposing them | **no** |
+| source-system links anywhere | **none** |
+| raw nanosecond timestamps retained from a trace | **no** |
+| span durations retained | **no** |
+| **`trace_id` retained** | **no** — and this was the finding |
+
+The first probe said the trace id survived. It did not: `"0a"` is two hex
+characters and matched inside a digest. Re-run against a real 32-character trace
+id, it appeared **nowhere** in the outcome — not in the case, not in the
+execution collection, not on a node.
+
+`ExecutionGraphBuilder.add_span` read `spanId` and `parentSpanId` and never
+`traceId`. So the case kept **exactly the wrong half of the pointer**: a span id,
+and no trace to find it in. A reviewer holding it could not reach Langfuse or
+Datadog without going hunting, which is the opposite of "link to source systems".
+
+The rest of the measurement is the good news and the design constraint at once:
+durations and timestamps are already dropped. Release-gate was never a telemetry
+store. The gap was never the data — it was the pointer.
+
+### 10af.2 A trace id is a fact about the run, not about a step
+
+`_carry` keeps four attributes per node, deliberately, so a ten-thousand-node
+graph stays small. Copying a 32-character id onto every node is exactly the bloat
+it exists to prevent, and the first fix did that.
+
+So trace ids live on the **graph**, collected once, capped at
+`MAX_TRACE_IDS = 32` — a run has one, or a handful when several were folded
+together, and a malformed export cannot turn a link list into a data set. A test
+asserts the ids are on the graph and *not* on the nodes.
+
+### 10af.3 Seven readouts, one surface
+
+`case` · `ingestion` · `coverage` · `completeness` · `verdict_evolution` ·
+`human_attention` · `required_evidence`
+
+`READOUTS` is a constant, so "is anything missing" is a comparison; a surface
+lacking one is refused at construction, because one left out *"reads as one with
+nothing to say, which is the difference between a clean case and an unexamined
+one"*. An **eighth** is refused too: *"a readout added here would be a metric,
+and metrics are what the platforms already do better."* That refusal is the scope
+boundary made structural rather than promised.
+
+Two readouts carry the NOT_ASSESSED distinction the whole engine rests on:
+
+* **completeness** without a `StreamLedger` is `NOT_ASSESSED`, not "complete" —
+  the same reason `facts_for` and `build_pack` take one.
+* **verdict evolution** without a previous outcome is `NOT_ASSESSED`, not
+  "unchanged". One run is not a trend, and reporting it as stable would invent a
+  history.
+
+### 10af.4 A link is not a copy
+
+`SourceLink.resolves_the_data` → `False`. Release-gate holds the id; the platform
+holds the bytes; following the link is a person's act. A stale link is a coverage
+gap rather than a clean read — the rule §10aa applies to an object store.
+
+Seven platforms ship as **data**: Langfuse, Datadog, Arize, Phoenix, Jaeger,
+Grafana Tempo, Honeycomb. A private one is a `SourceSystem` a deployment
+constructs. The host is never guessed — *"datadoghq.com and datadoghq.eu are
+different tenancies, and guessing one would send a reviewer to a console their
+trace is not in"*.
+
+`LinkResolution` has four values because the ways a link fails are different
+facts: `RESOLVED`, `NO_HOST`, `NO_PROJECT`, `NO_SOURCE`. **In every failing case
+the id still travels**, because a link nobody configured and a run with no
+telemetry are not the same thing, and dropping both would report the second.
+
+`AssuranceStatus.links` deduplicates. Several readouts are about the same trace,
+and aggregating them naively reported **three** unresolved links where one trace
+was unreachable — overstating a gap by counting how many readouts mention it.
+
+### 10af.5 The refusals, and the test that they hold
+
+`replaces_your_observability` · `answers_what_happened_at` ·
+`stores_telemetry` — all unconditionally `False`, all in the payload.
+
+`answers_what_happened_at` is the sharpest: there is no time axis here. A
+question about a moment belongs to the system that indexes by time, and this
+surface would answer it badly. Tests assert no `p50`/`p95`/`p99`/`latency_ms`/
+`histogram` key appears anywhere in the payload, that a 2.5-second span leaves no
+duration in the case, and — by AST, not substring — that `status.py` imports no
+HTTP client. A link is a URL a person opens, never something release-gate
+follows.
+
+### 10af.6 The protocol guard fired on the next prompt
+
+`status.py` introduced `STATUS_SCHEMA_VERSION`, and §10ae's drift guard failed
+the build: a new schema had not joined `rg.assurance.v1`. Registering it — and
+moving the manifest digest — is precisely the deliberate act that guard exists to
+force. It caught a real omission one prompt after being written, which is the
+only evidence that kind of guard ever gives.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

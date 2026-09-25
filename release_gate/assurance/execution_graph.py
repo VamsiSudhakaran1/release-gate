@@ -255,11 +255,18 @@ class ExecutionGraph:
     """An immutable, typed graph of what ran."""
 
     def __init__(self, nodes: Iterable[ExecutionNode], edges: Iterable[ExecutionEdge],
-                 *, completeness: Optional[ExecutionCompleteness] = None) -> None:
+                 *, completeness: Optional[ExecutionCompleteness] = None,
+                 trace_ids: Iterable[str] = ()) -> None:
         self._nodes: Dict[str, ExecutionNode] = {n.node_id: n for n in nodes}
         self._edges: Tuple[ExecutionEdge, ...] = tuple(sorted(
             {e.key: e for e in edges}.values(), key=lambda e: e.key))
         self.completeness = completeness or ExecutionCompleteness()
+        #: Trace ids seen while building, bounded. Kept on the graph rather than
+        #: on every node because a trace id is a fact about the run, not about a
+        #: step — copying it onto ten thousand nodes is exactly the bloat
+        #: `_carry` exists to prevent. These are the handles that reach the
+        #: system holding the spans; the spans themselves stay there.
+        self.trace_ids: Tuple[str, ...] = tuple(trace_ids or ())
 
         self._out: Dict[str, List[ExecutionEdge]] = defaultdict(list)
         self._in: Dict[str, List[ExecutionEdge]] = defaultdict(list)
@@ -497,6 +504,7 @@ class ExecutionGraphBuilder:
         self._declared_sources = tuple(declared_sources)
         self._observed_sources: Set[str] = set()
         self._spans_seen = 0
+        self._trace_ids: List[str] = []
         self._leaf_count = 0
         self._aggregates: Dict[str, Dict[str, Any]] = {}
         self._parent_of: Dict[str, str] = {}
@@ -576,11 +584,29 @@ class ExecutionGraphBuilder:
         parent_id = str(span.get("parentSpanId") or span.get("parent_span_id") or "")
         name = str(span.get("name") or "")
         started = span_start_ns(span)
+        # The trace id is the one identifier that addresses this run in the
+        # system that produced it. It was read off neither `spanId` nor
+        # `parentSpanId` and so never reached the graph at all, which left a
+        # reviewer holding a span id and no trace to find it in — the case kept
+        # exactly the wrong half of the pointer. Durations and timestamps stay
+        # out; an id is a link, not telemetry.
+        trace_id = str(span.get("traceId") or span.get("trace_id") or "")
+        if trace_id:
+            self._note_trace(trace_id)
         self._spans_seen += 1
         self._record_source(merged)
         self._record_sequence(merged)
         self._ingest(span_id or f"span:{self._spans_seen}", parent_id, name, merged, started)
         return self
+
+    #: A run has one trace id, or a handful when several were folded together.
+    #: Bounded so a malformed export cannot turn a link list into a data set.
+    MAX_TRACE_IDS = 32
+
+    def _note_trace(self, trace_id: str) -> None:
+        if (trace_id not in self._trace_ids
+                and len(self._trace_ids) < self.MAX_TRACE_IDS):
+            self._trace_ids.append(trace_id)
 
     def add_span_record(self, record: Mapping[str, Any]) -> "ExecutionGraphBuilder":
         """Attach an already-flat execution record (the envelope's `execution` shape)."""
@@ -588,6 +614,11 @@ class ExecutionGraphBuilder:
         for key in ("tool", "model", "agent", "action", "artifact"):
             if key in record:
                 attrs.setdefault(key, record[key])
+        for key in ("trace_id", "traceId"):
+            if record.get(key):
+                self._note_trace(str(record[key]))
+            elif attrs.get(key):
+                self._note_trace(str(attrs[key]))
         node_kind_hint = record.get("node_kind") or record.get("type")
         if node_kind_hint:
             attrs.setdefault("_kind_hint", node_kind_hint)
@@ -822,7 +853,8 @@ class ExecutionGraphBuilder:
             observed_sources=tuple(sorted(self._observed_sources)),
             notes=tuple(self._notes))
         return ExecutionGraph(self._nodes.values(), edges.values(),
-                              completeness=completeness)
+                              completeness=completeness,
+                              trace_ids=tuple(self._trace_ids))
 
     def _resolved_edges(self) -> Dict[Tuple[str, str, str], ExecutionEdge]:
         """Rewrite every endpoint through the alias map, merging counts.
