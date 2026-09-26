@@ -276,6 +276,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
              note="the seven readouts and their links back to the systems that "
                   "hold the data; a link is not a copy"),
         _ref("streaming", "streaming", "STREAMING_SCHEMA_VERSION", 1),
+        _ref("verdict_trace", "trace", "TRACE_SCHEMA_VERSION", 1,
+             note="the walk from a verdict to the sources beneath it, with the "
+                  "reasons it could not walk named rather than omitted"),
         _ref("trust", "trust", "TRUST_SCHEMA_VERSION", 1),
         _ref("verdict", "verdict", "VERDICT_SCHEMA_VERSION", 1),
         _ref("verifier", "verifiers", "VERIFIER_SCHEMA_VERSION", 1),

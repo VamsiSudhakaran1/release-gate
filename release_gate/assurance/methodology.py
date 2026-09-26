@@ -516,6 +516,17 @@ class NoUnresolved(Predicate):
                      if FIELD_RESOLVED not in r and FIELD_OPEN not in r]
         observed = {"records_held": len(records), "total_count": total,
                     "unresolved": len(unresolved), "untracked": len(untracked)}
+        # The ids, not only the count. A predicate reporting "1 unresolved"
+        # without naming which one has produced a finding nobody can cite: the
+        # verdict trace reached this requirement, had nothing to descend to, and
+        # stopped at the action node. Naming them lets the walk continue to the
+        # record, its evidence and the producer behind it — and any link inferred
+        # from the requirement's *name* instead would be exactly the guess this
+        # engine refuses to make elsewhere.
+        for index, record in enumerate(unresolved[:8]):
+            identifier = str(record.get("record_id") or record.get("id") or "")
+            if identifier:
+                observed[f"unresolved_id_{index}"] = identifier
         return _absence_outcome(
             unresolved, incomplete,
             # "none were observed", never "none exist". Detection here is

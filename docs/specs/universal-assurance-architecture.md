@@ -6408,6 +6408,117 @@ left for someone to hit at runtime.
 
 ---
 
+### 10an. Explainability — every verdict walks to a source
+
+`verdict → condition/rule → subject/claim/action → evidence → source`, starting
+from every reason the verdict names. `release_gate/assurance/trace.py`.
+
+#### 10an.1 The walk existed and was silent where it mattered most
+
+`EvidenceGraph.explain_verdict` already did this walk, descending from the
+**methodology assessment**. That is the right source for a case with a
+methodology and it is empty for one without — which is the shape a zero-config
+run takes, and the most common verdict this product produces. Measured:
+
+```
+verdict: HOLD   fired: ['RG-ZC-001', 'contra_1e59d698c803d285', 'RG-ZC-003']
+unresolved_count: 0
+fired rules with no explanation: all three
+```
+
+Three reasons named, nothing explained, and the actual cause —
+`RG-CONTRA-003`, `RG-CONTRA-005` — nowhere in the answer. A reviewer asking
+"Why HOLD?" got an empty trace.
+
+So the walk now starts from `fired_rules`, which is the verdict's own list of
+what produced it. A verdict names four different kinds of thing and each needs a
+different first step: a **methodology requirement** (the assessment holds its
+result), a **structural rule** (the finding holds `refs` and `observed`), a
+**policy clause** (§10aj established these are clauses of the decision procedure
+rather than findings, explained by what they state), and a **ledger id** — a
+`contra_…` that `family_of` correctly refuses, because it is not a rule, and
+that is still a reason a verdict named.
+
+#### 10an.2 `unexplained` is the load-bearing field
+
+A trace covering four of five reasons would be worse than none, because a reader
+would stop looking. Every fired entry either gets a chain or is named in
+`unexplained` with why. Three accessors keep the distinctions apart, and the
+middle one was missing at first:
+
+* `reaches_source` — the chain got to a named producer.
+* `stopped_at_condition` — nothing lies below it *by nature*; a policy clause
+  states how the decision was reached rather than being about a subject.
+* `walked` — got a chain at all, however far down. Reading only the first two
+  made a chain that reached a subject and found no evidence look skipped.
+
+"Nothing under this by its nature" and "I could not get under this" are different
+answers, and collapsing them is how a gap gets graded as coverage.
+
+#### 10an.3 A HOLD could not be traced to its findings, and a BLOCK could
+
+`decide()` extends `fired_rules` with every **blocking** rule id. The holding
+branch appended only `RG-ZC-003` and put the rule ids inside prose — so
+`RG-ZC-003` said *"the structural analysis found something a person has to look
+at"* and a reviewer asking **which** structure had nowhere to go. A BLOCK was
+traceable to its causes; a HOLD was not, and a HOLD is the verdict a person is
+most often asked to act on.
+
+One line, using the mechanism the blocking branch already used. The zero-config
+HOLD above now reads:
+
+```
+VERDICT HOLD
+  └─ CONDITION RG-CONTRA-003 — 1 claim(s) carry unresolved contradicting evidence
+    └─ SUBJECT c-behaviour
+      └─ EVIDENCE ev_e36d1ce6… — TEST_RESULT
+        └─ SOURCE ci://nightly
+```
+
+#### 10an.4 "1 unresolved" is a finding nobody can cite
+
+At ten thousand agents the walk reached `contradictions.resolved`, had nothing to
+descend to, and stopped at the action node. The requirement's `observed` said
+`{"unresolved": 1}` — a count, with no id.
+
+The temptation was to link it by name: a requirement called
+`contradictions.resolved` is obviously about the contradiction ledger. That is an
+inference from a string, and this engine refuses those elsewhere for good
+reasons. The fix went upstream instead: `NoUnresolved` now names the records it
+counted, so the existing "observed values that are graph nodes" path picks them up
+with no special case. One further hop follows a link the **record itself states**
+— a contradiction names its target claims — rather than one guessed from a
+requirement's name.
+
+The frontier BLOCK now walks from the verdict to `C-0441` to the evidence to
+`worker://rg-1842/00864`. At that scale, with 21,845 graph nodes.
+
+#### 10an.5 No opaque link, enforced rather than asserted
+
+Every `TraceStep` carries a `basis` naming the record it was read from, and an
+empty one is refused in `__post_init__` — a rung that cannot say where it came
+from is exactly the opaque link the brief forbids. `derived` marks a step whose
+value was computed rather than read; most of the interesting rungs are derived,
+and a reader is entitled to know which.
+
+Nothing model-assisted appears as a rung at all. A semantic proposal is a
+candidate permanently (§10r): it is evidence *about* a case, never a link in the
+path that justifies a verdict, and a test asserts no step carries a `PROPOSED`
+status.
+
+#### 10an.6 What the numbers are
+
+Across all sixteen corpus constructions and both demos: **no reason on any
+verdict is unaccounted for**, and every one of the seven non-PROMOTE cases
+reaches a named source. A PROMOTE names only a policy clause and correctly stops
+at the condition — there is no unresolved subject beneath a case that was not
+held.
+
+Both fixes are load-bearing: reverting the holding-ids line drops three tests,
+reverting the named-ids line drops three others.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

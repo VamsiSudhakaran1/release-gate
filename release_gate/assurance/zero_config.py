@@ -991,6 +991,13 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
 
     if holding and decision is Decision.HOLD and RULE_STRUCTURAL_HOLD not in fired:
         fired.append(RULE_STRUCTURAL_HOLD)
+        # The holding rule ids, not only their summaries. `RG-ZC-002` above
+        # already extends `fired` with every blocking rule id, and this branch
+        # did not — so a BLOCK could be traced from the verdict down to the
+        # findings that caused it and a HOLD could not. `RG-ZC-003` said
+        # "structure held this" and a reviewer asking *which* structure had
+        # nowhere to go, because the ids were only ever inside prose.
+        fired.extend(sorted({f.rule_id for f in holding}))
         reasons.extend(f"{f.rule_id}: {f.summary}" for f in holding)
 
     if accepted_holds:
