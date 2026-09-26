@@ -459,6 +459,7 @@ def render_view(view: ApprovalView) -> str:
     state = displays["case_state"]
     completeness = displays["completeness"]
 
+    from release_gate.assurance.canonical import display_text
     lines = [
         "WHAT EXACTLY AM I TAKING RESPONSIBILITY FOR?",
         "=" * RULE_WIDTH,
@@ -530,4 +531,4 @@ def render_view(view: ApprovalView) -> str:
         lines.append("")
 
     lines.append("Release-gate recommends and records. The authorisation is yours.")
-    return "\n".join(lines)
+    return display_text("\n".join(lines))

@@ -195,10 +195,11 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "of `case_digest`; every BoundApproval and Override binds to it"),
         _ref("claim", "claims", "CLAIM_SCHEMA_VERSION", 1, core=True,
              note="the other schema that already refuses a newer version"),
-        _ref("verification", "verification", "VERIFICATION_SCHEMA_VERSION", 2,
+        _ref("verification", "verification", "VERIFICATION_SCHEMA_VERSION", 3,
              core=True,
-             note="at 2 — the first schema in this protocol to have moved, and "
-                  "it moved before anything recorded that it had"),
+             note="at 3. It reached 2 before anything recorded that it had "
+                  "moved; 3 excludes an arrival stamp from an attempt's "
+                  "identity, so attempt ids stop moving with the clock"),
         _ref("approval_packet", "packet", "PACKET_SCHEMA_VERSION", 1, core=True,
              note="the eleven-question document a person reads before acting"),
         _ref("required_evidence", "required_evidence",
@@ -244,6 +245,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("execution", "execution_graph", "EXECUTION_SCHEMA_VERSION", 1),
         _ref("expectation", "expectation", "EXPECTATION_SCHEMA_VERSION", 1),
         _ref("failed_branch", "failed_branches", "FAILED_BRANCH_SCHEMA_VERSION", 1),
+        _ref("hostile_report", "hostile", "HOSTILE_SCHEMA_VERSION", 1,
+             note="the seventeen threats against the engine itself, and which "
+                  "are refused, declared, bought nothing, or are not defended"),
         _ref("identity_claim", "identity", "IDENTITY_SCHEMA_VERSION", 1),
         _ref("independence", "independence", "INDEPENDENCE_SCHEMA_VERSION", 1),
         _ref("level", "level", "LEVEL_SCHEMA_VERSION", 1),

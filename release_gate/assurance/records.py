@@ -226,8 +226,15 @@ def strip_clocks(data: Mapping[str, Any]) -> Dict[str, Any]:
                         if k not in CLOCK_FIELDS
                         and not (k == "timestamp" and nested_arrival)}
         elif isinstance(value, (list, tuple)):
+            # The `stamped_on_arrival` rule applies here too. It did not, and
+            # the asymmetry was load-bearing: a claim's `verification_attempts`
+            # is a *list*, so every attempt's arrival stamp survived into the
+            # claim's digest and the claim moved every second. The mapping branch
+            # above had the check; this one had only half of it.
             out[key] = [
-                {k: v for k, v in item.items() if k not in CLOCK_FIELDS}
+                {k: v for k, v in item.items()
+                 if k not in CLOCK_FIELDS
+                 and not (k == "timestamp" and bool(item.get("stamped_on_arrival")))}
                 if isinstance(item, Mapping) else item
                 for item in value]
         else:

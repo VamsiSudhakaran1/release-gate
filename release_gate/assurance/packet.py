@@ -878,4 +878,13 @@ def build_packet(case: Any, outcome: Any = None, *,
 
 
 def render_packet(packet: ApprovalPacket) -> str:
-    return packet.render()
+    """The text a person reads before authorising.
+
+    Passed through `display_text` because this is the authorization surface: a
+    producer-controlled string reached it carrying a bidirectional override, so
+    `ci://real\u202ekcatta` stored one producer id and *displayed* another. The
+    record keeps what was submitted; what a human reads does not get to lie
+    about its own direction.
+    """
+    from release_gate.assurance.canonical import display_text
+    return display_text(packet.render())

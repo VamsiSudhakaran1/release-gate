@@ -61,6 +61,68 @@ class Coverage:
         }
 
 
+#: How deeply a submitted document may nest before it is refused.
+#:
+#: Python's JSON decoder recurses per level and has no limit of its own, so an
+#: **18 KB file was enough to take the process down with a RecursionError** —
+#: before release-gate saw a single record, and therefore before any bound it
+#: applied to records could matter. For a gate that stands in front of a
+#: deployment, "small file, whole service" is the cheapest denial there is.
+#:
+#: 64 is far past anything a real export nests to; the deepest shape here is a
+#: trace with nested spans, which runs to single digits.
+MAX_JSON_DEPTH = 64
+
+
+def _too_deep(text: str, limit: int = MAX_JSON_DEPTH) -> bool:
+    """Whether this text nests past `limit`, measured without parsing it.
+
+    A scan over the raw characters, because the whole point is to answer before
+    the decoder recurses. Brackets inside strings are skipped, so a payload that
+    spells `{{{{` in a field does not read as depth.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+            if depth > limit:
+                return True
+        elif char in "}]":
+            depth -= 1
+    return False
+
+
+def _loads(text: str) -> Any:
+    """`json.loads` with the depth bound applied first, and a floor under it."""
+    if _too_deep(text):
+        raise ValueError(
+            f"Ingest input nests deeper than {MAX_JSON_DEPTH} levels and was "
+            "refused before parsing. A document this deep exhausts the "
+            "interpreter stack in the JSON decoder rather than in anything that "
+            "could report it")
+    try:
+        return json.loads(text)
+    except RecursionError as exc:
+        # The scan above should make this unreachable. It is kept because a
+        # crash here is a denial of service, and "unreachable" is a claim about
+        # code rather than about every input somebody will send.
+        raise ValueError(
+            "Ingest input could not be decoded without exhausting the "
+            "interpreter stack; it was refused rather than parsed") from exc
+
+
 def load_document(path: str) -> Any:
     """Read a JSON or JSONL export.
 
@@ -76,17 +138,17 @@ def load_document(path: str) -> Any:
         raise ValueError(f"Ingest input is empty: {path}")
 
     if p.suffix.lower() == ".jsonl":
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
+        return [_loads(line) for line in text.splitlines() if line.strip()]
 
     try:
-        return json.loads(text)
+        return _loads(text)
     except json.JSONDecodeError:
         # A .json file that is actually line-delimited is common enough
         # (`promptfoo eval -o out.json` on some versions, span dumps) that
         # falling back beats failing.
         lines = [line for line in text.splitlines() if line.strip()]
         if len(lines) > 1:
-            return [json.loads(line) for line in lines]
+            return [_loads(line) for line in lines]
         raise
 
 

@@ -62,7 +62,7 @@ __all__ = [
     "VerificationTarget",
 ]
 
-VERIFICATION_SCHEMA_VERSION = 2
+VERIFICATION_SCHEMA_VERSION = 3
 
 
 class VerificationError(ValueError):
@@ -236,7 +236,10 @@ class VerificationAttempt:
     input_state: Optional[str] = None
     result: Mapping[str, Any] = field(default_factory=dict)
     evidence: Tuple[str, ...] = ()
-    timestamp: str = field(default_factory=_utc_now)
+    #: Left empty to mean "release-gate stamps it on arrival", which is what
+    #: `stamped_on_arrival` then records. A caller that knows when the check
+    #: actually ran passes it, and that value is part of the attempt's identity.
+    timestamp: str = ""
     independence_lineage: Tuple[str, ...] = ()
     trust_status: TrustStatus = TrustStatus.NOT_ESTABLISHED
     status: VerificationStatus = VerificationStatus.UNKNOWN
@@ -245,6 +248,9 @@ class VerificationAttempt:
     schema_version: int = VERIFICATION_SCHEMA_VERSION
 
     verification_id: str = field(default="", init=False)
+    #: True when the timestamp is release-gate's arrival clock rather than a time
+    #: anybody observed. Set here, never by a caller (Invariant 1).
+    stamped_on_arrival: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "method", VerificationMethod(self.method))
@@ -265,6 +271,10 @@ class VerificationAttempt:
                 "verifier is required for an attempt that ran: a check nobody is "
                 "answerable for cannot be weighed or corroborated (Invariant 11)")
 
+        if not str(self.timestamp or "").strip():
+            object.__setattr__(self, "stamped_on_arrival", True)
+            object.__setattr__(self, "timestamp", _utc_now())
+
         object.__setattr__(self, "verification_id",
                            short_id("ver", digest_object(self.identity())))
 
@@ -280,6 +290,22 @@ class VerificationAttempt:
         absent, two labs reporting the same outcome collided into one record and
         a case could not hold both. Ids from version 1 do not survive the change;
         the version in the digest makes that explicit rather than silent.
+
+        **At version 3 an arrival stamp is excluded.** `timestamp` defaulted to
+        release-gate's own clock, so an attempt built without one got a different
+        id every second — which moved the replication group ids derived from it,
+        the evidence fold containing those, and the case digest. Two identical
+        sessions a second apart produced two different cases, and the
+        determinism §10al claims for a restart held only within a single second.
+        It surfaced as an intermittent failure in the chaos suite's own
+        `duplicate_case` and `restart` faults.
+        
+        A timestamp a caller *supplied* stays in: that is a claim about when the
+        check ran, and two runs an hour apart really are two attempts. An arrival
+        stamp is not such a claim — it is when the record reached us — and
+        `EvidenceRecord` had already drawn exactly this line (§10ah). This is the
+        same fix, one layer down, and the version bump makes the id change
+        explicit rather than silent.
         """
         return {
             "schema_version": VERIFICATION_SCHEMA_VERSION,
@@ -290,7 +316,8 @@ class VerificationAttempt:
             "input_state": self.input_state,
             "independence_lineage": list(self.independence_lineage),
             "status": self.status.value,
-            "timestamp": self.timestamp,
+            # Excluded when release-gate stamped it: see the note above.
+            "timestamp": "" if self.stamped_on_arrival else self.timestamp,
             "evidence": list(self.evidence),
             "result": dict(self.result),
         }
@@ -349,6 +376,11 @@ class VerificationAttempt:
             "record_type": "verification",
             "record_id": self.verification_id,
             "verification_id": self.verification_id,
+            # Carried, so a round trip does not turn an arrival stamp into a
+            # caller-supplied one. `from_dict` re-supplied the timestamp it had
+            # just written, which made it explicit again and put the clock back
+            # into the id — the fix undone by its own serialisation.
+            "stamped_on_arrival": self.stamped_on_arrival,
             "verifier": self.verifier,
             "method": self.method.value,
             "target": self.target.to_dict() if self.target else None,
@@ -384,7 +416,8 @@ class VerificationAttempt:
             input_state=data.get("input_state"),
             result=data.get("result") or {},
             evidence=tuple(data.get("evidence") or ()),
-            timestamp=data.get("timestamp") or _utc_now(),
+            timestamp=("" if data.get("stamped_on_arrival")
+                       else (data.get("timestamp") or "")),
             independence_lineage=tuple(data.get("independence_lineage") or ()),
             trust_status=TrustStatus(data.get("trust_status",
                                               TrustStatus.NOT_ESTABLISHED.value)),
@@ -664,7 +697,20 @@ class VerificationGraph:
     # ── commitments ─────────────────────────────────────────────────────────
 
     def digest(self) -> str:
-        return digest_object({"attempts": [a.to_dict() for a in self._attempts],
+        """A commitment to what these attempts *are*.
+
+        Built from each attempt's `identity()` rather than its full
+        serialisation, so an arrival stamp does not enter it. Hashing `to_dict()`
+        put the clock back in one layer above the attempt ids: the ids were
+        stable and the graph digest still moved every second, which moved the
+        coverage row that carries it and with it the case digest.
+
+        Nothing is lost by the narrowing. `identity()` is already the complete
+        set of things that make an attempt distinct — it is what the ids are
+        derived from — so two graphs with equal digests hold the same checks on
+        the same targets with the same results.
+        """
+        return digest_object({"attempts": [a.identity() for a in self._attempts],
                               "schema_version": VERIFICATION_SCHEMA_VERSION})
 
     def summary(self) -> Dict[str, Any]:
@@ -757,6 +803,22 @@ class VerificationGraph:
 
 def _retarget(attempt: VerificationAttempt,
               target: VerificationTarget) -> VerificationAttempt:
-    """Attach a target to an attempt that arrived without one."""
+    """Attach a target to an attempt that arrived without one.
+
+    `dataclasses.replace` re-passes every init field to the constructor, so the
+    arrival timestamp it had already filled in came back as a *caller-supplied*
+    one and `stamped_on_arrival` — which is `init=False` and cannot ride along —
+    reset to False. The clock went straight back into the attempt's identity, and
+    the id moved every second again: the fix undone by a retarget.
+    
+    So the flag is carried across deliberately. The timestamp is rebuilt as an
+    arrival stamp and then the original value is put back, which keeps the
+    recorded arrival time exact while leaving it out of the identity.
+    """
     import dataclasses
-    return dataclasses.replace(attempt, target=target)
+    rebuilt = dataclasses.replace(
+        attempt, target=target,
+        timestamp="" if attempt.stamped_on_arrival else attempt.timestamp)
+    if attempt.stamped_on_arrival:
+        object.__setattr__(rebuilt, "timestamp", attempt.timestamp)
+    return rebuilt

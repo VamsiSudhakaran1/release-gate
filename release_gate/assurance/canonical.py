@@ -262,6 +262,62 @@ MULTISET_ALGO = "rg-mset-1"
 _MULTISET_MODULUS = 1 << 256
 
 
+#: Characters that change what a string *looks like* without changing what it
+#: *is*. Bidirectional overrides are the dangerous ones: `ci://real\u202ekcatta`
+#: stores one producer and displays another, and the display is what a person
+#: reads before authorising.
+_DECEPTIVE = {
+    "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",   # bidi embedding/override
+    "\u2066", "\u2067", "\u2068", "\u2069",             # bidi isolates
+    "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff",   # zero-width, BOM
+    "\u00ad",                                            # soft hyphen
+}
+
+
+def display_text(rendered: str) -> str:
+    """A whole rendered report, made safe to show without touching its layout.
+
+    The same substitution as `safe_for_display` for deceptive characters, but
+    newlines and tabs are left alone because here they are the report's own
+    structure rather than a producer's content. Applied at the render
+    chokepoints, so a field added later is covered without anyone remembering to
+    wrap it.
+    """
+    if not any(char in rendered for char in _DECEPTIVE):
+        return rendered
+    return "".join(f"<U+{ord(c):04X}>" if c in _DECEPTIVE else c for c in rendered)
+
+
+def safe_for_display(value: Any) -> str:
+    """One producer-controlled string, made safe to show a person.
+
+    Applied at **render** time and never at storage time. What a producer sent is
+    kept exactly as sent — rewriting a record to make it presentable would be
+    release-gate editing evidence, and the digest would no longer commit to what
+    arrived. What a human reads is a different artifact with a different job, and
+    its job includes not lying about its own direction.
+
+    Deceptive characters become a visible `<U+XXXX>`, so the reader sees that
+    something was there rather than the string silently losing it. Control
+    characters that would break a line-oriented report are escaped for the same
+    reason: a newline inside a producer id can forge a row in a rendered table.
+    """
+    text = str(value)
+    out = []
+    for char in text:
+        if char in _DECEPTIVE:
+            out.append(f"<U+{ord(char):04X}>")
+        elif char in ("\n", "\r"):
+            out.append("\\n" if char == "\n" else "\\r")
+        elif char == "\t":
+            out.append("\\t")
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            out.append(f"<U+{ord(char):04X}>")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 def multiset_add(accumulator: int, digest: str) -> int:
     """Fold one record digest into a multiset accumulator. Order-independent."""
     value = int(content_id_hex(digest)[:DIGEST_HEX_LEN].rjust(DIGEST_HEX_LEN, "0"), 16)

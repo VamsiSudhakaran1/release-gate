@@ -211,6 +211,53 @@ class ContentReference:
                    detail=data.get("detail") or {})
 
 
+class PathNotContained(ValueError):
+    """A locator resolved outside the root it was allowed to read from."""
+
+
+def _contained(locator: str, root: Optional[Any] = None) -> Path:
+    """Resolve a locator inside `root`, or refuse.
+
+    Symlinks are resolved *before* the containment test, so a link inside the
+    root pointing out of it is caught: checking the unresolved path would let
+    `evidence/link -> /etc/shadow` through on the strength of its spelling,
+    which is the same "a name is not a fact" error the rest of this engine
+    refuses to make.
+    """
+    if root is None:
+        # Permissive by default, and the default is a considered one rather than
+        # an oversight. In every flow this engine owns, the subject's locator
+        # comes from the file the *operator* named — `_subject_for` reads it off
+        # the input artifact release-gate hashed itself — so a submitted document
+        # cannot choose what gets read. Defaulting to a containment root broke
+        # twelve legitimate absolute-path callers to close a hole the core's own
+        # paths do not open.
+        #
+        # A caller that builds a subject from data it did not choose is in a
+        # different position, and `root=` is for them. Stated here rather than
+        # left implicit, because "the default is safe if you only use it the way
+        # we do" is exactly the assumption a security review exists to write
+        # down.
+        return Path(locator)
+    base = Path(root)
+    try:
+        base = base.resolve()
+        candidate = (base / locator).resolve() if not Path(locator).is_absolute() \
+            else Path(locator).resolve()
+    except (OSError, RuntimeError) as exc:            # loops, bad encodings
+        raise PathNotContained(
+            f"{locator!r} could not be resolved: {type(exc).__name__}") from exc
+    if candidate != base and base not in candidate.parents:
+        raise PathNotContained(
+            f"{locator!r} resolves to {str(candidate)!r}, outside the root "
+            f"{str(base)!r} this check may read from. A locator arrives in the "
+            "submitted document, so reading wherever it points would let the "
+            "document choose which of the host's files get hashed — and the "
+            "result is returned, which makes that a digest oracle. Pass the "
+            "root you mean if this path is intended")
+    return candidate
+
+
 @dataclass(frozen=True)
 class MutationCheck:
     """Result of asking whether a subject is still what it was."""
@@ -434,7 +481,8 @@ class AssuranceSubject:
     # ── mutation detection ──────────────────────────────────────────────────
 
     def recheck(self, resolver: Optional[Callable[["AssuranceSubject"], Optional[str]]] = None,
-                items: Optional[Iterable[Any]] = None) -> MutationCheck:
+                items: Optional[Iterable[Any]] = None,
+                root: Optional[Any] = None) -> MutationCheck:
         """Is this still the thing that was recorded?
 
         `resolver` lets a caller supply an observed digest for references this
@@ -443,6 +491,22 @@ class AssuranceSubject:
 
         Never returns UNCHANGED on a guess: anything we cannot confirm is
         UNVERIFIABLE, which is a distinct answer from "fine".
+
+        **`root` bounds what may be read from disk, and a caller handling
+        untrusted locators should pass one.** This method hashes whatever the
+        locator names and returns the result in `observed_digest`, which makes an
+        unbounded read a **digest oracle**: guess a file's contents, submit the
+        guess as the subject digest, and read UNCHANGED or MUTATED to learn
+        whether the guess was right. With `root` set, a locator is resolved
+        inside it — symlinks first, so a link inside the root pointing out of it
+        is caught — and anything that escapes is refused by name rather than
+        read.
+
+        With no `root` the locator is read as given. That default is deliberate:
+        in the flows this engine owns, the subject's reference comes from the
+        input file the operator named, so nothing a submitted document says can
+        steer it. A caller that constructs subjects from data it did not choose
+        is in a different position and should pass the root it means.
         """
         if self.digest is None:
             return MutationCheck(
@@ -450,7 +514,7 @@ class AssuranceSubject:
                 "subject has no digest, so mutation cannot be detected at all")
 
         try:
-            observed = self._observe(resolver=resolver, items=items)
+            observed = self._observe(resolver=resolver, items=items, root=root)
         except Exception as exc:
             # An object store that is down, a revoked credential, an I/O error.
             # `UNVERIFIABLE` is what this method promises for anything it cannot
@@ -480,15 +544,15 @@ class AssuranceSubject:
             "content digest differs from the recorded subject — any approval bound "
             "to this subject no longer applies")
 
-    def _observe(self, resolver=None, items=None) -> Optional[str]:
+    def _observe(self, resolver=None, items=None, root=None) -> Optional[str]:
         kind = self.content_reference.kind
 
         if kind is ReferenceKind.FILE:
-            path = Path(self.content_reference.locator)
+            path = _contained(self.content_reference.locator, root)
             return digest_file(path) if path.is_file() else None
 
         if kind is ReferenceKind.DIRECTORY:
-            path = Path(self.content_reference.locator)
+            path = _contained(self.content_reference.locator, root)
             return directory_manifest_digest(path)[0] if path.is_dir() else None
 
         if kind is ReferenceKind.INLINE:

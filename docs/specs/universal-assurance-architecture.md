@@ -6228,6 +6228,186 @@ way.
 
 ---
 
+### 10am. Security review — the engine as the target
+
+Seventeen threats run as executable attacks, five defects fixed.
+`release_gate/assurance/hostile.py`.
+
+#### 10am.1 A different threat model from the anti-gaming suite
+
+`test_assurance_anti_gaming.py` attacks the **argument**: a producer shaping
+evidence to buy a verdict it has not earned. This attacks the **engine**: an
+adversary who controls the submitted document, the locators inside it, or the
+strings a human reads before authorising. Gaming yields a wrong verdict; an
+engine compromise yields arbitrary file reads, a crashed gate, or a report that
+lies about its own contents.
+
+The two stay in separate files. Reading one file's coverage as the other's is
+the over-claim the split exists to prevent.
+
+Outcomes reuse §10al's three recoveries — `REFUSED`, `DECLARED`, `IDENTICAL` —
+plus a fourth that is not a grade: **`NOT_DEFENDED`**, which requires a stated
+`limited_by` in the constructor. `UNSUPPORTED_THREATS` in the anti-gaming suite
+set that precedent, and a threat model that graded everything "handled" would be
+worse than none because a reader would stop looking.
+
+#### 10am.2 Five defects
+
+**Path traversal, and a digest oracle behind it.** `AssuranceSubject.recheck`
+hashed whatever `content_reference.locator` named — `/etc/passwd` and
+`../../../../etc/hostname` both read — and returned the result in
+`observed_digest`. That is worse than a read: guess a file's contents, submit the
+guess as the subject digest, and read UNCHANGED or MUTATED to learn whether the
+guess was right. `recheck(root=…)` now resolves inside a stated root, symlinks
+first so a link inside the root pointing out of it is caught.
+
+The default stayed permissive, and the reasoning is worth recording because the
+first attempt got it wrong. Defaulting to a containment root broke twelve tests,
+which sent me looking for *where the locator comes from*: `_subject_for` reads it
+off the input artifact release-gate hashed itself, so in every flow this engine
+owns the locator is the file the **operator** named and a submitted document
+cannot steer it. Default-denying would have broken legitimate absolute-path
+callers to close a hole the core's own paths do not open. A caller that builds
+subjects from data it did not choose is in a different position, and the
+docstring says so rather than leaving "the default is safe if you use it the way
+we do" as an unwritten assumption.
+
+**18 KB of nesting took the gate down.** Python's JSON decoder recurses per level
+and has no limit of its own, so a small file raised `RecursionError` in
+`json.loads` — before release-gate saw a record, and therefore before any bound
+it applied to records could matter. For something standing in front of a
+deployment, "small file, whole service" is the cheapest denial there is. Bounded
+at the loader with a character scan that skips brackets inside strings, so a
+payload spelling `{{{{` in a field does not read as depth, plus a `RecursionError`
+guard underneath because "unreachable" is a claim about code rather than about
+every input somebody will send.
+
+**A 20 MB field was accepted and retained in the case.** Now refused before
+parsing, along with records nested past 64 or carrying more than 4,096 keys.
+Every bound is a *skip* with a note, never an exception and never a silent drop:
+a bound that quietly discards a record is itself evidence omission, which is the
+threat Invariant 13 names and the defect §10ak found.
+
+**`record_type` that was not a string crashed detection.** `record_type in
+ENVELOPE_RECORD_TYPES` raised `TypeError: unhashable type` on a mapping, inside
+`detect_document`, before any guard could report it.
+
+**The authorization surface could be spoofed.** The approval packet is what a
+person reads before binding themselves to a state, and two producer-controlled
+strings reached it intact:
+
+* A bidirectional override — `ci://real‮kcatta` stored one producer id and
+  *displayed* another. Now rendered as `<U+202E>` at the render chokepoint, so
+  the reader sees that something was there. Applied at render time and never at
+  storage time: rewriting a record to make it presentable would be release-gate
+  editing evidence, and the digest would stop committing to what arrived.
+* A newline in a producer id, which rendered as **its own line** in the evidence
+  list, indistinguishable from a real entry:
+
+        - ev_071c…: TEST_RESULT from ci://x
+          - FORGED: verified by security [VERIFIED]
+
+  Refused rather than escaped. Unlike a coverage note there is no legitimate
+  producer id with a line break in it, and a malformed identifier should not be
+  quietly cleaned up and accepted.
+
+#### 10am.3 What was already held, and where the guard actually sits
+
+Four of the seventeen needed a fix — path traversal, DoS, oversized payload and
+schema abuse. The fifth defect, display spoofing, is not one of the seventeen at
+all: it surfaced while probing schema abuse, and it is the most directly
+dangerous of the five because it attacks the surface a human authorises on rather
+than the engine behind it.
+
+The remaining thirteen needed no change. Several are worth naming because the *location*
+of the defence is not where a reader would guess.
+
+**Event injection** is defended at the **case boundary**, not in the event
+converter. A forged event claiming `release_gate` identity and `in-process`
+basis produces a record asserting `OBSERVED` — and entering a case re-derives it
+to `DECLARED` from an `external`, `unauthenticated` producer. A caller that
+trusts `events_to_records` output *without* passing it through a case does not
+get that guard, which is a real caveat rather than a theoretical one.
+
+**Approval forgery** splits in two. An approval built from scratch fails, because
+the digests it must name are content-addressed. An approval that was genuinely
+issued and then had its approver field swapped reads `VALID` — because
+`check_approval` asks whether an approval *binds to this state*, not whether it
+is authentic. That is the documented division: `AuthSource` records how an
+identity was established, including `ASSERTED` for one nobody checked, and the
+integrity of an approval store is the deployment's.
+
+**SSRF is structurally absent** from the core, which imports no networking module
+at all. The first version of that check grepped for `urlopen|requests\.` and
+flagged **its own source**, because the pattern is a string literal in it — the
+fourth time in this architecture a substring check has read text instead of
+meaning. It walks the AST now.
+
+#### 10am.4 The gap that is named rather than closed
+
+**Cross-tenant evidence mixing** is `NOT_DEFENDED`. Two tenants' records land in
+one case and nothing in the core separates them, because there is no tenancy
+concept in the core. Inventing one inside a security review is the wrong place to
+design it. What limits the threat today: a case is built from one submitted
+document by one caller, so separation is the deployment's boundary — and every
+record carries the producer it came from, so mixing is visible after the fact
+even though nothing prevents it.
+
+#### 10am.5 A sixth defect: the case digest moved with the clock
+
+Found by the chaos suite failing its own claim. §10al published that a resumed
+session's digest equals an uninterrupted one's, and its `restart` and
+`duplicate_case` faults began failing intermittently under test reordering. Both
+faults ran inside a single second, so neither could see what was wrong: **two
+identical sessions a second apart produced two different case digests.**
+
+Four leaks, each hiding behind the last, and each found only after fixing the one
+in front of it:
+
+1. `VerificationAttempt.identity()` included `timestamp`, which defaulted to
+   release-gate's own clock. `EvidenceRecord` had drawn exactly this line already
+   (§10ah) — a producer's stated time identifies, an arrival stamp does not — and
+   verification attempts never got the same treatment. Now carries
+   `stamped_on_arrival`, set by the engine and never by a caller, and excluded
+   from identity when set. `VERIFICATION_SCHEMA_VERSION` moves to 3, which the
+   protocol drift guard duly caught.
+2. `to_dict`/`from_dict` dropped the flag, so a round trip re-supplied the
+   timestamp release-gate had just written and made it caller-supplied again. The
+   fix undone by its own serialisation.
+3. `_retarget` uses `dataclasses.replace`, which re-passes every init field —
+   so the filled-in timestamp came back as explicit and `stamped_on_arrival`,
+   being `init=False`, reset. The fix undone by a retarget.
+4. `strip_clocks` applied the arrival rule to nested *mappings* but only half of
+   it to nested *lists* — and a claim's `verification_attempts` is a list, so
+   every attempt's arrival stamp survived into the claim's digest.
+5. `VerificationGraph.digest()` hashed each attempt's full serialisation rather
+   than its identity, putting the clock back one layer above the ids: the ids
+   were stable and the graph digest still moved, which moved the coverage row
+   carrying it and with it the case digest.
+
+Two things worth keeping from how this went. The claim in §10al was tested with a
+patched clock — and the patch covered `evidence._utc_now` while the leak was in
+`verification._utc_now`, so a true-looking test guarded nothing. And the defect
+surfaced as *flakiness*, which is the form a determinism bug takes: the suite was
+telling me the claim was false and it read as noise.
+
+#### 10am.6 Two shadowed exports, found by accident
+
+Checking that `hostile.Threat` did not collide with anything revealed that it
+did: it was silently replacing `trust.Threat` in the package namespace. Renaming
+it to `Attack` fixed that and the audit turned up two pre-existing collisions —
+`EvidenceExpectation` (`methodology` shadowed by `expectation`) and
+`RetentionReason` (`compaction` shadowed by `failed_branches`). In both cases the
+two classes are genuinely different types, and one of each pair is unreachable
+through the package.
+
+Not fixed here: renaming a public export is a breaking change and not a call to
+make inside a security review. The current resolution is pinned by a test
+instead, so it cannot get worse silently and the collision is named rather than
+left for someone to hit at runtime.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

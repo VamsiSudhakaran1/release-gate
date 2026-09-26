@@ -396,14 +396,24 @@ def _f_restart() -> FaultResult:
     resumed_session = _session(base[:3])
     resumed_session.extend([dict(r) for r in base[3:]])
     resumed = resumed_session.finalize()
-    same = _shape(resumed) == _shape(uninterrupted)
+    whole, split = _shape(uninterrupted), _shape(resumed)
+    same = whole == split
+    # Which field moved, not just that one did. This check has failed
+    # intermittently under a full-suite run and not in isolation, and a bare
+    # "shape_identical: False" gives the next person nothing to work from —
+    # the point of a determinism check is to say what stopped being
+    # deterministic.
+    differing = {key: {"uninterrupted": str(whole[key])[:120],
+                       "resumed": str(split.get(key))[:120]}
+                 for key in whole if whole[key] != split.get(key)}
     return FaultResult(
         name="restart",
         recovery=Recovery.IDENTICAL if same else Recovery.DECLARED,
         signal=f"resumed digest == uninterrupted digest: "
-               f"{resumed.case.case_digest == uninterrupted.case.case_digest}",
+               f"{resumed.case.case_digest == uninterrupted.case.case_digest}"
+               + (f"; differing: {sorted(differing)}" if differing else ""),
         perturbed=True,
-        detail={"shape_identical": same,
+        detail={"shape_identical": same, "differing": differing,
                 "verdict": resumed.case.verdict.decision.value})
 
 

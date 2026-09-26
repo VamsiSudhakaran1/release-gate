@@ -223,7 +223,9 @@ def _looks_like_envelope(doc: Any) -> int:
     if not isinstance(doc, list) or not doc:
         return 0
     typed = sum(1 for r in doc[:200]
-                if isinstance(r, Mapping) and r.get("record_type") in ENVELOPE_RECORD_TYPES)
+                if isinstance(r, Mapping)
+                and isinstance(r.get("record_type"), str)
+                and r.get("record_type") in ENVELOPE_RECORD_TYPES)
     sample = min(len(doc), 200)
     return int(100 * typed / sample) if sample else 0
 
@@ -616,8 +618,41 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
         if not isinstance(row, Mapping):
             skip("record is not an object")
             continue
+        # Bounds before parsing. A submitted document is attacker-controlled in
+        # the deployments this engine is built for, and three shapes used to get
+        # past this point and take the process with them rather than being
+        # refused: a record nested thousands deep (RecursionError inside the
+        # canonicaliser), a `record_type` that is not hashable (TypeError on the
+        # membership test below), and a single field holding tens of megabytes,
+        # which was accepted and then *retained* in the case.
+        #
+        # Each is a `skip`, never an exception and never a silent drop: a bound
+        # that quietly discards a record is itself evidence omission, which is
+        # the threat Invariant 13 names. The skip is counted, noted, and shows
+        # up in the record_mapping coverage row like any other record that did
+        # not make it.
+        breach = _exceeds_bounds(row)
+        if breach:
+            skip(f"record refused: {breach}")
+            notes.append(f"a record was refused before parsing: {breach}")
+            continue
         record_type = row.get("record_type")
-        producer = _record_producer(row, fallback)
+        if not isinstance(record_type, str):
+            skip("record_type is not a string")
+            notes.append(
+                f"a record declares record_type {type(record_type).__name__}, "
+                "which cannot name a kind; it was refused rather than parsed")
+            continue
+        try:
+            # Inside the guard: a malformed producer identity is a reason to
+            # refuse one record, never to take the whole run down. It sat outside
+            # and a control character in a producer id propagated out of
+            # `normalise` as an exception.
+            producer = _record_producer(row, fallback)
+        except Exception as exc:
+            skip(f"record rejected: {type(exc).__name__}")
+            notes.append(f"a record names an unusable producer: {exc}")
+            continue
         try:
             if record_type == "evidence":
                 evidence_rows.append((row, producer))
@@ -895,6 +930,44 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
             coverage_note=(f"{note} (split half: {label})" if note
                            else f"split half: {label}")))
     return halves
+
+
+#: Bounds on one submitted record. Values, not magic numbers scattered about,
+#: so a deployment that genuinely needs more can see what it is changing.
+MAX_RECORD_DEPTH = 64
+MAX_FIELD_CHARS = 1_048_576          # 1 MiB of text in any single field
+MAX_RECORD_KEYS = 4_096
+
+
+def _exceeds_bounds(row: Mapping[str, Any]) -> str:
+    """The first bound this record breaks, named, or an empty string.
+
+    Iterative rather than recursive on purpose: a depth check that recursed
+    would hit the very stack limit it exists to prevent, which is the kind of
+    guard that only works on inputs that did not need it.
+    """
+    stack: List[Tuple[Any, int]] = [(row, 0)]
+    keys = 0
+    while stack:
+        value, depth = stack.pop()
+        if depth > MAX_RECORD_DEPTH:
+            return (f"nested deeper than {MAX_RECORD_DEPTH}; a record this deep "
+                    "exhausts the stack in canonicalisation rather than parsing")
+        if isinstance(value, Mapping):
+            keys += len(value)
+            if keys > MAX_RECORD_KEYS:
+                return f"more than {MAX_RECORD_KEYS} keys in one record"
+            for key, item in value.items():
+                if isinstance(key, str) and len(key) > MAX_FIELD_CHARS:
+                    return f"a key longer than {MAX_FIELD_CHARS} characters"
+                stack.append((item, depth + 1))
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                stack.append((item, depth + 1))
+        elif isinstance(value, str) and len(value) > MAX_FIELD_CHARS:
+            return (f"a field of {len(value):,} characters, over the "
+                    f"{MAX_FIELD_CHARS:,} bound; it would be retained in the case")
+    return ""
 
 
 def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],

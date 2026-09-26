@@ -255,3 +255,113 @@ class TestTheDefectsFound:
                      for r in outcome.case.records("evidence")}
         assert "ci://first" in producers
         assert "ci://second" not in producers
+
+
+class TestDeterminismAcrossTheClock:
+    """The determinism this file claims, measured across a clock boundary.
+
+    Every fault above ran inside one second, so none of them could see this:
+    two identical sessions a second apart produced two different case digests.
+    It surfaced as an intermittent failure of this file's own `restart` and
+    `duplicate_case` faults under test reordering — the suite catching its own
+    claim being false.
+    """
+
+    def _at(self, stamp):
+        from unittest import mock
+        import release_gate.assurance.evidence as evidence_module
+        import release_gate.assurance.verification as verification_module
+        from release_gate.assurance.chaos import _base, _session
+        document = _base()
+        with mock.patch.object(verification_module, "_utc_now", return_value=stamp), \
+             mock.patch.object(evidence_module, "_utc_now", return_value=stamp):
+            return _session(document).finalize()
+
+    def test_two_sessions_five_years_apart_produce_one_case(self):
+        first = self._at("2026-01-01T00:00:00Z")
+        second = self._at("2031-07-07T07:07:07Z")
+        assert first.case.case_digest == second.case.case_digest
+
+    def test_and_a_second_apart_which_is_how_this_was_found(self):
+        import time
+        from release_gate.assurance.chaos import _base, _session
+        document = _base()
+        first = _session(document).finalize()
+        time.sleep(max(0.0, 1.05 - (time.time() % 1)))
+        second = _session(document).finalize()
+        assert first.case.created_at != second.case.created_at, (
+            "the two runs did not straddle a second boundary, so this proves "
+            "nothing; the sleep above is meant to guarantee they do")
+        assert first.case.case_digest == second.case.case_digest
+
+    def test_a_verification_attempt_leaves_its_arrival_stamp_out_of_its_identity(self):
+        from release_gate.assurance.verification import (
+            VerificationAttempt, VerificationMethod, VerificationStatus)
+        arrival = VerificationAttempt(method=VerificationMethod.TEST_SUITE,
+                                      verifier="ci://pytest",
+                                      status=VerificationStatus.PASSED)
+        assert arrival.stamped_on_arrival is True
+        assert arrival.identity()["timestamp"] == ""
+        assert arrival.timestamp, "the stamp is still recorded, just not identifying"
+
+    def test_but_a_supplied_timestamp_is_part_of_it(self):
+        """A time a caller states is a claim about when the check ran, and two
+        runs an hour apart really are two attempts."""
+        from release_gate.assurance.verification import (
+            VerificationAttempt, VerificationMethod, VerificationStatus)
+        def attempt(stamp):
+            return VerificationAttempt(method=VerificationMethod.TEST_SUITE,
+                                       verifier="ci://pytest", timestamp=stamp,
+                                       status=VerificationStatus.PASSED)
+        morning, evening = attempt("2026-01-01T09:00:00Z"), attempt("2026-01-01T18:00:00Z")
+        assert morning.stamped_on_arrival is False
+        assert morning.verification_id != evening.verification_id
+
+    def test_a_retarget_keeps_the_arrival_flag(self):
+        """`dataclasses.replace` re-passes the filled-in timestamp as a supplied
+        one, and `stamped_on_arrival` is init=False so it cannot ride along. The
+        fix was undone by a retarget."""
+        from release_gate.assurance.verification import (
+            VerificationAttempt, VerificationMethod, VerificationStatus,
+            VerificationTarget, _retarget)
+        original = VerificationAttempt(method=VerificationMethod.TEST_SUITE,
+                                       verifier="ci://pytest",
+                                       status=VerificationStatus.PASSED)
+        moved = _retarget(original, VerificationTarget.claim("c1"))
+        assert moved.stamped_on_arrival is True
+        assert moved.timestamp == original.timestamp
+
+    def test_the_round_trip_keeps_it_too(self):
+        from release_gate.assurance.verification import (
+            VerificationAttempt, VerificationMethod, VerificationStatus)
+        original = VerificationAttempt(method=VerificationMethod.TEST_SUITE,
+                                       verifier="ci://pytest",
+                                       status=VerificationStatus.PASSED)
+        restored = VerificationAttempt.from_dict(original.to_dict())
+        assert restored.stamped_on_arrival is True
+        assert restored.verification_id == original.verification_id
+
+    def test_strip_clocks_applies_the_rule_inside_a_list(self):
+        """A claim's `verification_attempts` is a list, so every attempt's
+        arrival stamp survived into the claim's digest. The mapping branch had
+        the check; the list branch had half of it."""
+        from release_gate.assurance.records import strip_clocks
+        stripped = strip_clocks({
+            "record_id": "c1",
+            "verification_attempts": [
+                {"verifier": "a", "timestamp": "2026-01-01T00:00:00Z",
+                 "stamped_on_arrival": True},
+                {"verifier": "b", "timestamp": "2026-01-01T00:00:00Z",
+                 "stamped_on_arrival": False}]})
+        attempts = stripped["verification_attempts"]
+        assert "timestamp" not in attempts[0]
+        assert attempts[1]["timestamp"] == "2026-01-01T00:00:00Z"
+
+    def test_the_graph_digest_commits_to_identity_not_arrival(self):
+        """Attempt ids were stable and the graph digest still moved, because it
+        hashed the full serialisation one layer above them."""
+        import inspect
+        from release_gate.assurance.verification import VerificationGraph
+        source = inspect.getsource(VerificationGraph.digest)
+        assert "a.identity()" in source
+        assert "a.to_dict()" not in source

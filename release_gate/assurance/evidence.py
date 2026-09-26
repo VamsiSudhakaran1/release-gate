@@ -215,7 +215,27 @@ class Producer:
             raise EvidenceError(
                 "producer_id is required: evidence with no identifiable producer cannot "
                 "be weighed, corroborated, or held to account")
-        object.__setattr__(self, "producer_id", self.producer_id.strip())
+        producer_id = self.producer_id.strip()
+        # An identifier is not free text, and a control character inside one is
+        # not content — it is a way to forge the report a person authorises on.
+        # A producer id carrying a newline rendered as a *second row* in the
+        # approval packet, indistinguishable from a real evidence line:
+        #
+        #     - ev_071c…: TEST_RESULT from ci://x
+        #       - FORGED: verified by security [VERIFIED]
+        #
+        # Refused rather than escaped, because unlike a coverage note there is no
+        # legitimate producer id with a line break in it, and a malformed
+        # identifier is exactly the kind of thing that should not be quietly
+        # cleaned up and accepted.
+        control = next((c for c in producer_id if ord(c) < 0x20 or ord(c) == 0x7F),
+                       None)
+        if control is not None:
+            raise EvidenceError(
+                f"producer_id contains a control character (U+{ord(control):04X}). "
+                "An identifier is not free text: a line break here forges a row "
+                "in the report a person reads before authorising")
+        object.__setattr__(self, "producer_id", producer_id)
         object.__setattr__(self, "kind", ProducerKind(self.kind))
 
     def to_dict(self) -> Dict[str, Any]:
