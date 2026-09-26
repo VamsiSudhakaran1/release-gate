@@ -624,6 +624,15 @@ def render(run: FrontierRun, *, attention_limit: int = 8) -> str:
         "",
     ]
 
+    # The funnel, before the list it produced. A reader who sees the items
+    # without the reduction cannot tell whether four items came out of four
+    # records or four hundred thousand — and one who sees the reduction without
+    # the retained-critical line beside it is being invited to read a big number
+    # as a good one, which is what that line is for.
+    from release_gate.assurance.compression import measure_compression
+    lines.extend(measure_compression(outcome).render().splitlines())
+    lines.append("")
+
     items = outcome.attention.top(attention_limit)
     for index, item in enumerate(items, start=1):
         payload = item.to_dict()

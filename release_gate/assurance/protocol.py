@@ -231,6 +231,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("chaos_report", "chaos", "CHAOS_SCHEMA_VERSION", 1,
              note="fault injection over the evidence path, and which of the "
                   "three recoveries each fault's nature permits"),
+        _ref("compression", "compression", "COMPRESSION_SCHEMA_VERSION", 1,
+             note="Human Attention Compression: how much a person does not have "
+                  "to read, with each stage's basis and none of it a safety claim"),
         _ref("corpus_case", "corpus", "CORPUS_SCHEMA_VERSION", 1,
              note="the assurance benchmark corpus: constructed cases whose "
                   "structure is known, and what may be claimed from scoring them"),

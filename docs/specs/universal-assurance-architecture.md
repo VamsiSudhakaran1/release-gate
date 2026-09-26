@@ -6519,6 +6519,90 @@ reverting the named-ids line drops three others.
 
 ---
 
+### 10ao. Human Attention Compression — a reading-volume metric, and nothing else
+
+`release_gate/assurance/compression.py`. What arrived, what a person is asked to
+read, and what may never be cut from that list.
+
+#### 10ao.1 The brief's example cannot be produced honestly
+
+The funnel in the brief was `2,184,992 events → 91,481 claims → 47 critical → 4
+items`. Measured against what the frontier case actually contains:
+
+| Stage | Brief | Observed | Why |
+|---|---|---|---|
+| events | 2,184,992 | **not assessed** | the scenario *declares* that many; no execution graph was built, so release-gate observed none |
+| claims | 91,481 | **2,420** | a declared count against what the case holds |
+| critical | 47 | 48 | derived, and genuinely close |
+| review items | 4 | 13 | derived |
+
+Two of the four headline figures are **a producer's declarations**, not
+observations. Printing them as release-gate's own would launder a self-report
+into our voice — Invariant 1, and exactly what §10ah settled for timestamps. So
+every `FunnelStage` carries a `Basis`: `OBSERVED` (release-gate counted it),
+`DECLARED` (somebody else stated it, and who), or `NOT_ASSESSED` (nobody did).
+The example is recorded in the tests as illustrative so nobody later reads it as
+a target and tunes toward it.
+
+`Basis.DECLARED` was unreachable in the first version — a distinction the whole
+module is built on, present only in an enum nothing could produce, which is its
+own kind of dishonesty. It now reads a declared denominator off the coverage
+ledger, where `ExpectationSource` already records who stated it. A case that
+declares 2,184,992 events and shows none renders:
+
+```
+     2,184,992  events [DECLARED]
+  …
+  728,330.7 records per review item, over 2,184,992 events (DECLARED)
+```
+
+The ratio names the stage it was taken over *and its basis*, because a ratio over
+a declared stage is a different claim from one over an observed stage and the
+figure alone does not say which.
+
+#### 10ao.2 Unknown is not zero, and a gap yields no ratio
+
+On the single-agent demo `CriticalitySet.determinable` is false. A funnel printing
+`0 critical claims` there would assert that nothing is critical — the single most
+damaging number this metric could produce, because it is the stage a reader scans
+for reassurance. The stage reports `not assessed` with the reason, and
+`FunnelStage` refuses the two dishonest shapes at construction: a count with a
+`NOT_ASSESSED` basis, and a basis claiming somebody counted with no count.
+
+`ratio` returns `None` where no stage has a count. A figure computed over a gap
+would be taken instead of the gap.
+
+#### 10ao.3 The refusals are the point
+
+`is_a_safety_metric`, `establishes_sufficiency`, `higher_is_better` and
+`is_comparable_across_cases` are unconditional `False` properties, and they travel
+in the serialised form and in the rendered text.
+
+`higher_is_better` is the one that would do damage. A larger ratio can mean the
+argument narrowed cleanly or that detection got worse, and nothing in the number
+tells them apart. **Optimising it is optimising for a shorter list, which is
+always available by finding less** — Invariant 6 applied to a metric that invites
+exactly that. So `retained_critical` sits beside the ratio always, carries the
+item ids so "7 retained" can be opened rather than trusted, and a retained count
+exceeding the shown list is refused outright: that would mean something was
+dropped which should not have been.
+
+#### 10ao.4 It counts nothing new
+
+Every number already existed on the case or the analysis — collection
+`total_count`, `CriticalitySet.critical_ids`, `HumanAttentionSet.items` and its
+`undroppable` flag, which has carried "never hide critical issues for
+compression" since §10i. This module assembles them, attaches the basis each one
+already had, and refuses a ratio where a stage has none.
+
+It is rendered in the frontier report above the attention list rather than below
+it: a reader who sees four items without the reduction cannot tell whether they
+came out of four records or four hundred thousand, and one who sees the reduction
+without the retained-critical line is being invited to read a big number as a
+good one.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
