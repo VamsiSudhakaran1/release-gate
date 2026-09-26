@@ -585,6 +585,40 @@ def _f_stale_digest() -> FaultResult:
                 "reasons": list(check.reasons)[:1]})
 
 
+def _f_reused_finalization() -> FaultResult:
+    """A case read while open, then finalized. The reuse must be invisible.
+
+    Not a fault the world inflicts — a fault *this engine* can inflict on itself.
+    §10ap made a finalization reuse the outcome of a provisional read over the same
+    records, which is sound only if the two are the same computation. A reuse that
+    settled on a different verdict, or on the same verdict over a different
+    commitment, would be the worst failure in this package: an approval bound to a
+    digest the recomputation would not have produced.
+
+    So it is injected here rather than only unit-tested, under the same standard as
+    every other fault. `perturbed` is true only when the reuse actually happened —
+    a run that quietly recomputed would pass a comparison while testing nothing.
+    """
+    base = _base()
+    cold = _shape(_session(base).finalize())
+
+    warm_session = _session(base)
+    warm_session.required_evidence()
+    warm = _shape(warm_session.finalize())
+    reused = getattr(getattr(warm_session, "reuse", None), "decision", None)
+    reused_name = getattr(reused, "value", "")
+
+    return FaultResult(
+        name="reused_finalization",
+        recovery=Recovery.IDENTICAL if cold == warm else Recovery.REFUSED,
+        signal=(f"a finalization following a provisional read reported "
+                f"{reused_name or 'no reuse decision'} and produced "
+                f"{'the same' if cold == warm else 'a DIFFERENT'} digest, verdict, "
+                f"findings and evidence count"),
+        perturbed=reused_name == "REUSED",
+        detail={"cold": cold, "warm": warm, "reuse": reused_name})
+
+
 _FAULT_LIST: Tuple[Fault, ...] = (
     Fault("ingestion_interruption",
           "the producer dies mid-stream and half the records never arrive",
@@ -614,6 +648,9 @@ _FAULT_LIST: Tuple[Fault, ...] = (
     Fault("clock_skew",
           "a producer stamps its records with a clock that is wrong",
           Recovery.IDENTICAL, _f_clock_skew),
+    Fault("reused_finalization",
+          "a case is read while open, then finalized over the same records",
+          Recovery.IDENTICAL, _f_reused_finalization),
     Fault("restart",
           "the process dies and the session resumes from where it stopped",
           Recovery.IDENTICAL, _f_restart),

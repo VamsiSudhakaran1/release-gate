@@ -36,6 +36,7 @@ from release_gate.assurance.attention import (
 )
 from release_gate.assurance.capabilities import CapabilitySurface
 from release_gate.assurance.level import LevelAssessment, assess_level
+from release_gate.assurance.latency import LatencyRecorder, Stage
 from release_gate.assurance.consequence import (
     ConsequenceProfile, ConsequenceRegistry, default_consequence_registry,
 )
@@ -713,20 +714,30 @@ def _analysis_records(analysis: AnalysisResult
     return contradictions, rows
 
 
-def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
-                objective: str, requested_decision: str,
-                methodology: Optional[AssuranceMethodology],
-                consequence: ConsequenceProfile,
-                verification: Optional[VerificationGraph] = None,
-                independence: Optional[IndependenceProfile] = None,
-                replication: Optional[ReplicationProfile] = None,
-                adversarial: Optional[AdversarialReview] = None,
-                criticality: Optional[CriticalitySet] = None,
-                contradictions: Optional[ContradictionLedger] = None,
-                assumptions: Optional[AssumptionGraph] = None,
-                counterexamples: Optional[CounterexampleLedger] = None,
-                failed_branches: Optional[FailedBranchLedger] = None,
-                extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
+def _case_prefix(subject: AssuranceSubject, normalisation: Normalisation, *,
+                 objective: str, requested_decision: str,
+                 methodology: Optional[AssuranceMethodology],
+                 consequence: ConsequenceProfile) -> AssuranceCaseBuilder:
+    """Everything a case over these records holds whatever the analysers conclude.
+
+    Split out from `_build_case` because this path builds three cases over one
+    record set — the provisional case the analysers read, the analysed case the
+    methodology is held against, and the final case carrying the attention list —
+    and it used to fold the records three times to do it. Measured on a
+    5,506-record case: 417ms, 610ms and 578ms, about half the finalization, to
+    produce the same commitment three times.
+
+    So the records are folded once and the result is forked (§10ap). Sound because
+    a collection's commitment is a multiset digest, order-free by construction, so
+    a forked prefix extended with a variant's own conclusions digests to exactly
+    what one pass over everything digests to. Every `case_digest` this path
+    produces is unchanged, which is the acceptance criterion rather than a hope:
+    a reuse that moved a digest would have moved what every approval binds to.
+
+    Nothing analysis-dependent belongs here. If a value in this function ever
+    starts reading an `AnalysisResult`, the prefix is no longer shared and the
+    three cases quietly become one.
+    """
     builder = AssuranceCaseBuilder(
         case_type=default_case_type(subject.subject_type), objective=objective,
         requested_decision=requested_decision, subject=subject,
@@ -752,6 +763,52 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
     # record_type. A profile of all-UNKNOWNs is still added — "nobody stated the
     # stakes" is a fact the case should carry, not an empty slot.
     builder.add("evidence", consequence)
+
+    # Present-but-empty is not the same as never supplied. The ingest looked for
+    # claims and artifacts, so the collections are declared present either way.
+    builder.declare_present("claims", "the ingest looked for claims in this input")
+    builder.extend("claims", normalisation.claims)
+    builder.declare_present("artifacts", "the input file itself is always an artifact")
+    builder.extend("artifacts", normalisation.artifacts)
+
+    if normalisation.execution is not None:
+        builder.declare_present("executions", "reconstructed from the input telemetry")
+        builder.add("executions", SimpleRecord(
+            record_type="execution", record_id=normalisation.execution.digest(),
+            payload=normalisation.execution.summary()))
+
+    # A verifier's attempts go in whole: they are typed verification records the
+    # tool produced, and the VerificationGraph reads them from here.
+    report = normalisation.verifier_report
+    verifications = list(report.attempts) if report else []
+    verifications += [r for r in normalisation.evidence if r.is_verification]
+    builder.declare_present(
+        "verification",
+        "the ingest looked for typed verification in this input"
+        if not verifications else "typed verification found in this input")
+    builder.extend("verification", verifications)
+    return builder
+
+
+def _case_tail(builder: AssuranceCaseBuilder, normalisation: Normalisation, *,
+               consequence: ConsequenceProfile,
+               verification: Optional[VerificationGraph] = None,
+               independence: Optional[IndependenceProfile] = None,
+               replication: Optional[ReplicationProfile] = None,
+               adversarial: Optional[AdversarialReview] = None,
+               criticality: Optional[CriticalitySet] = None,
+               contradictions: Optional[ContradictionLedger] = None,
+               assumptions: Optional[AssumptionGraph] = None,
+               counterexamples: Optional[CounterexampleLedger] = None,
+               failed_branches: Optional[FailedBranchLedger] = None,
+               extra: Optional[Mapping[str, List[Any]]] = None
+               ) -> AssuranceCaseBuilder:
+    """The part of a case that depends on what the analysers concluded.
+
+    Mutates and returns the builder it is given, which is expected to be a fork of
+    `_case_prefix`. Called with every analysis argument left None it produces the
+    provisional case, which is what the analysers themselves read.
+    """
     if independence is not None:
         # Same reasoning as the consequence profile: one object, already a record,
         # and the predicate finds it here by record_type.
@@ -777,19 +834,6 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         # on its absence, which is the honest reading of "nothing was compared".
         builder.add("evidence", replication)
 
-    # Present-but-empty is not the same as never supplied. The ingest looked for
-    # claims and artifacts, so the collections are declared present either way.
-    builder.declare_present("claims", "the ingest looked for claims in this input")
-    builder.extend("claims", normalisation.claims)
-    builder.declare_present("artifacts", "the input file itself is always an artifact")
-    builder.extend("artifacts", normalisation.artifacts)
-
-    if normalisation.execution is not None:
-        builder.declare_present("executions", "reconstructed from the input telemetry")
-        builder.add("executions", SimpleRecord(
-            record_type="execution", record_id=normalisation.execution.digest(),
-            payload=normalisation.execution.summary()))
-
     # CAPPED where retention dropped examples: the collection says how it came to
     # hold what it holds, rather than implying it holds everything.
     builder.collection(
@@ -814,17 +858,6 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         "derived from what the claims in this case declare they rest on")
     builder.extend("assumptions", list(assumptions) if assumptions else [])
 
-    # A verifier's attempts go in whole: they are typed verification records the
-    # tool produced, and the VerificationGraph reads them from here.
-    report = normalisation.verifier_report
-    verifications = list(report.attempts) if report else []
-    verifications += [r for r in normalisation.evidence if r.is_verification]
-    builder.declare_present(
-        "verification",
-        "the ingest looked for typed verification in this input"
-        if not verifications else "typed verification found in this input")
-    builder.extend("verification", verifications)
-
     builder.collection("coverage", basis=MaterialisationBasis.COMPLETE)
     builder.extend("coverage", _merge_declared_expectations(
         _ingest_coverage(normalisation, consequence, verification, independence,
@@ -836,7 +869,38 @@ def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
         builder.declare_present(kind, "produced by the zero-config analysis")
         builder.extend(kind, records)
 
-    return builder.build()
+    return builder
+
+
+def _build_case(subject: AssuranceSubject, normalisation: Normalisation, *,
+                objective: str, requested_decision: str,
+                methodology: Optional[AssuranceMethodology],
+                consequence: ConsequenceProfile,
+                verification: Optional[VerificationGraph] = None,
+                independence: Optional[IndependenceProfile] = None,
+                replication: Optional[ReplicationProfile] = None,
+                adversarial: Optional[AdversarialReview] = None,
+                criticality: Optional[CriticalitySet] = None,
+                contradictions: Optional[ContradictionLedger] = None,
+                assumptions: Optional[AssumptionGraph] = None,
+                counterexamples: Optional[CounterexampleLedger] = None,
+                failed_branches: Optional[FailedBranchLedger] = None,
+                extra: Optional[Mapping[str, List[Any]]] = None) -> AssuranceCase:
+    """One case from one fold. Kept as the single-case entry point.
+
+    The signature is unchanged; the body is now the prefix plus the tail, so a
+    caller wanting one case pays for one fold and a caller wanting three forks the
+    prefix instead of folding again.
+    """
+    prefix = _case_prefix(subject, normalisation, objective=objective,
+                          requested_decision=requested_decision,
+                          methodology=methodology, consequence=consequence)
+    return _case_tail(
+        prefix, normalisation, consequence=consequence, verification=verification,
+        independence=independence, replication=replication, adversarial=adversarial,
+        criticality=criticality, contradictions=contradictions,
+        assumptions=assumptions, counterexamples=counterexamples,
+        failed_branches=failed_branches, extra=extra).build()
 
 
 def _subject_for(path: Path, normalisation: Normalisation,
@@ -1072,7 +1136,8 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
                          requested_decision: Optional[str] = None,
                          requested_action: Optional[str] = None,
                          consequence_registry: Optional[ConsequenceRegistry] = None,
-                         declared_consequence: Optional[Any] = None
+                         declared_consequence: Optional[Any] = None,
+                         recorder: Optional[LatencyRecorder] = None
                          ) -> AssuranceOutcome:
     """Everything `assure` does after reading the file.
 
@@ -1081,7 +1146,16 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
     requires that a case built locally and a case built through the API from the
     same records produce the same `case_digest` (§15); sharing this function is
     what makes that structural instead of coincidental.
+
+    `recorder` is optional instrumentation (§10ap). Passing one attributes the
+    finalization to its stages; passing none costs nothing, because the disabled
+    recorder does not read a clock. Nothing it measures reaches the outcome: a
+    finalization that was timed and one that was not produce the same verdict and
+    the same `case_digest`, which is what keeps a duration out of the identity an
+    approval binds to.
     """
+    timer = recorder if recorder is not None else LatencyRecorder.disabled()
+    timer.begin()
     source = source_path if source_path is not None else Path(source_name)
 
     objective = objective or f"Assurance of {source.name}"
@@ -1090,22 +1164,35 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
     requested_action = requested_action or (
         f"authorise the result described by {source.name}")
 
-    subject = _subject_for(source, normalisation, requested_action)
+    with timer.stage(Stage.SUBJECT):
+        subject = _subject_for(source, normalisation, requested_action)
 
-    registry = consequence_registry or default_consequence_registry()
-    declared = list(normalisation.declared_consequence)
-    declared.extend(declared_consequence or ())
-    consequence = registry.build(None, capabilities=normalisation.capabilities,
-                                 declared=declared)
+    with timer.stage(Stage.CONSEQUENCE):
+        registry = consequence_registry or default_consequence_registry()
+        declared = list(normalisation.declared_consequence)
+        declared.extend(declared_consequence or ())
+        consequence = registry.build(None, capabilities=normalisation.capabilities,
+                                     declared=declared)
 
-    provisional = _build_case(subject, normalisation, objective=objective,
+    # One fold of the submitted records, forked for each case that shares it.
+    # Three independent folds of this set were about half of a finalization
+    # (§10ap); the commitment is order-free, so a fork is a copy rather than a
+    # replay and every case digest below is byte-for-byte what it always was.
+    folded = (len(normalisation.evidence) + len(normalisation.claims)
+              + len(normalisation.artifacts))
+    with timer.stage(Stage.FOLD, records=folded):
+        prefix = _case_prefix(subject, normalisation, objective=objective,
                               requested_decision=requested_decision,
                               methodology=methodology, consequence=consequence)
-    analysis = analyse(provisional, normalisation=normalisation,
-                       claim_graph=None, artifact_graph=None,
-                       execution=normalisation.execution,
-                       capabilities=normalisation.capabilities,
-                       consequence=consequence)
+        provisional = _case_tail(prefix.fork(), normalisation,
+                                 consequence=consequence).build()
+
+    with timer.stage(Stage.ANALYSE, records=folded):
+        analysis = analyse(provisional, normalisation=normalisation,
+                           claim_graph=None, artifact_graph=None,
+                           execution=normalisation.execution,
+                           capabilities=normalisation.capabilities,
+                           consequence=consequence)
 
     # The analysed case: the ingest, plus what the analysers concluded about it.
     # This is what the methodology is held against — assessing the provisional
@@ -1113,74 +1200,83 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
     # analysis had in fact run and found none, which is the exact conflation
     # between "nobody looked" and "we looked and found nothing" that the presence
     # model exists to prevent.
-    contradictions, coverage_rows = _analysis_records(analysis)
-    analysed = _build_case(
-        subject, normalisation, objective=objective,
-        requested_decision=requested_decision, methodology=methodology,
-        consequence=consequence, verification=analysis.verification_graph,
-        independence=analysis.independence, replication=analysis.replication,
-        adversarial=analysis.adversarial, criticality=analysis.criticality,
-        contradictions=analysis.contradictions,
-        assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
-        failed_branches=analysis.failed_branches,
-        extra={"contradictions": contradictions, "coverage": coverage_rows})
+    #
+    # Folding, not analysing, so it is timed as folding. Attributing a fold to
+    # ANALYSE would report the analysis as costing what the folding cost, which is
+    # the misattribution §10ap.1 refuses; the recorder merges it into the one
+    # `fold` row.
+    with timer.stage(Stage.FOLD, records=folded):
+        contradictions, coverage_rows = _analysis_records(analysis)
+        analysed_builder = _case_tail(
+            prefix.fork(), normalisation, consequence=consequence,
+            verification=analysis.verification_graph,
+            independence=analysis.independence, replication=analysis.replication,
+            adversarial=analysis.adversarial, criticality=analysis.criticality,
+            contradictions=analysis.contradictions,
+            assumptions=analysis.assumptions,
+            counterexamples=analysis.counterexamples,
+            failed_branches=analysis.failed_branches,
+            extra={"contradictions": contradictions, "coverage": coverage_rows})
+        analysed = analysed_builder.build()
 
-    assessment = assess(analysed, methodology)
+    with timer.stage(Stage.ASSESS, records=folded):
+        assessment = assess(analysed, methodology)
 
-    # Required evidence first: each attention item carries what would resolve it,
-    # so the reader is not sent to a second list to find out what to ask for.
-    required = build_required_evidence(analysed, analysis, assessment)
-    attention = build_attention(analysed, analysis, assessment, required=required)
+    with timer.stage(Stage.ATTENTION):
+        # Required evidence first: each attention item carries what would resolve it,
+        # so the reader is not sent to a second list to find out what to ask for.
+        required = build_required_evidence(analysed, analysis, assessment)
+        attention = build_attention(analysed, analysis, assessment, required=required)
 
-    # Attention and required evidence are release-gate's own conclusions, folded in
-    # for the record only. They are deliberately not present when the methodology
-    # is assessed: a yardstick judges the evidence in a case, never the engine's
-    # reading of that evidence.
-    final = _build_case(
-        subject, normalisation, objective=objective,
-        requested_decision=requested_decision, methodology=methodology,
-        consequence=consequence, verification=analysis.verification_graph,
-        independence=analysis.independence, replication=analysis.replication,
-        adversarial=analysis.adversarial, criticality=analysis.criticality,
-        contradictions=analysis.contradictions,
-        assumptions=analysis.assumptions, counterexamples=analysis.counterexamples,
-        failed_branches=analysis.failed_branches,
-        extra={"contradictions": contradictions,
-               "coverage": coverage_rows,
-               "attention_items": list(attention.items),
-               "required_evidence": list(required.items)})
+        # Attention and required evidence are release-gate's own conclusions, folded in
+        # for the record only. They are deliberately not present when the methodology
+        # is assessed: a yardstick judges the evidence in a case, never the engine's
+        # reading of that evidence.
+        #
+        # A fork of the analysed builder rather than a fourth fold: the final case is
+        # the analysed case plus these two collections, so that is literally what it
+        # is built as.
+        final_builder = analysed_builder.fork()
+        for kind, records in (("attention_items", list(attention.items)),
+                              ("required_evidence", list(required.items))):
+            final_builder.declare_present(kind, "produced by the zero-config analysis")
+            final_builder.extend(kind, records)
+        final = final_builder.build()
 
-    verdict = decide(analysis, assessment, has_methodology=methodology is not None,
-                     methodology=methodology, consequence=consequence)
-    decided = final.seal().render_verdict(verdict)
+    with timer.stage(Stage.DECIDE):
+        verdict = decide(analysis, assessment, has_methodology=methodology is not None,
+                         methodology=methodology, consequence=consequence)
 
-    # Derived last, from the sealed case, and deliberately AFTER `decide`. The
-    # level describes a case that has already been analysed and ruled on in full;
-    # computing it earlier would invite a future edit to branch analysis on it,
-    # which is exactly the suppression channel this must never become.
-    level = assess_level(
-        case_type=decided.case_type, methodology=methodology,
-        consequence=consequence,
-        # Collections that HOLD something, not ones merely marked PRESENT:
-        # PRESENT means "this was looked for", so every case has empty frontier
-        # ledgers and reading presence here rated an email send as FRONTIER.
-        populated_collections={kind: decided.collection(kind).total_count
-                               for kind in COLLECTION_KINDS
-                               if decided.collection(kind).total_count > 0},
-        dimensions=[str(r.to_dict().get("dimension") or "")
-                    for r in decided.collection("coverage").materialised],
-        signals={
-            "subject_digest": bool(getattr(decided.subject, "digest", "")),
-            "execution_reconstructed": normalisation.execution is not None,
-            "producers_identified": any(
-                getattr(getattr(r, "producer", None), "producer_id", "")
-                for r in decided.collection("evidence").materialised)})
+    with timer.stage(Stage.SEAL):
+        decided = final.seal().render_verdict(verdict)
 
-    # Proportionate asks first. Nothing is dropped — an above-level requirement
-    # describes a real gap — but a Level 1 case should be told to state its
-    # consequence before it is told to find a second independent producer.
-    required = dataclasses.replace(
-        required, items=level.order_requirements(required.items))
+        # Derived last, from the sealed case, and deliberately AFTER `decide`. The
+        # level describes a case that has already been analysed and ruled on in full;
+        # computing it earlier would invite a future edit to branch analysis on it,
+        # which is exactly the suppression channel this must never become.
+        level = assess_level(
+            case_type=decided.case_type, methodology=methodology,
+            consequence=consequence,
+            # Collections that HOLD something, not ones merely marked PRESENT:
+            # PRESENT means "this was looked for", so every case has empty frontier
+            # ledgers and reading presence here rated an email send as FRONTIER.
+            populated_collections={kind: decided.collection(kind).total_count
+                                   for kind in COLLECTION_KINDS
+                                   if decided.collection(kind).total_count > 0},
+            dimensions=[str(r.to_dict().get("dimension") or "")
+                        for r in decided.collection("coverage").materialised],
+            signals={
+                "subject_digest": bool(getattr(decided.subject, "digest", "")),
+                "execution_reconstructed": normalisation.execution is not None,
+                "producers_identified": any(
+                    getattr(getattr(r, "producer", None), "producer_id", "")
+                    for r in decided.collection("evidence").materialised)})
+
+        # Proportionate asks first. Nothing is dropped — an above-level requirement
+        # describes a real gap — but a Level 1 case should be told to state its
+        # consequence before it is told to find a second independent producer.
+        required = dataclasses.replace(
+            required, items=level.order_requirements(required.items))
 
     return AssuranceOutcome(case=decided, normalisation=normalisation,
                             analysis=analysis, assessment=assessment,

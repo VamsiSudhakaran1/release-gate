@@ -6603,6 +6603,331 @@ good one.
 
 ---
 
+### 10ap. Decision latency, and reuse that cannot change an answer
+
+Two questions, and the first exists to answer the second. *How long does a
+finalization take* is answerable with a clock. *What is being rebuilt that did not
+need rebuilding* is only answerable once the first has been measured.
+
+Both of this section's starting assumptions turned out to be false, and in
+opposite directions: the analysis was assumed to be the expensive stage and is
+three percent of a finalization (§10ap.2), and ingest was assumed to be the
+reusable stage and is not reusable at all (§10ap.4). Neither was discoverable by
+reading the code carefully; one needed a profiler and the other needed a
+200-record document appended to a 131-record one. That is the whole argument for
+ordering this work measurement-first.
+
+#### 10ap.1 The boundary is the finalization request
+
+Latency here is the interval from somebody asking for a decision to a verdict
+existing. Not from when the agents started: a case that stayed open for nine
+hours while a swarm worked and then finalized in 40ms did not take nine hours to
+decide, and release-gate does not control when evidence arrives. `span_ms` is the
+interval this engine is answerable for, and the stages account for as much of it
+as is instrumented — `unattributed_ms` reports the remainder rather than
+spreading it across the stages that were measured, because a profile that
+silently distributes unmeasured time starts lying about where the work is.
+
+#### 10ap.2 The analysis was not the expensive part
+
+The plan was a cache over `analyse()`, on the assumption that structural analysis
+over ten million events is where a finalization goes. Measured on a 5,506-record
+case, before any change:
+
+| stage | ms | share |
+|---|---|---|
+| `_build_case` (provisional) | 417 | 12.4% |
+| `_build_case` (analysed) | 610 | 18.1% |
+| `_build_case` (final) | 578 | 17.1% |
+| `assess` | 1,153 | 34.2% |
+| `normalise` | 482 | 14.3% |
+| **`analyse`** | **106** | **3.1%** |
+
+`analyse` is three percent. The pipeline was folding the same record set **three
+times** — 48% of a finalization producing the same commitment three times over —
+and 66% of every `record_digest` call in a finalization was a recomputation of a
+digest already computed in that same finalization.
+
+This is why the section is ordered measurement-first. A cache over the analysis
+would have been carefully built, correct, and worth three percent.
+
+#### 10ap.3 Fold once, fork per variant
+
+The three cases are the same records with different conclusions attached: the
+provisional case the analysers read, the analysed case the methodology is held
+against, and the final case carrying the attention list. So `_build_case` is
+split into `_case_prefix` — everything a case over these records holds whatever
+the analysers conclude — and `_case_tail`, which is the part that depends on what
+they concluded. The prefix is folded once and forked.
+
+`RecordCollectionBuilder.fork()` is sound for one reason: a collection's
+commitment is a **multiset** digest, order-free by construction and O(1) to
+combine. A forked prefix extended with a variant's own records digests to exactly
+what one pass over everything digests to, so there is no ordering a fork could
+get wrong — which is what makes this a copy rather than a replay. Every mutable
+structure is copied, because a fork sharing `_seen_ids` would let one branch
+reject a record the other legitimately added. `_policy` is shared deliberately:
+`RetainAll`, `RetainFirst` and `RetainRelevant` are frozen and decide from their
+arguments alone, so there is no policy state for one fork to advance on
+another's behalf.
+
+The final case is a fork of the *analysed* builder plus two collections, because
+that is literally what it is. Collection creation order is not preserved across a
+fork and does not need to be: `case_digest` reads collections through the fixed
+`COLLECTION_KINDS` tuple, so the order they were created in cannot reach the
+digest an approval binds to.
+
+Measured after, with the case digest checked against the value recorded before
+the change at each size:
+
+| records | before | after | reduction | `case_digest` |
+|---|---|---|---|---|
+| 131 | 83.1ms | 54.0ms | 35% | unchanged |
+| 1,256 | 671.4ms | 394.5ms | 41% | unchanged |
+| 5,506 | 3,299.7ms | 1,870.4ms | 43% | unchanged |
+
+That last column is the acceptance criterion, not a pleasant side effect. A reuse
+that moved a digest would have moved what every recorded approval binds to
+(§10ae), silently, while every test that pins no digest kept passing.
+
+It is worth recording *how* the digest check went, because it went badly twice.
+The first two comparison runs reported the digest as moved. Both times the defect
+was in the throwaway comparison script — once a `coverage_note` that differed
+from the run the baseline came from, once a claim proposition — so it was
+comparing two different documents and correctly reporting them as different. The
+engine was right both times. A digest comparison is only as good as the assurance
+that both sides were handed the same input, which is the argument for pinning this
+property in the suite rather than in a script: `test_a_forked_prefix_builds_the
+_case_the_direct_path_builds` builds both cases from one fixture in one process,
+where they cannot drift apart.
+
+#### 10ap.4 Append-stable and retractable, and why almost everything recomputes
+
+`incremental.Stability` is the axis everything else hangs from.
+
+`APPEND_STABLE` means appending a record extends the result and leaves every
+earlier part of it unchanged. `RETRACTABLE` means appending a record can withdraw
+a conclusion that held over every record before it: a contradiction arrives and
+"no contradictions" was not slightly stale, it was false. Reusing a retractable
+stage is the omission inversion of §10ak.5 in its purest form — losing
+information to produce a cleaner verdict — so retractable stages recompute,
+always.
+
+A stage nobody has classified is `UNKNOWN`, and `UNKNOWN` recomputes. Unknown is
+not a permissive default anywhere else in this architecture and it is not one
+here (Invariant 3).
+
+An `APPEND_STABLE` claim requires a `why` and a `RETRACTABLE` one is refused
+one, for the same reason `chaos.Fault` requires a justification only for a
+non-identical recovery: the claim that *permits* something carries the burden.
+Recomputation permits nothing, so it owes no argument.
+
+The shape of the table is the finding rather than the table itself, and it is not
+the shape this section was first written with. **Of eleven stages, exactly one is
+append-stable.**
+
+`detect` and `normalise` were classified `APPEND_STABLE` on reasoning that sounded
+right: a record maps to its typed form independently of the others, and a later
+record can add a document type but never remove one. Both halves are wrong, and
+reading `detect_document` rather than reasoning about it is what showed it.
+Detection scores candidates as a **proportion of sampled lines**, so appending 200
+unrecognised records to a document that detected as `ASSURANCE_ENVELOPE` at 83%
+confidence drops it to `UNRECOGNISED` at 2%. `normalise` takes that detection as an
+input, so its output over n+1 records is not an extension of its output over n —
+the whole mapping can change underneath, and the measured effect is that appending
+records *reduces* the evidence the case holds.
+
+This is the same failure as §10ak.6, where four of the corpus's own constructions
+were wrong before the engine was, and §10am.3, where the question "where do these
+locators come from" moved a guard rather than added one. What is new is that the
+claim being corrected was sitting in the field added to stop exactly this.
+`StageSpec.why` makes an `APPEND_STABLE` claim argue for itself, which is worth
+having and is not sufficient: an argument is a thing that can be wrong. So the
+classification is now pinned by behaviour — a test appends records and asserts the
+detected kind changes — and a future edit that makes ingest genuinely resumable
+has to come past that test rather than past a sentence.
+
+What survives is the one claim that was structural rather than inferential: a
+collection's commitment is a multiset digest, order-free by construction, so a fold
+over a prefix plus the remainder is the fold over everything.
+
+#### 10ap.5 Keyed on content, because the record list is public
+
+`AssuranceSession.records` is a mutable list anything can append to without
+calling `add()`. A dirty flag records that somebody remembered to set it; a
+content digest over the inputs cannot be wrong about whether those inputs
+changed. `reuse_key` refuses a key that omits a declared input *and* one that
+covers an undeclared one, so the `StageSpec` and the key hold each other honest:
+a future field that changes the verdict cannot enter the session without either
+entering the key or being declared not to matter.
+
+The key is a by-product rather than an overhead. `_prepare` builds the document
+and its canonical bytes, which is what `normalise` is handed anyway, so the added
+work is one sha256 over bytes that already exist — measured at 0.8% of a
+finalization over 3,401 records, 128 times cheaper than the computation a hit
+avoids.
+
+What the session deliberately does *not* keep is a per-record key set. It would
+let the session report *what* changed rather than only *that* something did, and
+ten million per-record digests cost more to hold and compare than the
+recomputation they would save. `incremental.plan` classifies a removal, a
+reorder or an in-place edit as `REWRITTEN` even when the count is unchanged — the
+case a length check gets wrong — and it is the decision procedure the
+`APPEND_STABLE` classification requires: without a way to establish that the input
+moved append-only, the classification is inert. It is tested and it is not yet
+called by the shipped path, because the one call site it exists for is the
+resumable ingest named in §10ap.10.
+
+#### 10ap.6 Latency is won before the request arrives
+
+A verdict is a pure function of the records. So a provisional read and a
+finalization over an identical record set **must** produce the same verdict — if
+they could differ, `required_evidence()` would be useless as a steering signal
+for a running agent. Reuse makes that identity structural instead of hopeful: an
+agent that was already being told what was missing has already paid for the
+answer, and the finalization request costs the key instead of the analysis.
+
+Measured on a 3,401-record case:
+
+| the finalization request | span |
+|---|---|
+| cold — nothing was read while the case was open | 1,522.8ms |
+| warm — one `required_evidence()` call first | 31.6ms |
+
+Forty-eight times faster, same `case_digest`, same verdict. Nothing here makes
+the analysis faster: the warm run is the key computation and nothing else, and the
+cold run is what the work costs. The only way the interval between asking and
+being answered gets short is for the work to have happened while the case was
+open, and that is the whole claim. An agent that was already being steered by
+`required_evidence()` gets that for nothing; an operator who finalizes a case
+nobody ever read pays full price, correctly.
+
+The session holds exactly one outcome. An outcome over ten million records is not
+a small object, and in a session records are only appended, so no key but the
+newest can ever be asked for again.
+
+#### 10ap.7 The cache is invisible in the result, which inverts compaction's rule
+
+`compaction` selects by content digest so retention is deterministic, because what
+it retains is *visible in the case*: it decides what a reviewer can drill into, so
+two runs that retained different sets agree on what existed and disagree about
+what can be inspected.
+
+A reuse cache is the opposite. Whether an entry was evicted may change how long an
+answer took and may never change what the answer is, so eviction order needs no
+determinism at all and `IncrementalCache` uses plain LRU.
+`eviction_can_change_a_result` is unconditionally `False`, and if it ever became
+true the cache would have joined the authoritative path, which Invariant 4
+forbids.
+
+That property is checked rather than assumed. `verify_reuse` runs both paths and
+compares, to the standard `chaos.Recovery.IDENTICAL` sets: not "the same verdict"
+but the same bytes, read off `binding_state()` where there is one, because a
+reuse that agreed on PROMOTE/HOLD while disagreeing on what the case committed to
+would pass a laxer check and still have broken the thing an approval binds to.
+This is necessary and not belt-and-braces: the failure mode of a reuse key is a
+stage reading an input it did not declare, and that is invisible to inspection by
+definition — code that reads an undeclared input looks exactly like code that
+does not.
+
+The session's reuse is also injected as a **fourteenth chaos fault** (§10al),
+`reused_finalization`, rather than left to unit tests. Every other fault in that
+harness is something the world does to release-gate; this is the one release-gate
+can do to itself, and a reuse that settled on a different commitment would be the
+worst defect in this package — an approval bound to a digest no recomputation
+would produce. It recovers `IDENTICAL`, and its `perturbed` flag is true only when
+the reuse actually happened, because a run that quietly recomputed would pass the
+comparison while testing nothing. Sabotaging the cache to return an outcome over a
+truncated record set makes the fault report `REFUSED` and name the differing
+digest, which is how the guard was confirmed load-bearing rather than assumed to
+be.
+
+#### 10ap.8 What a duration may not mean
+
+Latency is the one assurance number with an obvious way to improve it: assess
+less. Every stage that could be dropped would make the figure better and the case
+weaker, so the metric carries its coverage with it. `render()` prints the
+NOT_ASSESSED dimensions next to the milliseconds, and a fast number can never be
+read on its own (Invariant 9). On the clean-release fixture the report reads
+`0.3 ms` beside twelve unassessed dimensions, which is exactly the juxtaposition
+the two numbers are useless without.
+
+`is_a_safety_metric`, `establishes_sufficiency`, `lower_is_more_trustworthy`,
+`is_comparable_across_cases` and `authorises_reduced_assessment` are all
+unconditionally `False`. `lower_is_more_trustworthy` is the load-bearing one:
+`scale != confidence` (Invariant 6) pointed at the clock instead of the record
+count. Twelve records and ten million are not a comparison, either.
+
+A `LatencyBudget` exists because an operator legitimately needs to know when the
+gate has become the slow part of their pipeline. Exceeding one is a finding about
+*the engine*, it names the dominant stage, and
+`LatencyBudget.authorises_reduced_assessment` cannot return anything but `False`.
+
+#### 10ap.9 The clock stays outside identity
+
+`time.monotonic`, not `time.time`: a wall clock stepped by NTP mid-finalization
+produces a negative duration, and `StageTiming` refuses those on the grounds that
+a measurement able to run backwards is not one.
+
+More importantly, nothing measured reaches a digest. A `DecisionLatency` is not a
+case record, is not folded into any collection, and does not appear in
+`case_digest` — the same discipline `verification.stamped_on_arrival` enforces for
+an arrival timestamp (§10ah), arrived at the hard way when a clock inside a digest
+made identical input produce two different case digests a second apart. A
+finalization that was timed and one that was not produce the same verdict and the
+same digest, and there is a test that says so rather than a comment that hopes so.
+`latency` imports from `incremental` and never the reverse, so that the reuse
+machinery reads no clock at all: a reuse decision that depended on the time would
+make the authoritative path nondeterministic.
+
+For the same reason the frontier and single-agent demonstrations (§10u, §10v) do
+**not** print a latency figure, unlike the compression metric (§10ao) which they
+do. A transcript carrying a duration is a transcript that differs on every run and
+on every machine, and a demo output nobody can diff is a demo nobody can check.
+`measure_finalization` is the documented entry point instead, and it hands the
+duration back beside the outcome rather than attaching it to one: an outcome with
+a `.latency` attribute would put a clock exactly one attribute away from a
+digest.
+
+#### 10ap.10 What was measured and left alone
+
+Two things remain, and they are stated because the alternative is that a later
+reader finds them and assumes nobody looked.
+
+**Repeated serialisation, 35%.** `EvidenceRecord.to_dict()` is called 36,048
+times for 3,006 evidence records — **92% of those calls are repeats** — and
+memoizing it on the instance saves 35% of a finalization with the case digest
+unchanged. It was not taken. `to_dict()` returns fresh nested dicts and a memo
+would have to return a shallow copy, so every nested container becomes shared
+mutable state reachable by any consumer of a record's serialised form. Proving
+that sound means auditing every such consumer across the package, and a silently
+shared mutable dict under a content-addressed digest is precisely the class of
+defect this architecture exists to refuse. The sound version is a derived view
+computed once and threaded through the predicate protocol in `methodology`, which
+is a change to that protocol rather than a cache, and is not this section's work.
+
+`assess` is now the dominant stage of a cold finalization at 61% of the span,
+which the report says out loud — `DecisionLatency.dominant` names it, so the
+residual is visible to anyone who measures rather than buried in this section.
+
+**Ingest is not resumable across calls, and making it so is not plumbing.** A
+finalization over 10,000,001 records re-normalises all ten million. The obvious
+fix — resume the normalisation from where it stopped — is unavailable while
+`detect` remains retractable, because a resumed normalisation would be reading a
+detection the remaining records might have changed. Getting there needs the input
+kind **settled at a boundary and held**, which is a decision about whether a case's
+document type may change while records are still arriving. That is a semantic
+question about what a case is, not an optimisation, and it is not one to answer
+inside a performance section.
+
+`assess` is `RETRACTABLE`, is proportional to the record count, and is now the
+dominant stage at 61% of a cold finalization. No reuse will make that go away: a
+methodology assessment is exactly the kind of conclusion one arriving record can
+withdraw. Reducing it means the derived-view work in the paragraph above, not a
+cache.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

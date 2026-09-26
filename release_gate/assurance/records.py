@@ -474,6 +474,37 @@ class RecordCollectionBuilder:
             self.add(record, materialise=materialise)
         return self
 
+    def fork(self) -> "RecordCollectionBuilder":
+        """A copy of this fold that can be extended without touching the original.
+
+        The primitive behind every reuse in `incremental`: fold a prefix once, then
+        fork it for each result that shares that prefix. Three of these replaced
+        three independent folds over the same ten thousand records, and the
+        measurement said those folds were half of a finalization.
+
+        Sound because the fold is a *multiset* commitment. `_accumulator` is an
+        integer combined order-free, so a forked prefix plus its remainder digests
+        to exactly what one pass over everything digests to — there is no ordering
+        the fork could get wrong, which is why this is a copy and not a replay.
+
+        Every mutable structure is copied, so the two folds cannot see each
+        other's records: a fork that shared `_seen_ids` would let one branch raise
+        a duplicate for a record the other branch added. `_policy` is shared
+        deliberately — `RetainAll`, `RetainFirst` and `RetainRelevant` are all
+        frozen and decide from their arguments alone, so there is no policy state
+        for one fork to advance on another's behalf.
+        """
+        clone = RecordCollectionBuilder(
+            self.kind, basis=self.basis, track_ids=self._track_ids, policy=self._policy)
+        clone._seen_ids = set(self._seen_ids)
+        clone._materialised = list(self._materialised)
+        clone._materialised_ids = set(self._materialised_ids)
+        clone._accumulator = self._accumulator
+        clone._total = self._total
+        clone._present = self._present
+        clone._notes = list(self._notes)
+        return clone
+
     def merge(self, other: "RecordCollectionBuilder") -> "RecordCollectionBuilder":
         """Combine a partial fold produced elsewhere (another thread, another shard)."""
         if other.kind != self.kind:

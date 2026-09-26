@@ -840,6 +840,29 @@ class AssuranceCaseBuilder:
         self.collection(kind).note(message)
         return self
 
+    def fork(self) -> "AssuranceCaseBuilder":
+        """A copy that shares this builder's folded records and nothing mutable.
+
+        For the case where several cases over the same evidence differ only in what
+        the engine concluded about it. The zero-config path builds three — the
+        provisional case the analysers read, the analysed case the methodology is
+        held against, and the final case carrying the attention list — and before
+        this they were three full folds of one record set.
+
+        Collection order is not preserved across a fork and does not need to be:
+        `case_digest` reads collections through the fixed `COLLECTION_KINDS`
+        tuple, so which order they were created in cannot reach the digest an
+        approval binds to.
+        """
+        clone = AssuranceCaseBuilder(
+            case_type=self.case_type, objective=self.objective,
+            requested_decision=self.requested_decision, subject=self.subject,
+            methodology=self.methodology, custom_type=self.custom_type,
+            metadata=dict(self.metadata))
+        clone._builders = {kind: builder.fork()
+                           for kind, builder in self._builders.items()}
+        return clone
+
     def build(self, **case_kwargs: Any) -> AssuranceCase:
         collections = {kind: builder.build() for kind, builder in self._builders.items()}
         return AssuranceCase(

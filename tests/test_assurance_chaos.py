@@ -28,13 +28,20 @@ def report():
 class TestTheHarness:
 
     def test_every_named_fault_is_covered(self):
-        """The thirteen the brief names, by the brief's own vocabulary."""
+        """The thirteen the brief names, by the brief's own vocabulary.
+
+        Plus one this engine can inflict on itself: §10ap made a finalization reuse
+        a provisional read's outcome, and a reuse that settled on a different
+        commitment would be an approval bound to a digest no recomputation would
+        produce. That belongs under the same standard as every external fault.
+        """
         assert set(FAULTS) == {
             "ingestion_interruption", "duplicate_batches", "reordered_events",
             "missing_telemetry", "clock_skew", "restart", "duplicate_case",
             "concurrent_mutation", "approval_during_update",
             "verifier_arriving_late", "subject_mutation_during_review",
-            "external_evidence_unavailable", "stale_digest"}
+            "external_evidence_unavailable", "stale_digest",
+            "reused_finalization"}
 
     def test_every_fault_actually_perturbs_its_input(self, report):
         """The meta-guard. A fault that leaves the input alone would recover
@@ -365,3 +372,23 @@ class TestDeterminismAcrossTheClock:
         source = inspect.getsource(VerificationGraph.digest)
         assert "a.identity()" in source
         assert "a.to_dict()" not in source
+
+
+class TestReusedFinalization:
+    """The one fault the engine inflicts on itself."""
+
+    def test_reuse_is_invisible_in_what_a_person_authorises(self):
+        result = run_fault("reused_finalization")
+        assert result.recovery is Recovery.IDENTICAL
+        assert result.detail["cold"] == result.detail["warm"]
+
+    def test_the_reuse_actually_happened(self):
+        """A run that quietly recomputed would pass the comparison and test nothing."""
+        result = run_fault("reused_finalization")
+        assert result.perturbed
+        assert result.detail["reuse"] == "REUSED"
+
+    def test_the_digest_is_what_is_compared(self):
+        result = run_fault("reused_finalization")
+        assert result.detail["cold"]["digest"].startswith("sha256:")
+        assert "digest" in result.signal

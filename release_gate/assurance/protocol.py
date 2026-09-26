@@ -252,7 +252,13 @@ def _schemas() -> Tuple[SchemaRef, ...]:
              note="the seventeen threats against the engine itself, and which "
                   "are refused, declared, bought nothing, or are not defended"),
         _ref("identity_claim", "identity", "IDENTITY_SCHEMA_VERSION", 1),
+        _ref("incremental", "incremental", "INCREMENTAL_SCHEMA_VERSION", 1,
+             note="which stages may be reused when a record is appended, and the "
+                  "equivalence check every reuse claim in this package passes"),
         _ref("independence", "independence", "INDEPENDENCE_SCHEMA_VERSION", 1),
+        _ref("latency", "latency", "LATENCY_SCHEMA_VERSION", 1,
+             note="the interval from a finalization request to a verdict, "
+                  "attributed to its stages and never a safety metric"),
         _ref("level", "level", "LEVEL_SCHEMA_VERSION", 1),
         _ref("model_dialect", "model_neutral", "MODEL_NEUTRAL_SCHEMA_VERSION", 1),
         _ref("mutation", "mutation", "MUTATION_SCHEMA_VERSION", 1),
