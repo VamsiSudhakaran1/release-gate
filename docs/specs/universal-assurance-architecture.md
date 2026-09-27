@@ -7392,6 +7392,164 @@ deliberately left open rather than settled as a side effect of adding a module.
 
 ---
 
+### 10as. Domain acts — authorize *what*, and does this approval finish it
+
+Six domains asked for the same thing and meant six different acts: publish or rely
+on a claim; execute a payment; present a recommendation for a clinician to
+authorize; apply a production change; execute containment; authorize a mission
+plan. Not one of those is a regulation and none belongs in this package. What
+belongs is the structure they share — and it turned out to be two questions the
+engine could not previously ask, plus one axis the consequence model does not have.
+
+#### 10as.1 Does this approval complete the authorization?
+
+Healthcare is the sharpest of the six and the reason `ActClass` exists at all.
+"Present a recommendation for clinician authorization" means release-gate authorizes
+the **presenting**. The clinician authorizes the care. An engine that recorded those
+as one approval would be claiming clinical authority it does not have and cannot
+have — in the record a hospital keeps.
+
+So `ActClass.REFER` is a first-class value, `completes_authorization` is `False` for
+it, and a `REFER` act must name the authority it defers to: "somebody else decides
+next" with no somebody is a gap wearing a process's clothes. The mirror error is
+refused too — an act that completes its own authorization may not name a further
+authority, because implying a step that is not there is the same mistake pointing
+the other way.
+
+`PERFORM`, `PUBLISH` and `RELY` complete it. `OTHER` does not, because an act nobody
+classified must not read as finished.
+
+This is Invariant 15 one step further in. "Approval is authorization, not truth
+certification" becomes: approval is authorization **of a named act**, and which act
+it is changes what the signature means.
+
+#### 10as.2 The axis the consequence model does not have
+
+Every one of `consequence`'s eleven dimensions measures the harm of **acting** —
+reversibility, blast radius, money, data, production, legality. Containment inverts
+that. The whole point of isolating a compromised host is that *not* doing it is
+worse, so HOLD — release-gate's safe answer everywhere else in this architecture —
+is the harmful answer there, and nothing in the model could say so.
+
+`WithholdingCost` says it. `holding_is_the_safe_default` returns `Optional[bool]`
+rather than a bool, because `True` and `False` are both strong claims about a domain
+and `UNKNOWN` — the commonest value — supports neither. Returning `True` by default
+is precisely the assumption that makes a gate dangerous during an incident.
+
+Of the brief's six, exactly one makes holding unsafe, and there is a test that pins
+that rather than asserting it in prose.
+
+#### 10as.3 Why it is not a twelfth consequence dimension
+
+The obvious home was `ConsequenceDimension`. It is unavailable, and the reason is
+measured rather than argued: `ConsequenceProfile.to_dict()` serialises
+`{d.value: … for d in ConsequenceDimension}` — **every** member, always, because a
+caller must never have to distinguish "absent from the mapping" from "unknown". So
+adding a dimension adds a key to every profile in every case, changes the profile
+record's digest, changes every `case_digest`, and thereby unseats **every
+`BoundApproval` ever recorded in a deployment**. That is the exact cost §10ae exists
+to make visible, paid for a field that would have been tidier in one place.
+
+Extending a *vocabulary* is free by comparison — verified, not assumed: adding a
+value to a dimension's value list moves no digest, because the list is not
+serialised. The asymmetry is why `UNKNOWN_IMPACT` is an escape hatch inside the
+closed enum rather than the enum being open, and it is why withholding lives beside
+a profile instead of in one.
+
+#### 10as.4 Who has standing, and what release-gate can never know
+
+A platform engineer is not a clinician. A payments approver is not a flight
+director. So an act declares the authority it requires by a name the **domain**
+supplies, and a claim to hold it arrives with a basis: `DECLARED` (the approver said
+so), `ATTRIBUTED` (an identity provider named the role, §10z), `VETTED` (the
+organisation's own registry records this reviewer, §10ar) or `NOT_ESTABLISHED`.
+
+`VETTED` is where last section's work becomes load-bearing here, and it is still not
+a licence. **No basis is a verified qualification**, at any value:
+`AuthorityClaim.is_a_verified_qualification`, `DomainAct.establishes_qualification`
+and `AuthorityReading.verifies_credentials` are all unconditionally `False`. Naming
+`clinician` as a required authority records what a domain asks for; it does not make
+release-gate a licensing board, and a reviewer who wants more is asking about a
+licensing board.
+
+A basis that rests on a third party must name that party, because an unattributed
+attribution is a declaration with better wording. A claim naming an authority the
+act does not require is kept rather than dropped — somebody thought it was relevant,
+and discarding it silently loses the only trace of that — it simply satisfies
+nothing.
+
+#### 10as.5 The claim this section found false
+
+`plugin`'s docstring said: *"Nothing under `release_gate/assurance/` names a domain
+from the roadmap."* Checking it produced three hits.
+
+One was `"socket"` matching a search for `soc` — a substring check reading text
+rather than meaning, in a test written by someone who has hit that in five previous
+sections. The other two were real: `Capability.PAYMENT` and
+`ArtifactKind.PAYMENT_BATCH` both exist, and `capabilities` maps `stripe.com` to a
+capability.
+
+They are not violations, and working out why is more useful than the claim was:
+
+* **Naming what an agent can do is describing the agent.** `Capability.PAYMENT`
+  means a tool surface can move money — something release-gate observed from a tool
+  name or a host. The module says so itself: *"this is evidence, not a verdict…
+  only a methodology can say it was not allowed."*
+* **Embedding a domain means encoding a rule only a domain expert could state.** "A
+  payment over ten thousand requires two approvers" is finance's rule; "a protected
+  identifier may not leave the estate" is healthcare's. Neither belongs here.
+
+So the claim is corrected in place, and the test is now structural rather than
+lexical: nothing under `assurance/` constructs a `DomainAct`, nothing hardcodes a
+`required_authority`, and `ActRegistry` ships empty. All six of the brief's examples
+are built in the tests, where a domain's vocabulary belongs.
+
+#### 10as.6 Declared through the plugin, because that is what it is for
+
+`DomainPlugin` gains `acts`. §10s exists so a domain author has one place to look
+rather than six registration calls, and adding a seventh would have defeated it. An
+act's id is namespaced `<domain>.<act>`, a plugin may not declare an act namespaced
+under another domain, and it may not declare one twice — the collision rules that
+already applied to claim types, verification types, rules and sections, applied here
+for the same reason.
+
+`PLUGIN_SCHEMA_VERSION` moves 1 → 2, and the cost is stated where the constant is
+rather than discovered later. A plugin's digest covers `content()`, so every plugin
+digest changes; **no case digest does**, because a case records a `MethodologyRef`
+carrying the *methodology's* digest and never a plugin's. No plugin ships, so nothing
+in the tree had a digest to break. That is a bump taken deliberately rather than a
+conditional inside an identity computation, which is how the alternative would have
+looked.
+
+#### 10as.7 The conflation caught while rendering
+
+`holding_is_the_safe_default` returns `None` for two different reasons, and the first
+draft of `render()` gave them one sentence: *"withholding cost: not assessed."*
+`DEGRADES` was assessed and landed in between; `UNKNOWN` means nobody looked.
+Reporting the first as the second is the same conflation between "we weighed it" and
+"nobody weighed it" that the whole coverage model exists to prevent, appearing in the
+one place a human actually reads. They now have different sentences and a test holds
+them apart.
+
+#### 10as.8 Nothing here changes a case
+
+The reading is derived from an act and a set of claims, the shape §10ao and §10ar
+already use: no branch in `assure_normalisation`, no configuration under which a case
+digest could move, and a deployment that declares no acts runs identical code to an
+identical verdict. Missing authority, self-declared authority and an unsafe default
+each become an `EvidenceExpectation` with `assessed=False`, landing in the coverage
+ledger beside every other gap (Invariants 3, 9).
+
+#### 10as.9 What is not built
+
+No regulation: no HIPAA, SOX, PCI or DO-178C logic, and no thresholds. No credential
+or licence verification. No shipped acts. And no gate — whether a missing authority
+should **hold** a case rather than appear as a coverage gap is a methodology
+decision, which makes seven now that this architecture has deliberately left open
+rather than settled as a side effect of adding a module.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

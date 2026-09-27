@@ -221,6 +221,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("approval_view", "approval_view", "VIEW_SCHEMA_VERSION", 1),
         _ref("artifact", "artifacts", "ARTIFACT_SCHEMA_VERSION", 1),
         _ref("assumption", "assumptions", "ASSUMPTION_SCHEMA_VERSION", 1),
+        _ref("authority", "authority", "AUTHORITY_SCHEMA_VERSION", 1,
+             note="what act an approval authorizes, whether it completes the "
+                  "authorization or refers it on, and who has standing to give it"),
         _ref("attestation", "attestation", "ATTESTATION_SCHEMA_VERSION", 1),
         _ref("capability", "capabilities", "CAPABILITY_SCHEMA_VERSION", 1),
         _ref("compaction", "compaction", "COMPACTION_SCHEMA_VERSION", 1),
@@ -269,7 +272,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
              "ORCHESTRATION_SCHEMA_VERSION", 1),
         _ref("organisation", "organisation", "ORGANISATION_SCHEMA_VERSION", 1),
         _ref("override", "override", "OVERRIDE_SCHEMA_VERSION", 1),
-        _ref("plugin", "plugin", "PLUGIN_SCHEMA_VERSION", 1),
+        _ref("plugin", "plugin", "PLUGIN_SCHEMA_VERSION", 2,
+             note="2 since a plugin may declare its domain's acts; plugin digests "
+                  "move and no case digest does, because a case records a "
+                  "methodology's digest and not a plugin's"),
         _ref("ports", "ports", "PORTS_SCHEMA_VERSION", 1),
         _ref("privacy", "privacy", "PRIVACY_SCHEMA_VERSION", 1),
         _ref("producers", "producers", "PRODUCERS_SCHEMA_VERSION", 1,

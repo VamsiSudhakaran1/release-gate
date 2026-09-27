@@ -15,11 +15,26 @@ delegates to the existing registries; nothing here re-implements what they do,
 and a methodology registered through a plugin is the same object, in the same
 place, as one registered directly.
 
-**The core stays domain-neutral, and that is a test rather than a promise.**
-Nothing under `release_gate/assurance/` names a domain from the roadmap. Finance
-knows what a material loss is; healthcare knows what a protected identifier is;
-this engine knows what evidence is, and mixing the two would make every case
-carry vocabulary for domains it has nothing to do with.
+**The core stays domain-neutral, and the line is narrower than "no domain words".**
+That claim was once written here as "nothing under `release_gate/assurance/` names a
+domain", and §10as found it false by grepping for it: `Capability.PAYMENT` and
+`ArtifactKind.PAYMENT_BATCH` both exist, and `capabilities` maps `stripe.com` to a
+capability.
+
+Those are on the right side of the line, and stating where the line actually runs
+is more useful than a claim that does not survive contact:
+
+* **Naming what an agent can do is describing the agent.** `Capability.PAYMENT`
+  means a tool surface can move money — something release-gate observed. The module
+  says so itself: "this is evidence, not a verdict... only a methodology can say it
+  was not allowed."
+* **Embedding a domain means encoding a rule only a domain expert could state.** "A
+  payment over ten thousand requires two approvers" is finance's rule, "a protected
+  identifier may not leave the estate" is healthcare's, and neither belongs here.
+
+So what the core may not hold is a domain's *rules, thresholds and named acts*, and
+the checkable form of that is structural rather than lexical: nothing under
+`assurance/` constructs a `DomainAct`, and the act registry ships empty.
 
 **A plugin extends and can never weaken.** That is the whole of "correctly", and
 it is enforced rather than documented:
@@ -62,6 +77,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+from release_gate.assurance.authority import DomainAct
 from release_gate.assurance.canonical import digest_object
 from release_gate.assurance.consequence import ConsequenceModel, ConsequenceRegistry
 from release_gate.assurance.methodology import (
@@ -85,7 +101,13 @@ __all__ = [
     "VocabularyTerm",
 ]
 
-PLUGIN_SCHEMA_VERSION = 1
+#: 2 since §10as: a plugin may declare the acts its domain authorizes, so
+#: `content()` covers one more field and every plugin's digest moves. Deliberately
+#: a bump rather than a conditional in an identity computation — and cheap, because
+#: a plugin digest reaches no case: a case records a `MethodologyRef` carrying the
+#: *methodology's* digest, which this does not touch. No plugin ships, so nothing
+#: in the tree had a digest to break (§10ae).
+PLUGIN_SCHEMA_VERSION = 2
 
 #: The predicate kinds the core ships, snapshotted once at import — before any
 #: plugin can have run. It must be a module-level snapshot rather than a
@@ -211,6 +233,11 @@ class DomainPlugin:
     rules: Tuple[Requirement, ...] = ()
     predicates: Tuple[type, ...] = ()
     report_sections: Tuple[DomainSection, ...] = ()
+    #: The acts this domain authorizes (§10as). Declared here rather than through a
+    #: seventh registration call, which is the whole reason this bundle exists. An
+    #: act's id is namespaced under its domain by `DomainAct`, so the collision rule
+    #: that already applies to claim and verification types applies here too.
+    acts: Tuple[DomainAct, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
     schema_version: int = PLUGIN_SCHEMA_VERSION
 
@@ -229,7 +256,7 @@ class DomainPlugin:
 
         for name in ("methodologies", "claim_types", "verification_types",
                      "consequence_models", "evidence_expectations", "rules",
-                     "predicates", "report_sections"):
+                     "predicates", "report_sections", "acts"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
 
         for term in self.claim_types:
@@ -265,6 +292,20 @@ class DomainPlugin:
                 raise PluginError(
                     f"{self.domain_id}: section {section.key} is declared twice")
             seen_sections.add(section.key)
+
+        seen_acts: Set[str] = set()
+        for act in self.acts:
+            if act.domain != self.domain_id:
+                raise PluginError(
+                    f"{self.domain_id}: act {act.act_id} is namespaced under "
+                    f"{act.domain!r}, so this plugin would be declaring another "
+                    "domain's vocabulary. An act belongs to the domain that "
+                    "authorizes it")
+            if act.act_id in seen_acts:
+                raise PluginError(
+                    f"{self.domain_id}: act {act.act_id} is declared twice, so what "
+                    "an approval of it authorizes would depend on which copy was read")
+            seen_acts.add(act.act_id)
 
         for predicate in self.predicates:
             if not (isinstance(predicate, type) and issubclass(predicate, Predicate)):
@@ -302,6 +343,7 @@ class DomainPlugin:
             "rules": len(self.rules),
             "predicates": len(self.predicates),
             "report_sections": len(self.report_sections),
+            "acts": len(self.acts),
         }
 
     def content(self) -> Dict[str, Any]:
@@ -318,6 +360,7 @@ class DomainPlugin:
             "rules": [r.to_dict() for r in self.rules],
             "predicates": [p.KIND for p in self.predicates],
             "report_sections": [s.to_dict() for s in self.report_sections],
+            "acts": [a.to_dict() for a in self.acts],
             "metadata": dict(self.metadata),
         }
 

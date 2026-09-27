@@ -28,6 +28,9 @@ from release_gate.assurance.methodology import (
     Requirement, RequirementEffect, RequirementOutcome, _Finding)
 from release_gate.assurance.packet import (
     CORE_SECTIONS, SectionKey, build_packet)
+from release_gate.assurance.authority import (
+    ActClass, DomainAct, WithholdingCost,
+)
 from release_gate.assurance.plugin import (
     DomainPlugin, DomainSection, PluginError, PluginRegistry, TermKind,
     VocabularyTerm)
@@ -102,6 +105,10 @@ def _section_rows(case, outcome):
 
 
 def reference_plugin(**overrides) -> DomainPlugin:
+    # An act is namespaced under its own domain, so a caller asking for a plugin in
+    # another domain gets that domain's act rather than a cross-domain declaration
+    # the constructor would (correctly) refuse.
+    domain = overrides.get("domain_id", "reference")
     kwargs = dict(
         domain_id="reference", version="1.0.0",
         description="exercises every extension point",
@@ -124,7 +131,14 @@ def reference_plugin(**overrides) -> DomainPlugin:
         predicates=(SignOffPresent,),
         report_sections=(DomainSection(
             key="SIGN_OFF_CHAIN", question="Who signed off, and for what?",
-            rows_from=_section_rows, answer="One sign-off recorded."),))
+            rows_from=_section_rows, answer="One sign-off recorded."),),
+        acts=(DomainAct(
+            act_id=f"{domain}.perform_reference_action",
+            act_class=ActClass.PERFORM,
+            description="the act this reference domain authorizes",
+            required_authority=("reference_approver",),
+            withholding=WithholdingCost.DELAY_ONLY,
+            declared_by="the reference domain"),))
     kwargs.update(overrides)
     return DomainPlugin(**kwargs)
 
@@ -146,13 +160,14 @@ def registry():
 
 # ── all seven capabilities reach something real ─────────────────────────────
 
-def test_a_plugin_declares_all_seven_capabilities(registry):
+def test_a_plugin_declares_all_eight_capabilities(registry):
+    """Eight since §10as added `acts` — the seam a domain needs for its own acts."""
     plugin = reference_plugin()
     installation = registry.install(plugin)
     assert plugin.contributes == {
         "methodologies": 1, "claim_types": 1, "verification_types": 1,
         "consequence_models": 1, "evidence_expectations": 1, "rules": 1,
-        "predicates": 1, "report_sections": 1}
+        "predicates": 1, "report_sections": 1, "acts": 1}
     assert installation.methodologies == ("reference-domain@1.0.0",)
     assert installation.sections == ("SIGN_OFF_CHAIN",)
 
