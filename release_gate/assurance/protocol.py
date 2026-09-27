@@ -294,6 +294,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("trust", "trust", "TRUST_SCHEMA_VERSION", 1),
         _ref("verdict", "verdict", "VERDICT_SCHEMA_VERSION", 1),
         _ref("verifier", "verifiers", "VERIFIER_SCHEMA_VERSION", 1),
+        _ref("vetting", "vetting", "VETTING_SCHEMA_VERSION", 1,
+             note="an organisation's own vetting decisions about its verifiers; "
+                  "ships empty, matched on identity evidence and never on a name"),
         _ref("zero_config_ruleset", "zero_config", "ZERO_CONFIG_RULESET_VERSION",
              "zero-config-1",
              note="a ruleset identifier; the rules that turn structure into a "

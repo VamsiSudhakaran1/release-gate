@@ -27,14 +27,20 @@ def report():
 class TestTheThreatModel:
 
     def test_every_named_threat_is_exercised(self):
-        """The seventeen the brief named, plus one federation opened (§10aq.8)."""
+        """The seventeen the brief named, plus two later prompts opened.
+
+        §10aq.8 added a federated reference a document could forge; §10ar adds the
+        attack a vetting registry creates by existing — type a vetted verifier's
+        name and inherit its standing.
+        """
         assert set(THREATS) == {
             "approval_forgery", "digest_substitution", "replay", "case_confusion",
             "cross_tenant_evidence_mixing", "event_injection", "schema_abuse",
             "dos", "oversized_payload", "path_traversal", "ssrf",
             "malicious_artifact_links", "tampered_evidence_pack", "toctou",
             "forged_completeness", "fake_verifier_identity",
-            "cross_case_evidence_replay", "federated_reference_forgery"}
+            "cross_case_evidence_replay", "federated_reference_forgery",
+            "verifier_name_squatting"}
 
     def test_each_threat_behaves_as_its_nature_permits(self, report):
         wrong = [(r["name"], r["expected"], r["outcome"])

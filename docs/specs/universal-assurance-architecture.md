@@ -7183,6 +7183,215 @@ deliberately rather than as a side effect of adding a module.
 
 ---
 
+### 10ar. Verifier vetting — an organisation's decisions, and nobody else's
+
+Release-gate ships **no trusted verifiers.** Not one, not a starter set, not a list
+of provers whose builds are obviously fine.
+
+That is worth stating against what every other registry in this architecture does.
+§10ac ships model dialects, §10af ships observability platforms, §10aq ships
+twenty-five federated systems — because those are **descriptions**. How Langfuse
+addresses a trace is a fact about Langfuse, and release-gate can write it down
+without speaking for anybody. Whether a customer relies on a particular prover,
+pipeline, laboratory or reviewer is a **judgement that customer makes**, and a
+shipped entry would be release-gate making it on their behalf while looking like a
+convenience. `empty_registry()` is empty, `ships_trusted_vendors` is
+unconditionally `False`, and a test asserts the count is zero rather than small.
+
+#### 10ar.1 Named for what it holds
+
+The module is `vetting`, not `trusted_verifiers`. A registry called the latter,
+whose entries can read `REVOKED` or `REJECTED`, is misnamed — and revocability is
+the point. What is stored is a set of **vetting decisions**, each of which may say
+"rely on this" or "do not". Each carries a `TrustDecision`, unchanged from §10d,
+which has refused to exist without a `basis` and a `decided_by` since it was
+written: trust that cannot be traced to somebody's judgement is indistinguishable
+from an assumption. "Trust must remain explicit" was already half-implemented; what
+was missing was somewhere to put the decisions.
+
+Every field the brief names has a home, and none of them is new vocabulary:
+
+| the brief | where it lives |
+|---|---|
+| verifier identity | `VerifierEntry.verifier_id`, with `VerifierKind` |
+| executable digest | `identified_by` under `Identification.CONTENT_DIGEST` |
+| CI workflow identity | `identified_by` under `Identification.PLATFORM_IDENTITY` |
+| lab identity | `identified_by` under `Identification.ASSERTED_NAME` |
+| human reviewer | `VerifierKind.HUMAN`, `Identification.ACCOUNT` |
+| trust status | `decision.status` — `evidence.TrustStatus`, unchanged |
+| validity period | `valid_from` / `valid_until` |
+
+#### 10ar.2 Matching on a name is how a registry like this becomes a rubber stamp
+
+§10am already records `fake_verifier_identity`: a claim carrying
+`verifier: "tool://trusted-prover"` and nothing else, which lands as `DECLARED`
+because the case says plainly that a self-declared proof citing no evidence is
+what it is.
+
+A registry changes the stakes of that attack completely. If an entry were found by
+**name**, the same claim would stop being a declaration and become an *upgrade*:
+the attacker types a string and inherits somebody else's vetting, and the case now
+reports that a verifier the organisation relies on has passed. The registry would
+have made the engine weaker than it was without one.
+
+So an entry declares the **identity evidence it is recognised by**, `recognises()`
+never compares the verifier's name, and a match on a name alone yields `UNVETTED`.
+The two `UNVETTED` reasons are deliberately different sentences, because they are
+different situations:
+
+* *"1 entry names `tool://trusted-prover`, and this check presented no identity
+  evidence any of them recognise (CONTENT_DIGEST expected). Matching on the name
+  would hand a vetting to whoever typed it."*
+* *"The registry records no decision about `tool://semgrep` and nothing presented
+  identified it. Not a rejection: nobody looked."*
+
+`identity_values_of` reads the conventional `detail` keys through `PROOF_KEYS` —
+data, so a deployment that spells them differently adds a row — and deliberately
+excludes `attempt.verifier`. That field is the one thing an attacker fully
+controls, and including it would have made every entry matchable by spelling.
+
+#### 10ar.3 Identification and the decision are orthogonal
+
+`Identification` grades what a match rested on: a content digest requires the
+executable, a platform identity requires the platform, an account requires being
+signed in, and an **asserted name** requires being able to type it.
+
+An organisation genuinely may vet a laboratory on the strength of an accreditation
+and a contract. That accreditation number is printed on the laboratory's own
+report, so anybody who has seen one can present it. Both facts are true at once, so
+they are two axes: the decision is an explicit `ACCEPTED`, and the standing is
+`PROVISIONAL` with *"anybody who can type it can present it"* attached.
+`VerifierStanding.VETTED` cannot rest on `ASSERTED_NAME` — the constructor refuses
+it — so the weaker identification cannot be laundered by a stronger decision.
+
+This is the same shape as §10aq.4's `Establishment` × `DigestStatus`: one axis for
+whether the question was answered, one for on whose authority, and merging them
+loses whichever half is inconvenient. `VerifierKind
+.strongest_available_identification` records that a laboratory's asserted identity
+is the **nature of the thing** rather than a misconfiguration, so the weaker case
+does not read as somebody's oversight.
+
+#### 10ar.4 Expiry and revocation are different endings
+
+A **lapsed window** means the vetting ran out and nobody alleged anything was
+wrong. A check performed inside the window keeps its standing, because judging an
+old check against today's calendar would rewrite history for a verifier that did
+nothing. `VerifierStanding.LAPSED` says so: *"nobody alleged anything was wrong, so
+checks inside the window keep their standing."*
+
+A **revocation** is a judgement that the verifier cannot be relied on, and it
+applies to everything it ever said. `WITHDRAWN` is retroactive deliberately,
+because the case it exists for is the one where the compromise is discovered
+afterwards — and a revocation that only applied going forward would leave every
+past check standing on a trust nobody holds any more. A withdrawal also outranks an
+acceptance that matched the same evidence: the strongest thing anybody has said
+about a verifier is the one that counts.
+
+#### 10ar.5 The hole in the temporal answer, and §10ah closing it
+
+That asymmetry rests on knowing **when** the check ran, and "when" is usually the
+producer's own clock. So a verifier whose vetting lapsed last year can be
+resurrected by backdating an attempt — the attacker supplies a timestamp inside the
+window and collects `VETTED`.
+
+`stamped_on_arrival` is exactly the field that distinguishes release-gate's arrival
+clock from a producer's claim, and it exists because a clock inside a digest once
+made identical input produce two different case digests (§10ah, §10am.5). Here it
+earns its keep a second time: `consult_attempt` reports which clock placed the
+check in time, and a standing that depends on a producer's timestamp is capped at
+`PROVISIONAL` with the reason stated — *"a producer that wanted a lapsed vetting
+back could supply an earlier one."*
+
+A missing timestamp is not replaced with the current time. `VerifierEntry.covers`
+refuses a `None` moment by name, because "when did this run" with no answer must be
+reported rather than guessed away, and guessing `now` would put every undated check
+inside every live window.
+
+#### 10ar.6 A registry is what makes "unvetted" mean something
+
+With no registry, every verifier is unvetted and the fact carries no information —
+nobody has said which verifiers this organisation relies on, so absence from a list
+that does not exist says nothing. So `expectations()` returns nothing, the render
+says plainly that no registry is configured, and a case is exactly what it was
+before this module existed.
+
+With a registry, an organisation has said *these are the verifiers we rely on*, and
+a check performed by something absent from that list is a gap worth naming. This is
+§10h's structure arriving somewhere new: a denominator is what turns an omission
+into a **detectable** omission. Without one there is nothing to be missing from.
+
+Unvetted verifiers share one coverage row naming all of them — §10aq.9's lesson,
+since `CoverageLedger.of` returns the first match — while withdrawn and lapsed
+verifiers get a row each, because "nobody vetted this" and "somebody revoked this"
+are different findings.
+
+#### 10ar.7 "Optional" is structural here, not conditional
+
+The report is computed **from a decided outcome**, the same shape §10ao's
+compression metric takes: `report_for(outcome, registry)`. Nothing in
+`assure_normalisation` consults a registry, so there is no branch in the
+authoritative path and no configuration under which a case digest could move. A
+deployment with a registry and one without run identical code to the same verdict,
+and the difference is entirely in what is reported afterwards.
+
+`attempts_in` gathers attempts from **both** places they live — the `verification`
+collection and `analysis.verification_graph` — because a report built from one of
+them would have vetted half the case and said nothing about the other half.
+
+#### 10ar.8 Trust is not correctness, and never an upgrade
+
+`Consultation.establishes_correctness` and `upgrades_epistemic_status` are
+unconditionally `False`, as is `VettingReport.changes_any_result`. A vetted
+verifier's FAILED check is a failure. An unvetted verifier's PASSED check is a pass
+whose standing nobody established. And a vetted verifier's DECLARED result stays
+DECLARED, because vetting is a decision about whom to rely on rather than an
+observation release-gate made (Invariants 1, 2, 11).
+
+`VettingReport.is_a_completeness_claim` is `False` too: the report covers the
+attempts a case carries, so a verifier that ran and was never reported is invisible
+here exactly as it is everywhere else (§10p).
+
+#### 10ar.9 The registry never comes from the case
+
+There is deliberately **no loader** that builds a registry out of a document's
+records, and a test asserts that `VettingRegistry` has no `from_dict` and no
+`from_records`. A case that could carry its own vetting registry would be
+self-vetting, which is §10ah's distinction exactly: a governance file is DECLARED
+evidence about what a team wrote down, never policy input. `ingest` maps no `trust`
+field either — verified rather than assumed — so a submitted record still cannot
+declare its own `TrustDecision`, and nothing here changed that.
+
+`VettingRegistry.source` records where the operator got the decisions, so the
+registry's own provenance is a question a reviewer can ask.
+
+#### 10ar.10 The nineteenth attack
+
+`verifier_name_squatting`: claim to be a verifier the organisation vetted, by using
+its name. Expected `DECLARED` — the claim lands and the case says what it is worth.
+
+Its `was_possible` flag reads off the attack's ingredients rather than the verdict:
+the registry does name the verifier, and the claim does reach the case. Only the
+identity-evidence requirement denies the standing. Making `recognises()` match
+anything — which is what name-matching amounts to — makes the same attack report
+`NOT_DEFENDED` with `relied_on=True`, which is how the guard was confirmed
+load-bearing rather than assumed to be.
+
+Note what did *not* change: `fake_verifier_identity` keeps its `DECLARED` outcome.
+A registry does not make the engine refuse a self-declared proof; it makes the
+verifier's standing visible. Upgrading that threat's expected outcome would have
+claimed a defence this work does not provide.
+
+#### 10ar.11 What is not built
+
+No shipped entries, ever. No signature verification or PKI — `identity` owns that,
+and a registry that validated tokens would be a second implementation of it. No
+credential handling. No loader from a case. And no gate: whether an unvetted or
+withdrawn verifier should **hold** a case rather than appear as a coverage gap is a
+methodology decision, and that is now the sixth such decision this architecture has
+deliberately left open rather than settled as a side effect of adding a module.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

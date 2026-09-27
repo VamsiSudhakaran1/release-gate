@@ -615,6 +615,71 @@ def _t_federated_reference_forgery() -> AttackResult:
                 "coverage_rows": [r.dimension for r in ledger.expectations()]})
 
 
+def _t_verifier_name_squatting() -> AttackResult:
+    """Claim to be a verifier the organisation vetted, by using its name.
+
+    The attack §10ar exists because of, and the reason its registry matches on
+    identity evidence rather than on identifiers. `fake_verifier_identity` above
+    shows that a self-declared proof lands as DECLARED. Once an organisation
+    records which verifiers it relies on, the same claim becomes a bid for
+    somebody else's standing: type the vetted verifier's name and inherit it.
+
+    Every ingredient works. The registry names the verifier, the claim uses exactly
+    that name, the verification is admissible in the case. What denies the standing
+    is that the entry is recognised by an executable digest the attacker does not
+    have, so `was_possible` reads off the ingredients rather than the verdict.
+    """
+    from release_gate.assurance.chaos import _base as chaos_base
+    from release_gate.assurance.evidence import TrustDecision, TrustStatus
+    from release_gate.assurance.vetting import (
+        Identification, VerifierEntry, VerifierKind, VettingRegistry, report_for,
+    )
+
+    vetted_name = "tool://trusted-prover"
+    real_digest = "sha256:" + "11" * 32
+
+    registry = VettingRegistry(source="the organisation's own vetting list")
+    registry.register(VerifierEntry(
+        entry_id="e-prover", verifier_id=vetted_name, kind=VerifierKind.EXECUTABLE,
+        identification=Identification.CONTENT_DIGEST, identified_by=(real_digest,),
+        decision=TrustDecision(
+            status=TrustStatus.ACCEPTED,
+            basis="reproducible build, reviewed by platform security",
+            decided_by="security-eng@acme")))
+
+    records = [dict(r) for r in chaos_base()]
+    for row in records:
+        if row.get("record_type") == "claim":
+            row["verification_attempts"] = list(row["verification_attempts"]) + [
+                {"method": "FORMAL_PROOF", "outcome": "PASSED",
+                 "verifier": vetted_name, "evidence": [], "detail": "proved"}]
+    outcome = _assure(records)
+    report = report_for(outcome, registry)
+
+    squatted = next((c for c in report.consultations
+                     if c.verifier_id == vetted_name), None)
+    # Ingredients: the registry knows the name, and the claim reached the case.
+    name_is_vetted = bool(registry.for_verifier(vetted_name))
+    claim_landed = squatted is not None
+
+    relied_on = bool(squatted and squatted.standing.relied_on)
+    costs_coverage = any(not row.assessed for row in report.expectations())
+
+    return AttackResult(
+        name="verifier_name_squatting",
+        outcome=Outcome.DECLARED if (claim_landed and not relied_on)
+                else Outcome.NOT_DEFENDED,
+        signal=(f"the registry vets {vetted_name!r} ({name_is_vetted}) and the claim "
+                f"reached the case ({claim_landed}); it bought "
+                f"{squatted.standing.value if squatted else 'no consultation'} rather "
+                f"than standing, and the gap costs coverage ({costs_coverage})"),
+        was_possible=name_is_vetted and claim_landed,
+        detail={"standing": squatted.standing.value if squatted else None,
+                "identification": squatted.identification.value if squatted else None,
+                "relied_on": relied_on,
+                "coverage_rows": [r.dimension for r in report.expectations()]})
+
+
 _THREAT_LIST: Tuple[Attack, ...] = (
     Attack("approval_forgery", "build an approval this engine never issued",
            Outcome.REFUSED, _t_approval_forgery),
@@ -661,6 +726,9 @@ _THREAT_LIST: Tuple[Attack, ...] = (
     Attack("federated_reference_forgery",
            "claim a remote holding and supply the digest it is checked against",
            Outcome.DECLARED, _t_federated_reference_forgery),
+    Attack("verifier_name_squatting",
+           "claim to be a verifier the organisation vetted, by using its name",
+           Outcome.DECLARED, _t_verifier_name_squatting),
 )
 
 THREATS: Mapping[str, Attack] = {t.name: t for t in _THREAT_LIST}
