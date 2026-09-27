@@ -27,13 +27,14 @@ def report():
 class TestTheThreatModel:
 
     def test_every_named_threat_is_exercised(self):
+        """The seventeen the brief named, plus one federation opened (§10aq.8)."""
         assert set(THREATS) == {
             "approval_forgery", "digest_substitution", "replay", "case_confusion",
             "cross_tenant_evidence_mixing", "event_injection", "schema_abuse",
             "dos", "oversized_payload", "path_traversal", "ssrf",
             "malicious_artifact_links", "tampered_evidence_pack", "toctou",
             "forged_completeness", "fake_verifier_identity",
-            "cross_case_evidence_replay"}
+            "cross_case_evidence_replay", "federated_reference_forgery"}
 
     def test_each_threat_behaves_as_its_nature_permits(self, report):
         wrong = [(r["name"], r["expected"], r["outcome"])
@@ -342,3 +343,27 @@ class TestExportCollisions:
         from release_gate.assurance import trust
         assert package.Threat is trust.Threat
         assert package.Attack.__module__.endswith("hostile")
+
+
+class TestFederatedReferenceForgery:
+    """Referencing evidence you do not have, and supplying its digest yourself."""
+
+    def test_the_forgery_lands_and_buys_no_verification(self):
+        result = run_threat("federated_reference_forgery")
+        assert result.outcome is Outcome.DECLARED
+        assert result.detail["self_referential"] is True
+        assert result.detail["verified_without_copying"] is False
+
+    def test_every_ingredient_of_the_attack_works(self):
+        """`was_possible` reads off the ingredients, not the verdict.
+
+        The system classifies, the locator is well shaped and the comparison
+        matches. Only the self-referential flag denies the payoff, which is what
+        makes this a defence rather than an accident.
+        """
+        assert run_threat("federated_reference_forgery").was_possible
+
+    def test_it_lands_in_coverage_rather_than_being_silently_dropped(self):
+        result = run_threat("federated_reference_forgery")
+        assert result.detail["coverage_rows"] == ["federated.oci_registry"]
+        assert result.detail["unresolved"]

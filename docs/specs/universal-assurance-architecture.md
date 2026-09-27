@@ -6928,6 +6928,261 @@ cache.
 
 ---
 
+### 10aq. Federated evidence — a reference, and what it is worth
+
+A large company keeps the trace in Langfuse, the test run in GitHub Actions, the
+weights at an S3 key, the cohort in a Snowflake table, the proof in a Lean
+repository, the experiment in MLflow, and the assay with a laboratory in another
+country. Release-gate is not going to hold any of it. §10aa already said a store
+is not an authority and §10ab already said proprietary content must never have to
+leave the environment that produced it, so the question was never how to copy it
+in. It was what a *reference* establishes.
+
+#### 10aq.1 The record model was already federated; the reading of it was not
+
+The first thing worth checking was whether this needed a new field, and it did
+not. `EvidenceRecord` already carries a `content_reference`, a `digest`, a
+`source_identity`, a `provenance_status` and a `trust`. `ReferenceKind` already
+had `OBJECT_STORE`, `URL`, `GIT_COMMIT` and `EXTERNAL`. `DigestStatus` already
+separated `OBSERVED` from `DECLARED`, and `DigestMethod` already had
+`EXTERNAL_ATTESTED` for "someone else says this is the digest". A record pointing
+at somebody else's system has been expressible since §10c.
+
+What was missing was everything downstream of the pointer: which *kind* of system
+it is, what its addressing permits, whose custody it sits in, and — the part the
+brief actually asks for — what an attempt to check it established. So
+`federation.py` adds no field to any record. `Holding.reference()` produces a
+`ContentReference` and `holdings_in()` reads holdings back out of records that
+carry one, which means a producer declares a federated holding through the model
+that already exists and no ingest path was added for it. A second evidence model
+beside the first would have been the parallel architecture the contract forbids,
+and it would have been easy to write without noticing.
+
+#### 10aq.2 "Verify identity/digest without copying" is three questions
+
+Run together they produce a case that reads as clean while resting on nothing. So
+they are three fields on every `Resolution` and never one:
+
+* **Identity** — does this reference name the object the case says it does?
+* **Integrity** — do the bytes at that reference hash to the claimed digest?
+* **Availability** — is it there *now*?
+
+A content-addressed reference settles identity for free and says nothing about
+whether the object exists: a CID for something no node is pinning is a perfectly
+valid name for a thing nobody can fetch. An existence probe settles availability
+and nothing about content: an object at the right key with the wrong bytes passes
+it. Only re-reading the bytes settles integrity on release-gate's own authority,
+and that moves the whole object, which is the thing the brief asks to avoid.
+
+`ESTABLISHMENT_TABLE` is that grid, exhaustive over `ResolutionMethod`, as a table
+rather than a chain of branches — so "does an existence probe establish integrity"
+has one answer in one place instead of one answer per call site.
+
+Availability is separated out because **federation is the one thing in this
+architecture that genuinely weakens Invariant 5.** An approval binds to an exact
+state; a remote object can be deleted or rewritten the day after the approval is
+recorded. The sharpest case is CI, and it is a row in the registry rather than a
+caveat in prose: a GitHub Actions run conclusion persists while its logs and
+artifacts expire on a repository setting, so **a green run outlives the evidence
+that justified it**, and a reference to it resolves perfectly long after there is
+nothing behind it.
+
+#### 10aq.3 The addressing decides what is checkable, not the vendor
+
+`Addressing` is the load-bearing enum, and the finding it encodes is that vendor
+identity barely matters:
+
+| addressing | what it permits | example |
+|---|---|---|
+| `CONTENT_ADDRESSED` | identity from the reference alone, zero payload | OCI manifest, git oid, CID |
+| `CHECKSUMMED` | integrity for one metadata call, on the store's authority | S3, GCS, Zenodo |
+| `OPAQUE_ID` | existence is the ceiling | trace id, CI run number, lab sample id |
+| `QUERY` | nothing; there is no fixed content to digest | `SELECT` against a live table |
+
+Two object stores with different addressing are further apart, for this question,
+than an object store and a CI system that both hand out opaque ids. `s3` and
+`oci_registry` are the same `SystemClass` and answer different questions, and
+there is a test that pins exactly that.
+
+`QUERY` exists because a database holding is the hard case and deserved naming
+rather than squeezing. A live table has no fixed content, so a holding against one
+is honest only if it names something immutable — a snapshot, an export, a
+time-travel clause — and `QUERY` is what it reads as otherwise.
+
+The trap this axis catches: **an OCI tag in a content-addressed registry.**
+`myapp:latest` sits in a registry whose addressing is `CONTENT_ADDRESSED`, and it
+is a mutable name. So `identity_checkable_without_transfer` requires both halves —
+the system's addressing *and* this locator's shape — and a resolution that claims
+`ADDRESS_IS_DIGEST` for a tag is turned into `UNREACHABLE` with the reason
+attached. A mutable name riding in on a content-addressed store's reputation is
+the most plausible way this module could have been used to overstate something.
+
+#### 10aq.4 Establishment and authority are orthogonal, and both travel
+
+`Establishment` says whether a question got an answer. `DigestStatus` says on
+whose authority. Merging them would lose the state that is *most common* for
+federated evidence: an S3 object whose checksum the store reports is `ESTABLISHED`
+**and** `DECLARED`. The question is answered; the answer is the store's word.
+That is genuinely useful and it is not the same as `ESTABLISHED` + `OBSERVED`.
+
+`DigestStatus` is `subject`'s, unchanged. Inventing a federation-specific status
+would have been a second vocabulary for a distinction §10c already drew, and the
+constructor refuses `OBSERVED` for any method but `RECOMPUTED` — so the one path
+that requires release-gate to have hashed the bytes cannot be reached by a
+resolver that would like to claim it.
+
+`Resolution.verified_without_copying` is `False` for `RECOMPUTED` even though
+`RECOMPUTED` is the strongest result available. It settled identity *by* copying,
+and counting it would make the measure report its own opposite.
+`FederationLedger.bytes_transferred` makes the whole claim checkable rather than
+rhetorical: a ledger of content-addressed and checksummed holdings reports a
+number near zero, one that recomputed everything reports the size of the evidence,
+and `None` means nobody measured — which is not zero.
+
+#### 10aq.5 The adapter reports, this module adjudicates
+
+A `Resolver` returns a `Probe`: the method, what it saw, how many bytes it moved.
+`resolve()` turns that into a `Resolution` by the table. The split is the same one
+§10aa draws between a worker and a verifier — an adapter that could mark its own
+read authoritative would be self-attestation with a storage client in front of it.
+A resolver returning a bare digest instead of a `Probe` is refused by name.
+
+Two behaviours carried over from lessons this engine already paid for:
+
+* **A resolver that raises becomes `UNREACHABLE`, not an exception.** `subject
+  .recheck` needed the same fix for the same reason: "is this evidence still
+  there" is asked in the approval path, and letting a revoked credential
+  propagate turns the question into a crash at the one moment it matters.
+* **With no resolver the answer is `NOT_ATTEMPTED`, and nothing is read locally.**
+  A holding's locator arrives in a submitted document, so falling back to
+  inspecting whatever it names is the digest oracle §10am.3 closed.
+
+Nothing in the module imports a driver, a client or a credential, and nothing in
+it can: the S3 client, the GitHub token and the Lean checkout all live outside and
+arrive through the protocol.
+
+#### 10aq.6 A lost reference costs differently per class
+
+`SystemClass.independently_recheckable` is true for exactly one of the seven, and
+the axis is about cost rather than mechanics. A Lean proof is a file any party can
+re-check, so a party that distrusts the reference can settle the matter instead of
+arguing about it — which is why `VerificationMethod.THEOREM_PROVER` was always a
+stronger thing than a pointer. A finished run's trace cannot be reproduced from
+its trace id by anyone, and a laboratory's measurement of a physical sample cannot
+be reproduced without the sample and a second laboratory. For those, losing the
+holding loses the evidence, which is the second reason availability is reported
+separately rather than folded into integrity.
+
+An external lab is also an independence question before it is a federation one
+(§10g): the reference is to a report, the report is a claim, and the claim was made
+by whoever was paid to make it. `Holding.declared_by` is required so that question
+is answerable at all.
+
+#### 10aq.7 Custody names the boundary and does not enforce one
+
+The brief names external labs, and a lab is a different organisation. `Custody`
+records that — `OWN`, `VENDOR`, `OTHER_ORGANISATION`, `UNKNOWN` — and
+`crosses_an_organisational_boundary` counts `UNKNOWN`, because an unrecorded
+custodian is not a domestic one (Invariant 3 applied to provenance).
+
+It records the boundary; it does not isolate anything. **Cross-tenant evidence
+separation remains `NOT_DEFENDED` (§10am.4.)** Naming the boundary is what lets a
+reviewer see that two holdings sit on opposite sides of it; building an isolation
+mechanism inside a federation module would be the same wrong place §10am.4
+declined to build it in, and it would have looked like progress.
+
+An unregistered system reads as `OPAQUE_ID` with `Custody.UNKNOWN` — the weakest
+reading available, not the most convenient one — and `system_for` returns `None`
+rather than raising, because a holding in a system this build cannot classify is
+still a holding worth carrying.
+
+#### 10aq.8 The hole: a property a submitted document could grant itself
+
+`ADDRESS_IS_DIGEST` compares the locator against the claimed digest. Read off one
+evidence record — which is exactly what `holdings_in` does — **both sides come from
+the same producer.** So an agent could set `verified_without_copying` to `True`
+with no external interaction of any kind, by writing a digest-shaped locator, a
+system name, and the same digest in the record's `digest` field. Measured before it
+was fixed: `identity=ESTABLISHED`, `match=MATCHED`, `verified_without_copying=True`,
+`is_a_gap=False`, resolver contacted nothing.
+
+A security property an attacker can award themselves is not a property. The fix is
+narrow and sits at the comparison rather than at the method: `Holding
+.digest_declared_by` names the party that stated the *expected* digest, and when
+that is the same party that wrote the reference the resolution is marked
+`self_referential`. Identity stays `ESTABLISHED`, because it is literally true — the
+reference does name the object the case claims — and that truth is worthless, so
+`verified_without_copying` becomes `False`, `is_a_gap` becomes `True`, the ledger
+counts the holding as unresolved, and it costs coverage like any other gap.
+
+Deliberately narrow to `ADDRESS_IS_DIGEST`. Under `METADATA_DIGEST` the store
+computed its digest without reference to anything the producer claimed, so
+comparing the two is a genuine cross-check and flagging it would have made the
+guard fire on the case it exists to distinguish. `holdings_in` leaves
+`digest_declared_by` empty rather than inventing a second party, so a holding read
+off a record is self-referential by default and a caller who knows the expected
+digest came from a methodology, a second producer or a release manifest says so
+explicitly.
+
+This is the §10g structure arriving somewhere new. "Who declared the denominator,
+and did they also produce the observations" is the question `ExpectationStanding`
+has asked since §10h, and a content-addressed reference is the same question about
+a digest.
+
+It is now the **eighteenth attack** in §10am's harness rather than only a unit
+test: `federated_reference_forgery`, expected `DECLARED`, because the holding lands
+and the case says what it is worth. Its `was_possible` flag reads off the attack's
+ingredients — the system classified, the locator was well shaped, the comparison
+matched — rather than off the verdict, since a defence for something that was never
+possible proves nothing. Disabling the guard makes the same attack report
+`NOT_DEFENDED` with `verified_without_copying=True`, which is how it was confirmed
+load-bearing rather than assumed to be.
+
+#### 10aq.9 The defect found at the coverage boundary
+
+`FederationLedger.expectations()` first emitted one coverage row per unresolved
+holding, keyed `federated.{system}`. `CoverageLedger.of(dimension)` returns the
+*first* row matching a dimension, so two unresolved holdings in one system put the
+second behind the first — losing a gap at exactly the boundary the method exists
+to carry gaps across. The same shape as every other defect found in this
+architecture: information dropped at a seam, with the more convenient half
+surviving.
+
+It is now one row per system, naming the count and every holding id in the note.
+A refuted holding gets its own row and a different dimension, because "we could not
+check this" and "we checked and the reference is wrong" are different findings and
+giving them one shape would bury the worse one.
+
+#### 10aq.10 Federation and privacy are one operation seen from two sides
+
+In §10ab the content was deliberately not sent; here it exists and is reachable
+and was not copied. In both, release-gate does not hold the bytes, and in both the
+case must read as **narrower** rather than as clean. So federation uses §10ab's
+mechanism unchanged: an unresolved holding emits an `EvidenceExpectation` with
+`assessed=False`, landing in the coverage ledger beside every other gap rather
+than in a federation report a reviewer would have to think to open (Invariants 3
+and 9).
+
+`Holding.is_held_by_release_gate`, `Resolution.retains_the_evidence` and
+`FederationLedger.is_a_completeness_claim` are all unconditionally `False`. The
+last is the one worth dwelling on: a ledger lists the holdings somebody
+*declared*, and whether evidence exists in a system nobody mentioned is exactly
+the omission §10p treats as an attack. A federation ledger is in the worst
+possible position to detect it, and a ledger that read as a complete inventory of
+where a case's evidence lives would be the most confident wrong answer in this
+module.
+
+#### 10aq.11 What is not built
+
+No clients, no credential handling, no vendor SDK. No query engine for the
+`DATABASE` class — naming `QUERY` is the contribution there. No cache of fetched
+bytes. No tenancy isolation, as above. And no new RG-* rule families and no gates:
+whether an unresolved holding or a refuted reference should *hold* a case rather
+than appear as a coverage gap is a methodology decision, and one worth taking
+deliberately rather than as a side effect of adding a module.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

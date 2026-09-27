@@ -551,6 +551,70 @@ def _t_cross_case_evidence_replay() -> AttackResult:
                 "verdict": outcome.case.verdict.decision.value})
 
 
+def _t_federated_reference_forgery() -> AttackResult:
+    """Claim a remote holding and supply the digest it is checked against.
+
+    The attack §10aq exists because of. Federated evidence is checked by comparing a
+    reference to a claimed digest, and read off a single evidence record both come
+    from the same producer — so an agent can write a digest-shaped locator, name a
+    content-addressed system, put the same digest in the record, and collect
+    "identity verified without copying the data" without anything ever contacting
+    anything.
+
+    Every ingredient lands: the system classifies, the locator is well shaped, the
+    comparison matches. What denies the payoff is that the resolution is marked
+    `self_referential`, which is why `was_possible` reads off those ingredients
+    rather than off the verdict — a defence for something that was never possible
+    proves nothing.
+    """
+    from release_gate.assurance.evidence import (
+        EvidenceRecord, EvidenceType, Producer, ProducerKind)
+    from release_gate.assurance.federation import (
+        Probe, ResolutionMethod, holdings_in, resolve_all)
+    from release_gate.assurance.subject import ContentReference
+
+    invented = "sha256:" + "de" * 32
+
+    class NeverContactsAnything:
+        def probe(self, holding: Any) -> Any:
+            return Probe(method=ResolutionMethod.ADDRESS_IS_DIGEST,
+                         bytes_transferred=0)
+
+    record = EvidenceRecord(
+        evidence_type=EvidenceType.DATA_ARTIFACT, source="agent://claimer",
+        producer=Producer(producer_id="agent://claimer", kind=ProducerKind.AGENT),
+        content_reference=ContentReference(
+            kind="OBJECT_STORE", locator=invented,
+            detail={"system": "oci_registry", "declared_by": "agent://claimer"}),
+        digest=invented)
+
+    holdings = holdings_in([record])
+    ledger = resolve_all(holdings, NeverContactsAnything())
+    resolution = ledger.of(holdings[0].holding_id) if holdings else None
+
+    # The forgery's ingredients, independent of whether it paid off.
+    matched = resolution is not None and resolution.match.value == "MATCHED"
+    named = bool(holdings) and holdings[0].identity_checkable_without_transfer
+
+    credited = bool(resolution and resolution.verified_without_copying)
+    flagged = bool(resolution and resolution.self_referential)
+    costs_coverage = any(not row.assessed for row in ledger.expectations())
+
+    return AttackResult(
+        name="federated_reference_forgery",
+        outcome=Outcome.DECLARED if (flagged and not credited) else Outcome.NOT_DEFENDED,
+        signal=(f"the holding landed and was classified ({named}), the digest "
+                f"comparison matched ({matched}), and it bought no verification: "
+                f"self_referential={flagged}, verified_without_copying={credited}, "
+                f"and it costs coverage ({costs_coverage})"),
+        was_possible=matched and named,
+        detail={"holdings": len(holdings),
+                "self_referential": flagged,
+                "verified_without_copying": credited,
+                "unresolved": [h.holding_id for h in ledger.unresolved],
+                "coverage_rows": [r.dimension for r in ledger.expectations()]})
+
+
 _THREAT_LIST: Tuple[Attack, ...] = (
     Attack("approval_forgery", "build an approval this engine never issued",
            Outcome.REFUSED, _t_approval_forgery),
@@ -594,6 +658,9 @@ _THREAT_LIST: Tuple[Attack, ...] = (
            Outcome.DECLARED, _t_fake_verifier_identity),
     Attack("cross_case_evidence_replay", "cite another case's evidence here",
            Outcome.DECLARED, _t_cross_case_evidence_replay),
+    Attack("federated_reference_forgery",
+           "claim a remote holding and supply the digest it is checked against",
+           Outcome.DECLARED, _t_federated_reference_forgery),
 )
 
 THREATS: Mapping[str, Attack] = {t.name: t for t in _THREAT_LIST}

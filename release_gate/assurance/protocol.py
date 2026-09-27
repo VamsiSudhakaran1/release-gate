@@ -248,6 +248,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("execution", "execution_graph", "EXECUTION_SCHEMA_VERSION", 1),
         _ref("expectation", "expectation", "EXPECTATION_SCHEMA_VERSION", 1),
         _ref("failed_branch", "failed_branches", "FAILED_BRANCH_SCHEMA_VERSION", 1),
+        _ref("federation", "federation", "FEDERATION_SCHEMA_VERSION", 1,
+             note="evidence held in another system, and whether a reference to it "
+                  "established identity, integrity or only that it was there"),
         _ref("hostile_report", "hostile", "HOSTILE_SCHEMA_VERSION", 1,
              note="the seventeen threats against the engine itself, and which "
                   "are refused, declared, bought nothing, or are not defended"),
