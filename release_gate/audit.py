@@ -169,6 +169,20 @@ COMPLIANCE_TAGS: Dict[str, List[str]] = {
 }
 
 
+
+# A recommendation's first sentence, for the one-line PR summary. Splitting on
+# every "." truncated `…then run via .execute().` to `…then run via .` — the
+# leading dot of a method call read as a sentence end. Only a period that ends a
+# word and is followed by a capital (or the string) terminates a sentence.
+_SENTENCE_END_RE = re.compile(r'(?<=[\w\)\]"`])\.(?:\s+(?=[A-Z])|\s*$)')
+
+
+def _first_sentence(text: str) -> str:
+    """First sentence of `text`, method calls left intact, ending in one period."""
+    head = _SENTENCE_END_RE.split(text.strip(), maxsplit=1)[0].rstrip()
+    return head if head.endswith(".") else head + "."
+
+
 def get_compliance_tags(key: str) -> List[str]:
     """Return the compliance framework references for a safeguard id or finding type key.
 
@@ -1417,7 +1431,7 @@ def render_ai_pr_comment(head_report: Dict[str, Any],
                        f"{f.get('title')}  `{f.get('file')}:{f.get('line')}`")
             rec = f.get("recommendation")
             if rec:
-                out.append(f"  ↳ {rec.split('.')[0]}.")
+                out.append(f"  ↳ {_first_sentence(rec)}")
         for s in new_sg:
             out.append(f"- ⚠ newly missing safeguard: **{s.get('label', s.get('id',''))}**")
         for d in drift_lines:
@@ -1954,7 +1968,7 @@ def render_pr_comment(report: Dict[str, Any],
                            f"`{f.get('file')}:{f.get('line')}`")
                 rec = f.get("recommendation")
                 if rec:
-                    out.append(f"  ↳ {rec.split('.')[0]}.")
+                    out.append(f"  ↳ {_first_sentence(rec)}")
             out.append("")
         else:
             out.append("**No new code findings.**")

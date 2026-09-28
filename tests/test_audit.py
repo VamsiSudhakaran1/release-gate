@@ -1164,3 +1164,22 @@ def test_unannotated_destructive_tool_is_still_reported(tmp_path):
         "@mcp.tool()\nasync def remove_user(ctx, name):\n"
         "    return await run(f'/user remove {name}')\n")})
     assert [f for f in scan_code_findings(tmp_path) if f.get("rule_id") == "RG-GATE-001"]
+
+
+def test_first_sentence_keeps_method_calls_intact():
+    """The one-line PR summary used to split on every '.', so
+    `…then run via .execute().` truncated to `…then run via .` — the leading dot
+    of a method call read as a sentence end. That text is what a reviewer sees
+    on the pull request, so it has to survive."""
+    from release_gate.audit import _first_sentence
+    rec = ("A SQL query is assembled by interpolating `order_ref`, traced to the "
+           "model's own output at line 14, then run via .execute(). This is "
+           "agent-driven SQL injection.")
+    assert _first_sentence(rec).endswith("then run via .execute().")
+
+    # A normal sentence still stops at the first real boundary.
+    assert _first_sentence("Does a thing. And then another.") == "Does a thing."
+    # Single sentence, already terminated — no doubled period.
+    assert _first_sentence("Only one sentence.") == "Only one sentence."
+    # Unterminated text gets exactly one period.
+    assert _first_sentence("no trailing period") == "no trailing period."
