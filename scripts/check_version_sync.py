@@ -33,12 +33,31 @@ def main() -> int:
     # 1. Exact-string pins that must equal the pyproject version.
     exact = {
         "release_gate/__init__.py": f'__version__ = "{version}"',
-        "release_gate_api/_app.py": f'"status": "ok", "version": "{version}"',
     }
     for rel, needle in exact.items():
         text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
         if needle not in text:
             errors.append(f"{rel}: expected {needle!r} (pyproject is {version})")
+
+    # 1b. The API must not restate the version at all.
+    #
+    #     It used to carry its own literal, kept in step by this guard. That is a
+    #     weaker arrangement than it looks: the pin only has to be *present*, so
+    #     the API sat three minors behind the package for several releases while
+    #     this check passed — the literal matched pyproject, and the thing it was
+    #     standing in for did not. Reading `release_gate.__version__` removes the
+    #     second place a version can be stated, so what is enforced here is the
+    #     absence of a literal, not the value of one.
+    api = (ROOT / "release_gate_api" / "_app.py").read_text(
+        encoding="utf-8", errors="ignore")
+    if "from release_gate import __version__" not in api:
+        errors.append("release_gate_api/_app.py: no longer reads the package "
+                      "__version__ — the API must not state a version of its own")
+    stray = re.findall(r'"version":\s*"(\d+\.\d+\.\d+)"', api)
+    if stray:
+        errors.append("release_gate_api/_app.py: hardcodes version(s) "
+                      + ", ".join(sorted(set(stray)))
+                      + " — read release_gate.__version__ instead")
 
     # 2. Every Action pin anywhere in the repo must be @v<version>. Any other
     #    release-gate@vX.Y.Z is a stale pin a user would copy verbatim.

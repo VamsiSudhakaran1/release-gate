@@ -1160,6 +1160,7 @@
       <li class="nav-dropdown">
         <button type="button" class="nav-dd-trigger" aria-haspopup="true" aria-expanded="false" onclick="toggleNavDropdown(this, event)">Product <span class="nav-caret" aria-hidden="true">▾</span></button>
         <div class="nav-dropdown-panel" role="menu">
+          <a href="/assurance.html" role="menuitem"><span class="ndp-t">Assurance</span><span class="ndp-d">Submit a run — get the case a person decides from</span></a>
           <a href="#agent-scan" role="menuitem"><span class="ndp-t">Agent Scan</span><span class="ndp-d">Find the agent-layer risks SAST misses</span></a>
           <a href="#pr-gate" role="menuitem"><span class="ndp-t">Review Gate</span><span class="ndp-d">Gate AI-generated PRs on what they introduced</span></a>
           <a href="/demo.html" role="menuitem"><span class="ndp-t">Live demo</span><span class="ndp-d">Watch it block a bad AI change — reproducible</span></a>
@@ -1169,6 +1170,7 @@
           <a href="#who-its-for" role="menuitem"><span class="ndp-t">Who it's for</span><span class="ndp-d">Teams shipping AI into production</span></a>
         </div>
       </li>
+      <li><a href="/assurance.html">Assurance</a></li>
       <li><a href="/demo.html">Demo</a></li>
       <li><a href="#enterprise">Pricing</a></li>
       <li><a href="research.html">Research</a></li>
@@ -1208,9 +1210,9 @@
       ▶ No repo handy? <a href="/demo.html"><strong>Watch it block a bad AI change</strong></a>
       — a real pull request, real output, reproducible on your machine in 30 seconds.
     </p>
-    <a href="#pr-gate" class="hero-pr-ribbon">
+    <a href="/assurance.html" class="hero-pr-ribbon">
       <span class="hpr-badge">New</span>
-      <span><strong>release-gate&nbsp;pr</strong> — AI-change review for pull requests: gate a diff on what it introduced, one merge decision</span>
+      <span><strong>release-gate&nbsp;assure</strong> — a machine produced something consequential; drop the run in and get the case a person decides from</span>
       <span class="hpr-arrow">&rarr;</span>
     </a>
    </div>
@@ -1253,6 +1255,107 @@
         </div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ ASSURANCE ═══════════════════════ -->
+<!--
+  Every figure in this section is measured by the test suite, not written here
+  by hand — tests/test_site_demo.py fails if the page and the engine disagree.
+-->
+<section id="assurance" style="padding:56px 0 48px;background:var(--bg);border-top:1px solid var(--border)">
+  <div class="container" style="max-width:860px">
+    <p style="font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin-bottom:12px">The assurance engine</p>
+    <h2 class="section-title" style="text-align:left;margin-bottom:10px">A machine produced something consequential.<br>A human has to decide whether the evidence is enough.</h2>
+    <p style="font-size:1.05rem;color:var(--text);line-height:1.65;max-width:62ch;margin-bottom:26px">
+      release-gate does not generate results and it does not verify them &mdash; agents
+      generate, tools verify, and release-gate assembles the argument those two
+      leave behind, then says whether that argument is sound enough to put to a
+      person. It reads an OpenTelemetry trace, a Langfuse export, a promptfoo
+      result or its own record format; the shape is detected, not declared.
+    </p>
+
+    <div style="display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));margin-bottom:28px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <h3 style="font-size:1rem;font-weight:800;color:var(--heading);margin:0 0 8px">1 &middot; A bounded list, not a score</h3>
+        <p style="font-size:.9rem;color:var(--text);line-height:1.6;margin:0">
+          Two million records is not reviewable, and a score over two million
+          records is one number standing in for a judgement nobody made.
+          Criticality comes from reachability in the claim graph, never volume.
+          <strong>A shorter list is not a better case</strong> &mdash; it can equally
+          mean detection got worse, which is why that refusal is a property in
+          the code rather than a caveat in the docs.
+        </p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <h3 style="font-size:1rem;font-weight:800;color:var(--heading);margin:0 0 8px">2 &middot; Every verdict says what it did <em>not</em> check</h3>
+        <p style="font-size:.9rem;color:var(--text);line-height:1.6;margin:0">
+          A pass that does not state its own coverage is indistinguishable from a
+          pass that never looked. <code>NOT_ASSESSED</code> is a first-class
+          answer, kept apart from &ldquo;we looked and found nothing&rdquo;
+          everywhere in the engine. Collapsing those is how a gap comes to read
+          as a clean bill of health.
+        </p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <h3 style="font-size:1rem;font-weight:800;color:var(--heading);margin:0 0 8px">3 &middot; When it holds, it returns the work order</h3>
+        <p style="font-size:.9rem;color:var(--text);line-height:1.6;margin:0">
+          A gate that only says no is a nag. Each item arrives with what would
+          close it, machine-readable with <code>--json</code>, so the next agent
+          run can go and get the evidence instead of a human re-reading the case
+          to work out what was missing.
+        </p>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto;margin-bottom:10px">
+    <table style="width:100%;border-collapse:collapse;font-size:.88rem">
+      <thead>
+        <tr style="text-align:left;border-bottom:1px solid var(--border-strong)">
+          <th style="padding:8px 10px;font-weight:700;color:var(--heading)"></th>
+          <th style="padding:8px 10px;font-weight:700;color:var(--heading);text-align:right">producers</th>
+          <th style="padding:8px 10px;font-weight:700;color:var(--heading);text-align:right">records seen</th>
+          <th style="padding:8px 10px;font-weight:700;color:var(--heading);text-align:right">evidence</th>
+          <th style="padding:8px 10px;font-weight:700;color:var(--heading);text-align:right">claims</th>
+          <th style="padding:8px 10px;font-weight:700;color:var(--heading);text-align:right">reaches a person</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 10px">one agent, one action</td>
+          <td style="padding:8px 10px;text-align:right">4</td>
+          <td style="padding:8px 10px;text-align:right">7</td>
+          <td style="padding:8px 10px;text-align:right">6</td>
+          <td style="padding:8px 10px;text-align:right">0</td>
+          <td style="padding:8px 10px;text-align:right;font-weight:700">1 item</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px">10,248 workers</td>
+          <td style="padding:8px 10px;text-align:right">10,254</td>
+          <td style="padding:8px 10px;text-align:right">2,287,133</td>
+          <td style="padding:8px 10px;text-align:right">10,258</td>
+          <td style="padding:8px 10px;text-align:right">2,420</td>
+          <td style="padding:8px 10px;text-align:right;font-weight:700">13 items, 7 undroppable</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:.8rem;color:var(--term-muted);margin:0 0 24px">
+      Measured by the test suite, not written here by hand &mdash; a claim that drifts
+      from the implementation fails a test. One code path carries both rows: 346
+      engine functions are common to them, 87% of everything the single-agent
+      path touches.
+    </p>
+
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+      <a href="/assurance.html" style="background:var(--accent-strong,#6366f1);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-weight:650;text-decoration:none;font-size:.95rem">Drop a run in &mdash; live &rarr;</a>
+      <code style="font-size:.86rem;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 13px">pip install release-gate &amp;&amp; release-gate assure your-run.jsonl</code>
+    </div>
+    <p style="font-size:.82rem;color:var(--term-muted);margin-top:14px">
+      No config file, no YAML, no account. It will <strong>HOLD</strong> until a
+      methodology says what <em>enough</em> means for the decision &mdash; inventing that
+      answer would be claiming a standard it does not have.
+    </p>
   </div>
 </section>
 

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Submit a run, get the case — release-gate assurance demo</title>
+<meta name="description" content="Drop an OpenTelemetry trace, a Langfuse export or a run record and release-gate builds the assurance case behind it: what a person must look at, what would resolve it, and what was never assessed.">
+<link rel="canonical" href="https://release-gate.com/assurance.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Submit a run, get the assurance case">
+<meta property="og:description" content="A verdict that arrives with its own coverage: what was checked, what was not, and what would close each hold.">
+<meta property="og:url" content="https://release-gate.com/assurance.html">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Submit a run, get the assurance case">
+<meta name="twitter:description" content="Drop a trace. Get what a person must look at, what would resolve it, and what was never assessed.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7.6' fill='%230B0B0F'/%3E%3Crect x='9.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='19.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='8' y='8.4' width='16' height='2.9' rx='1.45' fill='%23C8A24B'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg:#FAF8F3; --surface:#FFFFFF; --ink:#17150E; --muted:#6E6656; --faint:#8B8474;
+    --hair:#E6E0D1; --accent:#9A731F; --accent-dec:#C8A24B; --high:#A83521;
+    --high-bg:#F6E7E2; --good:#3F6E44; --good-bg:#E8F0E6; --med:#8A5E12; --med-bg:#F3EAD6;
+    --code-bg:#F3F0E8; --band:#141317; --band-ink:#F3EFE4; --band-muted:#A49C89;
+    --measure:52rem;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --serif: Georgia,"Iowan Old Style","Times New Roman",serif;
+    --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;--faint:#7C7566;
+    --hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;--high-bg:#2A1512;
+    --good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}}
+  :root[data-theme="dark"]{--bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;
+    --faint:#7C7566;--hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;
+    --high-bg:#2A1512;--good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:18px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:var(--measure); margin:0 auto; padding:0 1.5rem; }
+  a { color:var(--accent); text-decoration:none;
+      border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent); }
+  a:hover { border-bottom-color:var(--accent); }
+  h1 { font-family:var(--serif); font-size:clamp(1.9rem,4.5vw,2.8rem); line-height:1.15;
+       letter-spacing:-.01em; margin:0 0 .6rem; }
+  h2 { font-family:var(--serif); font-size:1.45rem; margin:2.6rem 0 .7rem; }
+  h3 { font-size:1rem; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--muted); margin:1.8rem 0 .6rem; font-weight:600; }
+  .lede { font-size:1.12rem; color:var(--muted); margin:0 0 1.6rem; }
+  header.top { border-bottom:1px solid var(--hair); padding:1rem 0; margin-bottom:2.4rem; }
+  header.top .wrap { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+  .brand { font-family:var(--serif); font-weight:700; border:0; }
+  .nav a { font-size:.92rem; margin-left:1.1rem; border:0; color:var(--muted); }
+  .nav a:hover { color:var(--accent); }
+
+  .panel { background:var(--surface); border:1px solid var(--hair); border-radius:12px;
+           padding:1.25rem; margin:1.2rem 0; }
+  textarea { width:100%; min-height:190px; font-family:var(--mono); font-size:13px;
+             line-height:1.5; background:var(--code-bg); color:var(--ink);
+             border:1px solid var(--hair); border-radius:8px; padding:.85rem; resize:vertical; }
+  .row { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; margin-top:.9rem; }
+  button, .btn { font:inherit; font-size:.95rem; padding:.55rem 1.05rem; border-radius:8px;
+          border:1px solid var(--hair); background:var(--surface); color:var(--ink);
+          cursor:pointer; }
+  button.primary { background:var(--ink); color:var(--bg); border-color:var(--ink); font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .samples { font-size:.9rem; color:var(--muted); }
+  .samples button { font-size:.85rem; padding:.3rem .7rem; }
+  select { font:inherit; font-size:.9rem; padding:.5rem .6rem; border-radius:8px;
+           border:1px solid var(--hair); background:var(--surface); color:var(--ink); }
+  .drop { border:1.5px dashed var(--hair); border-radius:10px; padding:.7rem;
+          text-align:center; color:var(--faint); font-size:.9rem; margin-bottom:.8rem; }
+  .drop.over { border-color:var(--accent); color:var(--accent); }
+
+  .verdict { display:inline-block; font-family:var(--mono); font-weight:700;
+             padding:.35rem .9rem; border-radius:7px; font-size:1.05rem; letter-spacing:.04em; }
+  .v-PROMOTE { background:var(--good-bg); color:var(--good); }
+  .v-HOLD    { background:var(--med-bg);  color:var(--med); }
+  .v-BLOCK   { background:var(--high-bg); color:var(--high); }
+  .meta { font-size:.85rem; color:var(--muted); font-family:var(--mono); margin-top:.5rem;
+          word-break:break-all; }
+
+  .item { border-left:3px solid var(--hair); padding:.15rem 0 .15rem .9rem; margin:.9rem 0; }
+  .item.blocks { border-left-color:var(--high); }
+  .item.holds  { border-left-color:var(--med); }
+  .band { font-family:var(--mono); font-size:.72rem; font-weight:700; letter-spacing:.07em;
+          padding:.12rem .45rem; border-radius:4px; background:var(--code-bg); color:var(--muted); }
+  .item.blocks .band { background:var(--high-bg); color:var(--high); }
+  .item.holds  .band { background:var(--med-bg);  color:var(--med); }
+  .focus { font-weight:600; margin-left:.45rem; }
+  .why { color:var(--muted); font-size:.95rem; margin:.3rem 0 0; }
+  .resolve { font-size:.92rem; margin:.45rem 0 0; padding-left:.9rem;
+             border-left:2px solid var(--accent-dec); color:var(--ink); }
+  .resolve strong { font-weight:600; color:var(--accent); }
+
+  ul.gaps { columns:2; column-gap:1.6rem; font-family:var(--mono); font-size:.82rem;
+            color:var(--muted); padding-left:1.1rem; margin:.4rem 0; }
+  @media (max-width:600px){ ul.gaps{ columns:1; } }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; margin:.5rem 0; }
+  th,td { text-align:left; padding:.35rem .5rem; border-bottom:1px solid var(--hair); }
+  th { color:var(--muted); font-weight:600; font-size:.8rem; text-transform:uppercase;
+       letter-spacing:.05em; }
+  td.num { font-family:var(--mono); text-align:right; }
+  pre { background:var(--code-bg); border:1px solid var(--hair); border-radius:8px;
+        padding:.9rem; overflow-x:auto; font-family:var(--mono); font-size:12.5px;
+        line-height:1.5; }
+  code { font-family:var(--mono); font-size:.9em; background:var(--code-bg);
+         padding:.1rem .3rem; border-radius:4px; }
+  .err { background:var(--high-bg); color:var(--high); border-radius:8px;
+         padding:.8rem 1rem; font-size:.95rem; }
+  .note { font-size:.9rem; color:var(--faint); }
+  details { margin:.8rem 0; }
+  summary { cursor:pointer; color:var(--muted); font-size:.92rem; }
+  footer { border-top:1px solid var(--hair); margin-top:4rem; padding:2rem 0 3rem;
+           color:var(--faint); font-size:.88rem; }
+  .spin { display:inline-block; width:.85em; height:.85em; border:2px solid var(--hair);
+          border-top-color:var(--accent); border-radius:50%; animation:s .7s linear infinite;
+          vertical-align:-.1em; margin-right:.45rem; }
+  @keyframes s { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <a class="brand" href="/">release-gate</a>
+  <nav class="nav">
+    <a href="/demo.html">PR gate</a>
+    <a href="https://github.com/VamsiSudhakaran1/release-gate">GitHub</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+
+<h1>Submit a run. Get the case behind it.</h1>
+<p class="lede">
+  A machine produced something consequential. Before a person signs off, they need
+  the argument behind it — not a score. Paste a run below and release-gate builds
+  that argument: what needs a human, what would resolve it, and what it never
+  checked.
+</p>
+
+<div class="panel">
+  <div class="drop" id="drop">Drop a file here, or paste below</div>
+  <textarea id="input" spellcheck="false" placeholder='One record per line. For example:
+
+{"record_type":"evidence","evidence_id":"e1","kind":"TEST_RESULT","producer":{"producer_id":"agent://assistant/1","kind":"agent"},"coverage_note":"412 of 412 passing; does not cover migration under load"}'></textarea>
+
+  <div class="row">
+    <button class="primary" id="run">Build the case</button>
+    <select id="methodology" title="What &quot;enough&quot; means for this decision">
+      <option value="">No methodology — report structure and hold</option>
+      <option value="general-autonomous-action@1.0.0">general-autonomous-action@1.0.0</option>
+      <option value="software-change@1.0.0">software-change@1.0.0</option>
+      <option value="production-database-change@1.0.0">production-database-change@1.0.0</option>
+      <option value="research-mathematics@1.1.0">research-mathematics@1.1.0</option>
+    </select>
+  </div>
+  <div class="row samples">
+    <span>Or load a sample:</span>
+    <button data-sample="action">an agent's migration</button>
+    <button data-sample="trace">an OpenTelemetry trace</button>
+    <button data-sample="research">a contested research claim</button>
+  </div>
+  <p class="note" id="equiv" hidden></p>
+</div>
+
+<div id="out"></div>
+
+<h2>What you are looking at</h2>
+
+<h3>1 — A bounded list, not a score</h3>
+<p>
+  The items above are what a person has to look at, derived from which claims the
+  decision actually rests on. Criticality comes from reachability in the claim
+  graph, never from volume: a claim one agent emitted once is exactly as
+  load-bearing as one four hundred agents discussed. On the frontier demo that
+  ships with the package, 2,287,133 records reduce to 13 items.
+  <strong>A shorter list is not a better case</strong> — it can equally mean
+  detection got worse, which is why that refusal is a property in the code.
+</p>
+
+<h3>2 — It says what it did not check</h3>
+<p>
+  Every verdict carries its own coverage. <code>NOT_ASSESSED</code> is a
+  first-class answer, kept apart from “we looked and found nothing” everywhere in
+  the engine — collapsing those is how a gap comes to read as a clean bill of
+  health.
+</p>
+
+<h3>3 — When it holds, it returns the work order</h3>
+<p>
+  Each item arrives with what would close it, in a form the next agent run can act
+  on rather than a human re-reading the case to work out what was missing.
+</p>
+
+<h2>Run it yourself</h2>
+<p>
+  This page has limits so one browser tab cannot monopolise a shared process. The
+  CLI has none — it needs no account, sends nothing anywhere, and the demo it ships
+  with folds 2.28&nbsp;million records in about three seconds.
+</p>
+<pre>pip install release-gate
+release-gate assure your-run.jsonl
+release-gate assure your-run.jsonl --review      # the one-screen version
+release-gate assure your-run.jsonl --json        # for a pipeline</pre>
+<p class="note">
+  Exit codes: <code>0</code> PROMOTE · <code>10</code> HOLD · <code>1</code> BLOCK —
+  so it drops into CI without a wrapper.
+  <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/DEMO.md">Full
+  walkthrough →</a>
+</p>
+
+<h2>What it will not tell you</h2>
+<p>
+  Not that a release is safe. Not that a result is guaranteed correct. Not that the
+  gate is unhackable — twenty attacks run against the engine itself and one is
+  recorded <code>NOT_DEFENDED</code> with what bounds it instead. Not that
+  hallucinations are solved, or that an expert has been replaced: the output is a
+  list of what needs a person. Each of those refusals is a property in code that
+  cannot return anything else.
+</p>
+
+</main>
+
+<footer><div class="wrap">
+  release-gate · <a href="https://github.com/VamsiSudhakaran1/release-gate">source</a> ·
+  <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/POSITIONING.md">every
+  claim, and the line that enforces it</a>
+</div></footer>
+
+<script>
+const SAMPLES = {
+  // examples/assurance/single-action.jsonl
+  action: "{\"record_type\":\"consequence\",\"REVERSIBILITY\":\"REVERSIBLE\",\"SCOPE\":\"SINGLE_SUBJECT\",\"DATA_IMPACT\":\"MODIFIED\",\"source\":\"the change ticket\"}\n{\"record_type\":\"evidence\",\"evidence_id\":\"e1\",\"kind\":\"TEST_RESULT\",\"producer\":{\"producer_id\":\"agent://assistant/1\",\"kind\":\"agent\"},\"coverage_note\":\"the project's test suite, 412 of 412 passing; does not cover data migration under load\"}\n{\"record_type\":\"evidence\",\"evidence_id\":\"e2\",\"kind\":\"OBSERVATION\",\"producer\":{\"producer_id\":\"agent://assistant/1\",\"kind\":\"agent\"},\"coverage_note\":\"applied to a scratch copy of production; row counts match before and after\"}\n{\"record_type\":\"artifact\",\"logical_id\":\"migration.sql\",\"artifact_kind\":\"MIGRATION\",\"digest_method\":\"SHA256_CONTENT\"}\n{\"record_type\":\"claim\",\"claim_id\":\"C-1\",\"proposition\":\"the 0042 migration applies cleanly and is reversible\",\"supporting_evidence\":[\"e1\",\"e2\"],\"verification_attempts\":[{\"method\":\"TEST_SUITE\",\"outcome\":\"PASSED\",\"verifier\":\"ci://build/991\"}]}\n{\"record_type\":\"expectation\",\"dimension\":\"migration rehearsal\",\"expected\":2,\"observed\":1,\"source\":{\"kind\":\"CI_PLAN\",\"declared_by\":\"ci://pipeline/migrations\",\"authenticated\":false,\"detail\":\"the pipeline rehearses on staging and on a prod clone\"}}",
+  // examples/assurance/agent-trace.json
+  trace: "{\n \"resourceSpans\": [\n  {\n   \"resource\": {\n    \"attributes\": [\n     {\"key\": \"service.name\", \"value\": {\"stringValue\": \"migration-agent\"}}\n    ]\n   },\n   \"scopeSpans\": [\n    {\n     \"spans\": [\n      {\n       \"traceId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n       \"spanId\": \"0000000000000001\",\n       \"name\": \"plan the change\",\n       \"startTimeUnixNano\": \"1700000000000000000\",\n       \"endTimeUnixNano\": \"1700000001000000000\",\n       \"attributes\": [\n        {\"key\": \"gen_ai.operation.name\", \"value\": {\"stringValue\": \"chat\"}},\n        {\"key\": \"gen_ai.system\", \"value\": {\"stringValue\": \"anthropic\"}}\n       ]\n      },\n      {\n       \"traceId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n       \"spanId\": \"0000000000000002\",\n       \"parentSpanId\": \"0000000000000001\",\n       \"name\": \"read schema\",\n       \"startTimeUnixNano\": \"1700000001000000000\",\n       \"endTimeUnixNano\": \"1700000002000000000\",\n       \"attributes\": [\n        {\"key\": \"gen_ai.operation.name\", \"value\": {\"stringValue\": \"execute_tool\"}},\n        {\"key\": \"gen_ai.tool.name\", \"value\": {\"stringValue\": \"postgres_query\"}}\n       ]\n      },\n      {\n       \"traceId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n       \"spanId\": \"0000000000000003\",\n       \"parentSpanId\": \"0000000000000001\",\n       \"name\": \"write migration.sql\",\n       \"startTimeUnixNano\": \"1700000002000000000\",\n       \"endTimeUnixNano\": \"1700000003000000000\",\n       \"attributes\": [\n        {\"key\": \"gen_ai.operation.name\", \"value\": {\"stringValue\": \"execute_tool\"}},\n        {\"key\": \"gen_ai.tool.name\", \"value\": {\"stringValue\": \"write_file\"}}\n       ]\n      },\n      {\n       \"traceId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n       \"spanId\": \"0000000000000004\",\n       \"parentSpanId\": \"0000000000000001\",\n       \"name\": \"run test suite\",\n       \"startTimeUnixNano\": \"1700000003000000000\",\n       \"endTimeUnixNano\": \"1700000004000000000\",\n       \"attributes\": [\n        {\"key\": \"gen_ai.operation.name\", \"value\": {\"stringValue\": \"execute_tool\"}},\n        {\"key\": \"gen_ai.tool.name\", \"value\": {\"stringValue\": \"shell\"}}\n       ]\n      },\n      {\n       \"traceId\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n       \"spanId\": \"0000000000000005\",\n       \"parentSpanId\": \"0000000000000001\",\n       \"name\": \"summarise\",\n       \"startTimeUnixNano\": \"1700000004000000000\",\n       \"endTimeUnixNano\": \"1700000005000000000\",\n       \"attributes\": [\n        {\"key\": \"gen_ai.operation.name\", \"value\": {\"stringValue\": \"chat\"}},\n        {\"key\": \"gen_ai.system\", \"value\": {\"stringValue\": \"anthropic\"}}\n       ]\n      }\n     ]\n    }\n   ]\n  }\n ]\n}",
+  // examples/assurance/research-claim.jsonl
+  research: "{\"record_type\":\"evidence\",\"evidence_id\":\"r1\",\"kind\":\"CLAIM_DERIVATION\",\"producer\":{\"producer_id\":\"archive://preprint/2291\",\"kind\":\"external\"},\"coverage_note\":\"the upstream derivation every restatement below reads from\"}\n{\"record_type\":\"evidence\",\"evidence_id\":\"r2\",\"kind\":\"CLAIM_DERIVATION\",\"producer\":{\"producer_id\":\"agent://worker/1\",\"kind\":\"agent\"},\"parent_evidence\":[\"r1\"],\"supports_claims\":[\"C-1\"],\"coverage_note\":\"restates the upstream derivation\"}\n{\"record_type\":\"evidence\",\"evidence_id\":\"r3\",\"kind\":\"CLAIM_DERIVATION\",\"producer\":{\"producer_id\":\"agent://worker/2\",\"kind\":\"agent\"},\"parent_evidence\":[\"r1\"],\"supports_claims\":[\"C-1\"],\"coverage_note\":\"restates the upstream derivation\"}\n{\"record_type\":\"evidence\",\"evidence_id\":\"r4\",\"kind\":\"EXPERIMENT_RESULT\",\"producer\":{\"producer_id\":\"group://numerics/2\",\"kind\":\"agent\"},\"contradicts_claims\":[\"C-1\"],\"coverage_note\":\"a numerical evaluation disagreeing with C-1 at n=2^31\"}\n{\"record_type\":\"claim\",\"claim_id\":\"C-1\",\"proposition\":\"the growth bound holds as stated\",\"is_root\":true,\"supporting_evidence\":[\"r2\",\"r3\"],\"contradicting_evidence\":[\"r4\"],\"verification_attempts\":[{\"method\":\"THEOREM_PROVER\",\"outcome\":\"PASSED\",\"verifier\":\"lean@4.8.0\"}]}\n{\"record_type\":\"counterexample\",\"target_claim\":\"C-1\",\"producer\":\"search://adversarial/7\",\"method\":\"PROPERTY_TEST\",\"result\":\"FOUND\",\"status\":\"OPEN\",\"searched\":\"10^7 sampled instances\",\"detail\":\"a candidate violating the growth bound at n=2^31\"}"
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// Each sample IS the file shipped in the repo, byte for byte — the page and the
+// CLI submit the same bytes, so the command below reproduces what you see.
+// scripts/sync_demo_samples.py regenerates SAMPLES; a test fails on drift.
+const SAMPLE_FILES = {
+  action: 'examples/assurance/single-action.jsonl',
+  trace: 'examples/assurance/agent-trace.json',
+  research: 'examples/assurance/research-claim.jsonl'
+};
+
+document.querySelectorAll('[data-sample]').forEach(b => {
+  b.addEventListener('click', () => {
+    const key = b.dataset.sample;
+    $('input').value = SAMPLES[key];
+    if (key === 'research') $('methodology').value = 'research-mathematics@1.1.0';
+    else if (key === 'action') $('methodology').value = 'general-autonomous-action@1.0.0';
+    else $('methodology').value = '';
+    const meth = $('methodology').value;
+    const equiv = $('equiv');
+    equiv.hidden = false;
+    equiv.innerHTML = 'Same bytes from the CLI: <code>release-gate assure '
+      + esc(SAMPLE_FILES[key]) + (meth ? ' --methodology ' + esc(meth) : '') + '</code>';
+    $('out').innerHTML = '';
+  });
+});
+
+const drop = $('drop');
+['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.add('over');
+}));
+['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', ev => {
+  const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { $('input').value = reader.result; drop.textContent = file.name; };
+  reader.readAsText(file);
+});
+
+$('run').addEventListener('click', async () => {
+  const content = $('input').value.trim();
+  const out = $('out');
+  if (!content) { out.innerHTML = '<div class="err">Paste a run, or load a sample.</div>'; return; }
+  $('run').disabled = true;
+  out.innerHTML = '<div class="panel"><span class="spin"></span>Building the case…</div>';
+  try {
+    const res = await fetch('/api/assure', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content, filename: 'submitted-run',
+                            methodology: $('methodology').value || null})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      out.innerHTML = '<div class="err">' + esc(data.detail || 'Something went wrong.') + '</div>';
+      return;
+    }
+    out.innerHTML = render(data);
+  } catch (err) {
+    out.innerHTML = '<div class="err">' + esc(err.message) + '</div>';
+  } finally {
+    $('run').disabled = false;
+  }
+});
+
+function render(d) {
+  const kindRows = Object.entries(d.counts.by_kind || {}).sort((a,b) => b[1]-a[1]);
+  const skipRows = Object.entries(d.counts.skipped || {}).sort((a,b) => b[1]-a[1]);
+  const arrived = kindRows.length
+    ? `<table><thead><tr><th>record type</th><th class="num">count</th></tr></thead><tbody>`
+      + kindRows.map(([k,v]) =>
+          `<tr><td>${esc(k)}</td><td class="num">${v.toLocaleString()}</td></tr>`).join('')
+      + `</tbody></table>`
+    : `<p class="note">No record-type breakdown: this input is a
+       ${esc(d.detected.kind)}, which release-gate reads as a trace rather than as
+       a stream of typed records.</p>`;
+  // Nothing is dropped quietly. Whatever the ingest could not fold is counted
+  // and named here, because an unreported skip is how a gap reads as a pass.
+  const skipped = skipRows.length
+    ? `<p class="note"><strong>Not folded:</strong> `
+      + skipRows.map(([k,v]) => `${esc(k)} (${v.toLocaleString()})`).join('; ')
+      + `</p>`
+    : '';
+
+  const items = (d.attention || []).map(a => {
+    const cls = a.band === 'BLOCKS' ? 'blocks' : (a.band === 'HOLDS' ? 'holds' : '');
+    const resolves = (a.resolves || []).map(r =>
+      `<p class="resolve"><strong>Would resolve it:</strong> ${esc(r)}</p>`).join('');
+    return `<div class="item ${cls}">
+      <span class="band">${esc(a.band)}</span><span class="focus">${esc(a.focus)}</span>
+      ${a.why ? `<p class="why">${esc(a.why)}</p>` : ''}${resolves}</div>`;
+  }).join('') || '<p class="note">Nothing was flagged for a person on this case.</p>';
+
+  const gaps = (d.not_assessed || [])
+    .map(g => `<li>${esc(g)}</li>`).join('');
+
+  return `
+  <div class="panel">
+    <span class="verdict v-${esc(d.decision)}">${esc(d.decision)}</span>
+    <div class="meta">
+      detected as ${esc(d.detected.kind)} at ${d.detected.confidence}% ·
+      ${d.counts.records_seen.toLocaleString()} record(s) seen,
+      ${d.counts.records_mapped.toLocaleString()} mapped<br>
+      case ${esc(d.case.case_id)} · ${esc((d.case.digest||'').slice(0,26))}…
+      ${d.case.methodology ? '· ' + esc(d.case.methodology) : '· no methodology supplied'}
+    </div>
+  </div>
+
+  <h3>What a person has to look at — ${(d.attention||[]).length} item(s)</h3>
+  ${items}
+
+  <h3>What it did not assess — ${(d.not_assessed||[]).length} dimension(s)</h3>
+  <ul class="gaps">${gaps}</ul>
+
+  <h3>What arrived</h3>
+  ${arrived}
+  ${skipped}
+
+  <details><summary>The full one-screen review</summary>
+    <pre>${esc(d.review_text)}</pre></details>
+
+  <p class="note">${(d.limits||[]).map(esc).join(' ')}</p>`;
+}
+</script>
+</body>
+</html>

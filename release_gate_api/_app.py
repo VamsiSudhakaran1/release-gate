@@ -1149,11 +1149,151 @@ async def agent_scan_live(body: LiveScanRequest, request: Request = None,
         raise HTTPException(status_code=422, detail=f"Scan failed: {exc}")
 
 
+# ── Assurance demo: submit a run, get the case ─────────────────────────────
+
+#: Bounds for the hosted demo. The engine has its own parsing bounds — a record
+#: nested thousands deep or carrying a twenty-megabyte field is refused at ingest
+#: and counted, not dropped — so these are about keeping one browser tab from
+#: monopolising a shared process, not about safety.
+_ASSURE_MAX_BYTES = 512_000
+_ASSURE_MAX_RECORDS = 2_000
+
+
+class AssureRequest(BaseModel):
+    """A run to assess. `content` is the file exactly as the user has it."""
+
+    content: str = ""
+    filename: Optional[str] = None
+    methodology: Optional[str] = None
+
+
+@app.post("/api/assure")
+async def assure_demo(body: AssureRequest, request: Request = None):
+    """Build the assurance case for a submitted run and return what a person reads.
+
+    SECURITY: the submitted content is **parsed, never executed**. The assurance
+    engine is stdlib-only with no network, no subprocess and no eval on any path,
+    and its ingest is written for attacker-controlled input: a record nested
+    thousands deep, a field of twenty megabytes and a locator pointing outside the
+    tree are each refused and counted rather than silently dropped. Those refusals
+    are exercised by the hostile harness that ships with the package.
+
+    The file is written to a private temporary path so the engine can hash the
+    bytes it actually read — the subject's digest is OBSERVED because release-gate
+    computed it, not because the caller asserted it — and removed afterwards.
+    """
+    import json as _json
+    import tempfile as _tempfile
+
+    ip = _client_ip(request)
+    if not _check_rate_limit(f"assure:ip:{ip}", limit=30, window=3600):
+        raise HTTPException(
+            status_code=429,
+            detail="Demo limit reached. `pip install release-gate` and run "
+                   "`release-gate assure <file>` locally — it needs no account "
+                   "and has no limit.")
+
+    content = body.content or ""
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="No content submitted.")
+    if len(content.encode("utf-8", "ignore")) > _ASSURE_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"This demo takes up to {_ASSURE_MAX_BYTES // 1000} KB. The CLI "
+                   "has no such limit — the frontier demo it ships with folds "
+                   "2.28 million records.")
+    if content.count("\n") > _ASSURE_MAX_RECORDS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"This demo takes up to {_ASSURE_MAX_RECORDS:,} lines.")
+
+    suffix = ".json" if content.lstrip().startswith(("{", "[")) and \
+        "\n{" not in content.strip() else ".jsonl"
+    path = None
+    try:
+        with _tempfile.NamedTemporaryFile(
+                "w", suffix=suffix, delete=False, encoding="utf-8") as handle:
+            handle.write(content)
+            path = handle.name
+
+        from release_gate.assurance.review import build_review, render_review
+        from release_gate.assurance.zero_config import assure
+
+        methodology = None
+        if body.methodology:
+            from release_gate.assurance.api import _methodology as _resolve
+            try:
+                methodology = _resolve(body.methodology)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=400, detail=str(exc))
+
+        outcome = assure(path, methodology=methodology)
+        review = build_review(outcome)
+        normalisation = outcome.normalisation
+
+        return {
+            "decision": outcome.case.verdict.decision.value,
+            "exit_code": outcome.exit_code,
+            "detected": {
+                "kind": normalisation.detection.kind.value,
+                "confidence": normalisation.detection.confidence,
+                "basis": normalisation.detection.basis,
+            },
+            "case": {
+                "case_id": outcome.case.case_id,
+                "digest": outcome.case.case_digest,
+                "subject_digest": review.subject.digest,
+                "methodology": review.methodology or None,
+            },
+            "counts": {
+                "records_seen": normalisation.records_seen,
+                "records_mapped": normalisation.records_mapped,
+                "by_kind": dict(normalisation.records_seen_by_kind),
+                "skipped": dict(normalisation.skipped),
+            },
+            # What a person is actually asked to look at, and what would close it.
+            "attention": [
+                {"band": item.band, "focus": item.focus, "why": item.why,
+                 "undroppable": item.undroppable,
+                 "resolves": list(item.resolves)}
+                for item in review.attention],
+            "required_evidence": [
+                str(line) for line in
+                (outcome.required_evidence.items if outcome.required_evidence else ())
+            ][:25],
+            # The half most tools leave out.
+            "not_assessed": list(review.not_assessed),
+            "coverage": [
+                {"dimension": row.dimension, "state": row.state, "shown": row.shown}
+                for row in review.coverage],
+            "limits": list(review.limits),
+            "review_text": render_review(review),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # The temporary path is scrubbed from the message. It is meaningless to
+        # the caller and names a directory on this host, and an error page is a
+        # poor place to start describing the server's filesystem.
+        message = str(exc).replace(path or "", body.filename or "the submitted file")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not read that as a run: {type(exc).__name__}: {message}")
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.10.1"}
+    # Read from the package, not typed here: two places stating a version is two
+    # places to disagree, and the CLI's banners had drifted three minors behind.
+    return {"status": "ok", "version": _RG_VERSION}
 
 
 @app.get("/api/debug/github-app")

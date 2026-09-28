@@ -52,7 +52,10 @@ def main() -> int:
 
     _sub("pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new}"', count=1)
     _sub("release_gate/__init__.py", r'(__version__\s*=\s*)"[^"]+"', rf'\g<1>"{new}"', count=1)
-    _sub("release_gate_api/_app.py", rf'("version":\s*)"{re.escape(old)}"', rf'\g<1>"{new}"')
+    # release_gate_api/_app.py is deliberately NOT bumped: it reads
+    # `release_gate.__version__` rather than carrying a literal, so there is
+    # nothing here to keep in step. This line used to substitute a hardcoded
+    # pin; check_version_sync.py now fails the build if one comes back.
     # Action pins are DISCOVERED, not listed. A hardcoded file list quietly
     # stopped covering new docs — `integrations/` shipped pinned at @v0.9.4 and
     # two older docs sat at @v0.7.3 / @v0.8.5 for several releases, because
