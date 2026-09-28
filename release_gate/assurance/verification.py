@@ -92,6 +92,12 @@ _COUNTS_TOWARD_STATUS = frozenset({
     VerificationStatus.PASSED, VerificationStatus.FAILED,
     VerificationStatus.INCONCLUSIVE})
 
+#: Trust states under which a check's result is not relied on. Both are explicit
+#: organisational rulings against the verifier; `NOT_ESTABLISHED` is deliberately
+#: absent, because nobody having ruled is the ordinary case and reading silence as
+#: rejection would refuse every check anyone submits (Invariant 3).
+_TRUST_WITHHELD = frozenset({TrustStatus.REVOKED, TrustStatus.REJECTED})
+
 
 class Applicability(str, Enum):
     """Whether an attempt still bears on the target it was run against."""
@@ -371,8 +377,36 @@ class VerificationAttempt:
                 else Applicability.SUPERSEDED)
 
     @property
+    def relied_upon(self) -> bool:
+        """May this check's result be relied on at all?
+
+        `False` where an organisation has ruled against the verifier that ran it.
+        `TrustStatus` is populated from a `ToolIdentity` by the verifier-report
+        adapter, and §10ar's vetting registry produces the same judgement for a
+        verifier an organisation withdrew or rejected.
+
+        Until this existed, `VerifierStanding` computed `relied_on` and **nothing
+        in the verdict path read it**: a prover an organisation had revoked after
+        a soundness bug satisfied a verification requirement exactly as a vetted
+        one did. An engine that works out an answer and then decides without it
+        has two parts disagreeing (Invariant 11: provenance is not trust, and a
+        trust decision that changes no decision is not one).
+
+        `NOT_ESTABLISHED` is not a refusal. Nobody having ruled on a verifier is
+        the ordinary case — the registry ships empty — and treating silence as
+        rejection would refuse every check anyone ever submits (Invariant 3).
+        """
+        return self.trust_status not in _TRUST_WITHHELD
+
+    @property
     def counts_toward_status(self) -> bool:
-        return self.status in _COUNTS_TOWARD_STATUS
+        """A usable result, from a verifier that may be relied on.
+
+        Both halves matter. A check that never ran contributes nothing, and so
+        does one whose verifier the organisation has ruled against — the second
+        is the half that was missing.
+        """
+        return self.status in _COUNTS_TOWARD_STATUS and self.relied_upon
 
     @property
     def lineage_established(self) -> bool:
@@ -671,8 +705,20 @@ class VerificationGraph:
             basis = "every applicable attempt was inconclusive"
         elif applies:
             status = VerificationStatus.UNKNOWN
-            basis = ("attempts apply but none of them reached a usable result "
-                     "(invalidated, not run, or unknown)")
+            withheld = [a for a in applies if not a.relied_upon]
+            if withheld and len(withheld) == len(applies):
+                # Naming the real reason. This read "invalidated, not run, or
+                # unknown", which would send a reviewer looking for a broken
+                # check when what happened is that their own organisation ruled
+                # against the verifier.
+                who = sorted({a.verifier for a in withheld if a.verifier})
+                basis = (f"{len(withheld)} applicable attempt(s) ran, and the "
+                         "organisation has ruled against the verifier that ran "
+                         f"them ({', '.join(who) or 'unnamed'}); a check from a "
+                         "withdrawn verifier is reported and not relied on")
+            else:
+                basis = ("attempts apply but none of them reached a usable result "
+                         "(invalidated, not run, or unknown)")
         elif superseded:
             status = VerificationStatus.UNKNOWN
             basis = (f"all {superseded} attempt(s) were run against an earlier state "

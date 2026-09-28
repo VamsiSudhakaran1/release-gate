@@ -8362,6 +8362,136 @@ no phrase in the review claims the result is true.
 
 ---
 
+### §10ay The ten deferred methodology decisions
+
+Ten questions had been carried across several prompts as "the user's, not mine",
+each of the shape *should this finding gate?* Deciding them needed a prior
+question answered first, and answering it changed most of the ten.
+
+#### 10ay.1 What actually gates
+
+Three layers, and only two reach a verdict.
+
+`Finding.effect` is the rule's own view of what it costs. It is metadata:
+`RG-PROV-002` carries `HOLD` and the `missing-provenance` corpus case promotes.
+`methodology.requirements` are predicates evaluated against the case, and these
+compose the verdict. `methodology.accepted_findings` name a rule the methodology
+has considered and decided not to gate on, with a rationale that appears in the
+report.
+
+So "should X gate" was never a question about the engine. It is a question about
+which methodology takes which position — and the finding that mattered is that a
+methodology may hold a **third** position nobody chooses: silence. Measured
+across the seven shipped methodologies, exactly one names any analyser finding at
+all, and it names two of the seventy-one the analyser can emit. The `RG-CLAIM-*`
+and `RG-SW-*` ids the others carry are their own requirement ids, not findings.
+
+#### 10ay.2 The decisions
+
+**1. False independence — require it, in the domains that rest on corroboration.**
+Implemented as `research-mathematics@1.1.0`, shipped beside 1.0.0.
+
+This one needed a measurement, and the measurement overturned the obvious
+reading. 1.0.0 *already* requires independence, scoped to `verification`. On the
+frontier scenario that requirement reads SATISFIED — "85 record(s) across 8
+independent group(s)" — while 8,913 of 10,254 evidence producers descend from one
+upstream derivation. Both statements are true: the checks really do span eight
+groups, and the evidence they check collapses to one lineage. The requirement
+asks about the wrong scope for the danger.
+
+Adding a root count would not have fixed it either: `minimum_roots=2` reads
+SATISFIED there, because sixteen lineages exist and 77.3% of contributors sit in
+one of them. Only `maximum_concentration` sees it. `AncestryIndependence` —
+present in the codebase and used by **zero** shipped methodologies — is the
+predicate that catches it, with the ceiling argument supplied.
+
+0.5 is a stated choice, not a derived constant, and an organisation may tighten it.
+
+**2. Unattributed replication paths — no gate; the engine already refuses to
+credit them.** `_lineage_groups` counts a path with no recorded lineage apart
+rather than as corroboration, unconditionally. Gating on top would punish a case
+for recording *more* paths than it can attribute, and the safety property already
+holds without a verdict change.
+
+**3. Unauthenticated provenance — no gate by default.** Provenance is an
+identification axis, not a trust decision (Invariant 11). An unsigned trace is
+the ordinary input, and a gate here would refuse the inputs this system exists to
+read. `RG-PROV-002` is already accepted by `general-autonomous-action` with the
+right rationale — one agent on one task is one producer by construction, so the
+finding is tautological at that scale rather than a fact about the case.
+
+**4–5. Federated references — refuted and unresolved must stay apart, and they
+already do.** `Establishment` separates `REFUTED` ("answered, no") from
+`NOT_ESTABLISHED` ("asked and could not settle it") from `NOT_ASSESSED` ("nobody
+asked"), and federation's own comment says why: reporting a refutation as "could
+not establish" would make the strongest negative result read as an absence of
+information. Federation is opt-in and emits no findings, by design — it produces
+coverage rows, and a methodology gates on those through `CoverageExpectation`.
+That is the existing mechanism and it needs no new rule family.
+
+**6–7. Withdrawn and unvetted verifiers — a defect, now fixed.** §10ar computed
+`VerifierStanding.relied_on` and **nothing in the verdict path read it**: the
+import graph shows `vetting` reaching `hostile`, `methods` and `organisation`, and
+never `methodology`. A prover an organisation had revoked after a soundness bug
+satisfied a verification requirement exactly as a vetted one did. A trust decision
+that changes no decision is not a trust decision.
+
+`VerificationAttempt.relied_upon` now reads `trust_status`, which the
+verifier-report adapter already populates from `ToolIdentity`, and
+`counts_toward_status` requires both a usable result and a verifier that may be
+relied on. `VerificationPresent` and `VerifierRequired` read the same field, and
+both say the checks were *not counted* rather than *absent* — a reviewer told "no
+verification" goes looking for a missing check when in fact it ran and does not
+vouch. The graph's basis was changed for the same reason: it read "invalidated,
+not run, or unknown", which sends somebody after a broken check when their own
+organisation withdrew the verifier.
+
+Unvetted is **not** withdrawn. `NOT_ESTABLISHED` stays relied upon, because
+nobody having ruled is the ordinary case — the registry ships empty — and reading
+silence as rejection would refuse every check anyone submits (Invariant 3).
+
+**8. Missing domain authority — cannot gate globally, and the three-valued answer
+is the decision.** `WithholdingCost.holding_is_the_safe_default` returns
+`Optional[bool]`, and all three answers occur: `NONE` and `DELAY_ONLY` are True,
+`HARM_CONTINUES` is False, `DEGRADES` and `UNKNOWN` are None. Holding a payment is
+usually safe; holding a containment action while an intrusion continues is not. A
+gate that held every act missing an authority claim would make release-gate the
+party taking the consequential decision, which is the one thing the product
+definition says it does not do.
+
+**9. Expert judgment — no new concept.** `EvidenceRequirementKind.HUMAN_REVIEW`
+already means a rule says a person must look, and `UNSPECIFIED` means release-gate
+sees a gap and cannot name a closer. Together they are exactly "needs a person".
+A third axis would be a parallel architecture for a distinction already
+expressible. (`monotone` was checked and rejected for this in §10av: it means
+"stays satisfied as evidence arrives", which is a different property.)
+
+**10. `STATIC_ANALYSIS` stays `EMPIRICAL`.** The case for `MECHANICAL` is that a
+*sound* analyser proving absence proves something — but soundness is a property of
+one analyser, not of the method class, and what real analysers report is no
+instance of the patterns they look for, over the code they looked at. That is the
+empirical shape. `MECHANICAL` means a fixed property the tool always checks about
+the artifact, which is a compiler accepting a program. An organisation running a
+genuinely sound analyser declares its character (§10aw), which keeps the claim
+attached to the party making it.
+
+#### 10ay.3 What is left, and why it is not a punt
+
+Six of the ten (2, 3, 4, 5, 9, 10) are decided as *no gate*, each because the
+property they protect already holds without one. Two (6, 7) were a defect and are
+fixed. One (8) is three-valued by design. One (1) is implemented as a new
+methodology version.
+
+What is **not** done is the general case: six of seven shipped methodologies still
+take no position on any analyser finding. That is not ten more decisions of the
+same kind — it is a standing property of the product, and the honest form of it is
+that a methodology is a domain artifact whose author is not release-gate. What
+this section fixes is that the mechanism now exists and is exercised, and that the
+one domain whose stated purpose depends on corroboration has a version that
+requires it.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

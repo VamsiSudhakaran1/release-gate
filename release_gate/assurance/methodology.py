@@ -101,6 +101,14 @@ FIELD_INDEPENDENCE_GROUP = "independence_group"
 #: the verifier path at all. It failed safe, and it made the capability
 #: unusable.
 FIELD_ATTEMPT_METHOD = "method"
+#: An organisation's ruling on the verifier that ran a check. Read by the
+#: requirements below so a verifier the organisation withdrew cannot satisfy one:
+#: §10ar computed that ruling and nothing in the verdict path consulted it.
+FIELD_ATTEMPT_TRUST = "trust_status"
+#: The two rulings that withhold reliance. `NOT_ESTABLISHED` is absent on
+#: purpose — nobody having ruled is the ordinary case, and reading silence as
+#: rejection would refuse every check anyone submits (Invariant 3).
+TRUST_WITHHELD = frozenset({"REVOKED", "REJECTED"})
 FIELD_ATTEMPT_LINEAGE = "independence_lineage"
 FIELD_OPEN = "open"
 
@@ -139,6 +147,18 @@ def _method_of(record: Mapping[str, Any]) -> str:
         if label:
             return label
     return method
+
+
+def _relied_upon(record: Mapping[str, Any]) -> bool:
+    """May this check's result be relied on, per the organisation's own ruling?
+
+    A requirement counts checks. Counting one from a verifier the organisation
+    revoked would let a withdrawn prover satisfy the same bar as a vetted one —
+    which is what happened until this existed, because `VerifierStanding` was
+    computed in one module and the verdict was decided in another.
+    """
+    return str(record.get(FIELD_ATTEMPT_TRUST) or "").strip().upper() \
+        not in TRUST_WITHHELD
 
 
 def _independence_of(record: Mapping[str, Any]) -> str:
@@ -415,7 +435,10 @@ class VerificationPresent(Predicate):
                             "of any type is on record", {"presence": coll.presence.value})
         records, incomplete, total = _records(case, self.collection)
         allowed = set(self.methods)
-        typed = [r for r in records if _method_of(r)]
+        # A check from a verifier the organisation ruled against is counted
+        # apart, never toward the minimum: it happened, and it does not vouch.
+        withheld = [r for r in records if _method_of(r) and not _relied_upon(r)]
+        typed = [r for r in records if _method_of(r) and _relied_upon(r)]
         # An unnamed method set means "any method" — except a model reading the
         # work, which has to be named. Before this, a requirement that had never
         # considered models credited one, which is the same default-to-yes the
@@ -432,7 +455,16 @@ class VerificationPresent(Predicate):
         observed = {"matching": len(matching), "minimum": self.minimum,
                     "records_held": len(records), "total_count": total,
                     "untyped_records": untyped,
-                    "model_review_not_credited": len(model_only)}
+                    "model_review_not_credited": len(model_only),
+                    "withdrawn_verifier_not_credited": len(withheld)}
+        if withheld and len(matching) < self.minimum:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(matching)} admissible verification(s), {self.minimum} "
+                f"expected; {len(withheld)} were not counted because the "
+                "organisation has ruled against the verifier that ran them. A "
+                "check from a withdrawn verifier is reported and does not vouch",
+                observed)
         if model_only and len(matching) < self.minimum:
             return _Finding(
                 RequirementOutcome.UNSATISFIED,
@@ -1085,16 +1117,34 @@ class VerifierRequired(Predicate):
                 "verifiers ran cannot be established",
                 {"required": list(self.verifiers)})
         seen = set()
+        withdrawn = set()
         for attempt in attempts:
+            trusted = _relied_upon(
+                attempt if isinstance(attempt, Mapping) else attempt.to_dict())
             for value in (getattr(attempt, "verifier", None),
                           getattr(getattr(attempt, "tool", None), "family", None),
                           getattr(attempt, "method", None)):
                 name = getattr(value, "value", value)
-                if name:
-                    seen.add(str(name).strip().lower())
+                if not name:
+                    continue
+                # A required verifier that ran and was then withdrawn has not
+                # met the requirement. The organisation named these checks as the
+                # ones it does not consider optional; a result it has ruled
+                # against cannot be the one that satisfies its own bar.
+                (seen if trusted else withdrawn).add(str(name).strip().lower())
         missing = sorted(v for v in self.verifiers if v.strip().lower() not in seen)
+        ruled_against = sorted(v for v in missing if v.strip().lower() in withdrawn)
         observed = {"required": list(self.verifiers), "missing": missing,
-                    "attempts": len(attempts)}
+                    "attempts": len(attempts),
+                    "ran_but_withdrawn": ruled_against}
+        if ruled_against:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(ruled_against)} required verifier(s) ran and the "
+                "organisation has since ruled against them: "
+                + ", ".join(ruled_against)
+                + ". The check is on record and does not satisfy the requirement",
+                observed)
         if missing:
             return _Finding(
                 RequirementOutcome.UNSATISFIED,

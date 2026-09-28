@@ -26,10 +26,13 @@ domain (Invariant 9).
 
 from __future__ import annotations
 
+import dataclasses
+
 from release_gate.assurance.case import CaseType
 from release_gate.assurance.methodology import (
     ALL_CASE_TYPES,
     AcceptedFinding,
+    AncestryIndependence,
     AdversarialReviewRequired,
     AppliesToCurrentState,
     AssumptionsExamined,
@@ -892,11 +895,57 @@ GENERAL_AUTONOMOUS_ACTION_V1 = AssuranceMethodology(
     metadata={"note": "Replace with a domain methodology where one exists."})
 
 
+#: `research-mathematics` at 1.1.0. Shipped beside 1.0.0, never instead of it: a
+#: case approved under 1.0.0 must keep resolving to the bar it was approved under,
+#: which is the whole reason `resolve` refuses a bare id.
+#:
+#: **What 1.1.0 adds, and why.** 1.0.0 already requires independence — through
+#: `independence_requirements`, scoped to `verification`. On the frontier scenario
+#: that requirement reads SATISFIED ("85 record(s) across 8 independent group(s)")
+#: while 8,913 of 10,254 evidence producers descend from a single upstream
+#: derivation. Both statements are true: the 85 *checks* really do span 8 groups,
+#: and the *evidence* they check collapses to one lineage. The requirement asks
+#: about the wrong scope for the danger.
+#:
+#: Adding a root count does not fix it either — `minimum_roots=2` reads SATISFIED
+#: on that case, because 16 lineages exist and 77.3% of contributors sit in one of
+#: them. Only `maximum_concentration` catches it, which is why that argument is
+#: here and why this took a measurement rather than a reading.
+#:
+#: 0.5 is a stated choice, not a derived constant: for a mathematical result whose
+#: standing rests on corroboration, no more than half the contributors may sit in
+#: one lineage. An organisation that wants a different number says so; what it may
+#: not do is lower the bar, because `OrganisationConfig` only tightens.
+RESEARCH_MATHEMATICS_V1_1 = dataclasses.replace(
+    RESEARCH_MATHEMATICS_V1,
+    version="1.1.0",
+    description=RESEARCH_MATHEMATICS_V1.description + (
+        " At 1.1.0 it also requires that support not concentrate in one evidence "
+        "lineage: ten thousand descendants of one derivation are one source, and "
+        "a group count alone does not see that."),
+    requirements=RESEARCH_MATHEMATICS_V1.requirements + (
+        Requirement(
+            requirement_id="independence.evidence.ancestry",
+            description="support does not concentrate in one evidence lineage",
+            predicate=AncestryIndependence(minimum_roots=2,
+                                           maximum_concentration=0.5,
+                                           collection="evidence"),
+            effect=RequirementEffect.HOLD,
+            remedy="obtain evidence from a producer whose ancestry is disjoint "
+                   "from the dominant lineage, or record why this result does not "
+                   "rest on corroboration",
+            rationale="Derived from ancestry, never declared. A case can carry "
+                      "thousands of agreeing producers and one source of error, "
+                      "and that is the shape this catches (Invariant 6)."),),
+)
+
+
 BUILTIN_METHODOLOGIES = (
     GENERAL_AGENT_ACTION_V1,
     SOFTWARE_CHANGE_V1,
     PRODUCTION_DATABASE_CHANGE_V1,
     RESEARCH_MATHEMATICS_V1,
+    RESEARCH_MATHEMATICS_V1_1,
     RESEARCH_ASSURANCE_V1,
     SOFTWARE_AGENT_ASSURANCE_V1,
     GENERAL_AUTONOMOUS_ACTION_V1,
