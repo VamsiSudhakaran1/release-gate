@@ -1,6 +1,13 @@
 # release-gate
 
-**The pre-deploy release gate for AI agents.** It renders an evidence-based **PROMOTE / HOLD / BLOCK** verdict — catching the agent-layer risks that SAST, guardrails, and evaluators structurally miss.
+**Release-Gate builds the assurance case behind machine-generated results before a
+human accepts responsibility for them.**
+
+From one agent to thousands of parallel researchers, it reconstructs the evidence
+behind a machine-generated result and tells the human what still requires judgment.
+
+> Agents generate. Tools verify. Release-Gate determines whether the available
+> evidence is sufficient to reach the next human authorization boundary.
 
 [![PyPI version](https://badge.fury.io/py/release-gate.svg)](https://badge.fury.io/py/release-gate)
 [![GitHub stars](https://img.shields.io/github/stars/VamsiSudhakaran1/release-gate)](https://github.com/VamsiSudhakaran1/release-gate)
@@ -13,6 +20,62 @@
 > **v0.9.4** — a **lean, three-dependency CLI** (`pip install release-gate` no longer pulls a web/SaaS stack) and a **reproducible [93-case benchmark](benchmark/RESULTS.md)** that covers every rule (≥2 vulnerable + ≥2 clean look-alikes each), so the zero-false-positive claim can be checked, not just read. Both sit on top of the **v0.9.0** agent-safety catalog (9 new rules + 2 precision upgrades), holding the precision bar at **0 false positives** on that labeled benchmark and a framework dogfood (llama_index / crewAI / langgraph / open-interpreter): indirect prompt injection from RAG/tool/HTTP provenance (`RG-PROMPT-002`), model-driven **SSRF / filesystem / SQL** sinks (`RG-ACTION-002/003/004`), **secret/PII → prompt** data-egress to the provider (`RG-SECRET-002`, an agent-aware egress path conventional SAST lacks context to model), taint-aware deserialization (`RG-EXEC-004`), unvalidated model-output parses (`RG-PARSE-001`), and **tool blast-radius + irreversibility gates** (`RG-TOOL-001` / `RG-GATE-001`) — plus confirmed taint through the canonical `resp.choices[0].message.content` extraction and a reproducible PR-gate demo. See [the catalog below](#what-it-detects--the-agent-safety-rule-catalog). Builds on **0.8.5**'s **`release-gate pr`**, the AI-change review gate: one PROMOTE/HOLD/BLOCK on what a pull request *introduced* (net-new agent risk + lockfile/behaviour drift), plus a GitHub Action `command: pr`; **0.8.4**'s security-hardened **MCP server** (`pip install 'release-gate[mcp]'`); and **0.8.0–0.8.2**'s AST-based evidence-citing analysis, deserialization calibration, and team-adoption workflow (`--mode` / `--baseline` / `--pr-comment`).
 
 **Why it's not SonarQube:** a SAST tool sees `eval(x)` and asks *"is x tainted by SQL/HTTP?"* — it has no concept of *"x is the model's reply."* That blind spot is the entire agent layer: `eval`/`pickle` of model output (the [CVE-2025-51472](https://www.gecko.security/blog/cve-2025-51472) RCE class), user input reaching a system prompt, LLM loops with no cost ceiling. Guardrails filter one input; evaluators score one output; **neither blocks a release.** release-gate is the gate.
+
+## What release-gate is
+
+An **assurance engine**. It does not generate results and it does not verify them —
+agents generate, tools verify, and release-gate assembles the argument those two leave
+behind, then says whether that argument is structurally sound enough to put to a
+person.
+
+```python
+import release_gate as rg
+
+case = rg.create_case(objective="Deploy generated migration", subject=migration)
+case.add_execution(trace)
+case.add_verification(test_result, method="TEST_SUITE", outcome="PASSED",
+                      verifier="ci://pytest", against_subject=True)
+
+decision = case.finalize()     # PROMOTE / HOLD / BLOCK, with its coverage attached
+```
+
+The same four calls carry a single agent's migration and a ten-thousand-worker
+research run. Two demonstrations ship, on one engine and one code path:
+
+|  | single agent | frontier research |
+|---|---|---|
+| distinct producers | 4 | **10,254** |
+| evidence records | 6 | 10,258 |
+| claims | 0 | 2,420 |
+| put to a person | 1 item | 13 items, 7 undroppable |
+
+A verdict is never handed over alone. It arrives with what was **not** assessed, what
+would resolve it, and a chain from the decision down to a source — and where that chain
+stops at a condition rather than reaching a source, it says so instead of implying it
+got further.
+
+### What it will not tell you
+
+Not that a release is **safe**. Not that a result is **guaranteed correct**. Not that
+the gate is **unhackable** — nineteen attacks run against the engine itself and one is
+recorded `NOT_DEFENDED` with what bounds it instead. Not that a case is
+**uncontested**, that hallucinations are **solved**, or that an expert has been
+**replaced**: the output is a list of what needs a person.
+
+Each of those refusals is a property in code that cannot return anything else, and
+[`docs/POSITIONING.md`](docs/POSITIONING.md) names every one with the line that
+enforces it.
+
+### Two lanes, and which benchmark speaks for which
+
+The code-scanning lane below is an **evidence producer**, not the product: it emits
+findings about agent code that a case can then weigh. Its 93-case corpus, and the
+precision figures on it, measure **that lane only**. The assurance engine has its own
+16-case corpus ([`benchmark/ASSURANCE.md`](benchmark/ASSURANCE.md)), which publishes no
+headline precision figure at all, because on most of its cases precision is not a
+meaningful thing to measure.
+
+---
 
 ## Try it in 30 seconds
 
@@ -71,12 +134,15 @@ release-gate audit . --emit-config -o governance.yaml
 release-gate score governance.yaml
 ```
 
-## What is release-gate?
+## The code-scanning lane
 
-release-gate sits between your tests and your deployment. It scans your agent code for
-the failure modes that only exist once an LLM is in the loop, runs evals, validates
-execution traces, checks cost budgets — then gives you two honest scores and one
-decision: **PROMOTE / HOLD / BLOCK**.
+One evidence producer among several, and the one most projects meet first.
+
+It scans your agent code for the failure modes that only exist once an LLM is in the
+loop, runs evals, validates execution traces and checks cost budgets — then gives you
+two scores and one decision: **PROMOTE / HOLD / BLOCK**. Used on its own it is a
+pre-deploy gate. Used inside a case it is a lane of evidence with a producer, a
+coverage note and a stated scope, weighed against whatever else arrived.
 
 **SonarQube checks your _code_. release-gate checks whether your _agent_ change meets its
 release policy.** They're complementary — keep your SAST suite; release-gate covers the agent layer

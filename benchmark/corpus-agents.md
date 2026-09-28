@@ -1,6 +1,6 @@
 # Deployed-agent dogfood corpus
 
-The labeled [benchmark](RESULTS.md) proves *precision*. This corpus is the other
+The labeled [benchmark](RESULTS.md) *measures* precision on the cases in it — which is a narrower thing than proving precision, and the distinction is the point. This corpus is the other
 half: real repos we scan to find where the engine is **wrong or silent**. Every
 false-positive class we've fixed came from a run over these.
 

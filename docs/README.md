@@ -2,6 +2,16 @@
 
 Welcome to release-gate documentation! Choose a guide below to get started.
 
+## Start here
+
+- **[POSITIONING.md](POSITIONING.md)** — what release-gate claims, what each claim
+  rests on in code, and the six things it will not say. Read this before quoting the
+  project anywhere.
+
+- **[specs/universal-assurance-architecture.md](specs/universal-assurance-architecture.md)**
+  — the assurance architecture: the epistemic status calculus, the coverage model, the
+  decision path, and a record of every defect found building it.
+
 ## Getting Started
 
 - **[QUICKSTART.md](QUICKSTART.md)** - 5-minute quick start

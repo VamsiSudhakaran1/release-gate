@@ -7735,6 +7735,145 @@ methodology, not a friendlier default.
 
 ---
 
+### 10au. Documentation positioning — the claims, and what each one rests on
+
+The instruction was *rewrite documentation only when implementation supports the
+claims*, which makes this a verification exercise with some prose at the end. Each
+statement was held against running code before it was written, and the numbers in the
+documents are re-measured by a test rather than remembered.
+
+#### 10au.1 The documentation described a different product
+
+`README.md` opened with **"The pre-deploy release gate for AI agents"** — a code
+scanner, compared against SonarQube, producing a readiness score. That was accurate
+several dozen sections ago. §10ag then repositioned the scanner as an **evidence
+producer**: one lane whose findings a case weighs, with a producer, a coverage note and
+a stated scope.
+
+So the architecture had moved and the front page had not, and the front page is the
+only part most readers see. The primary claim now leads, the scanner is "the
+code-scanning lane" rather than the definition, and `docs/POSITIONING.md` holds the
+claim-by-claim justification so the next person to write marketing copy has something
+to check it against.
+
+#### 10au.2 What each claim rests on
+
+**"Builds the assurance case … before a human accepts responsibility."** The ordering is
+structural rather than advisory, which was worth verifying rather than assuming: a case
+has no decision until `finalize()`, and reading `outcome` beforehand raises *"this case
+has not been finalized, so it has no decision"*. A `BoundApproval` binds to that sealed
+case's digest and stops binding when the state moves. Note what the sentence does not
+say — not "verifies", not "certifies". *Builds the case* is the whole claim.
+
+**"From one agent to thousands of parallel researchers."** Measured on the two shipped
+demonstrations, one engine and one code path:
+
+| | single-agent | frontier research |
+|---|---|---|
+| distinct producers | 4 | **10,254** |
+| evidence records | 6 | 10,258 |
+| claims | 0 | 2,420 |
+| verdict | PROMOTE | BLOCK |
+| put to a person | 1 | 13, of which 7 undroppable |
+
+"Thousands" understates the second column, and `Case.stream()` folds a million events at
+0 MB of resident growth (§10at.6). This is the claim that could most easily have been
+aspirational, so it is the one with a test asserting 10,254 appears in both documents
+*and* is what the demonstration actually produces.
+
+**"Reconstructs the evidence."** `trace_verdict` walks verdict → condition →
+subject/claim → evidence → source (§10an), and both demonstrations report **zero
+unexplained steps** — no step in either chain is an assertion nothing supports. Where a
+chain stops at a condition rather than reaching a source it says so, which is why the
+claim is "reconstructs the evidence" and not "always reaches a source".
+
+**"Tells the human what still requires judgment."** `HumanAttentionSet`, each item
+carrying what would resolve it. Deliberately not "tells the human what is wrong":
+requiring judgment and being wrong are different states and most items are the first.
+
+#### 10au.3 The engineering statement has two readings, and only one is supported
+
+> Agents generate. Tools verify. Release-Gate determines whether the available evidence
+> is sufficient to reach the next human authorization boundary.
+
+The first two sentences are exact — `verifiers` says outright that release-gate "does
+not replace these tools and does not check their work".
+
+The third turns on a distinction worth stating rather than glossing:
+
+* **Sufficient to reach the boundary** — structurally sound enough to be *put to a
+  person*. That is what PROMOTE / HOLD / BLOCK answers, and it is supported.
+* **Sufficient to authorize the act** — a domain question. With no methodology stated
+  the engine refuses it in those words: *"structural assurance is complete as far as it
+  goes, but no methodology states what evidence this decision requires. Domain
+  sufficiency is NOT_ASSESSED."*
+
+The statement says the first, so it stands as written. It is recorded here because the
+second reading is the natural one for a hurried reader, and a positioning line that
+overclaims on a second glance is the failure this project spends its time preventing.
+`docs/POSITIONING.md` states both readings side by side rather than relying on a
+careful reader.
+
+#### 10au.4 The six non-claims, and the two overclaims the audit found
+
+Auditing every Markdown file in the tree for the six forbidden claims produced a result
+worth recording: **every hit but two was already an explicit refusal.**
+`benchmark/ASSURANCE.md` — *"Release-gate holds no truth about release safety and
+claiming one here would be the universal truth claim Invariant 10 refuses."*
+`integrations/README.md` and the observability article — *never "safe to deploy."* The
+discipline was in the documentation; it was missing from the headline.
+
+The two that were real:
+
+* **`docs/QUICKSTART.md`: "All checks passed. Safe to deploy."** One of the six, stated
+  affirmatively, on the page a new user reads second. Now: every check this lane runs
+  passed, nothing it looks for was found, and what a pass establishes is bounded by what
+  was checked.
+* **`benchmark/corpus-agents.md`: "The labeled benchmark proves *precision*."** A
+  labeled corpus *measures* precision on the cases in it, which is narrower than proving
+  precision — and §10ak.4 is an entire subsection about a precision figure that could
+  not come out wrong. Now says the narrower thing, and says the distinction is the point.
+
+Neither was in the primary positioning. Both were in places a reader reaches.
+
+#### 10au.5 A mis-attribution the repositioning itself created
+
+The README carries a badge reading *93-case corpus · 100% precision · 100% recall*. With
+a scanner as the headline that badge was attached to the right thing. Leading with the
+assurance positioning attaches it, for any reader who does not look closely, to the
+**assurance engine** — which §10ak.1 says that benchmark cannot speak for, because it
+measures the wrong layer.
+
+So the README now says which benchmark speaks for which lane, and says the harder half
+out loud: the assurance corpus publishes **no headline precision figure at all**, because
+on most of its cases precision is not a meaningful thing to measure (§10ak.3). A
+repositioning that moved a strong number onto a claim it does not support would have
+been the cleanest overclaim in the project's history.
+
+#### 10au.6 The guard, and the limit it states about itself
+
+`tests/test_positioning.py` has two halves, and only one of them is a proof.
+
+The **phrase half** greps the user-facing documents for the six claims in the
+affirmative, excusing a sentence that negates them. It is a tripwire: a substring check
+reads text and never meaning, and this project has been caught by that twice already —
+once matching `"socket"` while looking for `soc` (§10as.5), once by an SSRF check that
+flagged its own source (§10am). So the limit is written where the check lives rather than
+discovered by whoever it misfires on. Its two current false positives are a quotation of
+what external reviews *punished* and a limiting statement whose negation sits in the
+following sentence; both are correct text and neither is in the guarded set.
+
+`docs/POSITIONING.md` is excluded from that scan for a self-referential reason:
+**enumerating the six is its job**, so a lexical scan of it matches all six by design. A
+separate test asserts the words are *present* there.
+
+The **figures half** is the load-bearing one. It runs both demonstrations and asserts
+that the producer counts, evidence counts, claim counts, attention counts, verdicts and
+zero-unexplained-step results are what the documents print. A claim that drifts from its
+implementation fails a test rather than being noticed later by somebody quoting it.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

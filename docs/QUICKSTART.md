@@ -112,13 +112,16 @@ python cli.py run --config release-gate.yaml --format json
 ## Understanding Results
 
 ### ✓ PASS (Exit Code 0)
-All checks passed. Safe to deploy.
+Every check this lane runs passed — nothing it looks for was found. That is not the
+same as safe to deploy, and release-gate will not say the second thing: what a pass
+establishes is bounded by what was checked, and the coverage note on each result says
+what that was.
 
 ### ⚠ WARN (Exit Code 10)
 Some warnings found. Review before deploying.
 
 ### ✗ FAIL (Exit Code 1)
-Critical issues found. Do not deploy. Fix first.
+Critical issues found. Fix before deploying.
 
 ## Using in CI/CD
 
