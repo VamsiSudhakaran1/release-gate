@@ -204,6 +204,48 @@ def test_records_seen_matches_the_normalisation(small):
         f"{small.outcome.normalisation.records_seen:,}")
 
 
+def test_the_breakdown_reconciles_with_its_own_total(small):
+    """One counter, so the total and the breakdown cannot disagree.
+
+    They did: the generator counted 311 declared failed branches while
+    constructing 64, and never counted the artifacts at all, leaving the
+    breakdown 245 short of a total nobody could reconcile. Both numbers now come
+    from the same tally, incremented where each record is produced.
+    """
+    normalisation = small.outcome.normalisation
+    assert sum(normalisation.records_seen_by_kind.values()) == normalisation.records_seen
+    assert normalisation.records_unaccounted == 0
+
+
+def test_every_produced_kind_is_counted_once_under_one_name(small):
+    """Two keys for one kind is two answers to "how many claims".
+
+    `claim` and `claims` both existed, differing by a plural, so summing by hand
+    was the only way to get the real figure.
+    """
+    kinds = set(small.outcome.normalisation.records_seen_by_kind)
+    assert kinds == {"execution", "claim", "evidence", "artifact",
+                     "verification", "counterexample", "failed_branch"}
+
+
+def test_the_counted_failures_are_all_of_them_not_the_kept_ones(small):
+    """The count is of branches that occurred; the tuple holds what was kept.
+
+    Bounded materialisation is the point — but the count has to come from the
+    loop that produced them, or it is the scenario's assertion wearing the
+    engine's voice (Invariant 1).
+    """
+    normalisation = small.outcome.normalisation
+    counted = normalisation.records_seen_by_kind["failed_branch"]
+    assert counted == SMALL.failed_branches
+    assert len(normalisation.failed_branches) <= counted
+
+
+def test_the_event_count_is_the_engine_counting_not_the_scenario_asserting(small):
+    """Every execution is iterated, so the headline figure is a count."""
+    assert small.outcome.normalisation.records_seen_by_kind["execution"] == SMALL.events
+
+
 def test_the_dependency_graph_size_matches_the_claim_graph(small):
     text = render(small)
     assert _value_after(text, "Claims in final dependency graph:") == (
@@ -235,18 +277,62 @@ def test_completeness_matches_the_stream_ledger(small):
 
 
 def test_the_verification_ratios_match_the_verification_graph(small):
+    """Re-derived from applicability, which is what makes a check current.
+
+    This test used to count any attempt whose status was PASSED — the same
+    shortcut the report took — so it agreed with the report and both were wrong:
+    a check run against a state the subject has since left was counted as a
+    current verification. Applicability is computed here from the attempt's own
+    `target_digest` against the graph's recorded current digest, so the test
+    re-derives the rule rather than re-running the helper it checks.
+    """
+    from release_gate.assurance.verification import Applicability
+
     text = render(small)
+    graph = small.analysis.verification_graph
     critical_ids = set(small.analysis.criticality.critical_ids)
     critical = len(critical_ids)
-    passed = {a.target.target_id for a in small.analysis.verification_graph.attempts
+
+    def applies(attempt):
+        return (attempt.applicability(graph.current_digest(attempt.target))
+                is Applicability.APPLIES)
+
+    passed = {a.target.target_id for a in graph.attempts
               if a.status is VerificationStatus.PASSED
-              and a.target.target_id in critical_ids}
-    formal = {a.target.target_id for a in small.analysis.verification_graph.attempts
+              and a.target.target_id in critical_ids and applies(a)}
+    formal = {a.target.target_id for a in graph.attempts
               if a.status is VerificationStatus.PASSED
-              and a.target.target_id in critical_ids
+              and a.target.target_id in critical_ids and applies(a)
               and a.method.value in ("FORMAL_PROOF", "THEOREM_PROVER")}
     assert _value_after(text, "Critical verification:") == f"{len(passed)} / {critical}"
     assert _value_after(text, "Formal verification:") == f"{len(formal)} / {critical}"
+
+
+def test_the_report_does_not_contradict_the_engines_own_finding(small):
+    """The report and the findings are one system and must say one thing.
+
+    `RG-VERIF-001` ("nothing in this case was verified") fired on this case while
+    the report printed 44 of 47 critical claims verified. Whichever number a
+    reader trusted, the other one was lying to them.
+    """
+    text = render(small)
+    fired = {f.rule_id for f in small.analysis.findings}
+    if "RG-VERIF-001" in fired:
+        assert _value_after(text, "Critical verification:").startswith("0 /")
+
+
+def test_a_zero_is_not_left_to_read_as_a_failed_check(small):
+    """Zero verified needs the undetermined count beside it.
+
+    Alone, `0 / 48` reads as "checks ran and did not pass". The truth on this
+    case is that the checks record a state nothing can compare against, which is
+    a coverage gap rather than a negative result (Invariant 3).
+    """
+    text = render(small)
+    verified = _value_after(text, "Critical verification:")
+    undetermined = _value_after(text, "Critical verification undetermined:")
+    assert verified.startswith("0 /")
+    assert not undetermined.startswith("0 /")
 
 
 def test_the_verdict_line_matches_the_case(small):

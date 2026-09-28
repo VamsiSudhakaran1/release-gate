@@ -288,6 +288,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("quality", "quality", "QUALITY_SCHEMA_VERSION", 1),
         _ref("query", "query", "QUERY_SCHEMA_VERSION", 1),
         _ref("replication", "replication", "REPLICATION_SCHEMA_VERSION", 1),
+        _ref("review", "review", "REVIEW_SCHEMA_VERSION", 1,
+             note="the one-screen case review: a typed view over an outcome, "
+                  "where every printed figure is a field and the renderer "
+                  "computes none of them"),
         _ref("rule_family", "rules_registry", "RULES_SCHEMA_VERSION", 1,
              note="the rule taxonomy and the seven questions every rule answers; "
                   "new spellings resolve as aliases so no rule id has to move"),

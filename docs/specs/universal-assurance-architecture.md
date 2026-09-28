@@ -7874,6 +7874,154 @@ implementation fails a test rather than being noticed later by somebody quoting 
 
 ---
 
+### §10av The case review, and the counters behind it
+
+A reviewer facing an assurance case does not want the analysis; they want one screen.
+`release_gate/assurance/review.py` builds it: what arrived, what the decision rests on,
+what coverage the case has, what a person must look at, and the verdict. `release-gate
+assure <file> --review` prints it. It is a **view**, not a second assurance path — every
+figure is read from an analysis that already produced the verdict, so the review cannot
+disagree with the default output.
+
+#### 10av.1 Every printed figure is a field
+
+`CaseReview` holds `Figure`s. `Figure.shown` formats itself; `CoverageLine.shown` turns a
+ratio into a percentage. `render_review` pastes those strings and pads them. It contains
+no numeric literal at all, which is asserted by walking its AST.
+
+The test that matters extracts every digit run from the rendered text and fails unless
+each one is a figure the review holds or part of a string it holds. A number worked out in
+the renderer is in neither. This is not tidiness: a report that recomputes a figure is a
+second engine, and when the two disagree nothing on the page says which was wrong.
+
+Both guards were confirmed load-bearing by adding `f"{len(review.attention)} items,
+{len(review.coverage) + 7} rows"` to the verdict line — the literal check and the
+extraction check both failed.
+
+#### 10av.2 A figure carries who established it
+
+`Basis` from §10ao is reused rather than restated: OBSERVED means release-gate counted it,
+DECLARED means somebody else did and we are repeating it in their name, NOT_ASSESSED means
+nobody did and the line prints `not assessed`. `Figure.__post_init__` refuses the two ways
+the pair could lie — a count with nobody behind it, and a basis claiming somebody counted
+with no count to show.
+
+#### 10av.3 The per-kind ingest tally, and why two counters became one
+
+`Normalisation.records_seen_by_kind` counts by `record_type` at the ingest boundary,
+before any decision about a row, so a rejected record still counts: the tally is what
+arrived, not what survived. It answers "how many events were there", which `records_seen`
+alone could not — the reason §10ao had to report the compression funnel's event stage as
+NOT_ASSESSED.
+
+Adding it exposed a defect in the frontier demo. The breakdown summed to 2,286,886 against
+a `records_seen` of 2,287,131 — **245 short**, from two causes:
+
+- `records_seen += scenario.failed_branches` counted 311 declared branches while the loop
+  beside it constructed `min(311, 64) = 64`. The count was the scenario's assertion wearing
+  the engine's voice (Invariant 1): 247 records claimed and never produced.
+- The two artifacts were never counted at all.
+
+The fix is not arithmetic. There is now **one counter**: `records_seen` is
+`sum(records_seen_by_kind.values())`, and a record is counted where it is produced. The
+failed-branch loop iterates all 311 and retains 64, so the count is honest and the
+materialisation stays bounded. Two keys for one kind (`claim` and `claims`, differing by a
+plural) were merged, and the vocabulary is the ingest's own `record_type` values so the
+demo path and the envelope path answer a reviewer the same way.
+
+`Normalisation.records_unaccounted` reports the residual. In the envelope path it is
+genuinely positive: a row that is not an object, breaches a parsing bound, or names no
+`record_type` is counted in the total and in `skipped` with a reason, but no kind accounts
+for it. The review prints that as a figure when it is non-zero, so a reader summing the
+lines gets a number rather than an unexplained shortfall.
+
+#### 10av.4 The events stage became OBSERVED — and says what that does not establish
+
+With the tally in place, the funnel's event stage reads OBSERVED: release-gate counted
+those records itself, one at a time. The stage says in the same breath that no execution
+graph was reconstructed, so their order and completeness are **not assessed**. A count of
+rows that name themselves executions is an honest count of rows; it is not evidence they
+form one coherent run, and the wording is built so it cannot be read that way.
+
+An absent `execution` key is **not** a count of zero. Only the envelope path walks typed
+rows, so a trace input can reconstruct a whole execution without a row ever naming itself
+one. Reading the missing key as `0` would both assert "no events" from an input shape that
+does not carry them and shadow a DECLARED count — the one case where the funnel most needs
+to show somebody else's number beside our absence of one (Invariant 3). Returning `0`
+there breaks four tests, which is how the ordering is pinned.
+
+#### 10av.5 `methods` and `passing_methods` answer different questions
+
+Building the critical-path section surfaced a worse defect, in the flagship demo's own
+report. `TargetVerification.methods` lists every method ever tried on a target, applicable
+or not. Reading it for "formally verified" credits a prover run against a state the target
+has since left — exactly what recording `target_digest` exists to catch (Invariant 5).
+`passing_methods` was added for the second question: the methods of the attempts that
+establish the *current* status.
+
+The demo's `_verified_critical` had the same shape of error one level up. It counted any
+attempt whose status was PASSED, ignoring applicability, and printed **44 of 47 critical
+claims verified** while the same engine's `RG-VERIF-001` finding on the same case said
+*"nothing in this case was verified"*. Whichever number a reader trusted, the other was
+lying to them. The demo's helpers now read `VerificationGraph.assess`, so the report and
+the findings derive from one fold.
+
+The test that had been protecting the defect re-derived the figure the same wrong way. It
+now computes applicability from each attempt's `target_digest` against the graph's
+recorded current digest — the rule, re-derived, rather than the helper, re-run — and two
+tests were added: one asserting the report cannot contradict `RG-VERIF-001`, one asserting
+a zero is never left beside no explanation.
+
+#### 10av.6 Zero verified is a different statement from zero assessed
+
+The engine records current digests for artifacts and for the subject. **Claims have no
+digest** — a claim is a statement, not a blob — so every attempt on a claim is
+`UNDETERMINED`, and the engine says so: *"attempts exist but nothing records which state
+they ran against, so whether they still apply is unknowable."*
+
+`Verified: 0` is true as stated: no critical claim carries a passing check that applies.
+But alone it reads as "checks ran and did not pass". So `Verification undetermined` sits
+beside it always, and on the frontier case reads 44 of 48. That pairing is the difference
+between a negative result and a coverage gap.
+
+#### 10av.7 The engine's words, and the two the brief asked for that were declined
+
+Attention items are banded by `RequirementPressure` — BLOCKS, HOLDS, UNASSESSED — not by a
+`[HIGH]`/`[MEDIUM]` scale. `BLOCKS` says a requirement of the stated methodology turns on
+this item. A severity label would say how *bad* it is, which release-gate does not derive
+and is not in a position to claim; whether a blocking coverage gap matters more than an
+open contradiction is the reviewer's call. For the same reason an item is marked *must not
+be dropped* when the engine marks it `undroppable`, and unmarked otherwise — the negation
+of `undroppable` is "not marked undroppable", not "may be deferred".
+
+The coverage section prints what the ledger holds. A percentage appears only where an
+expectation supplied a denominator; dimensions examined without one read UNKNOWN, and
+dimensions nobody examined are listed by name under NOT ASSESSED. On the frontier case
+that is one percentage, two UNKNOWNs and fourteen named gaps. A plausible percentage over
+a dimension the case never measured would be the most damaging thing on the screen,
+because that is the number a reader scans for reassurance.
+
+"Expert judgment items" counts required-evidence items whose kind is `HUMAN_REVIEW` or
+`UNSPECIFIED` — a closed set read off the engine's own enum, so a new rule cannot quietly
+fall outside the count. `monotone` was checked first and rejected: it means "stays
+satisfied as evidence arrives", not "evidence cannot settle this", and using it would have
+mislabelled four dispatchable items as needing a person.
+
+#### 10av.8 Four refusals
+
+`is_a_safety_assessment`, `establishes_that_the_subject_is_correct`,
+`a_shorter_attention_list_is_a_better_case` and
+`completeness_of_this_report_implies_complete_evidence` are unconditional `False`. The
+third is the one that would do damage: a short list can mean the argument narrowed cleanly
+or that detection found less, and nothing on the screen tells them apart (Invariant 6). It
+is also printed, next to the review-item count, where the misreading happens.
+
+The review reaches for no clock and no randomness — asserted by AST, because a figure that
+moved between two builds of one outcome would make the review unreproducible, and a review
+that cannot be reproduced cannot be what an approval was taken against (Invariant 4).
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

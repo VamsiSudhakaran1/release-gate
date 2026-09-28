@@ -167,25 +167,39 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
     digest, which is what lets the demo be a regression test as well as a
     showcase.
 
-    The bulk — every event, every claim — is counted into `records_seen` because
-    the generator genuinely produces it. What reaches `Normalisation`'s tuples is
-    the relevance-directed materialisation: the dependency claims, the critical
-    ones, the evidence that argues about them, and everything that failed.
+    The bulk — every event, every claim — is counted because the generator
+    genuinely produces it. What reaches `Normalisation`'s tuples is the
+    relevance-directed materialisation: the dependency claims, the critical ones,
+    the evidence that argues about them, and everything that failed.
+
+    There is exactly one counter. `records_seen` is the sum of
+    `records_seen_by_kind`, so the total and the breakdown cannot disagree — and
+    a record is counted at the point it is produced, never from a length
+    computed afterwards. Two counters incremented side by side is how a
+    breakdown comes to be 245 short of its own total.
     """
     rng = random.Random(scenario.seed)
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
     notes: List[str] = []
-    records_seen = 0
+    # The same tally the ingest keeps (§10av), in the ingest's own `record_type`
+    # vocabulary so the two paths answer a reviewer's "how many events" the same
+    # way. Before this the engine could count 2,287,131 records and not say how
+    # many were executions, which is why the compression funnel had to report
+    # them NOT_ASSESSED.
+    seen_by_kind: Dict[str, int] = {}
+
+    def count(kind: str, n: int = 1) -> None:
+        seen_by_kind[kind] = seen_by_kind.get(kind, 0) + n
 
     # ── the bulk, genuinely iterated ────────────────────────────────────────
     # Every event and every claim is produced. Only the ones that bear on the
     # decision are kept, which is the whole point of relevance-directed
     # materialisation: the count is honest and the memory is bounded.
     for _ in range(scenario.events):
-        records_seen += 1
+        count("execution")
     for _ in range(scenario.claims - scenario.dependency_claims):
-        records_seen += 1
+        count("claim")
 
     # ── the shared source, and the copies that descend from it ──────────────
     # One upstream derivation, read by thousands of workers. Each copy declares
@@ -198,7 +212,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
         timestamp=RUN_AT,
         coverage_note="the upstream derivation every copy below reads from")
     evidence.append(root)
-    records_seen += 1
+    count("evidence")
 
     copy_ids: List[str] = []
     for worker in range(scenario.copying_workers):
@@ -210,7 +224,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
             timestamp=RUN_AT,
             coverage_note=f"restates the upstream derivation for {COPIED_CLAIM}")
         copy_ids.append(record.evidence_id)
-        records_seen += 1
+        count("evidence")
         # Every copy is kept, and that is the point: "workers observed" has to be
         # a count of parties the engine actually saw, not a number the scenario
         # asserts. Thousands of small records cost little, and holding them is
@@ -230,7 +244,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
             timestamp=RUN_AT,
             coverage_note="a numerical check of one lemma, at one worker")
         evidence.append(record)
-        records_seen += 1
+        count("evidence")
 
     # ── genuinely independent derivations ───────────────────────────────────
     independent_roots: List[str] = []
@@ -244,7 +258,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
             coverage_note=f"an independent derivation path for {_claim_id(group)}")
         evidence.append(record)
         independent_roots.append(record.evidence_id)
-        records_seen += 1
+        count("evidence")
 
     # ── the hidden contradiction, on a critical claim ───────────────────────
     against = EvidenceRecord.declared(
@@ -254,7 +268,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
         timestamp=RUN_AT,
         coverage_note=f"a numerical evaluation disagreeing with {COPIED_CLAIM} at n=2^31")
     evidence.append(against)
-    records_seen += 1
+    count("evidence")
 
     # ── the artifact whose content moved after it was checked ───────────────
     artifacts = (
@@ -262,6 +276,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
                  digest=SUBJECT_DIGEST, digest_method=DigestMethod.SHA256_CONTENT,
                  digest_status=DigestStatus.DECLARED, created_at=RUN_AT,
                  digest_attested_by="orchestrator://rg-1842"),)
+    count("artifact", len(artifacts))
 
     # ── claims: one conclusion, the lemmas it rests on, and the rest ────────
     # Criticality is derived from the dependency graph, never declared: the
@@ -277,7 +292,7 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
         producer=Producer(producer_id="group://derivation/0", kind=ProducerKind.AGENT),
         provenance=ClaimProvenance.DECLARED, is_root=True, created_at=RUN_AT,
         parents=tuple(critical_ids)))
-    records_seen += 1
+    count("claim")
 
     for index in range(scenario.dependency_claims):
         claim_id = _claim_id(index)
@@ -297,16 +312,25 @@ def build_normalisation(scenario: ResearchScenario = DEFAULT_SCENARIO
             producer=_producer(index % max(1, scenario.workers)),
             provenance=ClaimProvenance.DECLARED, created_at=RUN_AT,
             assumptions=assumptions, parents=parents))
-        records_seen += 1
+        count("claim")
 
-    return _finish(scenario, rng, evidence, claims, artifacts, records_seen, notes)
+    return _finish(scenario, rng, evidence, claims, artifacts, notes, seen_by_kind)
 
 
 def _finish(scenario: ResearchScenario, rng: random.Random,
             evidence: List[EvidenceRecord], claims: List[Claim],
-            artifacts: Tuple[Artifact, ...], records_seen: int,
-            notes: List[str]) -> Tuple[Normalisation, StreamLedger]:
-    """The verification, the failures, and the telemetry that did not all arrive."""
+            artifacts: Tuple[Artifact, ...], notes: List[str],
+            seen_by_kind: Dict[str, int]
+            ) -> Tuple[Normalisation, StreamLedger]:
+    """The verification, the failures, and the telemetry that did not all arrive.
+
+    Takes the tally rather than a total: the caller has been counting by kind
+    since the first event, and handing this function a second number to keep in
+    step would reintroduce the drift the single counter removes.
+    """
+
+    def count(kind: str, n: int = 1) -> None:
+        seen_by_kind[kind] = seen_by_kind.get(kind, 0) + n
 
     # ── formal checker output ───────────────────────────────────────────────
     # One of the checks names a digest the derivation has since moved past. The
@@ -363,7 +387,7 @@ def _finish(scenario: ResearchScenario, rng: random.Random,
             independence_lineage=("referee-panel",),
             timestamp=RUN_AT,
             detail="read by a referee"))
-    records_seen += len(attempts)
+    count("verification", len(attempts))
 
     report = VerifierReport(
         tool=ToolIdentity(name="lean", version="4.8.0",
@@ -392,21 +416,29 @@ def _finish(scenario: ResearchScenario, rng: random.Random,
             status=CounterexampleStatus.NOT_APPLICABLE,
             searched="10^6 sampled instances", attempted_at=RUN_AT,
             detail="no violation found in the sampled space"))
-    records_seen += len(counterexamples)
+    count("counterexample", len(counterexamples))
 
     # ── failed branches: kept, because a case that records only its successes
     # looks like its best branch (Invariant 7) ──────────────────────────────
-    branches = tuple(
-        FailedBranch(
+    # Every branch is produced and counted; the first 64 are kept. The loop is
+    # what makes the count honest: the previous version counted
+    # `scenario.failed_branches` while constructing 64, which is a number the
+    # scenario asserted rather than one the generator produced — 247 records
+    # claimed and never seen (Invariant 1).
+    retained: List[FailedBranch] = []
+    for index in range(scenario.failed_branches):
+        count("failed_branch")
+        if len(retained) >= 64:
+            continue
+        retained.append(FailedBranch(
             outcome=BranchOutcome.PROOF_FAILED,
             locus=FailureLocus(step=f"lemma {index}", ordinal=index),
             produced_by=f"worker://rg-1842/{index % max(1, scenario.workers):05d}",
             bears_on_claims=(_claim_id(index),),
             depth=index % 7,
             detail="the induction step does not close at the boundary case",
-            occurred_at=RUN_AT, retained_because=RetentionReason.BEARS_ON_CLAIM)
-        for index in range(min(scenario.failed_branches, 64)))
-    records_seen += scenario.failed_branches
+            occurred_at=RUN_AT, retained_because=RetentionReason.BEARS_ON_CLAIM))
+    branches = tuple(retained)
 
     # ── an incomplete telemetry source ──────────────────────────────────────
     # Source S-4 reports without sequence numbers, so a hole in it would leave no
@@ -448,6 +480,7 @@ def _finish(scenario: ResearchScenario, rng: random.Random,
         digest_status=DigestStatus.OBSERVED, content_reference=reference,
         byte_length=len(submitted), created_at=RUN_AT,
         metadata={"role": "assurance-input"}),)
+    count("artifact")
 
     normalisation = Normalisation(
         detection=Detection(kind=InputKind.ASSURANCE_ENVELOPE, confidence=100,
@@ -456,7 +489,9 @@ def _finish(scenario: ResearchScenario, rng: random.Random,
         evidence=tuple(evidence), claims=tuple(claims), artifacts=artifacts,
         counterexamples=tuple(counterexamples), failed_branches=branches,
         verifier_report=report,
-        records_seen=records_seen, records_mapped=records_seen,
+        records_seen=sum(seen_by_kind.values()),
+        records_mapped=sum(seen_by_kind.values()),
+        records_seen_by_kind=dict(seen_by_kind),
         notes=tuple(notes))
     return normalisation, ledger
 
@@ -510,22 +545,43 @@ def _critical_ids(run: FrontierRun) -> Tuple[str, ...]:
 
 
 def _verified_critical(run: FrontierRun, methods: Sequence[str] = ()) -> int:
-    """Critical claims carrying a passing attempt, optionally by method."""
+    """Critical claims the engine reads as verified, optionally by method.
+
+    Reads `VerificationGraph.assess`, which is the engine's own fold over the
+    attempts on a target. It used to count any attempt whose status was PASSED,
+    which ignored applicability — so a check run against a state the subject has
+    since left was counted as a current verification, and this report printed
+    44 of 47 critical claims verified while the same engine's `RG-VERIF-001` said
+    "nothing in this case was verified". Two parts of one system disagreeing is
+    the defect; the engine's reading is the one that respects Invariant 5.
+    """
     graph = getattr(run.analysis, "verification_graph", None)
     if graph is None:
         return 0
-    critical = set(_critical_ids(run))
-    hit = set()
-    for attempt in graph.attempts:
-        target = getattr(attempt, "target", None)
-        target_id = str(getattr(target, "target_id", "") or "")
-        if attempt.status is not VerificationStatus.PASSED:
+    hit = 0
+    for claim_id in _critical_ids(run):
+        reading = graph.assess(VerificationTarget.claim(claim_id))
+        if not reading.verified:
             continue
-        if methods and attempt.method.value not in methods:
+        if methods and not any(m in methods for m in reading.passing_methods):
             continue
-        if not critical or target_id in critical:
-            hit.add(target_id)
-    return len(hit)
+        hit += 1
+    return hit
+
+
+def _undetermined_critical(run: FrontierRun) -> int:
+    """Critical claims whose checks exist and may or may not still apply.
+
+    Printed beside the verified count, because zero verified with every check of
+    unknown applicability is a different statement from zero verified with checks
+    that ran and failed — and the first reads as the second on its own.
+    """
+    graph = getattr(run.analysis, "verification_graph", None)
+    if graph is None:
+        return 0
+    return sum(1 for claim_id in _critical_ids(run)
+               if not (reading := graph.assess(VerificationTarget.claim(claim_id))).applies
+               and reading.undetermined)
 
 
 def _independent_critical(run: FrontierRun) -> int:
@@ -534,21 +590,16 @@ def _independent_critical(run: FrontierRun) -> int:
     Not "checked by someone with a group name": one group checking a thing twice
     is one check twice, and counting it as corroboration is the error the whole
     independence analysis exists to prevent (Invariant 6).
+
+    `TargetVerification.corroborated` is that test, already done by the engine
+    over the attempts that apply. The local union over lineages this replaced
+    reached the same conclusion from attempts that no longer applied.
     """
     graph = getattr(run.analysis, "verification_graph", None)
     if graph is None:
         return 0
-    critical = set(_critical_ids(run))
-    lineages: Dict[str, set] = {}
-    for attempt in graph.attempts:
-        if attempt.status is not VerificationStatus.PASSED:
-            continue
-        target_id = str(getattr(getattr(attempt, "target", None), "target_id", "") or "")
-        if critical and target_id not in critical:
-            continue
-        for lineage in attempt.independence_lineage or ():
-            lineages.setdefault(target_id, set()).add(lineage)
-    return sum(1 for groups in lineages.values() if len(groups) >= 2)
+    return sum(1 for claim_id in _critical_ids(run)
+               if graph.assess(VerificationTarget.claim(claim_id)).corroborated)
 
 
 def render(run: FrontierRun, *, attention_limit: int = 8) -> str:
@@ -592,6 +643,9 @@ def render(run: FrontierRun, *, attention_limit: int = 8) -> str:
         "",
         "Critical verification:",
         f"{_verified_critical(run)} / {len(critical)}",
+        "",
+        "Critical verification undetermined:",
+        f"{_undetermined_critical(run)} / {len(critical)}",
         "",
         "Independent verification:",
         f"{_independent_critical(run)} / {len(critical)}",

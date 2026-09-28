@@ -101,13 +101,56 @@ class TestUnknownIsNotZero:
 # ── somebody else's count is labelled as theirs ──────────────────────────────
 
 class TestWhoseNumberItIs:
-    """Two of the obvious headline figures are not release-gate's. The frontier
-    scenario declares 2,184,992 events and the case observed none of them."""
+    """Not every obvious headline figure is release-gate's, and the stage says
+    which. The frontier count became ours when the ingest started tallying by
+    kind (§10av); a count nobody established is still never borrowed."""
 
-    def test_an_unobserved_event_count_is_not_borrowed(self, frontier):
+    def test_a_count_the_ingest_took_itself_is_ours(self, frontier):
         stage = next(s for s in frontier.stages if s.name == "events")
+        assert stage.count == 2_184_992
+        assert stage.basis is Basis.OBSERVED
+
+    def test_and_it_says_what_counting_records_does_not_establish(self, frontier):
+        """OBSERVED answers who counted, not how much the count establishes.
+
+        2,184,992 rows naming themselves executions is an honest count of rows.
+        It is not evidence they form one coherent run, and this is the stage a
+        reader is most likely to quote as though it were."""
+        stage = next(s for s in frontier.stages if s.name == "events")
+        assert "records" in stage.of
+        assert "no execution graph was reconstructed" in stage.detail
+        assert "not assessed" in stage.detail
+
+    def test_an_unobserved_event_count_is_not_borrowed(self):
+        """The original property, on an input where nobody counted.
+
+        Strip the execution rows and no tally names them. That must not read as
+        `0` observed: only the envelope path walks typed rows, so an absent key
+        means nobody counted rather than that there were none (Invariant 3)."""
+        document = [r for r in _base() if r.get("record_type") != "execution"]
+        metric = measure_compression(_assure(document))
+        stage = next(s for s in metric.stages if s.name == "events")
         assert stage.count is None
         assert stage.basis is Basis.NOT_ASSESSED
+
+    def test_a_declared_count_is_not_shadowed_by_our_silence(self):
+        """The ordering that matters: theirs beats an absence of ours.
+
+        An orchestrator declaring 2,184,992 events while release-gate counted no
+        execution rows is the coverage gap the funnel exists to show. Reading the
+        missing tally key as `0 OBSERVED` would take the DECLARED path off the
+        table and hide the gap behind a number of our own."""
+        document = [r for r in _base() if r.get("record_type") != "execution"]
+        document.append({
+            "record_type": "expectation", "dimension": "events",
+            "expected": 2_184_992, "observed": 0,
+            "source": {"kind": "ORCHESTRATION_MANIFEST",
+                       "declared_by": "orchestrator://swarm",
+                       "authenticated": False, "detail": "the orchestrator's tally"}})
+        stage = next(s for s in measure_compression(_assure(document)).stages
+                     if s.name == "events")
+        assert stage.basis is Basis.DECLARED
+        assert stage.count == 2_184_992
 
     def test_but_a_declared_count_is_reported_as_declared(self):
         document = [r for r in _base() if r.get("record_type") != "execution"]

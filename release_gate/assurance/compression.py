@@ -18,14 +18,20 @@ cleanly; it can equally mean detection got worse. Invariant 6 — scale is not
 confidence — applies directly, so `retained_critical` sits beside the number
 always and is never itself compressed.
 
-**Every stage carries its basis, because two of the obvious numbers are not
-ours.** The frontier scenario *declares* 2,184,992 events and 91,481 claims; the
-case observed no execution graph and holds 2,420 claims. Printing the declared
-figures as release-gate's own would launder a producer's self-report into our
-voice, which is Invariant 1 and precisely what §10ah settled for timestamps. So a
-stage says whether its count was OBSERVED by release-gate, DECLARED by somebody
-else, or NOT_ASSESSED — and a `DECLARED` stage is visibly declared wherever the
-funnel is shown.
+**Every stage carries its basis, because not every obvious number is ours.**
+Printing a figure somebody else stated as release-gate's own would launder a
+producer's self-report into our voice, which is Invariant 1 and precisely what
+§10ah settled for timestamps. So a stage says whether its count was OBSERVED by
+release-gate, DECLARED by somebody else, or NOT_ASSESSED — and a `DECLARED`
+stage is visibly declared wherever the funnel is shown.
+
+**OBSERVED says who counted, not how much it establishes.** The frontier
+scenario's 2,184,992 events read OBSERVED because the ingest counted those
+records itself, one at a time, as they arrived (§10av) — and the stage says in
+the same breath that no execution graph was reconstructed, so their order and
+completeness are not assessed. A count of records that name themselves
+executions is an honest count of records. It is not evidence that they form a
+coherent run, and the stage is worded so it cannot be read that way.
 
 **A stage with no number yields no ratio.** On the single-agent demo criticality
 is `UNDETERMINABLE`; a metric printing `0 critical claims` there would assert
@@ -283,16 +289,56 @@ def _declared_count(outcome: Any, dimension: str) -> Optional[Tuple[int, str]]:
     return int(row.expected), f"declared by {who} ({standing})"
 
 
+def _counted_executions(outcome: Any) -> Optional[int]:
+    """How many execution records the ingest itself counted, if it counted.
+
+    `records_seen_by_kind` is release-gate's own tally, taken at the ingest
+    boundary before any decision about a row, so a figure read from it is
+    observed rather than declared.
+
+    `None` unless the tally actually holds an `execution` count. A tally with no
+    such key is *not* a count of zero: only the envelope path walks typed rows,
+    so a trace input can reconstruct a whole execution without any row ever
+    naming itself one. Reading the missing key as `0` would assert "no events"
+    from an input shape that does not carry them, and would shadow a declared
+    count — the one case where the funnel most needs to show somebody else's
+    number beside our absence of one (Invariant 3).
+    """
+    normalisation = getattr(outcome, "normalisation", None)
+    tally = getattr(normalisation, "records_seen_by_kind", None)
+    if not isinstance(tally, Mapping):
+        return None
+    counted = tally.get("execution")
+    return counted if isinstance(counted, int) and not isinstance(counted, bool) else None
+
+
 def _execution_stage(outcome: Any) -> FunnelStage:
     """Events, which is the stage most likely to be quoted and least often ours.
 
     A scenario that declares two million events and supplies no trace has told
-    release-gate a number, not shown it one. That reads `NOT_ASSESSED` here, and
-    the difference between "two million events" and "no execution record" is the
+    release-gate a number, not shown it one. That reads `DECLARED` here, and the
+    difference between "two million events" and "no execution record" is the
     whole reason this stage carries a basis at all.
+
+    Between those two there is a third case, and it is the common one at scale:
+    no graph was reconstructed, but the ingest counted the execution records as
+    they arrived. That count *is* release-gate's, so it reads `OBSERVED` — while
+    the `of` and the detail say what was observed was records arriving, not an
+    execution reconstructed. Counting rows that name themselves executions
+    establishes how many there were; it establishes nothing about their order,
+    their completeness, or whether they describe one coherent run.
     """
     graph = getattr(outcome.analysis, "execution_graph", None)
     if graph is None:
+        counted = _counted_executions(outcome)
+        if counted is not None:
+            return FunnelStage(
+                name="events", count=counted, basis=Basis.OBSERVED,
+                of="execution records counted at ingest",
+                detail="release-gate counted these as they arrived; no execution "
+                       "graph was reconstructed, so their order and completeness "
+                       "are not assessed and this is a count of records rather "
+                       "than of steps taken")
         declared = _declared_count(outcome, "events")
         if declared is not None:
             count, who = declared

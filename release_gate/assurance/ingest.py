@@ -176,12 +176,35 @@ class Normalisation:
     verifier_report: Optional[VerifierReport] = None
     records_seen: int = 0
     records_mapped: int = 0
+    #: How many records of each `record_type` passed through, counted at the ingest
+    #: boundary by release-gate. Added because `records_seen` alone could not answer
+    #: "how many events were there" — a reviewer's first question at frontier scale,
+    #: and the reason §10ao had to report the compression funnel's event stage as
+    #: NOT_ASSESSED. Empty when nobody counted, which is distinct from all-zero.
+    records_seen_by_kind: Mapping[str, int] = field(default_factory=dict)
     skipped: Mapping[str, int] = field(default_factory=dict)
     notes: Tuple[str, ...] = ()
 
     @property
     def skipped_total(self) -> int:
         return sum(self.skipped.values())
+
+    @property
+    def records_unaccounted(self) -> int:
+        """Records in the total that no kind accounts for.
+
+        Positive when rows arrived that could not be classified: not an object,
+        over a parsing bound, or naming no `record_type`. Each is counted in
+        `skipped` with a reason, so the information exists — this is the
+        arithmetic that says how many, so a reader summing the breakdown against
+        the total gets a number here instead of an unexplained shortfall.
+
+        Zero when the breakdown accounts for everything. Negative only when the
+        two counters disagree, which is a defect in whatever built this
+        `Normalisation` and is reported rather than clamped: the engine's own
+        paths keep them reconciled by construction and a test pins that.
+        """
+        return self.records_seen - sum(self.records_seen_by_kind.values())
 
     def to_dict(self) -> Dict[str, Any]:
         return {"detection": self.detection.to_dict(), "source": self.source,
@@ -198,6 +221,8 @@ class Normalisation:
                 "verifier_report": (self.verifier_report.summary()
                                     if self.verifier_report else None),
                 "records_seen": self.records_seen, "records_mapped": self.records_mapped,
+                "records_seen_by_kind": dict(self.records_seen_by_kind),
+                "records_unaccounted": self.records_unaccounted,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
 
@@ -599,6 +624,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     skipped: Dict[str, int] = {}
     notes: List[str] = []
     mapped = 0
+    seen_by_kind: Dict[str, int] = {}
 
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
@@ -637,6 +663,10 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             notes.append(f"a record was refused before parsing: {breach}")
             continue
         record_type = row.get("record_type")
+        if isinstance(record_type, str) and record_type:
+            # Counted before any decision about the row, so the tally is what
+            # arrived rather than what survived: a rejected record still happened.
+            seen_by_kind[record_type] = seen_by_kind.get(record_type, 0) + 1
         if not isinstance(record_type, str):
             skip("record_type is not a string")
             notes.append(
@@ -776,7 +806,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             "were absorbed into the first record under that id")
 
     return (evidence, claims, artifacts, counterexamples, branches, adversarial,
-            expectations, mapped, skipped, notes)
+            expectations, mapped, skipped, notes, seen_by_kind)
 
 
 def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
@@ -1379,6 +1409,10 @@ def normalise(doc: Any, detection: Detection, *, source: str,
     notes: List[str] = []
     seen = 0
     mapped = 0
+    # Empty rather than zeroed: only the envelope path walks typed rows, so for any
+    # other input nobody counted by kind, and an all-zero tally would read as
+    # "there were none of those" (Invariant 3).
+    seen_by_kind: Dict[str, int] = {}
 
     artifact, file_record, _reference, file_digest = _file_artifact(source, content)
     artifacts.append(artifact)
@@ -1401,7 +1435,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
 
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
-        ev, cl, art, cex, fbr, adv, exp, mapped, skipped, env_notes = \
+        ev, cl, art, cex, fbr, adv, exp, mapped, skipped, env_notes, seen_by_kind = \
             _envelope_records(doc, source, producer, execution=execution,
                               declared_consequence=declared_consequence)
         expectations.extend(exp)
@@ -1470,7 +1504,8 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         counterexamples=tuple(counterexamples), adversarial=tuple(adversarial),
         expectations=tuple(expectations),
         failed_branches=tuple(failed_branches), verifier_report=verifier_report,
-        records_seen=seen, records_mapped=mapped, skipped=dict(skipped),
+        records_seen=seen, records_mapped=mapped,
+        records_seen_by_kind=dict(seen_by_kind), skipped=dict(skipped),
         notes=tuple(notes))
 
 

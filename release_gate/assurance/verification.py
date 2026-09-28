@@ -462,7 +462,15 @@ class TargetVerification:
     by_status: Mapping[str, int] = field(default_factory=dict)
     independent_confirmations: int = 0
     unattributed_confirmations: int = 0
+    #: Every method ever tried on this target, applicable or not. Answers "what
+    #: has been attempted", which is not the same question as the next field.
     methods: Tuple[str, ...] = ()
+    #: The methods of the attempts that actually establish the current status:
+    #: applicable, counted, and passed. A caller asking "is this formally
+    #: verified" means this one, and reading `methods` for it would credit a
+    #: theorem-prover run against a state the target has since left — the exact
+    #: thing `target_digest` is recorded to catch (Invariant 5).
+    passing_methods: Tuple[str, ...] = ()
     challenges: Tuple[str, ...] = ()
     basis: str = ""
 
@@ -486,7 +494,9 @@ class TargetVerification:
                 "by_status": dict(self.by_status),
                 "independent_confirmations": self.independent_confirmations,
                 "unattributed_confirmations": self.unattributed_confirmations,
-                "methods": list(self.methods), "challenges": list(self.challenges),
+                "methods": list(self.methods),
+                "passing_methods": list(self.passing_methods),
+                "challenges": list(self.challenges),
                 "basis": self.basis}
 
 
@@ -651,6 +661,7 @@ class VerificationGraph:
             independent_confirmations=independent,
             unattributed_confirmations=unattributed,
             methods=tuple(sorted({a.method.value for a in attempts})),
+            passing_methods=tuple(sorted({a.method.value for a in passed})),
             challenges=tuple(a.verification_id for a in failed), basis=basis)
 
     def superseded_attempts(self) -> Tuple[VerificationAttempt, ...]:

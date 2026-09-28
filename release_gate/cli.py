@@ -1167,6 +1167,8 @@ def print_help():
     print("      and the evidence that would resolve each hold. Exit 0 PROMOTE · 10 HOLD · 1 BLOCK.")
     print("      Without --methodology it reports METHODOLOGY_REQUIRED and HOLDs: structure is")
     print("      assessable without config, domain sufficiency is not, and it will not invent one.")
+    print("      --review prints the one-screen review: execution, critical path, coverage,")
+    print("      what a person must look at, and the verdict — every figure read from the case.")
     print("  release-gate assure --list-methodologies  # Built-in methodologies you can pass")
     print("\nOptions for 'agent-score':")
     print("  --full                                  Show the full breakdown (per-dimension bars, tiers, top issues)")
@@ -1744,11 +1746,16 @@ def _run_assure_command():
     """release-gate assure — structural assurance from one file, no configuration.
 
     Usage:
-      release-gate assure <file> [--json] [--full]
+      release-gate assure <file> [--json] [--full] [--review]
                                  [--methodology REF|FILE]
                                  [--config FILE] [--case-output FILE]
       release-gate assure --list-methodologies
       release-gate assure --diagnostics
+
+    `--review` prints the one-screen case review: what arrived, what the decision
+    rests on, what coverage the case has, what a person must look at, and the
+    verdict. Same outcome, read a different way — every figure on it comes from an
+    analysis that already ran, so it cannot disagree with the default output.
 
     No configuration is required for any of this. `--config` is an organisation
     layer that can only tighten the bar; without it the command is complete.
@@ -1795,7 +1802,7 @@ def _run_assure_command():
 
     target = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
     if not target:
-        print("Usage: release-gate assure <file> [--json] [--full] "
+        print("Usage: release-gate assure <file> [--json] [--full] [--review] "
               "[--methodology REF] [--config FILE] [--case-output FILE]")
         print("       release-gate assure --list-methodologies")
         sys.exit(1)
@@ -1861,6 +1868,14 @@ def _run_assure_command():
 
     if '--json' in argv:
         print(_json.dumps(outcome.to_dict(), indent=2, sort_keys=True))
+    elif '--review' in argv:
+        # The one-screen review. An additional view over the same outcome, not a
+        # different assurance run: every figure on it is read from the analyses
+        # that already produced the verdict, so the two cannot disagree.
+        from release_gate.assurance.review import build_review, render_review
+        print(render_review(build_review(outcome)))
+        if case_output:
+            print(f"  Case written to {case_output}")
     else:
         print(render_text(outcome, full='--full' in argv))
         if case_output:
