@@ -217,6 +217,9 @@ def _schemas() -> Tuple[SchemaRef, ...]:
              "rg-structural-1",
              note="a ruleset identifier, not an integer: rules change what a "
                   "verdict says, so the id travels with the finding"),
+        _ref("api", "api", "API_SCHEMA_VERSION", 1,
+             note="the product surface: create_case, Case, CaseDecision — a facade "
+                  "over the session, with no second decision path behind it"),
         _ref("approval", "approval", "APPROVAL_SCHEMA_VERSION", 1),
         _ref("approval_view", "approval_view", "VIEW_SCHEMA_VERSION", 1),
         _ref("artifact", "artifacts", "ARTIFACT_SCHEMA_VERSION", 1),

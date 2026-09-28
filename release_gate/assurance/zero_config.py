@@ -1137,6 +1137,7 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
                          requested_action: Optional[str] = None,
                          consequence_registry: Optional[ConsequenceRegistry] = None,
                          declared_consequence: Optional[Any] = None,
+                         subject: Optional[AssuranceSubject] = None,
                          recorder: Optional[LatencyRecorder] = None
                          ) -> AssuranceOutcome:
     """Everything `assure` does after reading the file.
@@ -1165,7 +1166,12 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
         f"authorise the result described by {source.name}")
 
     with timer.stage(Stage.SUBJECT):
-        subject = _subject_for(source, normalisation, requested_action)
+        # A caller that named the thing being authorised gets that thing as the
+        # subject. Otherwise it is derived from the input as before — and a caller
+        # who names nothing runs the identical path to the identical digest, which
+        # is what keeps this additive.
+        if subject is None:
+            subject = _subject_for(source, normalisation, requested_action)
 
     with timer.stage(Stage.CONSEQUENCE):
         registry = consequence_registry or default_consequence_registry()

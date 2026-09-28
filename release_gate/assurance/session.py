@@ -117,6 +117,10 @@ class AssuranceSession:
     objective: Optional[str] = None
     requested_decision: Optional[str] = None
     requested_action: Optional[str] = None
+    #: The thing being authorised, when a caller names one. Left unset, the case's
+    #: subject is derived from the submitted records as it always was — so a session
+    #: that does not use this runs identical code to an identical digest.
+    subject: Optional[Any] = None
     records: List[Any] = field(default_factory=list)
     _outcome: Optional[Any] = field(default=None, repr=False)
     #: The last reuse decision, so "why did that take two seconds" is answerable
@@ -133,7 +137,8 @@ class AssuranceSession:
              methodology: Optional[AssuranceMethodology] = None,
              objective: Optional[str] = None,
              requested_decision: Optional[str] = None,
-             requested_action: Optional[str] = None) -> "AssuranceSession":
+             requested_action: Optional[str] = None,
+             subject: Optional[Any] = None) -> "AssuranceSession":
         """Start a case. Nothing is required, including a methodology.
 
         With no methodology the case will report METHODOLOGY_REQUIRED and hold,
@@ -143,7 +148,7 @@ class AssuranceSession:
         """
         return cls(source_name=source_name, methodology=methodology,
                    objective=objective, requested_decision=requested_decision,
-                   requested_action=requested_action)
+                   requested_action=requested_action, subject=subject)
 
     # ── while open ──────────────────────────────────────────────────────────
 
@@ -296,7 +301,8 @@ class AssuranceSession:
             source_path=Path(self.source_name),
             methodology=self.methodology, objective=self.objective,
             requested_decision=self.requested_decision,
-            requested_action=self.requested_action, recorder=timer)
+            requested_action=self.requested_action, subject=self.subject,
+            recorder=timer)
         self._cache.put(key, outcome)
         self.reuse = Reuse(
             stage="finalization", decision=ReuseDecision.RECOMPUTED, key=key,
@@ -322,6 +328,8 @@ class AssuranceSession:
             "requested_decision": self.requested_decision,
             "requested_action": self.requested_action,
             "source": self.source_name,
+            "subject": (self.subject.subject_id
+                        if self.subject is not None else None),
         })
 
     def _prepare(self) -> Tuple[Any, bytes, str]:

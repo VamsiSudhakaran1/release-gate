@@ -7550,6 +7550,191 @@ rather than settled as a side effect of adding a module.
 
 ---
 
+### 10at. The product surface — four names, and the engine still says no
+
+    import release_gate as rg
+
+    case = rg.create_case(objective="Deploy generated migration",
+                          subject=migration_artifact)
+    case.add_execution(trace)
+    case.add_verification(test_result)
+    decision = case.finalize()
+
+and, with more at stake and nothing else different, `create_case(type=…,
+methodology=…)`, `case.stream(events)`, `add_replication`, `add_counterexample`.
+Both samples run verbatim, `type=` included — it shadows the builtin deliberately,
+because a `case_type=` alias would mean two spellings of one argument forever.
+
+`create_case`, `Case`, `CaseDecision`, `ApiError`. Four names, and `release_gate`
+resolves them through `__getattr__` so `import release_gate` stays at 36ms against
+the 237ms the assurance package costs: the old surface must not pay for a package
+it never touches.
+
+#### 10at.1 "The same conceptual system" as something checkable
+
+One `Case` class, one `AssuranceSession`, one decision path. The claim worth making
+is the testable form: **the same records through this surface and through
+`assure_normalisation` reach the same verdict, with the same fired rules, on the
+same collection counts, with the same verification attempts in the graph.** If they
+could differ, the facade would be a second engine wearing a nicer coat.
+
+It reaches PROMOTE, too, which matters — an API that could only ever hold would be
+worse than none. And it reaches it while still printing the twelve dimensions
+nobody assessed, because `CaseDecision.render()` prints coverage beside the answer.
+
+#### 10at.2 The three things a simpler API must not buy its simplicity with
+
+**It must not upgrade what a producer claimed.** `_PRODUCER_FORBIDDEN` at the ingest
+boundary already strips `epistemic_status`, `trust_status` and `provenance_status`
+from any submitted payload and keeps them as content — checked, not assumed. So the
+adders stamp *shape* (a `record_type`, a `kind`) and never standing, and could not
+launder a status if they tried. There is a test that tries.
+
+**It must not read what a tool meant.** `add_verification({"passed": True})` looks
+like it should work, and mapping `passed` → `PASSED` is precisely the guess §10q was
+written to refuse: a producer's vocabulary is the producer's, and a parser against
+formats nobody tested is a guess wearing a tool's name. So a payload that *is* the
+documented generic envelope is read — reading a documented format is not guessing —
+and anything else is kept while `decision.required_evidence` names the three fields
+that would make it a verification. **The sample runs, the verdict is HOLD, and the
+reason is a sentence you can act on.** Supply method, outcome and verifier and the
+same call reaches the graph.
+
+`against_subject=True` exists for the common case and is an opt-in, never a default.
+A verification with no target is UNDETERMINED against every state, and filling that
+in from the subject release-gate happens to be holding would assert currency the
+check never established. The caller may assert it; the engine may not infer it.
+
+**It must not hand back a verdict without its coverage.** `finalize()` returns a
+`CaseDecision`, not a bare `Decision`. A one-word return would have been tidier and
+would have let a PROMOTE be read without the dimensions nobody assessed (Invariant
+9). `__bool__` is True only for PROMOTE, spelled out because `if decision:` will be
+written whatever this module prefers and every non-empty object is otherwise truthy
+— a BLOCK reading as success is not a mistake worth leaving available.
+
+#### 10at.3 `subject=` was decorative, which is the worst place for a bug
+
+The first draft added the subject to the case as an *artifact*. The session went on
+deriving its subject from its own bytes, so `subject=migration_artifact` — the most
+important argument in both samples — put a record in a collection and changed
+nothing about what an approval would bind to.
+
+Fixed by threading an optional `subject` through `AssuranceSession` into
+`assure_normalisation`, which uses it when given and derives one as before when not.
+Additive and keyword-only: a caller who names no subject runs the identical path to
+the identical digest. The session's reuse key covers it too (§10ap), because a
+changed subject that reused a cached outcome would be the same bug one layer down.
+
+And `subject=` says which reading it took, because the reading decides what the case
+can claim (§10c): a file or bytes are hashed here and read `OBSERVED`; an object
+carrying its own digest is `DECLARED`; any other string is an identifier with no
+digest at all. The one refusal: **a string that looks like a path and is not a
+file.** Treating `./migrations/0041.sql` as an opaque identifier because of a typo
+would hand back a case with an unhashed subject that reads exactly like a hashed
+one.
+
+#### 10at.4 The engine caught two of the facade's lies, and that is the argument
+
+`AssuranceSubject` refused the supplied-digest branch twice over. It refused
+`digest_method=SHA256_CONTENT` for a digest release-gate did not compute —
+"`EXTERNAL_ATTESTED` is someone else's claim, so it is DECLARED (Invariant 1)" — and
+then refused a `DECLARED` digest naming no attestor: "provenance is part of the
+claim, not an optional annotation (Invariant 11)".
+
+Both were mistakes in the convenience layer, and neither reached a test because the
+constructor would not build the object. That is the whole case for a facade **over**
+a strict engine rather than a simple path **beside** one: the validation that has
+been accumulating since §10c does not care that the caller is a product surface, so
+the product surface cannot quietly be laxer than the thing it wraps. The API now
+reads the attestor off the subject and refuses by name when there is none, which is
+the engine's rule surfaced rather than worked around.
+
+#### 10at.5 A counterexample that was silently dropped
+
+`case.add_counterexample(counterexample_search)` succeeded, and the case held no
+counterexample. Ingest rejects one that names no claim — "a counterexample against
+nothing cannot be weighed or surfaced" — and the first draft let that rejection
+happen downstream, so the only trace was a line in the normalisation's `notes`
+tuple. A call that appears to work and quietly loses what it was handed is worse
+than one that refuses.
+
+The rule this settled, now applied across the surface: **never silently drop, never
+invent; keep the payload and name what is missing.** So a search naming no claim is
+kept as evidence of a search, and `required_evidence` says what would make it
+weighable. The same rule already governed `add_verification`, and there is a test
+that puts every adder through and asserts the ingest's `skipped` tally stays empty.
+
+#### 10at.6 `stream()` is not `extend()`, and the numbers say why
+
+Measured before it was written, because the frontier sample says "events" and means
+millions:
+
+| events through `extend` | RSS | canonical document |
+|---|---|---|
+| 10,000 | +11 MB | 1.3 MB |
+| 100,000 | +86 MB | 13.0 MB |
+| 400,000 | +339 MB | 52.3 MB |
+
+The session holds what it is given, so ten million events is about **8–9 GB and a
+1.3 GB document**. The frontier sample would not have run.
+
+So `stream()` folds instead: every event is counted and hashed as it passes, a
+bounded set is retained, and one record release-gate produced carries the observed
+total and the fold digest over all of them. **One million events grew RSS by
+0 MB**, against ~850 MB per million through `extend`, and the case commits to every
+event while holding a thousand. `RetainFirst` is the honest bounded default
+precisely because it makes no claim to have chosen well.
+
+Two things that took a second pass:
+
+* **The commitment arrived as a repr.** The counts were put under the row's
+  `content` key, and ingest preserves a submitted payload *under* `content` — so a
+  producer's own `content` lands a level deeper and its nested mappings come back
+  as strings. A commitment that cannot be read is not a commitment. The counts now
+  sit at the row's top level, where they survive as integers.
+* **The collection reads COMPLETE, and with respect to what was submitted it is.**
+  The dropped events were folded outside the session and never offered to it. Saying
+  that only in a `coverage_note` would leave a reviewer reading a complete collection
+  over a truncated stream, so the gap goes where every other gap goes: an
+  `EvidenceExpectation` with `assessed=False` on a `stream.event_content` dimension
+  (§10ab, §10aq, §10ar).
+
+#### 10at.7 A gap in the envelope format, found by needing it
+
+`_expectation_from` never read `assessed`, so an expectation record arriving in a
+document could only ever report `assessed=True`. `privacy`, `federation` and
+`vetting` could all declare a coverage gap programmatically and **the document
+format could not** — which only surfaced when this surface needed to declare one
+from the outside.
+
+Now read, defaulting `True`, so every existing document is unchanged. Safe to
+honour because it is the conservative direction: `assessed=False` reads as a gap and
+holds a case, so nothing is gained by claiming it. The dangerous direction —
+claiming coverage you do not have — was never available and still is not.
+
+#### 10at.8 An empty case was falsy
+
+`Case.__len__` counts records added, so a case with nothing in it yet was falsy and
+`if case:` read as "this case is invalid" on a case created perfectly well. Found by
+a test that did `assert create_case(...)` for an unrelated reason. `__bool__` is now
+explicitly `True`, for the same reason `CaseDecision.__bool__` is explicitly
+PROMOTE-only: where `__len__` exists, truthiness has to be decided rather than
+inherited.
+
+The rendering had the same shape of bug. `_render_item` guessed at attribute names
+and `RequiredEvidenceItem` has `what`/`why`, so **every line of the headline output
+was a dataclass repr** — the one thing a product surface exists to avoid, in the one
+place a person actually reads.
+
+#### 10at.9 What is not built
+
+No second decision path. No heuristic reading of tool output. No ORM, no builder
+DSL, no async, no client. No `PROMOTE` the evidence did not earn — the minimal
+sample returns HOLD with `METHODOLOGY_REQUIRED`, and the fix for that is a
+methodology, not a friendlier default.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

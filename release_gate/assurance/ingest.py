@@ -1202,6 +1202,13 @@ def _expectation_from(row: Mapping[str, Any],
         observed_ids=tuple(_as_ids(row.get("observed_ids"))),
         source=source,
         observed_from=str(row.get("observed_from") or producer.producer_id),
+        # Read rather than defaulted, so a producer can declare a dimension nobody
+        # assessed. Until this was read, an expectation arriving in a document could
+        # only ever report `assessed=True` — `privacy`, `federation` and `vetting`
+        # could express a coverage gap programmatically and the envelope format could
+        # not. Safe to honour because it is the conservative direction: `False` reads
+        # as a gap and holds a case, so nothing is gained by claiming it.
+        assessed=(bool(row["assessed"]) if "assessed" in row else True),
         note=str(row.get("note") or ""))
 
 

@@ -223,7 +223,7 @@ STAGES: Tuple[StageSpec, ...] = (
     StageSpec(
         name="finalization", stability=Stability.RETRACTABLE,
         reads=("records", "methodology", "objective", "requested_decision",
-               "requested_action", "source")),
+               "requested_action", "source", "subject")),
 )
 
 #: name → spec. Built from `STAGES` rather than written out again.
