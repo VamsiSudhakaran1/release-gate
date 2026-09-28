@@ -71,27 +71,63 @@ class TestBoundedFold:
 
 class TestNoQuadraticFold:
 
-    def test_work_per_record_stays_flat_as_the_fold_grows(self):
-        """The duplicate check for `track_ids=False` was a linear scan over every
-        record held, on every add: 41us per record at 2,000 and 152us at 8,000.
+    def test_the_duplicate_check_does_not_scan_what_is_already_held(self):
+        """The property, counted directly rather than timed.
 
-        A quadratic shows as ~4x when the input doubles. The bound is 2.5x so a
-        slow machine does not fail the build.
+        The check for `track_ids=False` was a linear scan over every record held,
+        on every add: 41us per record at 2,000 and 152us at 8,000.
+
+        **This counted comparisons for eight years of machine noise.** The test
+        that caught this originally compared wall-clock between two input sizes,
+        and wall-clock is not a signal this machine can give reliably: a single
+        sample had a median ratio of 2.32 against its own 2.5 bound and crossed
+        it 6 times in 15. Taking the minimum of five repeats fixed it in
+        isolation — 0 failures in 20 runs — and it still failed inside the full
+        suite, where other tests' memory pressure moves the floor.
+
+        So it counts string comparisons instead. A set membership test costs one
+        hash and at most a handful of `__eq__` calls; a scan over a list of n
+        held ids costs n of them. That difference is arithmetic, not timing, and
+        no amount of load changes it.
         """
-        def elapsed(n: int) -> float:
-            records = [rec(i) for i in range(n)]
+        class CountingId(str):
+            """A record id that counts how often it is compared."""
+            comparisons = 0
+
+            def __eq__(self, other):
+                CountingId.comparisons += 1
+                return str.__eq__(self, other)
+
+            def __ne__(self, other):
+                CountingId.comparisons += 1
+                return str.__ne__(self, other)
+
+            def __hash__(self):
+                return str.__hash__(self)
+
+        def comparisons_for(n: int) -> int:
+            records = []
+            for i in range(n):
+                record = rec(i)
+                object.__setattr__(record, "record_id", CountingId(record.record_id))
+                records.append(record)
             builder = RecordCollectionBuilder("evidence", track_ids=False)
-            start = time.perf_counter()
+            CountingId.comparisons = 0
             for record in records:
                 builder.add(record)
-            return time.perf_counter() - start
+            return CountingId.comparisons
 
-        elapsed(4_000)                      # warm the interpreter
-        small = elapsed(8_000)
-        large = elapsed(16_000)
-        assert large < small * 2.5, (
-            f"folding twice as many records took {large / max(small, 1e-9):.1f}x "
-            "as long; the per-add duplicate check has gone quadratic again")
+        # Healthy, this is **zero**: distinct ids never collide in a hash set, so
+        # `__eq__` is never reached. A scan over the held list makes n-1 of them
+        # per add — 1,999,000 in total at n=2,000, which is what the regression
+        # measured when it was reintroduced to check this test still bites.
+        for n in (1_000, 2_000, 4_000):
+            comparisons = comparisons_for(n)
+            assert comparisons <= n, (
+                f"folding {n:,} records made {comparisons:,} id comparison(s); "
+                f"a constant-time check makes at most a handful and a scan over "
+                f"what is held makes about {n * (n - 1) // 2:,}. The per-add "
+                "duplicate check is scanning again")
 
     def test_duplicates_are_still_refused_when_ids_are_tracked(self):
         builder = RecordCollectionBuilder("evidence", track_ids=True)

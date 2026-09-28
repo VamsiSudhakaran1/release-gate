@@ -353,7 +353,8 @@ class Claim:
         if int(data.get("schema_version", CLAIM_SCHEMA_VERSION)) > CLAIM_SCHEMA_VERSION:
             raise ClaimError(
                 f"claim schema version {data['schema_version']} is newer than this reader "
-                f"understands ({CLAIM_SCHEMA_VERSION})")
+                f"understands ({CLAIM_SCHEMA_VERSION}); upgrade release-gate rather "
+                "than reading a record whose fields it would silently drop")
         reference = data.get("statement_reference")
         # A producer-supplied status is ignored on purpose: status is computed
         # from evidence on every build, not carried in the document.

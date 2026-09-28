@@ -57,7 +57,7 @@ got further.
 ### What it will not tell you
 
 Not that a release is **safe**. Not that a result is **guaranteed correct**. Not that
-the gate is **unhackable** — nineteen attacks run against the engine itself and one is
+the gate is **unhackable** — twenty attacks run against the engine itself and one is
 recorded `NOT_DEFENDED` with what bounds it instead. Not that a case is
 **uncontested**, that hallucinations are **solved**, or that an expert has been
 **replaced**: the output is a list of what needs a person.

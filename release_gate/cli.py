@@ -18,6 +18,7 @@ from typing import Dict, Any
 # Add package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from release_gate import __version__ as _VERSION
 from release_gate.web_cta import print_web_cta, web_url
 from release_gate.checks.action_budget import ActionBudgetCheck
 from release_gate.checks.input_contract import InputContractCheck
@@ -210,6 +211,19 @@ def load_config(config_path: str) -> Dict[str, Any]:
         return config
     except FileNotFoundError:
         print(f"Error: Config file not found: {config_path}")
+        sys.exit(1)
+    except IsADirectoryError:
+        # `release-gate score .` used to print a raw traceback. `audit` takes a
+        # directory and `score` takes a governance file, so the confusion is the
+        # product's, and a stack trace is the worst possible way to explain it.
+        print(f"Error: {config_path} is a directory, and `score` reads a "
+              "governance file.")
+        print("  Try:  release-gate score governance.yaml")
+        print("  Or:   release-gate audit .          # scan a directory")
+        print("  Or:   release-gate assure <file>    # assurance from one file")
+        sys.exit(1)
+    except PermissionError:
+        print(f"Error: cannot read {config_path}: permission denied")
         sys.exit(1)
     except yaml.YAMLError as e:
         print(f"Error: Invalid YAML in config: {e}")
@@ -804,7 +818,7 @@ def _print_score_report(scoring, project, evals, traces, impact, runtime=None, f
     conf = scoring["confidence"]
 
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Readiness Scorer  v0.8.4")
+    print(f"\U0001f6aa release-gate  |  Readiness Scorer  v{_VERSION}")
     print("=" * 80 + "\n")
 
     print(f"  Project          {project}")
@@ -933,7 +947,7 @@ def run_score_command(config_path, evals_path, traces_path, html_report, evidenc
 def _print_regression_report(result, full=False):
     """Render a regression comparison report to the terminal."""
     print("\n" + "=" * 80)
-    print("\U0001f6aa release-gate  |  Regression Gate  v0.8.4")
+    print(f"\U0001f6aa release-gate  |  Regression Gate  v{_VERSION}")
     print("=" * 80 + "\n")
 
     print(f"  Baseline score    {result['previous_score']} / 100   {result['baseline_decision']}")
@@ -1099,7 +1113,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 
     paths = generate_evidence_pack(data, output_dir)
 
-    print("\n\U0001f6aa release-gate  |  Evidence Pack  v0.8.4\n")
+    print(f"\n\U0001f6aa release-gate  |  Evidence Pack  v{_VERSION}\n")
     print(f"  Decision: {scoring['decision']}  (score {scoring['readiness_score']}/100)\n")
     print(f"  ✓  {paths['json']}")
     print(f"  ✓  {paths['markdown']}")
@@ -1116,7 +1130,7 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print("\U0001f6aa release-gate v0.8.4  — AI release decision engine")
+    print(f"\U0001f6aa release-gate v{_VERSION}  — AI release decision engine")
     print("="*80)
     print("\nUsage:")
     print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
@@ -1317,6 +1331,16 @@ def main():
         sys.exit(1)
 
     command = sys.argv[1]
+
+    # The two flags every CLI is expected to answer. They used to fall through to
+    # `Unknown command: --help` and exit 1, which fails a CI smoke step that runs
+    # `release-gate --version` and tells a first-time user their install is broken.
+    if command in ('-h', '--help', 'help'):
+        print_help()
+        sys.exit(0)
+    if command in ('-V', '--version', 'version'):
+        print(f"release-gate {_VERSION}")
+        sys.exit(0)
 
     if command == 'audit':
         if not AUDIT_AVAILABLE:

@@ -428,6 +428,26 @@ class VerificationAttempt:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "VerificationAttempt":
+        # Refused, not read. `EvidenceRecord` and `Claim` have always guarded
+        # this and `verification` never did — while being the one core schema
+        # that has actually moved, three times. A v5 attempt read by a v4 reader
+        # loses whatever v5 added: silently, and into a case an approval then
+        # binds to (Invariant 5). Dropping fields a producer sent is evidence
+        # omission, which is the threat Invariant 13 names.
+        declared = data.get("schema_version", VERIFICATION_SCHEMA_VERSION)
+        try:
+            declared = int(declared)
+        except (TypeError, ValueError):
+            raise VerificationError(
+                f"verification schema_version {declared!r} is not a version "
+                "number; a record that cannot say which schema it speaks cannot "
+                "be read safely") from None
+        if declared > VERIFICATION_SCHEMA_VERSION:
+            raise VerificationError(
+                f"verification schema version {declared} is newer than this "
+                f"reader understands ({VERIFICATION_SCHEMA_VERSION}); upgrade "
+                "release-gate rather than reading an attempt whose fields it "
+                "would silently drop")
         target = data.get("target")
         return cls(
             method=VerificationMethod(data["method"]),

@@ -17,13 +17,23 @@ objects and reads them; it computes no statistic of its own and contains no
 literal counts. That is enforced by `tests/test_demo_frontier_research.py`, which
 re-derives each line independently and compares.
 
-**The scale is real, not claimed.** Every event and claim is constructed,
-digested and folded into its collection's multiset commitment, so `total_count`
-is a count of records the engine actually saw. What is *not* kept is the bulk:
-materialisation is relevance-directed, so two million events cost bounded memory
-and the collection says plainly how many it holds of how many it saw (§10i,
-§10j). At the default scale a run takes around half a minute, almost all of it
-in that fold.
+**The scale is real, and what is real about it is the count.** Every event and
+claim is iterated and counted, one at a time, so `records_seen` and
+`records_seen_by_kind` are counts of records this generator actually produced
+rather than numbers the scenario asserts (§10av). What is *not* constructed is
+the bulk: materialisation is relevance-directed, so at the default scale
+2,184,992 events are counted while 10,254 evidence records and 2,420 claims are
+built, digested and folded into their collections' multiset commitments — and
+each collection says plainly how many it holds of how many it saw (§10i, §10j).
+
+That is the honest shape of the claim, and an earlier version of this paragraph
+overstated it twice: it said every event was "constructed, digested and folded",
+which would be 2.18M digests rather than ~13K, and it said a full-scale run took
+"around half a minute". Measured at the commit that wrote that sentence, it took
+3.8 seconds; today the median over five runs is 3.4s (3.0–3.5). A demo whose
+purpose is to let a claim be checked rather than asserted has no business
+carrying an unchecked one — including the replacement, which is why that is a
+median over repeats rather than the first number a single run happened to give.
 
 **Eleven phenomena, each generated and each detected.** Copying, derivation,
 independent verification, formal checking, counterexample search, failed

@@ -8189,6 +8189,157 @@ classified reads as unassessed for as long as nobody classifies it.
 
 ---
 
+### §10ax The final repository audit
+
+Everything run at once, against the installed wheel rather than the source tree
+where the surface allows it: both test suites, both benchmarks, the assurance
+corpus, three demos, twelve named failure scenarios, packaging, CLI, API, MCP,
+GitHub Action, and the five legacy user paths.
+
+Everything the engine does passed. **Five defects were found, none of them in the
+assurance engine, and all of them the same shape: a statement the repository made
+about itself that was not true.** None was a regression — each had been true for
+as long as its file existed, which is the argument for pinning them in
+`tests/test_repository_audit.py`: nothing had been watching.
+
+#### 10ax.1 What passed
+
+The scanner benchmark: 93 cases, precision 100%, recall 100%, zero false
+positives on clean cases. The assurance corpus: 16 of 16, case-level precision
+100%. The chaos harness: 15 faults, each recovering the way its nature permits.
+The hostile harness: 20 threats, each landing where expected, one
+`NOT_DEFENDED` and it states what limits it. The twelve named scenarios each
+behave as declared, including the three the corpus detects and promotes anyway —
+`false-independence`, `fake-verifier`, `missing-provenance` — which remain open
+methodology decisions rather than detection failures.
+
+Packaging builds a wheel and an sdist; a clean venv installs it and imports the
+newest surfaces. Backward compatibility holds: cases round-trip with their
+digests preserved, a v3 verification attempt and a v1 organisation config both
+still read, and an evidence pack seals and verifies.
+
+#### 10ax.2 The flagship demo overstated itself twice
+
+Its docstring said a full-scale run took "around half a minute". Measured: 3.4s
+today, and **3.8s at the commit that wrote the sentence** — it was never true.
+
+Worse, the same paragraph said every event was "constructed, digested and folded
+into its collection's multiset commitment". At the default scale that would be
+2.18M digests. The truth is 2,184,992 events *counted* and ~13K records built and
+folded — the whole point of relevance-directed materialisation, claimed as 170x
+more work than it does, in a file whose stated purpose is to let a claim be
+checked rather than asserted.
+
+The replacement states the measured median over five runs rather than the first
+number a single run gave, because that is the mistake being corrected.
+
+#### 10ax.3 The CLI told every user the wrong version
+
+Five hardcoded banners read `v0.8.4` against a package at `0.10.1`. Two places
+stated the version and they disagreed; there is one source now, and a test
+refuses any hardcoded banner.
+
+`--help` and `--version` printed `Unknown command` and exited 1 — the two flags
+every CLI is expected to answer, failing a CI smoke step and telling a
+first-time user their install is broken. An unknown command still exits 1, which
+was the half that was already right.
+
+`release-gate score .` raised `IsADirectoryError` at the user. `audit` takes a
+directory and `score` takes a governance file, so the confusion is the product's,
+and a stack trace is the worst available way to explain it.
+
+#### 10ax.4 A core schema said it would refuse the future and did not
+
+`VerificationAttempt.from_dict` read a record declaring `schema_version: 99`.
+`EvidenceRecord` and `Claim` have always refused one.
+
+`verification` is core, and it is the **only core schema that has actually
+moved** — three times, to v4. A v5 attempt read by a v4 reader loses whatever v5
+added: silently, into a case an approval then binds to (Invariant 5). Dropping
+fields a producer sent is evidence omission, the threat Invariant 13 names.
+
+The guard now matches the other two, and the match is tested by raising all three
+and comparing the messages rather than by grepping for the phrase — which finds
+nothing in `verification.py`, where it wraps across two source lines. Writing
+that test also caught `Claim`'s message stating the problem without the remedy
+the other two give.
+
+Three of eight core schemas guard this. The other five sit at v1 and have never
+moved, so nothing can yet have been misread; a test pins that set so the
+exposure is noticed the first time one of them does move.
+
+#### 10ax.5 The suite was not reliably green, and the fix was to stop timing
+
+`test_work_per_record_stays_flat_as_the_fold_grows` compared wall-clock between
+two input sizes against a 2.5x bound. Measured on this machine: a single sample
+had a **median ratio of 2.32** — 7% under the bound it asserted — and crossed it
+6 times in 15. A 40% flake rate on a shipped test.
+
+Taking the minimum of five repeats fixed it in isolation (0 failures in 20 runs)
+and it **still failed inside the full suite**, where other tests' memory pressure
+moves the floor. Wall-clock is not a signal this machine can give reliably, and
+no amount of repetition makes it one.
+
+So the test counts string comparisons instead. A set membership test on distinct
+ids costs **zero** `__eq__` calls; a scan over the held list costs n-1 per add.
+Reintroducing the original quadratic measured 1,999,000 comparisons at n=2,000 —
+exactly n(n-1)/2 — against zero. That difference is arithmetic, and no load
+changes it.
+
+#### 10ax.6 A stale count, and a scan that nearly produced a false one
+
+The README said "nineteen attacks run against the engine itself" after §10aw made
+it twenty. A number in a README is a claim like any other and this one is
+checkable against the thing it describes, so a test now derives it.
+
+The scan that found it also flagged six forbidden claims — "safe to deploy",
+"guaranteed correct", "unhackable", "uncontested" — across the README, the
+quickstart and an article. **Every one was a negation.** The documents say
+release-gate does *not* claim these things, and a substring scan cannot tell a
+claim from its refusal. Reading the context before reporting is what kept a false
+finding out of this audit; the test that replaces the scan checks the phrase is
+preceded by "not that", so a tripwire cannot force the document to stop being
+explicit about what it refuses.
+
+The same mistake cost a first pass on the GitHub Action, which appeared to invoke
+a `release-gate rules` command that does not exist — the match was the English
+phrase "release-gate rules on their verdict" inside an input description. The
+action's real invocations are parsed from `run:` blocks now, and all three are
+dispatched.
+
+#### 10ax.7 One Release-Gate, demonstrated by tracing
+
+The requirement that the three scenarios not need three architectures was checked
+by tracing which functions each actually executes, not by reading the code.
+
+Scenario A executes 394 engine functions; C executes 531. **346 are shared by all
+three**, across 27 modules — 87% of everything A touches also runs in C. The 48
+unique to A are input-shape handling (`digest_file`, `declared_from_document`,
+`descriptors_from_mapping`): reading a file from disk, not a second engine. The
+185 extra in C are the research machinery A never asks for.
+
+#### 10ax.8 The three acceptance scenarios
+
+**A — individual developer.** One agent, one consequential action, no
+configuration file. HOLD with five review items, each naming what would resolve
+it. The research machinery reads NOT_ASSESSED rather than being demanded.
+
+**B — enterprise agent system.** 108 producers, 24,782 records, provenance
+reconstructed across 19 ancestry clusters with concentration HIGH, reduced to 13
+review items of which 7 may never be dropped, 23 dispatchable evidence
+requirements, BLOCK.
+
+**C — frontier research system.** 10,254 producers, 2,287,133 records, a 2,420
+claim graph over 10,258 evidence records. Every planted phenomenon detected
+rather than declared: independence collapse (largest lineage 8,913 of 10,254),
+formal verification typed, one open counterexample, one open contradiction,
+artifact mutation as `RG-DRIFT-002`, and a telemetry source reading
+`COMPLETENESS_UNKNOWN`. 48 of 2,420 claims load-bearing by reachability, with
+`volume_affects_criticality` false. An eleven-section approval packet. BLOCK, and
+no phrase in the review claims the result is true.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
