@@ -331,8 +331,45 @@ class Case:
     # ── adding ──────────────────────────────────────────────────────────────
 
     def add_execution(self, trace: Any) -> "Case":
-        """A record of what actually ran."""
-        return self._add(trace, record_type="execution")
+        """A record of what actually ran.
+
+        Takes release-gate's native trace — a mapping carrying `steps` — or the
+        steps on their own, which is the shape a caller reaches for first.
+
+        A bare sequence is wrapped into that mapping, because `{"steps": [...]}`
+        is the shape the ingest folds into an execution graph and nothing else
+        is. Passed as a list, the steps used to arrive flattened to a scalar
+        under `content`, no graph was built, and the case went on to report
+        `execution_reconstruction: NOT_ASSESSED` and ask for the trace that had
+        just been supplied. A method whose whole job is "here is what the agent
+        did" must not be able to accept an argument and quietly do nothing with
+        it.
+
+        A payload that cannot become a trace is refused rather than stored. The
+        alternative is what was happening: a call that looks like it worked, and
+        a requirement that fails for a reason the caller has already addressed.
+        """
+        if hasattr(trace, "to_dict") and hasattr(trace, "record_type"):
+            return self._add(trace, record_type="execution")
+
+        payload: Any = trace
+        if (isinstance(payload, Sequence)
+                and not isinstance(payload, (str, bytes, bytearray, Mapping))):
+            # The steps alone. Passed through as written — `add_native_trace`
+            # skips a step it cannot read, and guessing a shape for one here
+            # would be release-gate inventing telemetry.
+            payload = {"steps": list(payload)}
+
+        if not isinstance(payload, Mapping) or not isinstance(
+                payload.get("steps"), list):
+            raise ApiError(
+                "add_execution needs a trace it can reconstruct: either "
+                "{'trace_id': ..., 'steps': [...]} or the steps on their own. "
+                f"Got {type(trace).__name__}"
+                + (" with no 'steps'" if isinstance(payload, Mapping) else "")
+                + ". A step is a mapping such as {'type': 'tool_call', 'tool': "
+                  "'shell'} or {'type': 'llm_call', 'model': ...}")
+        return self._add(payload, record_type="execution")
 
     def add_verification(self, result: Any, *, method: str = "", outcome: str = "",
                          verifier: str = "", target_digest: str = "",
@@ -702,11 +739,16 @@ def create_case(*, objective: str, subject: Any = None, type: Optional[str] = No
     uses and a `case_type=` alias would mean two spellings of one argument forever.
     Nothing in this function needs `type()`.
 
-    `methodology` is a registered id — `"research-mathematics-v1"`, or a bare
-    `"research-mathematics"` for whatever version is latest. Omitted, the case will
-    report `METHODOLOGY_REQUIRED` and hold, which is the honest answer rather than a
-    missing feature: structural analysis can say what the evidence *is*, and
-    "enough for this decision" is a domain question nobody has answered yet.
+    `methodology` is a registered id. `"research-mathematics@1.1.0"` pins exactly;
+    `"research-mathematics-v1"` pins to the newest version in the 1 line; a bare
+    `"research-mathematics"` takes whatever is newest. Pin one if the bar matters
+    to you — the case records the version it resolved either way, but only a pin
+    keeps *this call* meaning the same thing after a new version ships.
+
+    Omitted, the case will report `METHODOLOGY_REQUIRED` and hold, which is the
+    honest answer rather than a missing feature: structural analysis can say what
+    the evidence *is*, and "enough for this decision" is a domain question nobody
+    has answered yet.
     """
     if not str(objective or "").strip():
         raise ApiError(
@@ -722,25 +764,70 @@ def create_case(*, objective: str, subject: Any = None, type: Optional[str] = No
     return Case(session, subject_basis=basis)
 
 
+def _version_key(version: str) -> Tuple[int, ...]:
+    parts = []
+    for piece in str(version).split("."):
+        digits = "".join(c for c in piece if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
 def _methodology(reference: Optional[str]) -> Optional[Any]:
+    """Resolve what the caller asked for, honouring a version when they gave one.
+
+    Three spellings, and the middle one is why this is not a one-liner:
+
+    * ``id@X.Y.Z`` pins exactly, through the registry's own `resolve`.
+    * ``id-vN`` is the spelling the product brief uses. It **reads as a pin**, and
+      it used to be thrown away: the id was split at ``-v`` and the newest version
+      of any major was returned. With more than one major published that is a
+      caller writing ``-v1`` and silently getting 2.x. It now pins to the newest
+      version inside the N line, which is what somebody writing ``-v1`` means.
+    * a bare ``id`` takes the newest, which is what the CLI does too — and the
+      case records the `MethodologyRef` it resolved to, so which bar was applied
+      is on the record even though the call did not name it.
+    """
     if reference is None:
         return None
     from release_gate.assurance.methodologies import default_registry
 
     registry = default_registry()
     text = str(reference).strip()
-    for candidate in (text, text.rsplit("-v", 1)[0] if "-v" in text else text):
+
+    if "@" in text:
         try:
-            found = registry.latest(candidate)
-        except Exception:
-            found = None
-        if found is not None:
-            return found
-    raise ApiError(
-        f"{reference!r} is not a registered methodology. Known: "
-        + ", ".join(sorted(registry.ids()))
-        + ". A methodology decides what 'enough' means, so a mistyped one must not "
-          "quietly become none")
+            return registry.resolve(text)
+        except Exception as exc:
+            name = text.split("@", 1)[0]
+            available = ", ".join(registry.versions(name)) or "none registered"
+            raise ApiError(
+                f"{reference!r} could not be resolved: {exc}. Versions registered "
+                f"for {name!r}: {available}") from None
+
+    if "-v" in text:
+        name, _, suffix = text.rpartition("-v")
+        if name and suffix.isdigit():
+            line = [v for v in registry.versions(name)
+                    if _version_key(v)[:1] == (int(suffix),)]
+            if line:
+                return registry.resolve(
+                    f"{name}@{max(line, key=_version_key)}")
+            if registry.versions(name):
+                raise ApiError(
+                    f"{reference!r} asks for version {suffix} of {name!r}, and the "
+                    f"registered versions are {', '.join(registry.versions(name))}. "
+                    "A version that is not there must not quietly become another "
+                    "one, because the version is what fixes the bar")
+            text = name
+
+    try:
+        return registry.latest(text)
+    except Exception:
+        raise ApiError(
+            f"{reference!r} is not a registered methodology. Known: "
+            + ", ".join(sorted(registry.ids()))
+            + ". A methodology decides what 'enough' means, so a mistyped one must "
+              "not quietly become none") from None
 
 
 def _requested_decision(case_type: Optional[str], objective: str) -> str:
