@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>release-gate | AI Agent Release Decision Engine</title>
-  <meta name="description" content="AI writes your agent fast; debugging it eats your day. release-gate catches the agent-layer risks SAST misses — model output reaching eval(), prompt injection, uncapped LLM loops — before you ship, with one PROMOTE / HOLD / BLOCK decision.">
+  <title>release-gate — the case behind what the machine did</title>
+  <meta name="description" content="A machine produced something consequential and a person has to decide whether the evidence is enough. release-gate assembles the case from the run — a bounded list of what needs a human, what would resolve it, and what was never assessed — and returns one PROMOTE / HOLD / BLOCK.">
   <link rel="canonical" href="https://release-gate.com/">
-  <meta name="theme-color" content="#6366f1">
+  <meta name="theme-color" content="#08080A">
   <script>
     // Apply the saved theme BEFORE first paint so there is no flash of the
     // wrong theme. No saved choice -> follow the OS (prefers-color-scheme).
@@ -20,11 +20,11 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://release-gate.com/">
   <meta property="og:site_name" content="release-gate">
-  <meta property="og:title" content="release-gate — AI Agent Release Decision Engine">
-  <meta property="og:description" content="AI writes your agent in seconds — then debugging it eats the rest of the day. release-gate catches the agent-layer risks SAST and guardrails miss — before you ship. Spend less time debugging what the AI wrote.">
+  <meta property="og:title" content="release-gate — know what the machine actually did">
+  <meta property="og:description" content="Agents generate. Tools verify. release-gate assembles the argument those two leave behind and says whether it is sound enough to put to a person — with the coverage it was reached under.">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="release-gate — AI Agent Release Decision Engine">
-  <meta name="twitter:description" content="The pre-deploy release gate for AI agents. One PROMOTE / HOLD / BLOCK decision, every finding backed by evidence.">
+  <meta name="twitter:title" content="release-gate — know what the machine actually did">
+  <meta name="twitter:description" content="One PROMOTE / HOLD / BLOCK on a machine's work — with a bounded list of what needs a human, what would close it, and what was never checked.">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -88,100 +88,10 @@
        text and tint reads from a token so both themes stay coherent. The
        terminal blocks are intentionally dark in BOTH themes (a terminal is a
        terminal), so those tokens don't change. */
-    :root, :root[data-theme="light"] {
-      --bg:            #faf9ff;
-      --bg-alt:        #f1eefb;
-      --surface:       #ffffff;
-      --surface-2:     #f7f6ff;   /* subtle raised / inset panels */
-      --border:        #e5e2f0;
-      --border-strong: #d6d1ea;
-      --text:          #4b5563;
-      --muted:         #6b7280;
-      --faint:         #9ca3af;
-      --heading:       #1e1b4b;
-      --accent:        #6366f1;
-      --accent-strong: #4f46e5;
-      --accent-tint:   #ede9fe;
-      --accent-tint-2: #e0e7ff;
-      --accent-glow:   rgba(99,102,241,.16);
-      --green:         #22c55e;
-      --green-text:    #15803d;
-      --green-tint:    #f0fdf4;
-      --red:           #ef4444;
-      --red-text:      #b91c1c;
-      --red-tint:      #fef2f2;
-      --amber:         #f59e0b;
-      --amber-text:    #b45309;
-      --amber-tint:    #fffbeb;
-      --blue-text:     #1e40af;
-      --blue-tint:     #dbeafe;
-      --card-shadow:   0 2px 16px rgba(99,102,241,.08);
-      --shadow-lg:     0 12px 40px rgba(30,27,75,.12);
-      --hero-glow-1:   rgba(129,140,248,.20);
-      --hero-glow-2:   rgba(192,132,252,.14);
-      --term-bg:       #0f1117;
-      --term-border:   #1e2433;
-      --term-muted:    #6b7280;
-      --term-bright:   #f1f5f9;
-      --term-green:    #4ade80;
-      --term-red:      #f87171;
-      --term-yellow:   #fbbf24;
-      --term-blue:     #60a5fa;
-      --term-purple:   #c084fc;
-      color-scheme: light;
-    }
 
-    :root[data-theme="dark"] {
-      --bg:            #0b0b12;
-      --bg-alt:        #101017;
-      --surface:       #16161f;
-      --surface-2:     #1b1b26;
-      --border:        #292935;
-      --border-strong: #383848;
-      --text:          #b7bacb;
-      --muted:         #8b8fa6;
-      --faint:         #6b7080;
-      --heading:       #f1f1f8;
-      --accent:        #818cf8;
-      --accent-strong: #a5b4fc;
-      --accent-tint:   #232338;
-      --accent-tint-2: #20202f;
-      --accent-glow:   rgba(129,140,248,.22);
-      --green:         #4ade80;
-      --green-text:    #6ee7a8;
-      --green-tint:    #12251b;
-      --red:           #f87171;
-      --red-text:      #fca5a5;
-      --red-tint:      #2a1618;
-      --amber:         #fbbf24;
-      --amber-text:    #fcd34d;
-      --amber-tint:    #2a2113;
-      --blue-text:     #93c5fd;
-      --blue-tint:     #16233d;
-      --card-shadow:   0 2px 18px rgba(0,0,0,.45);
-      --shadow-lg:     0 16px 48px rgba(0,0,0,.55);
-      --hero-glow-1:   rgba(129,140,248,.16);
-      --hero-glow-2:   rgba(192,132,252,.10);
-      color-scheme: dark;
-    }
 
     /* Auto dark when the visitor's OS prefers it AND they haven't chosen a
        theme explicitly (no data-theme on <html>). */
-    @media (prefers-color-scheme: dark) {
-      :root:not([data-theme]) {
-        --bg:#0b0b12; --bg-alt:#101017; --surface:#16161f; --surface-2:#1b1b26;
-        --border:#292935; --border-strong:#383848; --text:#b7bacb; --muted:#8b8fa6;
-        --faint:#6b7080; --heading:#f1f1f8; --accent:#818cf8; --accent-strong:#a5b4fc;
-        --accent-tint:#232338; --accent-tint-2:#20202f; --accent-glow:rgba(129,140,248,.22);
-        --green:#4ade80; --green-text:#6ee7a8; --green-tint:#12251b;
-        --red:#f87171; --red-text:#fca5a5; --red-tint:#2a1618;
-        --amber:#fbbf24; --amber-text:#fcd34d; --amber-tint:#2a2113;
-        --blue-text:#93c5fd; --blue-tint:#16233d;
-        --card-shadow:0 2px 18px rgba(0,0,0,.45); --shadow-lg:0 16px 48px rgba(0,0,0,.55);
-        --hero-glow-1:rgba(129,140,248,.16); --hero-glow-2:rgba(192,132,252,.10);
-        color-scheme: dark;
-      }
-    }
 
     html { scroll-behavior: smooth; }
     body { overflow-x: hidden; }
@@ -198,7 +108,7 @@
     /* Keyboard users get a visible route past the nav */
     .skip-link {
       position: absolute; left: -9999px; top: 0; z-index: 300;
-      background: var(--accent); color: #fff; font-weight: 700;
+      background: var(--accent); color: var(--on-accent); font-weight: 700;
       padding: 10px 18px; border-radius: 0 0 10px 0; font-size: .9rem;
     }
     .skip-link:focus { left: 0; }
@@ -216,7 +126,7 @@
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
-    ::selection { background: var(--accent); color: #fff; }
+    ::selection { background: var(--accent); color: var(--on-accent); }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
     button { font-family: inherit; }
 
@@ -288,7 +198,7 @@
     /* User avatar menu (logged-in) */
     .nav-avatar {
       width: 34px; height: 34px; border-radius: 50%; flex: none; cursor: pointer;
-      background: var(--accent); color: #fff; border: none;
+      background: var(--accent); color: var(--on-accent); border: none;
       font-size: .9rem; font-weight: 700; text-transform: uppercase;
       display: inline-flex; align-items: center; justify-content: center;
       transition: box-shadow .15s, transform .15s;
@@ -302,7 +212,7 @@
     }
     .nav-user-panel a { flex-direction: row; font-size: .88rem; font-weight: 600; color: var(--heading); }
     .nav-cta {
-      background: var(--accent); color: #fff !important;
+      background: var(--accent); color: var(--on-accent) !important;
       padding: 7px 18px; border-radius: 8px; font-weight: 600;
       transition: opacity .15s;
     }
@@ -413,7 +323,7 @@
       box-shadow: 0 0 0 3px rgba(99,102,241,.12);
     }
     .hero-scan-row button {
-      background: var(--accent); color: #fff;
+      background: var(--accent); color: var(--on-accent);
       padding: 16px 32px; border-radius: 50px; border: none;
       font-weight: 700; font-size: 1rem; cursor: pointer;
       transition: opacity .15s; white-space: nowrap;
@@ -465,7 +375,7 @@
     .hero-pr-ribbon strong { color: var(--accent-strong); font-family: ui-monospace, monospace; font-size: .92em; }
     .hpr-badge {
       flex: none; font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
-      background: var(--accent); color: #fff; padding: 3px 9px; border-radius: 999px;
+      background: var(--accent); color: var(--on-accent); padding: 3px 9px; border-radius: 999px;
     }
     .hpr-arrow { flex: none; color: var(--accent); font-weight: 800; }
     .hero-inner.has-results .hero-pr-ribbon { margin-left: 0; }
@@ -554,7 +464,7 @@
       text-align: center;
     }
     .pg-cta-row a {
-      display: inline-block; background: var(--accent); color: #fff;
+      display: inline-block; background: var(--accent); color: var(--on-accent);
       padding: 10px 24px; border-radius: 50px; font-weight: 700;
       font-size: .9rem; transition: opacity .15s;
     }
@@ -707,7 +617,7 @@
       font-weight: 700; font-size: .85rem;
       transition: opacity .15s;
     }
-    .tier-btn.primary { background: var(--accent); color: #fff; }
+    .tier-btn.primary { background: var(--accent); color: var(--on-accent); }
     .tier-btn.secondary { background: var(--accent-tint); color: var(--accent); border: 1.5px solid var(--accent); }
     .tier-btn:hover { opacity: .85; text-decoration: none; }
     .coming-badge {
@@ -726,7 +636,7 @@
 
     /* ── CTA SECTION ── */
     .cta-section {
-      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
       text-align: center;
       padding: 100px 24px;
     }
@@ -828,7 +738,7 @@
     .auth-form input:focus { border-color: var(--accent); }
     .auth-form button[type=submit] {
       width: 100%; margin-top: 20px;
-      background: var(--accent); color: #fff;
+      background: var(--accent); color: var(--on-accent);
       padding: 12px; border-radius: 10px; border: none;
       font-weight: 700; font-size: .95rem; cursor: pointer;
       transition: opacity .15s;
@@ -855,7 +765,7 @@
       cursor: pointer; transition: background .15s;
     }
     .nav-btn:hover { background: var(--accent-tint); }
-    .nav-btn.primary { background: var(--accent); color: #fff; }
+    .nav-btn.primary { background: var(--accent); color: var(--on-accent); }
     .nav-btn.primary:hover { opacity: .88; background: var(--accent); }
 
     /* ── DASHBOARD ── */
@@ -989,7 +899,7 @@
     }
     .doc-step { display: flex; gap: 12px; margin-bottom: 14px; }
     .doc-step-num {
-      width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff;
+      width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--on-accent);
       font-size: .76rem; font-weight: 800; display: flex; align-items: center;
       justify-content: center; flex-shrink: 0; margin-top: 1px;
     }
@@ -1007,7 +917,7 @@
     }
     .doc-link-btn:hover { opacity: .8; }
     .btn-primary {
-      display: inline-block; background: var(--accent); color: #fff;
+      display: inline-block; background: var(--accent); color: var(--on-accent);
       padding: 12px 26px; border-radius: 10px;
       font-weight: 700; font-size: .95rem;
       transition: opacity .15s;
@@ -1147,6 +1057,562 @@
     .faq-ask-status.ok { color: var(--green-text); }
     .faq-ask-status.err { color: var(--red-text); }
   </style>
+  <style id="ds2">
+/* ══════════════════════════════════════════════════════════════════════════
+   DESIGN LAYER 2 — the current visual system.
+
+   This overrides the token palette and the structural rules above it. It is
+   deliberately a LAYER rather than a replacement: the stylesheet above defines
+   183 class names, most of them used by markup the JS generates at runtime, so
+   swapping it out wholesale would mean re-implementing every one of them to
+   find out which three had broken. Everything here rides on the same tokens,
+   so a component not named below still gets the new palette.
+
+   Direction: near-black canvas, one warm accent (the gold already in the
+   wordmark), hairline borders instead of shadows, large display type with
+   tight tracking, and motion only where it explains something. Dark is the
+   default; the toggle keeps a real light theme for people who want one.
+
+   No external fonts, scripts or stylesheets are loaded — the page makes zero
+   third-party requests, which is worth more to this audience than a webfont.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tokens ─────────────────────────────────────────────────────────────── */
+/* Dark is the brand default. `:root[data-theme="dark"]` is restated because
+   the block above sets it at higher specificity than a bare `:root`. */
+:root,
+:root[data-theme="dark"] {
+  --bg:            #08080A;
+  --bg-alt:        #0C0C10;
+  --surface:       #0F0F14;
+  --surface-2:     #14141A;
+  --border:        rgba(255,255,255,.07);
+  --border-strong: rgba(255,255,255,.14);
+  --text:          #9C9AA6;
+  --muted:         #8B8996;
+  --faint:         #8A8794;
+  --heading:       #F5F3EE;
+  --accent:        #D8B65C;
+  --accent-strong: #E8CE86;
+  --accent-tint:   rgba(216,182,92,.10);
+  --accent-tint-2: rgba(216,182,92,.06);
+  --accent-glow:   rgba(216,182,92,.20);
+  --on-accent:     #0A0A0C;
+  --green:         #5FD08A;
+  --green-text:    #7EDCA0;
+  --green-tint:    rgba(95,208,138,.10);
+  --red:           #E8705C;
+  --red-text:      #F09585;
+  --red-tint:      rgba(232,112,92,.10);
+  --amber:         #E0A93F;
+  --amber-text:    #ECC069;
+  --amber-tint:    rgba(224,169,63,.10);
+  --blue-text:     #8FB4E8;
+  --blue-tint:     rgba(143,180,232,.10);
+  --card-shadow:   none;
+  --shadow-lg:     0 24px 64px rgba(0,0,0,.6);
+  --hero-glow-1:   rgba(216,182,92,.10);
+  --hero-glow-2:   rgba(120,130,200,.07);
+  --term-bg:       #0B0B0F;
+  --term-border:   rgba(255,255,255,.08);
+  --term-muted:    #908E9C;
+  --term-bright:   #F5F3EE;
+  --term-green:    #5FD08A;
+  --term-red:      #E8705C;
+  --term-yellow:   #E0A93F;
+  --term-blue:     #8FB4E8;
+  --term-purple:   #B49CE8;
+  color-scheme: dark;
+}
+
+/* An explicit light choice gets a warm paper theme, not the old lavender. */
+:root[data-theme="light"] {
+  --bg:            #FAF8F3;
+  --bg-alt:        #F3F0E8;
+  --surface:       #FFFFFF;
+  --surface-2:     #F7F4EC;
+  --border:        rgba(23,21,14,.10);
+  --border-strong: rgba(23,21,14,.18);
+  --text:          #5A5448;
+  --muted:         #6E6656;
+  --faint:         #6E6656;
+  --heading:       #17150E;
+  --accent:        #7D5D18;
+  --accent-strong: #5F400E;
+  --accent-tint:   rgba(125,93,24,.09);
+  --accent-tint-2: rgba(125,93,24,.05);
+  --accent-glow:   rgba(125,93,24,.16);
+  --on-accent:     #FFFDF8;
+  --green:         #3F6E44;
+  --green-text:    #2F5734;
+  --green-tint:    rgba(63,110,68,.09);
+  --red:           #A83521;
+  --red-text:      #8C2B1A;
+  --red-tint:      rgba(168,53,33,.08);
+  --amber:         #8A5E12;
+  --amber-text:    #6F4B0E;
+  --amber-tint:    rgba(138,94,18,.09);
+  --blue-text:     #2B4C7E;
+  --blue-tint:     rgba(43,76,126,.08);
+  --card-shadow:   none;
+  --shadow-lg:     0 24px 64px rgba(23,21,14,.14);
+  --hero-glow-1:   rgba(125,93,24,.10);
+  --hero-glow-2:   rgba(90,100,160,.07);
+  color-scheme: light;
+}
+
+/* The OS-preference block above targets `:root:not([data-theme])` at the same
+   specificity as this one and comes first, so the tokens are restated to keep
+   dark identical whichever route a visitor arrives by. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg:#08080A; --bg-alt:#0C0C10; --surface:#0F0F14; --surface-2:#14141A;
+    --border:rgba(255,255,255,.07); --border-strong:rgba(255,255,255,.14);
+    --text:#9C9AA6; --muted:#8B8996; --faint:#8A8794; --heading:#F5F3EE;
+    --accent:#D8B65C; --accent-strong:#E8CE86;
+    --accent-tint:rgba(216,182,92,.10); --accent-tint-2:rgba(216,182,92,.06);
+    --accent-glow:rgba(216,182,92,.20);--on-accent:#0A0A0C;
+    --green:#5FD08A; --green-text:#7EDCA0; --green-tint:rgba(95,208,138,.10);
+    --red:#E8705C; --red-text:#F09585; --red-tint:rgba(232,112,92,.10);
+    --amber:#E0A93F; --amber-text:#ECC069; --amber-tint:rgba(224,169,63,.10);
+    --blue-text:#8FB4E8; --blue-tint:rgba(143,180,232,.10);
+    --card-shadow:none; --shadow-lg:0 24px 64px rgba(0,0,0,.6);
+    --hero-glow-1:rgba(216,182,92,.10); --hero-glow-2:rgba(120,130,200,.07);
+    --term-bg:#0B0B0F; --term-border:rgba(255,255,255,.08); --term-muted:#908E9C;
+    --term-bright:#F5F3EE; --term-green:#5FD08A; --term-red:#E8705C;
+    --term-yellow:#E0A93F; --term-blue:#8FB4E8; --term-purple:#B49CE8;
+    color-scheme: dark;
+  }
+}
+
+/* ── Type ───────────────────────────────────────────────────────────────── */
+:root {
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+  --page: 1200px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  letter-spacing: -.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 { color: var(--heading); letter-spacing: -.028em; line-height: 1.08; }
+h1 { font-weight: 600; }
+h2, h3 { font-weight: 600; letter-spacing: -.022em; }
+
+code, pre, .mono { font-family: var(--mono); }
+
+a { color: var(--accent); }
+a:hover { color: var(--accent-strong); }
+
+::selection { background: var(--accent); color: #08080A; }
+
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+.container { max-width: var(--page); padding: 0 28px; }
+
+section { padding: 104px 0; position: relative; }
+section + section { padding-top: 0; }
+
+/* A hairline between bands instead of alternating background slabs. */
+#checks-explained, #agent-scan, #pr-gate, #who-its-for, #cli-section,
+#loop-section, #enterprise, #integrations, #security, #faq, #assurance {
+  background: var(--bg) !important;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+#site-header {
+  position: sticky; top: 0; z-index: 120;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid var(--border);
+  box-shadow: none;
+}
+#site-header nav { max-width: var(--page); padding: 0 28px; height: 62px; }
+.rg-logo { font-size: .98rem; letter-spacing: -.02em; }
+.rg-logo svg { width: 23px; height: 23px; border-radius: 6px; }
+.nav-links { gap: 26px; }
+.nav-links a, .nav-dd-trigger {
+  font-size: .855rem; font-weight: 450; color: var(--muted);
+  letter-spacing: -.008em;
+}
+.nav-links a:hover, .nav-dd-trigger:hover { color: var(--heading); }
+.nav-dropdown-panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow-lg); padding: 7px;
+  min-width: 300px;
+}
+.nav-dropdown-panel a { border-radius: 8px; padding: 9px 11px; }
+.nav-dropdown-panel a:hover { background: var(--surface-2); }
+.nav-dropdown-panel .ndp-t { font-weight: 550; font-size: .875rem; }
+.nav-dropdown-panel .ndp-d { font-size: .76rem; color: var(--faint); }
+
+.nav-btn, .nav-cta {
+  border-radius: 8px !important; font-size: .84rem; font-weight: 550;
+  padding: 8px 15px; letter-spacing: -.008em;
+}
+.nav-btn.primary, .nav-cta {
+  background: var(--heading) !important; color: var(--bg) !important;
+  border: none !important;
+}
+.nav-btn.primary:hover, .nav-cta:hover { opacity: .86; }
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero {
+  padding: 84px 0 72px;
+  background: var(--bg);
+  overflow: hidden;
+}
+/* One soft light source, top-left, plus a faint grid. Replaces the two
+   lavender blobs — a gradient that loud reads as a template. */
+.hero::before {
+  content: ""; position: absolute; inset: -30% -10% auto -20%;
+  height: 720px; pointer-events: none;
+  background:
+    radial-gradient(52% 46% at 22% 18%, var(--hero-glow-1), transparent 72%),
+    radial-gradient(44% 40% at 78% 8%,  var(--hero-glow-2), transparent 70%);
+  filter: blur(6px);
+}
+.hero::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(58% 52% at 30% 24%, #000, transparent 76%);
+  mask-image: radial-gradient(58% 52% at 30% 24%, #000, transparent 76%);
+  opacity: .5;
+}
+
+.hero-inner {
+  display: grid; gap: 52px; align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr);
+  text-align: left;
+}
+.hero-left, .pg-wrap, .pg-wrap * { text-align: left !important; }
+
+.hero h1 {
+  font-size: clamp(2.3rem, 4.3vw, 3.5rem);
+  font-weight: 600; letter-spacing: -.04em; line-height: 1.02;
+  color: var(--heading);
+  margin: 0 0 20px;
+  background: none; -webkit-text-fill-color: currentColor;
+}
+.hero-sub {
+  font-size: 1.05rem; line-height: 1.62; color: var(--text);
+  max-width: 34rem; margin: 0 0 26px; text-align: left;
+}
+.hero-sub strong { color: var(--heading); font-weight: 550; }
+
+.hero-eyebrow {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--mono); font-size: .69rem; text-transform: uppercase;
+  letter-spacing: .15em; color: var(--accent);
+  border: 1px solid var(--border-strong); border-radius: 100px;
+  padding: 5px 13px; margin-bottom: 26px;
+}
+.hero-eyebrow .dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.hero-scan-row { justify-content: flex-start !important; margin-left: 0 !important; gap: 9px; max-width: 34rem; }
+.hero-scan-row input { flex: 1 1 auto; min-width: 0; }
+.hero-scan-row button { flex: 0 0 auto; white-space: nowrap; }
+.hero-scan-row input {
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 9px; color: var(--heading); font-size: .92rem;
+  padding: 12px 15px; box-shadow: none;
+  font-family: var(--mono);
+}
+.hero-scan-row input::placeholder { color: var(--faint); }
+.hero-scan-row input:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); outline: none;
+}
+.hero-scan-row button {
+  background: var(--accent); color: #0A0A0C; border: none;
+  border-radius: 9px; font-size: .9rem; font-weight: 600; padding: 12px 20px;
+  box-shadow: none; letter-spacing: -.01em;
+}
+.hero-scan-row button:hover { background: var(--accent-strong); transform: none; box-shadow: none; }
+.hero-scan-hint { text-align: left !important; font-size: .82rem; color: var(--faint); margin-left: 0; }
+.hero-scan-hint a { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border-strong); }
+.hero-scan-hint a:hover { color: var(--heading); }
+
+.hero-pr-ribbon {
+  margin-left: 0 !important; margin-right: 0; max-width: 34rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 11px; padding: 13px 15px; gap: 11px;
+  font-size: .865rem; color: var(--text); box-shadow: none;
+}
+.hero-pr-ribbon:hover { border-color: var(--border-strong); box-shadow: none; transform: none; }
+.hero-pr-ribbon strong { color: var(--heading); }
+.hpr-badge {
+  background: var(--accent-tint); color: var(--accent);
+  border: 1px solid var(--border-strong); border-radius: 5px;
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;
+  text-transform: uppercase; padding: 3px 7px;
+}
+.hpr-arrow { color: var(--accent); }
+
+/* The right column of the hero: a product surface, not empty space. */
+.pg-wrap { max-width: none !important; margin: 0 !important; }
+.hero-terminal {
+  text-align: left;
+  background: var(--term-bg); border: 1px solid var(--term-border);
+  border-radius: 13px; overflow: hidden; box-shadow: var(--shadow-lg);
+  font-family: var(--mono); font-size: .795rem; line-height: 1.75;
+}
+.hero-terminal .ht-bar {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 14px; border-bottom: 1px solid var(--term-border);
+  background: color-mix(in srgb, var(--term-bright) 3%, transparent);
+}
+.hero-terminal .ht-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.hero-terminal .ht-cmd { color: var(--term-muted); font-size: .74rem; margin-left: 7px; }
+.hero-terminal .ht-body { padding: 15px 17px; }
+.hero-terminal .ht-row { display: flex; gap: 10px; }
+.hero-terminal .ht-k { color: var(--term-muted); }
+.hero-terminal .ht-hi { color: var(--term-bright); font-weight: 600; }
+.hero-terminal .ht-rule { height: 1px; background: var(--term-border); margin: 11px 0; }
+
+.hero-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+  margin-top: 18px; background: var(--border);
+  border: 1px solid var(--border); border-radius: 11px; overflow: hidden;
+}
+.hero-stat { background: var(--bg); padding: 15px 16px; }
+.hero-stat b {
+  display: block; font-size: 1.32rem; font-weight: 600; color: var(--heading);
+  letter-spacing: -.03em; font-family: var(--mono);
+}
+.hero-stat span { font-size: .745rem; color: var(--faint); letter-spacing: -.005em; }
+
+@media (max-width: 940px) {
+  .hero-inner { grid-template-columns: 1fr; gap: 40px; }
+  .hero { padding: 56px 0 48px; }
+}
+
+/* ── Section headings ───────────────────────────────────────────────────── */
+.section-header { text-align: left; max-width: 46rem; margin-bottom: 44px; }
+.section-eyebrow {
+  font-family: var(--mono); font-size: .68rem; text-transform: uppercase;
+  letter-spacing: .16em; color: var(--accent); font-weight: 500;
+  display: block; margin-bottom: 13px; background: none; border: 0; padding: 0;
+}
+.section-title {
+  font-size: clamp(1.7rem, 3.1vw, 2.4rem); font-weight: 600;
+  letter-spacing: -.032em; line-height: 1.1; color: var(--heading);
+  margin-bottom: 13px; background: none; -webkit-text-fill-color: currentColor;
+}
+.section-subtitle {
+  font-size: 1rem; color: var(--muted); line-height: 1.62;
+  max-width: 42rem; margin-left: 0; margin-right: 0; text-align: left;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.check-card, .persona-card, .tier-card, .faq-item, .dash-card, .repo-group,
+.cli-col, .doc-section, .int-card {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 13px !important;
+  box-shadow: none !important;
+  transition: border-color .18s ease, background-color .18s ease;
+}
+.check-card:hover, .persona-card:hover, .tier-card:hover, .int-card:hover {
+  border-color: var(--border-strong) !important;
+  background: var(--surface-2) !important;
+  transform: none !important;
+}
+.checks-grid, .personas-grid, .tier-grid { align-items: stretch; }
+.check-card, .persona-card, .tier-card { display: flex; flex-direction: column; }
+.check-card h3, .persona-title, .tier-card h3 {
+  color: var(--heading); font-weight: 550; letter-spacing: -.018em;
+}
+/* The base rule sets only a font-size on a block div, so giving it a surface
+   turned it into a full-width bar. It is a mark, so it gets a mark's box. The
+   emoji are desaturated to the accent rather than left at full colour — six
+   saturated glyphs down a column is the single most dated thing on a page. */
+.check-card-icon, .persona-icon {
+  display: inline-flex !important; align-items: center; justify-content: center;
+  width: 34px !important; height: 34px !important;
+  background: var(--accent-tint) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 9px !important;
+  font-size: 1rem !important; line-height: 1 !important;
+  margin-bottom: 14px !important;
+  filter: grayscale(.45) brightness(1.12);
+}
+.persona-icon { width: 38px !important; height: 38px !important; font-size: 1.1rem !important; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn-primary, .cta-btn, button.primary {
+  background: var(--accent) !important; color: #0A0A0C !important;
+  border: none !important; border-radius: 9px !important;
+  font-weight: 600; letter-spacing: -.01em; box-shadow: none !important;
+}
+.btn-primary:hover, .cta-btn:hover, button.primary:hover {
+  background: var(--accent-strong) !important; transform: none !important;
+}
+.btn-secondary, .btn-ghost {
+  background: transparent !important; color: var(--heading) !important;
+  border: 1px solid var(--border-strong) !important; border-radius: 9px !important;
+}
+.btn-secondary:hover, .btn-ghost:hover { background: var(--surface-2) !important; }
+
+/* The skip link sits on an accent fill too, and it is the first thing a
+   keyboard user lands on. */
+.skip-link { background: var(--accent) !important; color: var(--on-accent) !important; }
+/* Terminal tokens are deliberately dark in BOTH themes, so the light block has
+   to restate them — otherwise the earlier light palette's #6b7280 comes back
+   and the hero terminal's text measures 3.9:1 against its own dark surface. */
+:root[data-theme="light"] {
+  --term-bg:#0B0B0F; --term-border:rgba(255,255,255,.08); --term-muted:#908E9C;
+  --term-bright:#F5F3EE; --term-green:#5FD08A; --term-red:#E8705C;
+  --term-yellow:#E0A93F; --term-blue:#8FB4E8; --term-purple:#B49CE8;
+}
+.loop-tab { color: var(--muted); }
+.loop-tab.active { color: var(--heading); }
+
+/* Light theme's accent is a dark gold (#9A731F), so the near-black button text
+   that reads well on the dark theme's #D8B65C becomes dark-on-dark. The text
+   colour follows the accent rather than being fixed. */
+:root[data-theme="light"] .hero-scan-row button,
+:root[data-theme="light"] .btn-primary,
+:root[data-theme="light"] .cta-btn,
+:root[data-theme="light"] button.primary,
+:root[data-theme="light"] .cta-scan-row button {
+  color: #FFFDF8 !important;
+  /* --accent (#9A731F) under white measured 4.08:1, and a 14px bold label is
+     not "large text", so the darker step is used for the fill. */
+  background: #6E5115 !important;
+}
+:root[data-theme="light"] .hero-scan-row button:hover,
+:root[data-theme="light"] .btn-primary:hover,
+:root[data-theme="light"] .cta-scan-row button:hover { background: #56400F !important; }
+
+/* ── Terminals & code ───────────────────────────────────────────────────── */
+/* Terminals are dark in BOTH themes but never set their own text colour, so on
+   the light theme they inherited the page's dark body text onto a near-black
+   surface (2.6:1). The colour has to come from the terminal palette, not from
+   whatever the page around it happens to be. */
+:root, :root[data-theme="dark"], :root[data-theme="light"] { --term-text: #C4C1CE; }
+/* Inside a terminal, the page's text tokens are remapped to the terminal's own.
+   Descendants that reach for var(--muted) or var(--heading) — and plenty do,
+   in inline styles written when the page was light — then resolve against the
+   dark surface they are actually sitting on instead of the page behind it.
+   Custom properties inherit, so this covers markup the JS generates too. */
+/* Some terminals are built inline rather than with a class — they are matched
+   on the one thing they all declare, their own dark background. */
+.hero-terminal, .term-block, pre, [style*="var(--term-bg)"] {
+  color: var(--term-text) !important;
+  --text:    var(--term-text);
+  --muted:   var(--term-muted);
+  --faint:   var(--term-muted);
+  --heading: var(--term-bright);
+}
+
+.term-block, pre {
+  background: var(--term-bg) !important; border: 1px solid var(--term-border) !important;
+  border-radius: 12px !important; box-shadow: none !important;
+  font-family: var(--mono); font-size: .8rem; line-height: 1.75;
+}
+code { font-size: .875em; }
+:not(pre) > code {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 5px; color: var(--heading);
+}
+
+/* ── FAQ ────────────────────────────────────────────────────────────────── */
+.faq-item summary, .faq-q { color: var(--heading); font-weight: 500; }
+.faq-a { color: var(--muted); }
+
+/* ── Closing CTA ────────────────────────────────────────────────────────── */
+/* Was a full-bleed indigo gradient slab. On a near-black page that is the one
+   element that reads as a template, so it becomes a bordered panel on the same
+   canvas — the emphasis comes from the hairline and the button, not from a
+   hundred-pixel colour field. */
+.cta-section {
+  background: var(--bg) !important;
+  padding: 96px 24px !important;
+  border-top: 1px solid var(--border);
+}
+.cta-section > .container, .cta-section .cta-inner { max-width: 760px; }
+.cta-section h2 {
+  font-size: clamp(1.7rem, 3.1vw, 2.3rem) !important; font-weight: 600 !important;
+  color: var(--heading) !important; letter-spacing: -.032em !important;
+}
+.cta-section .cta-sub { color: var(--muted) !important; }
+.cta-scan-row input {
+  border-radius: 9px !important; background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important; box-shadow: none !important;
+  color: var(--heading) !important; font-family: var(--mono); font-size: .9rem !important;
+  padding: 12px 15px !important;
+}
+.cta-scan-row input::placeholder { color: var(--faint); }
+.cta-scan-row button {
+  border-radius: 9px !important; background: var(--accent) !important;
+  color: #0A0A0C !important; font-weight: 600 !important; padding: 12px 22px !important;
+  box-shadow: none !important;
+}
+.cta-scan-row button:hover { background: var(--accent-strong) !important; }
+
+/* ── Code blocks scroll rather than clip ────────────────────────────────── */
+pre, .term-block, .yaml-block, .code-block { overflow-x: auto; }
+pre::-webkit-scrollbar, .term-block::-webkit-scrollbar { height: 7px; }
+pre::-webkit-scrollbar-thumb, .term-block::-webkit-scrollbar-thumb {
+  background: var(--border-strong); border-radius: 4px;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+footer {
+  background: var(--bg) !important; border-top: 1px solid var(--border);
+  padding: 64px 0 40px;
+}
+footer a { color: var(--muted); }
+footer a:hover { color: var(--heading); }
+
+/* ── Assurance section (added with the engine; styled here, not inline) ─── */
+#assurance .rg-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 13px; padding: 20px 22px;
+}
+#assurance table { font-family: var(--mono); font-size: .8rem; }
+#assurance th { color: var(--faint) !important; font-weight: 500 !important;
+                text-transform: uppercase; letter-spacing: .1em; font-size: .66rem !important; }
+#assurance td { color: var(--text); }
+#assurance tbody tr:last-child td { color: var(--heading); }
+
+/* ── Motion: reveal on scroll, once, and never for reduced-motion ───────── */
+.reveal { opacity: 0; transform: translateY(14px); }
+.reveal.in { opacity: 1; transform: none; transition: opacity .55s ease, transform .55s cubic-bezier(.22,.8,.3,1); }
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .reveal.in { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .hero::after { display: none; }
+}
+@media print {
+  .reveal { opacity: 1 !important; transform: none !important; }
+}
+
+/* ── Mobile ─────────────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  section { padding: 68px 0; }
+  .container { padding: 0 20px; }
+  .hero h1 { font-size: clamp(2.1rem, 9vw, 2.8rem); }
+  .hero-stats { grid-template-columns: 1fr; }
+  #site-header nav { padding: 0 20px; }
+}
+
+  </style>
 </head>
 <body>
 
@@ -1192,9 +1658,14 @@
 <section class="hero" id="main">
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
-    <h1>Know before you ship.</h1>
-    <p class="hero-sub">AI writes your agent in seconds — trusting the diff is what eats the day. release-gate catches the agent-layer risks <strong>SAST and guardrails miss</strong> — model output reaching <code>eval</code>, prompt injection, uncapped LLM loops — and returns one explainable <strong>PROMOTE&nbsp;·&nbsp;HOLD&nbsp;·&nbsp;BLOCK</strong>, with evidence for every finding. In CI, on every pull request.</p>
-    <p style="font-size:1.02rem;color:var(--accent);font-weight:650;margin-bottom:26px;line-height:1.5">Block the risky change before it merges — not after it ships.</p>
+    <span class="hero-eyebrow"><span class="dot"></span>Assurance for autonomous work</span>
+    <h1>Know what the machine actually did.</h1>
+    <p class="hero-sub">
+      Agents generate. Tools verify. release-gate assembles the argument those two
+      leave behind and says whether it is sound enough to put to a person — one
+      <strong>PROMOTE · HOLD · BLOCK</strong>, carrying the coverage it was reached
+      under and a list of what still needs a human.
+    </p>
 
     <!-- Hero playground input -->
     <div class="hero-scan-row">
@@ -1218,6 +1689,36 @@
    </div>
 
     <div class="pg-wrap">
+      <div id="sample-output-section">
+        <div class="hero-terminal">
+          <div class="ht-bar">
+            <span class="ht-dot" style="background:#E8705C"></span>
+            <span class="ht-dot" style="background:#E0A93F"></span>
+            <span class="ht-dot" style="background:#5FD08A"></span>
+            <span class="ht-cmd">$ release-gate assure run.jsonl --methodology general-autonomous-action@1.0.0</span>
+          </div>
+          <div class="ht-body">
+            <div><span class="ht-hi" style="color:var(--term-red)">BLOCK</span> <span class="ht-k">Assurance of run.jsonl</span></div>
+            <div class="ht-rule"></div>
+            <div class="ht-row"><span class="ht-k" style="width:78px;flex:none">Input</span><span>ASSURANCE_ENVELOPE <span class="ht-k">at 83%</span></span></div>
+            <div class="ht-row"><span class="ht-k" style="width:78px;flex:none">Case</span><span class="ht-k">case_ee6ecc87 v1 · sha256:bb29512d…</span></div>
+            <div class="ht-rule"></div>
+            <div class="ht-k" style="font-size:.71rem;letter-spacing:.1em">WHAT WAS ASSESSED</div>
+            <div><span class="ht-k">[</span><span style="color:var(--term-green)">assessed</span><span class="ht-k">]  input_integrity</span></div>
+            <div><span class="ht-k">[</span><span style="color:var(--term-green)">assessed</span><span class="ht-k">]  record_mapping — 6 of 6</span></div>
+            <div><span class="ht-k">[</span><span style="color:var(--term-yellow)">NOT_ASSESSED</span><span class="ht-k">]  execution_reconstruction</span></div>
+            <div><span class="ht-k">[</span><span style="color:var(--term-yellow)">NOT_ASSESSED</span><span class="ht-k">]  adversarial_review</span></div>
+            <div class="ht-rule"></div>
+            <div><span style="color:var(--term-red)">[BLOCK]</span> <span class="ht-hi">RG-ACT-001</span> <span class="ht-k">'execution_reconstruction' is NOT_ASSESSED</span></div>
+            <div class="ht-k" style="padding-left:18px">&rarr; supply the run's trace or tool-call log</div>
+          </div>
+        </div>
+        <div class="hero-stats">
+          <div class="hero-stat"><b>2,287,133</b><span>records folded</span></div>
+          <div class="hero-stat"><b>13</b><span>reach a person</span></div>
+          <div class="hero-stat"><b>0</b><span>config files</span></div>
+        </div>
+      </div>
       <div class="pg-spinner" id="pg-spinner">
         <div class="pg-spinner-ring"></div>
         <p>Running audit&hellip;</p>
@@ -1249,7 +1750,7 @@
               <div style="font-weight:700;color:var(--accent-strong);font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
               <div style="font-size:.82rem;color:var(--text);margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
             </div>
-            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:#6366f1;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Create fix PR &rarr;</button>
+            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:var(--accent);color:var(--on-accent);border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Create fix PR &rarr;</button>
           </div>
           <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
         </div>
@@ -1340,7 +1841,7 @@
       </tbody>
     </table>
     </div>
-    <p style="font-size:.8rem;color:var(--term-muted);margin:0 0 24px">
+    <p style="font-size:.8rem;color:var(--faint);margin:0 0 24px">
       Measured by the test suite, not written here by hand &mdash; a claim that drifts
       from the implementation fails a test. One code path carries both rows: 346
       engine functions are common to them, 87% of everything the single-agent
@@ -1348,10 +1849,10 @@
     </p>
 
     <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
-      <a href="/assurance.html" style="background:var(--accent-strong,#6366f1);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-weight:650;text-decoration:none;font-size:.95rem">Drop a run in &mdash; live &rarr;</a>
+      <a href="/assurance.html" style="background:var(--accent-strong);color:var(--on-accent);border:none;border-radius:10px;padding:12px 22px;font-weight:650;text-decoration:none;font-size:.95rem">Drop a run in &mdash; live &rarr;</a>
       <code style="font-size:.86rem;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 13px">pip install release-gate &amp;&amp; release-gate assure your-run.jsonl</code>
     </div>
-    <p style="font-size:.82rem;color:var(--term-muted);margin-top:14px">
+    <p style="font-size:.82rem;color:var(--faint);margin-top:14px">
       No config file, no YAML, no account. It will <strong>HOLD</strong> until a
       methodology says what <em>enough</em> means for the decision &mdash; inventing that
       answer would be claiming a standard it does not have.
@@ -1378,28 +1879,6 @@
   </div>
 </section>
 
-<!-- ═══════════════════════ SAMPLE OUTPUT ═══════════════════════ -->
-<section id="sample-output-section" style="padding:40px 0 60px;background:var(--bg)">
-  <div class="container" style="max-width:600px;text-align:center">
-    <p style="font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--term-muted);font-weight:700;margin-bottom:14px">Sample output</p>
-    <div style="background:var(--term-bg);border:1px solid var(--term-border);border-radius:12px;padding:0 0 16px;font-family:ui-monospace,monospace;font-size:.82rem;text-align:left">
-      <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--term-border)">
-        <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
-        <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
-        <span style="width:11px;height:11px;border-radius:50%;background:#22c55e;display:inline-block"></span>
-        <span style="color:var(--term-muted);font-size:.75rem;margin-left:6px">$ release-gate audit myorg/my-ai-agent</span>
-      </div>
-      <div style="padding:14px 16px;line-height:1.85">
-        <div style="color:var(--term-muted)">Agents <span style="color:var(--term-blue)">OpenAI / Agents SDK, LangChain</span></div>
-        <div style="margin-top:12px"><span style="color:var(--term-bright);font-weight:700">Agent Code Safety</span> &nbsp;<span style="color:var(--term-red);font-weight:700">28/100&nbsp; BLOCK</span> &nbsp;<span style="color:var(--term-muted);font-size:.78rem">4 high &middot; 18 med</span></div>
-        <div style="color:#8a6d3b;font-size:.78rem;padding-left:2px">&nbsp;&nbsp;the model&rsquo;s own output <span style="color:var(--term-yellow)">assistant_reply</span> &rarr; <span style="color:var(--term-red)">eval()</span> &nbsp;<span style="color:var(--term-muted)">agent.py:149</span></div>
-        <div style="margin-top:6px"><span style="color:var(--term-bright);font-weight:700">Governance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> &nbsp;<span style="color:var(--term-yellow);font-weight:700">50/100&nbsp; Partial</span> &nbsp;<span style="color:var(--term-muted);font-size:.78rem">4/8 safeguards declared</span></div>
-        <div style="margin-top:12px;color:var(--term-red);font-weight:700">Decision:  &#x2717;  BLOCK</div>
-        <div style="margin-top:8px;color:var(--term-muted);font-size:.75rem">The <span style="color:var(--term-red)">eval()</span> of model output is the CVE-2025-51472 RCE class &mdash; the agent-layer risk SAST, guardrails &amp; evaluators miss.</div>
-      </div>
-    </div>
-  </div>
-</section>
 
 <!-- ═══════════════════════ CHECKS EXPLAINED ═══════════════════════ -->
 <section id="checks-explained">
@@ -1526,7 +2005,7 @@
     <div style="max-width:760px;margin:0 auto 44px">
       <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px">
         <button class="prg-tab" data-prg="block" onclick="showPrGate('block')"
-          style="padding:8px 18px;border:1.5px solid var(--border);border-radius:9px;background:var(--accent);color:#fff;font-size:.88rem;font-weight:700;cursor:pointer">A risky AI change</button>
+          style="padding:8px 18px;border:1.5px solid var(--border);border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:.88rem;font-weight:700;cursor:pointer">A risky AI change</button>
         <button class="prg-tab" data-prg="promote" onclick="showPrGate('promote')"
           style="padding:8px 18px;border:1.5px solid var(--border);border-radius:9px;background:var(--surface);color:var(--heading);font-size:.88rem;font-weight:700;cursor:pointer">A clean AI change</button>
       </div>
@@ -1537,31 +2016,31 @@
           <span style="width:11px;height:11px;border-radius:50%;background:#ef4444;display:inline-block"></span>
           <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;display:inline-block"></span>
           <span style="width:11px;height:11px;border-radius:50%;background:#22c55e;display:inline-block"></span>
-          <span style="color:var(--term-muted);font-size:.76rem;margin-left:8px">release-gate pr --base origin/main</span>
+          <span style="color:var(--faint);font-size:.76rem;margin-left:8px">release-gate pr --base origin/main</span>
         </div>
 
         <!-- BLOCK sample -->
         <div id="prg-block" style="padding:20px 22px;font-size:.83rem;line-height:1.85">
           <div style="color:var(--term-red);font-weight:700">&#x1F534; release-gate &mdash; AI-change review: BLOCK</div>
-          <div style="color:var(--term-muted);margin-bottom:10px">this change made things net-worse &mdash; see reasons</div>
+          <div style="color:var(--faint);margin-bottom:10px">this change made things net-worse &mdash; see reasons</div>
           <div style="color:var(--term-bright)">Agent Code Safety: <span style="color:var(--term-yellow)">100 &rarr; 88</span> <span style="color:var(--term-red)">(&#x25BC; -12)</span></div>
-          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Introduced by this change <span style="color:var(--term-muted);font-weight:400">(not pre-existing):</span></div>
-          <div style="color:var(--term-red);padding-left:2px">&nbsp;&#x26A0; HIGH (confirmed): model output <span style="color:var(--term-yellow)">reply</span> &rarr; <span style="color:var(--term-red)">eval()</span> &nbsp;<span style="color:var(--term-muted)">src/agent/tools.py:88</span></div>
+          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Introduced by this change <span style="color:var(--faint);font-weight:400">(not pre-existing):</span></div>
+          <div style="color:var(--term-red);padding-left:2px">&nbsp;&#x26A0; HIGH (confirmed): model output <span style="color:var(--term-yellow)">reply</span> &rarr; <span style="color:var(--term-red)">eval()</span> &nbsp;<span style="color:var(--faint)">src/agent/tools.py:88</span></div>
           <div style="color:var(--term-red);padding-left:2px">&nbsp;&#x26A0; prompt changed <span style="color:var(--term-blue)">prompts/system.txt</span> &mdash; release-gate.lock not updated</div>
-          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Context <span style="color:var(--term-muted);font-weight:400">(advisory, not blocking):</span></div>
-          <div style="color:var(--term-muted);padding-left:2px">&nbsp;&bull; 11 source files changed, 0 test files touched</div>
-          <div style="margin-top:10px;color:var(--term-muted);font-style:italic">Inherited debt ignored (not this change&rsquo;s fault): 4 findings.</div>
-          <div style="margin-top:10px;color:var(--term-red)">exit 1 &nbsp;<span style="color:var(--term-muted)">(0 PROMOTE &middot; 10 HOLD &middot; 1 BLOCK)</span></div>
+          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Context <span style="color:var(--faint);font-weight:400">(advisory, not blocking):</span></div>
+          <div style="color:var(--faint);padding-left:2px">&nbsp;&bull; 11 source files changed, 0 test files touched</div>
+          <div style="margin-top:10px;color:var(--faint);font-style:italic">Inherited debt ignored (not this change&rsquo;s fault): 4 findings.</div>
+          <div style="margin-top:10px;color:var(--term-red)">exit 1 &nbsp;<span style="color:var(--faint)">(0 PROMOTE &middot; 10 HOLD &middot; 1 BLOCK)</span></div>
         </div>
 
         <!-- PROMOTE sample -->
         <div id="prg-promote" style="display:none;padding:20px 22px;font-size:.83rem;line-height:1.85">
           <div style="color:var(--term-green);font-weight:700">&#x1F7E2; release-gate &mdash; AI-change review: PROMOTE</div>
-          <div style="color:var(--term-muted);margin-bottom:10px">safe to merge &mdash; this change introduced no net-new risk</div>
+          <div style="color:var(--faint);margin-bottom:10px">safe to merge &mdash; this change introduced no net-new risk</div>
           <div style="color:var(--term-bright)">Agent Code Safety: <span style="color:var(--term-green)">100 &rarr; 100</span> (&mdash; +0)</div>
           <div style="margin-top:12px;color:var(--term-green);font-weight:700">Introduced by this change: nothing net-new. &#x2705;</div>
-          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Context <span style="color:var(--term-muted);font-weight:400">(advisory):</span></div>
-          <div style="color:var(--term-muted);padding-left:2px">&nbsp;&bull; 4 source &middot; 2 test files changed</div>
+          <div style="margin-top:12px;color:var(--term-bright);font-weight:700">Context <span style="color:var(--faint);font-weight:400">(advisory):</span></div>
+          <div style="color:var(--faint);padding-left:2px">&nbsp;&bull; 4 source &middot; 2 test files changed</div>
           <div style="margin-top:10px;color:var(--term-green);font-style:italic">&#x2705; 1 pre-existing finding fixed in this change.</div>
           <div style="margin-top:10px;color:var(--term-green)">exit 0</div>
         </div>
@@ -1754,7 +2233,7 @@
       <span style="color:var(--muted)">→</span>
       <span style="background:var(--accent-tint-2);color:var(--accent-strong);padding:8px 18px;border-radius:8px">Execute</span>
       <span style="color:var(--muted)">→</span>
-      <span style="background:#6366f1;color:#fff;padding:8px 18px;border-radius:8px;box-shadow:0 2px 12px rgba(99,102,241,.4)">✓ Release Gate Verify</span>
+      <span style="background:var(--accent);color:var(--on-accent);padding:8px 18px;border-radius:8px;box-shadow:0 2px 12px rgba(99,102,241,.4)">✓ Release Gate Verify</span>
       <span style="color:var(--muted)">→</span>
       <span style="background:var(--accent-tint-2);color:var(--accent-strong);padding:8px 18px;border-radius:8px">Iterate</span>
     </div>
@@ -1843,7 +2322,7 @@
         </div>
 
         <button id="lv-run-btn" onclick="runLoopVerify()"
-          style="width:100%;padding:13px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;transition:opacity .15s">
+          style="width:100%;padding:13px;background:var(--accent);color:var(--on-accent);border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;transition:opacity .15s">
           Verify this iteration &rarr;
         </button>
 
@@ -1926,7 +2405,7 @@
                   style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:.95rem;box-sizing:border-box">
               </div>
               <button id="lr-load-btn" onclick="loadLoopReport()"
-                style="padding:11px 22px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:.95rem;font-weight:700;cursor:pointer;transition:opacity .15s">
+                style="padding:11px 22px;background:var(--accent);color:var(--on-accent);border:none;border-radius:10px;font-size:.95rem;font-weight:700;cursor:pointer;transition:opacity .15s">
                 Load report &rarr;
               </button>
             </div>
@@ -2209,6 +2688,7 @@
     <div class="footer-row">
       <div class="footer-logo"><span class="rg-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7.6" fill="#0B0B0F"/><rect x="9.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="19.7" y="12" width="2.6" height="12" rx="1.2" fill="#F4F1E9"/><rect x="8" y="8.4" width="16" height="2.9" rx="1.45" fill="#C8A24B"/></svg><span class="wm">release<span class="g">-</span>gate</span></span></div>
       <div class="footer-links">
+        <a href="/assurance.html">Assurance demo</a>
         <a href="/demo.html">Live demo</a>
         <a href="research.html">Research</a>
         <a href="#cli-section">CLI docs</a>
@@ -2339,17 +2819,18 @@
   }
   // ── Theme (light / dark) ──
   var _themeMeta = document.querySelector('meta[name="theme-color"]');
-  function _osPrefersDark() {
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  }
   function _activeTheme() {
-    var explicit = document.documentElement.getAttribute('data-theme');
-    return explicit || (_osPrefersDark() ? 'dark' : 'light');
+    // The unset default is DARK, because that is what the stylesheet renders
+    // when no data-theme is present — it no longer follows the OS. While this
+    // read said "light" on a light-preference machine, the first click set
+    // data-theme="dark", which the page already looked like, so the toggle
+    // appeared dead until you pressed it twice.
+    return document.documentElement.getAttribute('data-theme') || 'dark';
   }
   function _reflectTheme() {
     var dark = _activeTheme() === 'dark';
     document.documentElement.classList.toggle('dark-active', dark);
-    if (_themeMeta) _themeMeta.setAttribute('content', dark ? '#0b0b12' : '#6366f1');
+    if (_themeMeta) _themeMeta.setAttribute('content', dark ? '#08080A' : '#FAF8F3');
     var btn = document.getElementById('theme-toggle');
     if (btn) btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
   }
@@ -2360,12 +2841,9 @@
     _reflectTheme();
   }
   _reflectTheme();
-  // Follow live OS changes while the visitor hasn't made an explicit choice.
-  if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
-      if (!document.documentElement.getAttribute('data-theme')) _reflectTheme();
-    });
-  }
+  // There is no OS-preference listener any more: the stylesheet renders dark
+  // whatever the OS says, so re-reflecting on an OS change would have flipped
+  // the button's label away from what the page was showing.
 
   // Picking a destination closes the menu so it never covers the section you asked for.
   document.getElementById('nav-links').addEventListener('click', function(e) {
@@ -3053,7 +3531,7 @@
         html += '</div>'; // end header
 
         html += '<div class="repo-body" id="rb-' + idx + '" data-repo="' + escHtml(repo.repo_url) + '" data-loaded="false">';
-        html += '<p class="dash-empty" style="color:var(--term-muted)">Expand to load history&hellip;</p>';
+        html += '<p class="dash-empty" style="color:var(--faint)">Expand to load history&hellip;</p>';
         html += '</div>';
         html += '</div>'; // end repo-group
       });
@@ -3131,7 +3609,7 @@
       var view = r.id
         ? '<a href="#" onclick="openRunReport(\'' + escHtml(r.id) + '\');return false">View report &rarr;</a>'
         : '—';
-      h += '<tr><td style="color:var(--term-muted);font-size:.82rem">' + dt + '</td>' +
+      h += '<tr><td style="color:var(--faint);font-size:.82rem">' + dt + '</td>' +
         '<td><strong style="color:' + scoreColor + '">' + (sc!=null?sc:'—') + '</strong></td>' +
         '<td><span class="pg-decision-badge ' + bc + '" style="font-size:.68rem;padding:2px 8px">' + escHtml(r.decision||'—') + '</span></td>' +
         '<td>' + view + '</td></tr>';
@@ -3149,18 +3627,34 @@
     function px(i){ return padL + (scores.length > 1 ? (i/(scores.length-1)) * iW : iW/2); }
     function py(s){ return padT + (1 - (s - minS) / range) * iH; }
 
+    // SVG presentation attributes do NOT resolve var(), so the tokens are read
+    // once and inlined. This chart had been mixing literals from the old light
+    // palette with var() attributes that never resolved; both are gone.
+    var _cs = getComputedStyle(document.documentElement);
+    function tok(name, fallback) {
+      var v = _cs.getPropertyValue(name).trim();
+      return v || fallback;
+    }
+    var C_ACCENT = tok('--accent', '#D8B65C'),
+        C_GRID   = tok('--border', 'rgba(255,255,255,.07)'),
+        C_LABEL  = tok('--faint', '#8A8794'),
+        C_GOOD   = tok('--green', '#5FD08A'),
+        C_AMBER  = tok('--amber', '#E0A93F'),
+        C_BAD    = tok('--red', '#E8705C'),
+        C_SURF   = tok('--surface', '#0F0F14');
+
     var uid = 'tg' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;display:block" xmlns="http://www.w3.org/2000/svg">';
     svg += '<defs><linearGradient id="' + uid + '" x1="0" y1="0" x2="0" y2="1">';
-    svg += '<stop offset="0%" stop-color="#6366f1" stop-opacity=".18"/>';
-    svg += '<stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>';
+    svg += '<stop offset="0%" stop-color="' + C_ACCENT + '" stop-opacity=".18"/>';
+    svg += '<stop offset="100%" stop-color="' + C_ACCENT + '" stop-opacity="0"/></linearGradient></defs>';
 
     [25,50,75,100].forEach(function(g){
       if (g < minS - 5 || g > maxS + 5) return;
       var gy = py(g);
       if (gy < padT || gy > H - padB + 2) return;
-      svg += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W-padR) + '" y2="' + gy.toFixed(1) + '" stroke="#e5e2f0" stroke-width="1" stroke-dasharray="4 3"/>';
-      svg += '<text x="' + (padL-4) + '" y="' + (gy+3.5).toFixed(1) + '" font-size="9" fill="#9ca3af" text-anchor="end">' + g + '</text>';
+      svg += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W-padR) + '" y2="' + gy.toFixed(1) + '" stroke="' + C_GRID + '" stroke-width="1" stroke-dasharray="4 3"/>';
+      svg += '<text x="' + (padL-4) + '" y="' + (gy+3.5).toFixed(1) + '" font-size="9" fill="' + C_LABEL + '" text-anchor="end">' + g + '</text>';
     });
 
     var area = 'M' + padL + ',' + (H-padB);
@@ -3169,12 +3663,12 @@
     svg += '<path d="' + area + '" fill="url(#' + uid + ')"/>';
 
     var pts = scores.map(function(s,i){ return px(i).toFixed(1) + ',' + py(s).toFixed(1); }).join(' ');
-    svg += '<polyline points="' + pts + '" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+    svg += '<polyline points="' + pts + '" fill="none" stroke="' + C_ACCENT + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
 
     history.forEach(function(r,i){
       var s = r.score != null ? r.score : 0;
-      var col = s>=70?'#22c55e':s>=40?'var(--amber)':'#ef4444';
-      svg += '<circle cx="' + px(i).toFixed(1) + '" cy="' + py(s).toFixed(1) + '" r="4.5" fill="' + col + '" stroke="#fff" stroke-width="1.5">';
+      var col = s >= 70 ? C_GOOD : s >= 40 ? C_AMBER : C_BAD;
+      svg += '<circle cx="' + px(i).toFixed(1) + '" cy="' + py(s).toFixed(1) + '" r="4.5" fill="' + col + '" stroke="' + C_SURF + '" stroke-width="1.5">';
       svg += '<title>' + (r.created_at ? new Date(r.created_at).toLocaleDateString() : '') + ': ' + s + '</title></circle>';
     });
     svg += '</svg>';
@@ -3264,7 +3758,7 @@
     var rid = data.id || '';
     var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
     h += '<div class="rpt-export" style="margin-top:14px">' +
-      (rid ? '<button onclick="downloadRunPdf(\'' + escHtml(rid) + '\', this)" style="background:var(--accent);color:#fff;border:none">&#x2B07;&nbsp; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' : '') +
+      (rid ? '<button onclick="downloadRunPdf(\'' + escHtml(rid) + '\', this)" style="background:var(--accent);color:var(--on-accent);border:none">&#x2B07;&nbsp; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' : '') +
       '<button onclick="exportReportJson()">&#x2B07;&nbsp; Download JSON</button>' +
       '<button onclick="exportReportMarkdown()">&#x2B07;&nbsp; Download Markdown</button>' +
       (data.repo_url ? '<a href="' + escHtml(data.repo_url) + '" target="_blank" rel="noopener" style="margin-left:auto;align-self:center;font-size:.82rem">Open repo on GitHub &rarr;</a>' : '') +
@@ -3433,7 +3927,7 @@
       h += '<div class="doc-code">' + escHtml(doc.example) + '</div>';
     }
 
-    h += '<div style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);font-size:.8rem;color:var(--term-muted)">';
+    h += '<div style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);font-size:.8rem;color:var(--faint)">';
     h += 'This check contributes <strong style="color:var(--heading)">' + (SAFEGUARD_INFO[key] ? SAFEGUARD_INFO[key].weight : '') + '</strong> to your release-gate score.';
     h += '</div>';
 
@@ -3656,7 +4150,7 @@
         var paid = ['pro','enterprise','admin'].indexOf((_currentUser && _currentUser.plan) || 'free') !== -1;
         h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">' +
           '<a href="/r/' + encodeURIComponent(report._run_id) + '" target="_blank" rel="noopener" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent-tint);border:1px solid var(--border-strong);border-radius:8px">&#x1F4CA; Full report &rarr;</a>' +
-          '<button onclick="downloadRunPdf(\'' + report._run_id + '\', this)" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer">&#x2B07;&#xFE0F; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' +
+          '<button onclick="downloadRunPdf(\'' + report._run_id + '\', this)" style="font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent);color:var(--on-accent);border:none;border-radius:8px;cursor:pointer">&#x2B07;&#xFE0F; ' + (paid ? 'Download PDF report' : 'Download PDF (summary)') + '</button>' +
           '</div>';
       }
     } else if (getToken() && !findings.length) {
@@ -4450,7 +4944,7 @@
         runLinkEl.innerHTML =
           '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">' +
             '<a href="/r/' + rid + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;color:var(--accent);font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent-tint);border-radius:8px;border:1px solid var(--border-strong);">&#x1F4CA; View full report + trend history &rarr;</a>' +
-            '<button type="button" onclick="downloadRunPdf(\'' + data._run_id + '\', this)" style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-weight:600;font-size:.85rem;padding:8px 14px;background:#6366f1;border-radius:8px;border:none;cursor:pointer;">' + pdfLabel + '</button>' +
+            '<button type="button" onclick="downloadRunPdf(\'' + data._run_id + '\', this)" style="display:inline-flex;align-items:center;gap:6px;color:#fff;font-weight:600;font-size:.85rem;padding:8px 14px;background:var(--accent);border-radius:8px;border:none;cursor:pointer;">' + pdfLabel + '</button>' +
           '</div>' +
           (isPaid ? '' : '<div style="font-size:.78rem;color:var(--muted);margin-top:6px;">Free reports show a summary. <a href="#enterprise" style="color:var(--accent);font-weight:600;">Upgrade to Pro</a> for every finding with file:line, fixes &amp; compliance mapping.</div>');
         runLinkEl.style.display = 'block';
@@ -4565,6 +5059,42 @@
   checkAuth();
   _checkResetRoute();
   _checkReportRoute();
+</script>
+<script>
+  /* Reveal-on-scroll. Progressive enhancement only: without IntersectionObserver
+     or with reduced motion requested, the class is never added and the CSS
+     leaves everything visible — the page must never depend on this to be
+     readable. Each element is unobserved after it fires, so nothing animates
+     twice on the way back up. */
+  (function () {
+    var reduced = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || !('IntersectionObserver' in window)) return;
+    var targets = document.querySelectorAll(
+      'section > .container > .section-header, .check-card, .persona-card, ' +
+      '.tier-card, .cli-col, .int-card, #assurance .container > *');
+    if (!targets.length) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: .05 });
+    targets.forEach(function (el, i) {
+      el.classList.add('reveal');
+      el.style.transitionDelay = (Math.min(i % 4, 3) * 55) + 'ms';
+      io.observe(el);
+    });
+    /* Safety net. `.reveal` starts at opacity 0, so anything the observer never
+       fires for would stay invisible — a rendering path that does not scroll
+       (a full-page screenshot, a print, a crawler that measures without
+       scrolling) would silently lose most of the page. Content being briefly
+       early is a far cheaper failure than content being permanently absent. */
+    setTimeout(function () {
+      targets.forEach(function (el) { el.classList.add('in'); });
+    }, 2500);
+  })();
 </script>
 </body>
 </html>

@@ -26,6 +26,11 @@ release-gate assure examples/assurance/single-action.jsonl
 That works with no config file, no YAML, no account. It will HOLD, and it will
 tell you why: nothing has said what *enough* means for this decision.
 
+**Without installing anything:** <https://release-gate.com/assurance.html> takes
+a pasted or dropped run and returns the same case. Its three samples are the
+files in `examples/assurance/` — the page and the CLI submit identical bytes, and
+a test fails if they ever diverge.
+
 ---
 
 ## 1. Inputs

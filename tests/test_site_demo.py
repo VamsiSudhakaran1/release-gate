@@ -196,3 +196,76 @@ class TestTheHomepageFiguresAreTheMeasuredOnes:
             assert printed in (ROOT / name).read_text(encoding="utf-8"), (
                 f"{name} prints a record total that is not "
                 f"{printed} — regenerate it from the demo")
+
+
+class TestThePaletteCannotDriftBack:
+    """Static guards for the two mistakes the redesign actually made.
+
+    The contrast work itself was measured in a browser — ten page/theme
+    combinations, every text node composited against what is really behind it —
+    which is not something to run in this suite. What *is* worth pinning are the
+    two specific ways the palette broke, because both were invisible in the
+    source and both would come back the moment someone adds a button.
+    """
+
+    PAGES = ("public/index.html", "public/assurance.html", "public/demo.html",
+             "public/research.html", "public/perfect-code.html")
+
+    def test_no_page_hardcodes_white_on_an_accent_fill(self):
+        """White over indigo was fine. White over gold is 1.5:1.
+
+        A dozen inline styles paired `background:var(--accent)` with a literal
+        `color:#fff`, which was correct until the accent changed and then was
+        unreadable on every one of them. The pairing now goes through
+        `--on-accent`, so the theme decides it.
+        """
+        import re
+
+        bad = []
+        for rel in self.PAGES:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            for m in re.finditer(r"background:\s*var\(--accent[^)]*\)\s*;\s*color:\s*#fff",
+                                 text, re.I):
+                bad.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}")
+        assert not bad, ("white is hardcoded over an accent fill at " + ", ".join(bad)
+                         + " — use var(--on-accent)")
+
+    def test_the_indigo_the_palette_replaced_is_gone_from_the_pages(self):
+        """#6366f1 was the old brand colour and survived in inline styles."""
+        for rel in self.PAGES:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            assert "#6366f1" not in text, (
+                f"{rel} still carries the replaced indigo literal")
+
+    def test_every_page_defines_the_accent_text_colour(self):
+        for rel in self.PAGES:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            if "var(--on-accent)" in text:
+                assert "--on-accent:" in text, f"{rel} uses --on-accent but never defines it"
+
+    def test_dark_is_the_default_on_every_page(self):
+        """A visitor crossing between pages must not cross between themes.
+
+        Each page's unset `:root` renders dark; light is reached only by
+        choosing it. The check is that no page's default background is the
+        paper colour.
+        """
+        import re
+
+        for rel in self.PAGES:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            # A default block is any :root selector list with no [data-theme]
+            # and no :not() on it — ":root {", ":root,\n:root[data-theme=\"dark\"] {"
+            # both qualify for the unset case, and the last one wins.
+            roots = re.findall(r"(:root[^{}@]*)\{([^}]*)\}", text)
+            defaults = [body for sel, body in roots
+                        if "--bg:" in body and ":not(" not in sel
+                        and not re.search(r':root\s*\[data-theme="light"\]', sel)]
+            assert defaults, f"{rel} has no :root block defining --bg"
+            last = defaults[-1]
+            m = re.search(r"--bg:\s*(#[0-9A-Fa-f]{6})", last)
+            assert m, f"{rel}: could not read the default --bg"
+            r, g, b = (int(m.group(1)[i:i + 2], 16) for i in (1, 3, 5))
+            assert (r + g + b) / 3 < 80, (
+                f"{rel} defaults to a light background ({m.group(1)}) — the rest "
+                "of the site defaults to dark")

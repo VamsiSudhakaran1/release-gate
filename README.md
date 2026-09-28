@@ -21,6 +21,10 @@ That works on an OpenTelemetry trace, a Langfuse export, a promptfoo result, or
 release-gate's own record format — the shape is detected, not declared. You get a
 verdict, what a person has to look at, and what would resolve it.
 
+Nothing to install first: **[drop a run into the browser demo](https://release-gate.com/assurance.html)**
+— it runs this same engine, and its three sample runs are the files in
+[`examples/assurance/`](examples/assurance/), byte for byte.
+
 ---
 
 ## Three things it does that a scanner or a score cannot

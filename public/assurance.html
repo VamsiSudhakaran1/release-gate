@@ -15,35 +15,46 @@
 <meta name="twitter:description" content="Drop a trace. Get what a person must look at, what would resolve it, and what was never assessed.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7.6' fill='%230B0B0F'/%3E%3Crect x='9.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='19.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='8' y='8.4' width='16' height='2.9' rx='1.45' fill='%23C8A24B'/%3E%3C/svg%3E">
 <style>
+  /* Same palette and type as the homepage, so the demo does not read as a
+     different product. Dark is the default here too; an explicit light choice
+     gets the warm paper theme. */
   :root {
-    --bg:#FAF8F3; --surface:#FFFFFF; --ink:#17150E; --muted:#6E6656; --faint:#8B8474;
-    --hair:#E6E0D1; --accent:#9A731F; --accent-dec:#C8A24B; --high:#A83521;
-    --high-bg:#F6E7E2; --good:#3F6E44; --good-bg:#E8F0E6; --med:#8A5E12; --med-bg:#F3EAD6;
-    --code-bg:#F3F0E8; --band:#141317; --band-ink:#F3EFE4; --band-muted:#A49C89;
-    --measure:52rem;
-    --sans: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    --serif: Georgia,"Iowan Old Style","Times New Roman",serif;
+    --bg:#08080A; --surface:#0F0F14; --surface-2:#14141A; --ink:#F5F3EE;
+    --muted:#9C9AA6; --faint:#8A8794;
+    --hair:rgba(255,255,255,.07); --hair-strong:rgba(255,255,255,.14);
+    --accent:#D8B65C; --accent-dec:#E8CE86;
+    --high:#E8705C; --high-bg:rgba(232,112,92,.10);
+    --good:#5FD08A; --good-bg:rgba(95,208,138,.10);
+    --med:#E0A93F;  --med-bg:rgba(224,169,63,.10);
+    --code-bg:#0B0B0F; --band:#0B0B0F; --band-ink:#F5F3EE; --band-muted:#908E9C;
+    --measure:56rem;
+    --sans: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+    --serif: ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
     --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    color-scheme: dark;
   }
-  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-    --bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;--faint:#7C7566;
-    --hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;--high-bg:#2A1512;
-    --good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}}
-  :root[data-theme="dark"]{--bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;
-    --faint:#7C7566;--hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;
-    --high-bg:#2A1512;--good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}
+  :root[data-theme="light"]{
+    --bg:#FAF8F3;--surface:#FFFFFF;--surface-2:#F7F4EC;--ink:#17150E;--muted:#5A5448;
+    --faint:#6E6656;--hair:rgba(23,21,14,.10);--hair-strong:rgba(23,21,14,.18);
+    --accent:#7D5D18;--accent-dec:#7D5D18;--high:#A83521;--high-bg:rgba(168,53,33,.08);
+    --good:#3F6E44;--good-bg:rgba(63,110,68,.09);--med:#8A5E12;--med-bg:rgba(138,94,18,.09);
+    --code-bg:#F3F0E8;color-scheme:light;}
 
   * { box-sizing:border-box; }
   html { -webkit-text-size-adjust:100%; }
-  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
-    font-size:18px; line-height:1.65; -webkit-font-smoothing:antialiased; }
+  body { margin:0; background:var(--bg); color:var(--muted); font-family:var(--sans);
+    font-size:17px; line-height:1.62; letter-spacing:-.005em;
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+  ::selection { background:var(--accent); color:#08080A; }
   .wrap { max-width:var(--measure); margin:0 auto; padding:0 1.5rem; }
   a { color:var(--accent); text-decoration:none;
       border-bottom:1px solid color-mix(in srgb,var(--accent) 35%,transparent); }
   a:hover { border-bottom-color:var(--accent); }
-  h1 { font-family:var(--serif); font-size:clamp(1.9rem,4.5vw,2.8rem); line-height:1.15;
-       letter-spacing:-.01em; margin:0 0 .6rem; }
-  h2 { font-family:var(--serif); font-size:1.45rem; margin:2.6rem 0 .7rem; }
+  h1, h2 { color:var(--ink); }
+  h1 { font-family:var(--sans); font-size:clamp(2.1rem,4.6vw,3.2rem); line-height:1.04;
+       letter-spacing:-.04em; font-weight:600; margin:0 0 .7rem; }
+  h2 { font-family:var(--sans); font-size:clamp(1.4rem,2.6vw,1.9rem); font-weight:600;
+       letter-spacing:-.03em; margin:3rem 0 .8rem; }
   h3 { font-size:1rem; text-transform:uppercase; letter-spacing:.08em;
        color:var(--muted); margin:1.8rem 0 .6rem; font-weight:600; }
   .lede { font-size:1.12rem; color:var(--muted); margin:0 0 1.6rem; }
@@ -53,8 +64,14 @@
   .nav a { font-size:.92rem; margin-left:1.1rem; border:0; color:var(--muted); }
   .nav a:hover { color:var(--accent); }
 
-  .panel { background:var(--surface); border:1px solid var(--hair); border-radius:12px;
-           padding:1.25rem; margin:1.2rem 0; }
+  .eyebrow { display:inline-flex; align-items:center; gap:9px; font-family:var(--mono);
+    font-size:.68rem; text-transform:uppercase; letter-spacing:.15em; color:var(--accent);
+    border:1px solid var(--hair-strong); border-radius:100px; padding:5px 13px;
+    margin-bottom:1.4rem; }
+  .eyebrow .dot { width:5px; height:5px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent); }
+  .panel { background:var(--surface); border:1px solid var(--hair); border-radius:13px;
+           padding:1.3rem; margin:1.3rem 0; }
   textarea { width:100%; min-height:190px; font-family:var(--mono); font-size:13px;
              line-height:1.5; background:var(--code-bg); color:var(--ink);
              border:1px solid var(--hair); border-radius:8px; padding:.85rem; resize:vertical; }
@@ -62,10 +79,17 @@
   button, .btn { font:inherit; font-size:.95rem; padding:.55rem 1.05rem; border-radius:8px;
           border:1px solid var(--hair); background:var(--surface); color:var(--ink);
           cursor:pointer; }
-  button.primary { background:var(--ink); color:var(--bg); border-color:var(--ink); font-weight:600; }
+  button.primary { background:var(--accent); color:#0A0A0C; border-color:var(--accent); font-weight:600; }
+  button.primary:hover:not(:disabled) { background:var(--accent-dec); border-color:var(--accent-dec); }
+  /* Light theme's accent is a dark gold, so the near-black label goes with it. */
+  :root[data-theme="light"] button.primary { color:#FAF8F3; }
   button:disabled { opacity:.5; cursor:default; }
   .samples { font-size:.9rem; color:var(--muted); }
   .samples button { font-size:.85rem; padding:.3rem .7rem; }
+  /* The longest option ("No methodology — report structure and hold") set the
+     select's intrinsic width and pushed the page 21px wide at 390px. */
+  select { max-width:100%; min-width:0; text-overflow:ellipsis; }
+  .row { flex-wrap:wrap; }
   select { font:inherit; font-size:.9rem; padding:.5rem .6rem; border-radius:8px;
            border:1px solid var(--hair); background:var(--surface); color:var(--ink); }
   .drop { border:1.5px dashed var(--hair); border-radius:10px; padding:.7rem;
@@ -131,6 +155,7 @@
 
 <main class="wrap">
 
+<span class="eyebrow"><span class="dot"></span>Live &mdash; runs the packaged engine</span>
 <h1>Submit a run. Get the case behind it.</h1>
 <p class="lede">
   A machine produced something consequential. Before a person signs off, they need

@@ -16,8 +16,8 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7.6' fill='%230B0B0F'/%3E%3Crect x='9.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='19.7' y='12' width='2.6' height='12' rx='1.2' fill='%23F4F1E9'/%3E%3Crect x='8' y='8.4' width='16' height='2.9' rx='1.45' fill='%23C8A24B'/%3E%3C/svg%3E">
 <style>
   :root {
-    --bg:#FAF8F3; --surface:#FFFFFF; --ink:#17150E; --muted:#6E6656; --faint:#8B8474;
-    --hair:#E6E0D1; --accent:#9A731F; --accent-dec:#C8A24B; --high:#A83521;
+    --bg:#FAF8F3; --surface:#FFFFFF; --ink:#17150E; --muted:#6E6656; --faint:#6E6656;
+    --hair:#E6E0D1; --accent:#7D5D18; --accent-dec:#C8A24B; --high:#A83521;
     --high-bg:#F6E7E2; --good:#3F6E44; --good-bg:#E8F0E6; --med:#8A5E12; --med-bg:#F3EAD6;
     --code-bg:#F3F0E8; --band:#141317; --band-ink:#F3EFE4; --band-muted:#A49C89;
     --measure:44rem;
@@ -25,16 +25,26 @@
     --serif: Georgia,"Iowan Old Style","Times New Roman",serif;
     --mono: ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   }
-  @media (prefers-color-scheme: dark){:root{
-    --bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;--faint:#7C7566;
-    --hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;--high-bg:#2A1512;
-    --good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}}
+  @media (prefers-color-scheme: dark){:root{--bg:#08080A;--surface:#0F0F14;--ink:#F5F3EE;--muted:#ADAAB6;--faint:#8A8794;--hair:rgba(255,255,255,.07);--accent:#D8B65C;--accent-dec:#E8CE86;--high:#E8705C;--high-bg:rgba(232,112,92,.10);--good:#5FD08A;--good-bg:rgba(95,208,138,.10);--med:#E0A93F;--med-bg:rgba(224,169,63,.10);--code-bg:#0B0B0F;--band:#0B0B0F;--band-ink:#F5F3EE;--band-muted:#908E9C;}}
   :root[data-theme="light"]{--bg:#FAF8F3;--surface:#FFFFFF;--ink:#17150E;--muted:#6E6656;
-    --faint:#8B8474;--hair:#E6E0D1;--accent:#9A731F;--accent-dec:#C8A24B;--high:#A83521;
+    --faint:#6E6656;--hair:#E6E0D1;--accent:#7D5D18;--accent-dec:#C8A24B;--high:#A83521;
     --high-bg:#F6E7E2;--good:#3F6E44;--good-bg:#E8F0E6;--med:#8A5E12;--med-bg:#F3EAD6;--code-bg:#F3F0E8;}
-  :root[data-theme="dark"]{--bg:#0E0D10;--surface:#17161A;--ink:#ECE7DC;--muted:#9A9384;
-    --faint:#7C7566;--hair:#2A2830;--accent:#D6B45C;--accent-dec:#C8A24B;--high:#E67C68;
-    --high-bg:#2A1512;--good:#84B98A;--good-bg:#152318;--med:#D7A64C;--med-bg:#241C10;--code-bg:#1B1A1F;}
+  :root[data-theme="dark"]{--bg:#08080A;--surface:#0F0F14;--ink:#F5F3EE;--muted:#ADAAB6;--faint:#8A8794;--hair:rgba(255,255,255,.07);--accent:#D8B65C;--accent-dec:#E8CE86;--high:#E8705C;--high-bg:rgba(232,112,92,.10);--good:#5FD08A;--good-bg:rgba(95,208,138,.10);--med:#E0A93F;--med-bg:rgba(224,169,63,.10);--code-bg:#0B0B0F;--band:#0B0B0F;--band-ink:#F5F3EE;--band-muted:#908E9C;}
+
+  /* Dark is the site's default, not just the OS preference — a visitor whose
+     machine is set to light would otherwise cross from a near-black homepage
+     onto a cream page and wonder whether they had left the site. The values
+     match the homepage's palette; `[data-theme="light"]` above still serves
+     anyone who chooses light, and it wins on specificity. */
+  :root{
+    --bg:#08080A;--surface:#0F0F14;--ink:#F5F3EE;--muted:#ADAAB6;--faint:#8A8794;
+    --hair:rgba(255,255,255,.07);--accent:#D8B65C;--accent-dec:#E8CE86;
+    --high:#E8705C;--high-bg:rgba(232,112,92,.10);
+    --good:#5FD08A;--good-bg:rgba(95,208,138,.10);
+    --med:#E0A93F;--med-bg:rgba(224,169,63,.10);
+    --code-bg:#0B0B0F;--band:#0B0B0F;--band-ink:#F5F3EE;--band-muted:#908E9C;
+    color-scheme:dark;}
+  @media (prefers-color-scheme: light){:root:not([data-theme]){color-scheme:dark;}}
 
   * { box-sizing:border-box; }
   html { -webkit-text-size-adjust:100%; }
@@ -72,6 +82,11 @@
     letter-spacing:-.015em; margin:0 0 1.1rem; text-wrap:balance; color:#FBF8EF; }
   .deck { font-size:1.14rem; line-height:1.55; color:var(--band-muted); max-width:36rem; margin:0 0 2.2rem; }
   .deck b { color:var(--band-ink); font-weight:600; }
+  /* The deck sits on the dark band, so a code chip inside it must not take the
+     page's light --code-bg — on the light theme that put band-muted text on a
+     paper chip at 2.8:1. */
+  .deck code { background:rgba(255,255,255,.07); color:var(--band-ink);
+               border:1px solid rgba(255,255,255,.10); }
   .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#26242B;
     border:1px solid #26242B; border-radius:10px; overflow:hidden; }
   .stat { background:var(--band); padding:1rem .9rem; }
