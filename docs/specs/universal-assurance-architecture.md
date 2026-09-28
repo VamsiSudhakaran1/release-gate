@@ -8022,6 +8022,173 @@ that cannot be reproduced cannot be what an approval was taken against (Invarian
 
 ---
 
+### §10aw The red-team question, and the one coupling it found
+
+Before declaring the architecture complete, ten questions were put to it: would
+release-gate remain useful if models became 100× smarter, agents stopped writing
+conventional code, ten thousand agents collaborated, chain-of-thought became
+inaccessible, companies refused to export prompts, most validation became formal,
+humans inspected only final critical decisions, orchestration frameworks changed,
+model vendors disappeared, or evidence lived across private systems?
+
+Nine hold, and each for a structural reason rather than an aspirational one.
+Nothing scales confidence with capability, so a smarter producer buys no
+credibility (Invariant 6). `execution_reconstruction` reads NOT_ASSESSED on the
+flagship case and the verdict still lands (Invariant 14). `privacy.py` is built on
+the premise that prompt text is never retained, and records *that* it was not, so
+"no prompt was sent" stays distinguishable from "we did not look". Orchestrator
+profiles are data rows and a private framework is an instance its owner
+constructs, so the only vendor names under `assurance/` are labels on rows — a
+dead vendor is an unused row. Scale is measured, not claimed: 10,254 producers,
+2,184,992 execution records, thirteen review items.
+
+**One failed, and it failed three times over.** Ask what happens when validation
+becomes formal in ways this release has never heard of.
+
+#### 10aw.1 What the audit found
+
+`VerificationMethod('INTERACTIVE_ORACLE_PROOF')` raised. On an attempt embedded in
+a claim, `ingest.py` caught that with a bare `except: continue` — **no skip count,
+no note**. Submitting one beside a `THEOREM_PROVER` attempt put one of two in the
+graph and left `skipped` empty. Release-gate omitting evidence without trace is
+the threat Invariant 13 names, turned on itself.
+
+What survived read as a negative finding. `_formal_verifier_passed` returned
+`FactState.DOES_NOT_HOLD` — *"none is a passing formal method"* — for any method
+outside a hardcoded pair. `FactState`'s own docstring calls conflating that with
+`NOT_ASSESSED` "the failure this whole system exists to avoid".
+
+And three places decided what "formal" meant with nothing making them agree:
+`quality.FORMAL_METHODS`, the case review's own set, and
+`failed_branches._OUTCOME_FOR_METHOD`, plus string constants in the built-in
+methodologies. A fourth place for them to drift was being added.
+
+#### 10aw.2 Character, and the axis it is not
+
+`MethodCharacter` says what kind of check a method is: `PROOF_CARRYING`,
+`MECHANICAL`, `EMPIRICAL`, `JUDGEMENT`, `UNKNOWN`. Built from one table with a row
+per enum member, tested for completeness — a method added with no row would read
+UNKNOWN silently, which is honest for a method nobody classified and wrong for one
+release-gate ships. All three readers derive from it, so a method is formal
+everywhere at once or nowhere.
+
+This is **not** `VerifierStanding` (§10ar). Standing asks whether a verifier may
+be relied on; character asks what kind of check it produces. A vetted tool can run
+an empirical check and an unvetted one can emit a proof. Merging the axes is what
+this architecture does not do, and `proves_nothing_about_strength` is
+unconditionally true on every reading to say so.
+
+`MECHANICAL` exists because of a mistake caught in the writing. Classifying
+`COMPILER` and `TYPE_CHECKER` as `PROOF_CARRYING` widened the derived formal set
+from two methods to four, which would have made a passing type check read as
+formal verification of a mathematical claim. A compiler proves well-formedness by
+its own rules, about the artifact and not about the claim. The derived set is now
+exactly `FORMAL_PROOF` and `THEOREM_PROVER` — identical to the hardcoded pair it
+replaced, which a test pins.
+
+#### 10aw.3 UNKNOWN is not "not formal"
+
+The distinction the module exists for. `proof_carrying()` is three-valued: `True`,
+`False`, and `None` for a method whose character nobody established. Every caller
+that collapsed `None` into `False` reported an unmodelled formal method as no
+formal verification at all.
+
+So `FORMAL_VERIFIER_PASSED` now has four readings, and each is reachable:
+HOLDS for a passing proof; **NOT_ASSESSED** where a passing check uses a method of
+unknown character; DOES_NOT_HOLD where every method is modelled and none is a
+proof — a real finding, preserved; NOT_APPLICABLE where nothing is in scope.
+
+#### 10aw.4 The label, and why it is part of identity
+
+`VerificationAttempt.method_label` carries what a producer called a method when
+`method` is `OTHER`. The ingest coerces an unmodelled name to `OTHER` plus the
+label and **appends a note**, so the record is kept and the omission is not
+silent. A label beside a modelled method is refused: a second name for something
+already named is two names for one thing.
+
+The label is in the attempt's identity payload, so `VERIFICATION_SCHEMA_VERSION`
+moved to 4 — the same discipline 3 followed when an arrival stamp left that
+payload. Two attempts differing only in what their producer called the method are
+two checks, and collapsing them would deduplicate a proof-carrying check against
+an empirical one because both arrived as `OTHER`.
+
+`_method_of` in the methodology layer reads the label in place of `OTHER`. This is
+the path that matters most, because requirements drive verdicts: a domain whose
+validation is formal in a way release-gate does not model writes
+`VerificationPresent(methods=("INTERACTIVE_ORACLE_PROOF",))` and has it met.
+Verified end to end — the requirement naming the label reads SATISFIED, one naming
+bare `OTHER` reads UNSATISFIED, so the label does not let unmodelled methods be
+credited indiscriminately.
+
+#### 10aw.5 A declaration is never an observation
+
+`MethodDeclaration` lets an organisation say what kind of check its own tool is,
+through `OrganisationConfig.method_declarations`. The registry **ships empty**:
+release-gate has no view on somebody else's tool, and shipping a guess would be
+the vendor list §10ar exists not to have.
+
+Every declaration is `CharacterBasis.DECLARED`, names its declarer, and says so in
+the fact's basis — *"1 of them by a method whose character is DECLARED by
+org://acme/assurance-office rather than modelled here"*. Laundering it into
+release-gate's voice would be what §10ah settled for timestamps and
+`_PRODUCER_FORBIDDEN` for epistemic status (Invariant 1). A declaring organisation
+must identify itself, for the same reason one permitting an override must.
+Declaring `UNKNOWN` is refused: that is the state of a method nobody classified,
+and a declaration is a classification. Two characters for one method are refused
+as two answers to one question.
+
+A declaration cannot loosen anything. A method with no declaration reads as of
+unknown character, which never satisfies a requirement; declarations only let a
+check be recognised, never let a missing one pass.
+
+#### 10aw.6 The attack the escape hatch opens
+
+`method_character_self_declaration`, the twentieth threat. Name a method, declare
+it proof-carrying, submit a passing attempt: a route to "formally verified" that
+never involved a proof. Every ingredient works, so `was_possible` is true.
+
+Two things deny it release-gate's voice. The reading is DECLARED and names the
+declarer. And where the declaration names the producing party among those it may
+not cover, it is **refused outright** and the character falls back to UNKNOWN — a
+party cannot classify its own check. The check runs over every party the caller can
+see, not just the verifier, because an estate where the declaring office is also
+the case's producer would slip past a single-name check. The threat's own run
+shows the formal fact reading NOT_ASSESSED rather than HOLDS.
+
+`unmodelled_verification_method` is the fifteenth chaos fault, and it is the
+passage of time as a fault: every check run by a method this release never heard
+of. Recovery is DECLARED — the attempts are kept under their producers' names, a
+note says release-gate does not model them, and whether any is formal reads
+NOT_ASSESSED.
+
+#### 10aw.7 Three figures in §10av that could only ever read zero
+
+Wiring the character reading into the case review exposed a defect in §10av's own
+work. `Verified`, `Independently corroborated` and `Formally verified` are counted
+over the critical claims by asking `VerificationGraph.assess` — and the engine
+records a current digest for **artifacts and the subject**, never for a claim,
+which is a statement rather than content. Measured on the flagship case: 45 claim
+targets, 0 with a current digest, 0 with any applicable attempt. Those three lines
+were arithmetic wearing the clothes of a finding, and could not have been anything
+but zero.
+
+They read `not assessed` now, carrying the reason in place of their description,
+and `Verification undetermined` holds the information that is actually
+establishable. A test re-derives the premise from the graph, so if something ever
+starts recording a claim's current state the tests fail rather than quietly
+keeping an assertion of absence.
+
+#### 10aw.8 The answer to the question
+
+A verification method that does not exist today can be submitted, kept under its
+own name, counted in the case review, required by name in a methodology, declared
+by an organisation, and reported as of unknown character rather than as absent
+formal verification. What is left open is deliberate: release-gate will not guess
+what kind of check somebody else's tool performs, and a method nobody has
+classified reads as unassessed for as long as nobody classifies it.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation

@@ -71,6 +71,9 @@ from release_gate.assurance.evidence import (
     TrustStatus,
     VerificationMethod,
 )
+from release_gate.assurance.methods import (
+    CHARACTERS, CharacterBasis, CharacterReading, MethodCharacter,
+    character_of)
 from release_gate.assurance.verification import VerificationStatus
 
 __all__ = [
@@ -171,10 +174,14 @@ _QUESTION: Mapping[EvidenceFact, str] = {
 #: Methods that count for `FORMAL_VERIFIER_PASSED`. A test suite is verification
 #: and is not a formal method; conflating the two is how "verified" stops meaning
 #: anything (Invariant 8).
-FORMAL_METHODS: Tuple[VerificationMethod, ...] = (
-    VerificationMethod.FORMAL_PROOF,
-    VerificationMethod.THEOREM_PROVER,
-)
+#:
+#: Derived from the one character table in §10aw rather than listed here. Three
+#: places used to keep their own copy of this list — here, the case review, and
+#: the failed-branch mapping — and nothing made them agree. A method added to the
+#: table is formal everywhere at once or nowhere.
+FORMAL_METHODS: Tuple[VerificationMethod, ...] = tuple(
+    method for method, character in CHARACTERS.items()
+    if character is MethodCharacter.PROOF_CARRYING)
 
 #: Provenance statuses under which somebody is named. `SELF_ATTESTED` is here on
 #: purpose: the producer vouching for itself is weak provenance, not absent
@@ -380,6 +387,12 @@ class _Context:
     case: AssuranceCase
     analysis: Any = None
     completeness: Any = None        # a StreamLedger, supplied by the caller
+    #: An organisation's method-character declarations (§10aw), supplied by the
+    #: caller for the same reason `completeness` is: it is configuration, not
+    #: something derivable from the case. `None` means no organisation declared
+    #: anything, and a method release-gate does not model then reads as of
+    #: unknown character rather than as not formal.
+    methods: Any = None
     record: Mapping[str, Any] = field(default_factory=dict)
     claim_ids: Tuple[str, ...] = ()       # claims this subject bears on
     evidence_ids: Tuple[str, ...] = ()    # evidence records in scope
@@ -400,7 +413,7 @@ def _record_map(case: AssuranceCase, kind: str) -> Dict[str, Dict[str, Any]]:
 
 
 def _context(subject: str, case: AssuranceCase, analysis: Any,
-             completeness: Any = None) -> _Context:
+             completeness: Any = None, methods: Any = None) -> _Context:
     reference = str(subject or "").strip()
     if not reference:
         raise QualityError("name what the facts are about: an evidence id, a claim "
@@ -410,7 +423,8 @@ def _context(subject: str, case: AssuranceCase, analysis: Any,
         claims = _record_map(case, "claims")
         return _Context(
             subject=reference, kind="case", case=case, analysis=analysis,
-            completeness=completeness, claim_ids=tuple(sorted(claims)), evidence_ids=tuple(sorted(evidence)),
+            completeness=completeness, methods=methods,
+            claim_ids=tuple(sorted(claims)), evidence_ids=tuple(sorted(evidence)),
             producers=tuple(sorted({_producer_of(r) for r in evidence.values()
                                     if _producer_of(r)})))
 
@@ -429,7 +443,7 @@ def _context(subject: str, case: AssuranceCase, analysis: Any,
                 "nothing")
         return _Context(
             subject=reference, kind=kind, case=case, analysis=analysis,
-            completeness=completeness, record=record,
+            completeness=completeness, methods=methods, record=record,
             claim_ids=tuple(sorted(
                 {*(record.get("supports_claims") or ()),
                  *(record.get("contradicts_claims") or ())})),
@@ -445,7 +459,7 @@ def _context(subject: str, case: AssuranceCase, analysis: Any,
     related = tuple(sorted({*supporting, *contradicting}))
     return _Context(
         subject=reference, kind=kind, case=case, analysis=analysis,
-        completeness=completeness, record=record,
+        completeness=completeness, methods=methods, record=record,
         claim_ids=(identifier,), evidence_ids=related,
         producers=tuple(sorted({_producer_of(evidence[e]) for e in related
                                 if e in evidence and _producer_of(evidence[e])})))
@@ -580,20 +594,69 @@ def _formal_verifier_passed(context: _Context) -> FactFinding:
             EvidenceFact.FORMAL_VERIFIER_PASSED, FactState.NOT_APPLICABLE,
             f"{len(attempts)} verification attempt(s) on record, none of them "
             "against this subject", "analysis.verification_graph")
-    # Compared against the enum, never a string literal: `VerificationStatus` is
-    # `PASSED`, and a hand-written "PASS" silently matched nothing — a passing
-    # theorem prover read as no formal verification at all.
-    passed = [a for a in scoped
-              if getattr(a, "method", None) in FORMAL_METHODS
-              and getattr(a, "status", None) is VerificationStatus.PASSED]
-    if passed:
+    def reading(attempt: Any) -> CharacterReading:
+        """What kind of check this was, from the one character table (§10aw).
+
+        The verifier and every producer on the case are passed, so a declaration
+        naming one of them as a party it may not cover is refused rather than
+        weighed: an organisation classifying its own tool and then submitting
+        that tool's output is self-certification.
+        """
+        return character_of(
+            attempt, registry=context.methods,
+            producers=(str(getattr(attempt, "verifier", "") or ""),
+                       *context.producers))
+
+    # Status compared against the enum, never a string literal: a hand-written
+    # "PASS" silently matched nothing, and a passing theorem prover read as no
+    # formal verification at all.
+    passing = [a for a in scoped
+               if getattr(a, "status", None) is VerificationStatus.PASSED]
+    proofs = [(a, reading(a)) for a in passing
+              if reading(a).character is MethodCharacter.PROOF_CARRYING]
+    if proofs:
+        declared = [r for _, r in proofs if r.basis is CharacterBasis.DECLARED]
+        basis = (f"{len(proofs)} formal verification(s) returned PASS against "
+                 "this subject")
+        if declared:
+            # Visibly declared. An organisation's statement that its tool
+            # produces proofs is not release-gate having established that, and a
+            # basis that hid the difference would launder a declaration into our
+            # voice — what §10ah settled for timestamps (Invariant 1).
+            who = sorted({r.declared_by for r in declared})
+            basis += (f"; {len(declared)} of them by a method whose character is "
+                      f"DECLARED by {', '.join(who)} rather than modelled here")
         return FactFinding(
-            EvidenceFact.FORMAL_VERIFIER_PASSED, FactState.HOLDS,
-            f"{len(passed)} formal verification(s) returned PASS against this "
-            "subject", "analysis.verification_graph",
-            tuple(str(getattr(a, "verification_id", "")) for a in passed)[:12])
-    methods = sorted({str(getattr(getattr(a, "method", None), "value", "?"))
-                      for a in scoped})
+            EvidenceFact.FORMAL_VERIFIER_PASSED, FactState.HOLDS, basis,
+            "analysis.verification_graph",
+            tuple(str(getattr(a, "verification_id", "")) for a, _ in proofs)[:12])
+
+    # Before concluding that no formal method passed, ask whether the question
+    # could be answered at all. An attempt whose method release-gate does not
+    # model is of unknown character, and reporting that as "none is a passing
+    # formal method" is a finding where the truth is an absence of one — the exact
+    # conflation `FactState`'s own docstring calls the failure this system exists
+    # to avoid. A case checked by a formal method invented after this release used
+    # to read as having no formal verification at all.
+    unclassified = [(a, reading(a)) for a in passing
+                    if reading(a).character is MethodCharacter.UNKNOWN]
+    if unclassified:
+        names = sorted({r.method for _, r in unclassified})
+        refusals = sorted({r.refused for _, r in unclassified if r.refused})
+        basis = (f"{len(unclassified)} passing attempt(s) against this subject use "
+                 f"a method whose character is not established "
+                 f"({', '.join(names)}), so whether a formal method passed cannot "
+                 "be answered; declaring the method's character makes this a "
+                 "finding either way")
+        if refusals:
+            basis += f". {refusals[0]}"
+        return FactFinding(
+            EvidenceFact.FORMAL_VERIFIER_PASSED, FactState.NOT_ASSESSED, basis,
+            "analysis.verification_graph",
+            tuple(str(getattr(a, "verification_id", ""))
+                  for a, _ in unclassified)[:12])
+
+    methods = sorted({reading(a).method for a in scoped})
     return FactFinding(
         EvidenceFact.FORMAL_VERIFIER_PASSED, FactState.DOES_NOT_HOLD,
         f"{len(scoped)} attempt(s) against this subject ({', '.join(methods)}) and "
@@ -877,7 +940,7 @@ _DERIVATIONS = (
 # ── the public reading ──────────────────────────────────────────────────────
 
 def facts_for(subject: str, *, case: AssuranceCase, analysis: Any = None,
-              completeness: Any = None) -> FactSheet:
+              completeness: Any = None, methods: Any = None) -> FactSheet:
     """Every structural fact about one subject, and nothing above them.
 
     `subject` is `evidence:<id>`, `claim:<id>` or `case`. Claim-level facts reach
@@ -892,7 +955,7 @@ def facts_for(subject: str, *, case: AssuranceCase, analysis: Any = None,
     the same way `run_query` takes it, because a ledger is built from the event
     stream the caller holds rather than derived from the case.
     """
-    context = _context(subject, case, analysis, completeness)
+    context = _context(subject, case, analysis, completeness, methods)
     notes: List[str] = []
     if analysis is None:
         notes.append(
@@ -904,7 +967,8 @@ def facts_for(subject: str, *, case: AssuranceCase, analysis: Any = None,
 
 
 def sheets_for_case(outcome: Any, *, subjects: Sequence[str] = (),
-                    completeness: Any = None) -> Dict[str, FactSheet]:
+                    completeness: Any = None,
+                    methods: Any = None) -> Dict[str, FactSheet]:
     """Fact sheets for a whole case, keyed by subject reference.
 
     Takes an `AssuranceOutcome` so the analysis travels with the case rather than
@@ -921,7 +985,7 @@ def sheets_for_case(outcome: Any, *, subjects: Sequence[str] = (),
     for subject in wanted:
         try:
             out[subject] = facts_for(subject, case=case, analysis=analysis,
-                                     completeness=completeness)
+                                     completeness=completeness, methods=methods)
         except QualityError:
             # A subject the case does not hold is skipped rather than raised:
             # this is a bulk reading, and one bad reference should not cost the

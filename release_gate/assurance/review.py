@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from release_gate.assurance.compression import Basis
+from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 
 __all__ = [
     "REVIEW_SCHEMA_VERSION",
@@ -295,10 +296,22 @@ class CaseReview:
 #: enum, so a new rule cannot quietly fall outside the count.
 _JUDGEMENT_KINDS = frozenset({"human_review", "unspecified"})
 
-#: Methods that establish a claim by proof rather than by trial. Read against
-#: `passing_methods`, never `methods`: a prover run against a state the claim has
-#: since left is history, not current verification.
-_FORMAL_METHODS = frozenset({"FORMAL_PROOF", "THEOREM_PROVER"})
+#: Methods that establish the claim by proof rather than by trial. Derived from
+#: the one character table (§10aw), not listed here: this was a third hardcoded
+#: copy of the same set, and a fourth place for it to drift.
+#:
+#: Read against `passing_methods`, never `methods`: a prover run against a state
+#: the claim has since left is history, not current verification.
+_FORMAL_METHODS = frozenset(
+    method.value for method, character in CHARACTERS.items()
+    if character is MethodCharacter.PROOF_CARRYING)
+
+#: Methods whose kind release-gate models at all. A passing check outside this
+#: set is not "not formal" — it is a method nobody here has classified, and the
+#: review says so rather than letting the formal count absorb it.
+_KNOWN_CHARACTER = frozenset(
+    method.value for method, character in CHARACTERS.items()
+    if character is not MethodCharacter.UNKNOWN)
 
 #: `RequirementPressure` → the band shown. The engine's word, deliberately: a
 #: HIGH/MEDIUM scale would state how bad something is, which release-gate does
@@ -400,9 +413,12 @@ def _critical_figures(outcome: Any) -> Tuple[Figure, ...]:
                            "records or producers enters this")
 
     verified = corroborated = formal = undetermined_verification = None
+    unclassified_methods = None
+    assessable = 0
     if determinable and graph is not None and critical_ids:
         from release_gate.assurance.verification import VerificationTarget
         verified = corroborated = formal = undetermined_verification = 0
+        unclassified_methods = 0
         for claim_id in critical_ids:
             # No digest argument: the graph records each target's own current
             # state, and handing it the case's subject digest instead made every
@@ -416,18 +432,64 @@ def _critical_figures(outcome: Any) -> Tuple[Figure, ...]:
             if any(_enum(m) in _FORMAL_METHODS
                    for m in (reading.passing_methods or ())):
                 formal += 1
-            if not reading.applies and reading.undetermined:
+            elif any(_enum(m) not in _KNOWN_CHARACTER
+                     for m in (reading.passing_methods or ())):
+                # A passing check by a method release-gate does not model. Whether
+                # it is formal is not established, and counting it against the
+                # formal total would report an absence of a reading as a reading
+                # (§10aw).
+                unclassified_methods += 1
+            if reading.applies:
+                assessable += 1
+            elif reading.undetermined:
                 undetermined_verification += 1
 
     contradictions = getattr(analysis, "contradictions", None)
     counterexamples = getattr(analysis, "counterexamples", None)
     assumptions = getattr(analysis, "assumptions", None)
 
+    if verified is not None and not assessable:
+        # Nothing could be assessed, so these are not counts of zero.
+        #
+        # The engine records a current digest for artifacts and for the subject —
+        # things with content to hash — and never for a claim, which is a
+        # statement rather than a blob. So no attempt on a claim is ever
+        # applicable, and `0 verified` here is arithmetic rather than a finding.
+        # It read as one until this: three lines that looked like readings and
+        # could not be anything but zero (Invariant 3).
+        why = ("no check on a critical claim could be placed against the claim's "
+               "current state: release-gate records current digests for artifacts "
+               "and for the subject, and a claim is a statement rather than "
+               "content, so applicability is not computable here")
+        verified = corroborated = formal = None
+        unclassified_methods = None
+        unassessable_detail = why
+    else:
+        unassessable_detail = ""
+
+    def _verification(label: str, value: Optional[int], detail: str) -> Figure:
+        """One verification figure, carrying the reason when there is no number.
+
+        The reason replaces the description rather than sitting beside it: a line
+        reading `not assessed` next to "at least one passing check that applies"
+        tells a reviewer what the figure would have meant, not why it is absent.
+        """
+        return _figure(label, value, unassessable_detail or detail)
+
+    tail: List[Figure] = []
+    if unclassified_methods:
+        # Shown only when there is something to explain, beside the formal count
+        # it would otherwise have been silently absent from.
+        tail.append(_figure(
+            "Checked by a method of unknown kind", unclassified_methods,
+            "release-gate does not model the method, so whether it is a formal "
+            "one is not established; an organisation may declare its character"))
+
     return (
         critical,
-        _figure("Verified", verified,
-                "at least one passing check that applies to the claim's current "
-                "state; a superseded check counts for nothing"),
+        _verification("Verified", verified,
+                      "at least one passing check that applies to the claim's "
+                      "current state; a superseded check counts for nothing"),
         # Beside `Verified` always. Zero verified with every attempt of unknown
         # applicability is a different case from zero verified with checks that
         # ran and failed, and the first reads as the second without this line.
@@ -435,11 +497,11 @@ def _critical_figures(outcome: Any) -> Tuple[Figure, ...]:
                 "checks exist and nothing establishes whether they still apply, "
                 "so they are reported and not counted — 'cannot tell' is not "
                 "'still holds'"),
-        _figure("Independently corroborated", corroborated,
-                "confirmed across more than one lineage — one group checking "
-                "twice is one check twice"),
-        _figure("Formally verified", formal,
-                "by a proof method, among the checks that currently apply"),
+        _verification("Independently corroborated", corroborated,
+                      "confirmed across more than one lineage — one group "
+                      "checking twice is one check twice"),
+        _verification("Formally verified", formal,
+                      "by a proof method, among the checks that currently apply"),
         _figure("Open contradictions",
                 len(contradictions.open()) if contradictions is not None else None),
         _figure("Unresolved load-bearing assumptions",
@@ -447,7 +509,7 @@ def _critical_figures(outcome: Any) -> Tuple[Figure, ...]:
                 if assumptions is not None else None),
         _figure("Open counterexamples",
                 len(counterexamples.open()) if counterexamples is not None else None),
-    )
+    ) + tuple(tail)
 
 
 def _coverage_lines(outcome: Any) -> Tuple[Tuple[CoverageLine, ...], Tuple[str, ...]]:

@@ -182,16 +182,40 @@ class TestUnknownIsNotZero:
             if line.ratio is None:
                 assert "%" not in line.shown
 
-    def test_zero_verified_comes_with_the_undetermined_count_beside_it(self, frontier):
-        """Zero verified reads as "checks ran and failed" without this line.
+    def test_a_figure_that_could_only_ever_read_zero_reads_not_assessed(self, frontier):
+        """These three were counts that could not be anything but zero.
 
-        On this case every check records a state nothing can compare against, so
-        the truthful reading is that applicability is unknown — a coverage gap,
-        not a negative result.
+        The engine records a current digest for artifacts and for the subject —
+        things with content to hash — and never for a claim, which is a statement
+        rather than a blob. So no attempt on a claim is ever applicable, and
+        `Verified: 0` was arithmetic wearing the clothes of a finding. A reader
+        scanning the critical path saw three zeros and had no way to know none of
+        them had been assessed (Invariant 3).
         """
         figures = {f.label: f for f in build_review(frontier).critical_path}
-        assert figures["Verified"].value == 0
+        for label in ("Verified", "Independently corroborated", "Formally verified"):
+            assert not figures[label].known, f"{label} reads a number"
+            assert figures[label].basis is Basis.NOT_ASSESSED
+            assert "not computable here" in figures[label].detail
+
+    def test_and_the_count_that_can_be_established_still_reads(self, frontier):
+        """`Verification undetermined` is the one figure with real information on
+        this case, and it must stay a number."""
+        figures = {f.label: f for f in build_review(frontier).critical_path}
         assert figures["Verification undetermined"].value > 0
+
+    def test_claim_targets_really_cannot_be_assessed(self, frontier):
+        """The premise of the two tests above, re-derived from the graph.
+
+        If this ever stops holding — if something starts recording a claim's
+        current state — those figures become real counts and the tests above
+        should fail rather than quietly keep asserting an absence.
+        """
+        graph = frontier.analysis.verification_graph
+        claims = [t for t in graph.targets() if t.kind.value == "CLAIM"]
+        assert claims
+        assert all(graph.current_digest(t) is None for t in claims)
+        assert all(graph.assess(t).applies == 0 for t in claims)
 
 
 # ── formal verification means the checks that currently apply ────────────────

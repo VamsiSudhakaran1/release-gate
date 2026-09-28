@@ -94,7 +94,7 @@ class TestNoDrift:
         assert moved.digest() != PROTOCOL.digest()
 
     def test_the_count_is_what_was_measured(self):
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 67
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 68
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────
@@ -125,11 +125,14 @@ class TestCoreSchemas:
         assert "has no version" in str(exc.value)
 
     def test_verification_records_that_it_already_moved(self):
-        """At 3. It reached 2 before anything recorded that it had moved; 3 is
+        """At 4. It reached 2 before anything recorded that it had moved; 3 is
         the first bump this protocol watched happen, and the drift guard is what
         noticed — excluding an arrival stamp from an attempt's identity changes
-        every attempt id, so the version had to move with it."""
-        assert PROTOCOL.schema("verification").version == 3
+        every attempt id, so the version had to move with it. 4 adds
+        `method_label` to that identity, for the same reason: a method
+        release-gate does not model is now recorded under the name its producer
+        gave it, and two attempts differing only in that name are two checks."""
+        assert PROTOCOL.schema("verification").version == 4
         assert "before anything recorded" in PROTOCOL.schema("verification").note
         assert "arrival stamp" in PROTOCOL.schema("verification").note
 

@@ -195,11 +195,13 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "of `case_digest`; every BoundApproval and Override binds to it"),
         _ref("claim", "claims", "CLAIM_SCHEMA_VERSION", 1, core=True,
              note="the other schema that already refuses a newer version"),
-        _ref("verification", "verification", "VERIFICATION_SCHEMA_VERSION", 3,
+        _ref("verification", "verification", "VERIFICATION_SCHEMA_VERSION", 4,
              core=True,
-             note="at 3. It reached 2 before anything recorded that it had "
+             note="at 4. It reached 2 before anything recorded that it had "
                   "moved; 3 excludes an arrival stamp from an attempt's "
-                  "identity, so attempt ids stop moving with the clock"),
+                  "identity, so attempt ids stop moving with the clock; 4 adds "
+                  "method_label, so a method release-gate does not model can be "
+                  "recorded under the name its producer gave it"),
         _ref("approval_packet", "packet", "PACKET_SCHEMA_VERSION", 1, core=True,
              note="the eleven-question document a person reads before acting"),
         _ref("required_evidence", "required_evidence",
@@ -273,7 +275,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("mutation", "mutation", "MUTATION_SCHEMA_VERSION", 1),
         _ref("orchestrator_profile", "orchestration",
              "ORCHESTRATION_SCHEMA_VERSION", 1),
-        _ref("organisation", "organisation", "ORGANISATION_SCHEMA_VERSION", 1),
+        _ref("organisation", "organisation", "ORGANISATION_SCHEMA_VERSION", 2,
+             note="at 2: method_declarations, so an organisation can say what "
+                  "kind of check its own verifier is without release-gate "
+                  "shipping a vendor list"),
         _ref("override", "override", "OVERRIDE_SCHEMA_VERSION", 1),
         _ref("plugin", "plugin", "PLUGIN_SCHEMA_VERSION", 2,
              note="2 since a plugin may declare its domain's acts; plugin digests "
@@ -287,6 +292,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("progress", "progress", "PROGRESS_SCHEMA_VERSION", 1),
         _ref("quality", "quality", "QUALITY_SCHEMA_VERSION", 1),
         _ref("query", "query", "QUERY_SCHEMA_VERSION", 1),
+        _ref("methods", "methods", "METHODS_SCHEMA_VERSION", 1,
+             note="what kind of check a verification method is, and who says so; "
+                  "one table, so the three places that hardcoded which methods "
+                  "are formal cannot drift apart"),
         _ref("replication", "replication", "REPLICATION_SCHEMA_VERSION", 1),
         _ref("review", "review", "REVIEW_SCHEMA_VERSION", 1,
              note="the one-screen case review: a typed view over an outcome, "

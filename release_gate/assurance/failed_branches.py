@@ -38,6 +38,7 @@ from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from release_gate.assurance.canonical import digest_object, short_id
+from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 from release_gate.assurance.records import MaterialisationBasis
 from release_gate.assurance.subject import ContentReference
 
@@ -521,14 +522,26 @@ def branches_from_verification(graph: Any) -> Tuple[FailedBranch, ...]:
     return tuple(out)
 
 
+#: What a failed check of each kind means. Methods absent from this map fall to
+#: the caller's default rather than being guessed at: a method release-gate does
+#: not model has no known failure shape, and inventing one would put a specific
+#: word on an outcome nobody established (§10aw).
+#:
+#: The proof-carrying rows are derived from the character table rather than
+#: listed, because this was the third place that kept its own copy of which
+#: methods are proofs. A `MECHANICAL` check failing rejects the artifact; a proof
+#: failing means the proof did not close, and those are different facts about the
+#: branch.
 _OUTCOME_FOR_METHOD = {
-    "FORMAL_PROOF": BranchOutcome.PROOF_FAILED,
-    "THEOREM_PROVER": BranchOutcome.PROOF_FAILED,
+    **{method.value: BranchOutcome.PROOF_FAILED
+       for method, character in CHARACTERS.items()
+       if character is MethodCharacter.PROOF_CARRYING},
+    **{method.value: BranchOutcome.ARTIFACT_REJECTED
+       for method, character in CHARACTERS.items()
+       if character is MethodCharacter.MECHANICAL},
     "SIMULATION": BranchOutcome.INVARIANT_VIOLATED,
     "PROPERTY_TEST": BranchOutcome.CANDIDATE_REFUTED,
     "TEST_SUITE": BranchOutcome.TEST_FAILED,
     "HUMAN_REVIEW": BranchOutcome.ARTIFACT_REJECTED,
     "CROSS_MODEL_REVIEW": BranchOutcome.ARTIFACT_REJECTED,
-    "COMPILER": BranchOutcome.ARTIFACT_REJECTED,
-    "TYPE_CHECKER": BranchOutcome.ARTIFACT_REJECTED,
 }

@@ -48,11 +48,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.level import AssuranceLevel
+from release_gate.assurance.methods import (
+    MethodDeclaration, MethodError, MethodRegistry)
 from release_gate.assurance.methodology import (
     AssuranceMethodology, MethodologyError, OverrideRule, Requirement,
 )
 
-ORGANISATION_SCHEMA_VERSION = 1
+ORGANISATION_SCHEMA_VERSION = 2
 
 
 class OrganisationConfigError(ValueError):
@@ -98,12 +100,23 @@ class OrganisationConfig:
     #: registry by the caller. Selection, never definition.
     methodology: Optional[str] = None
     override_rules: Tuple[OverrideRule, ...] = ()
+    #: What kind of check the organisation's own verification methods are, for
+    #: methods release-gate does not model (§10aw). Classification, never trust:
+    #: saying a tool produces proofs is a different statement from saying its
+    #: output may be relied on, and `VerifierStanding` is the second one.
+    #:
+    #: Each declaration is DECLARED wherever it is used and names its declarer, so
+    #: a reader can see it is somebody's statement about their own tooling. It
+    #: cannot loosen anything: a method with no declaration reads as of unknown
+    #: character, which never satisfies a requirement.
+    method_declarations: Tuple[MethodDeclaration, ...] = ()
     organisation_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "risk_appetite", _level(self.risk_appetite))
         for name in ("domain_requirements", "required_verifiers", "approval_roles",
-                     "custom_capabilities", "override_rules"):
+                     "custom_capabilities", "override_rules",
+                     "method_declarations"):
             object.__setattr__(self, name, tuple(getattr(self, name) or ()))
         for name in ("required_verifiers", "approval_roles", "custom_capabilities"):
             object.__setattr__(self, name, tuple(
@@ -113,6 +126,21 @@ class OrganisationConfig:
             raise OrganisationConfigError(
                 "an organisation permitting an override must identify itself: a "
                 f"waiver of {permissive[0]} that names nobody cannot be reviewed")
+        if self.method_declarations:
+            # Same rule, same reason. Classifying a method changes what a
+            # requirement reads as met by, so a declaration nobody signs cannot
+            # be reviewed either.
+            if not self.organisation_id:
+                raise OrganisationConfigError(
+                    "an organisation declaring a verification method's character "
+                    f"must identify itself: the claim that "
+                    f"{self.method_declarations[0].label!r} is a "
+                    f"{self.method_declarations[0].character.value} check is a "
+                    "statement somebody is answerable for")
+            try:
+                MethodRegistry(self.method_declarations)
+            except MethodError as exc:
+                raise OrganisationConfigError(str(exc)) from exc
 
     @property
     def is_empty(self) -> bool:
@@ -120,7 +148,7 @@ class OrganisationConfig:
         return not (self.risk_appetite is not None or self.domain_requirements
                     or self.required_verifiers or self.approval_roles
                     or self.custom_capabilities or self.methodology
-                    or self.override_rules)
+                    or self.override_rules or self.method_declarations)
 
     # ── reading ─────────────────────────────────────────────────────────────
 
@@ -134,7 +162,8 @@ class OrganisationConfig:
         unknown = set(data) - {
             "risk_appetite", "domain_requirements", "required_verifiers",
             "approval_roles", "custom_capabilities", "methodology",
-            "override_rules", "organisation_id", "schema_version", "record_type"}
+            "override_rules", "organisation_id", "schema_version", "record_type",
+            "method_declarations"}
         if unknown:
             # Refused rather than ignored: a misspelled key in a file whose whole
             # job is to tighten a gate would silently not tighten it.
@@ -145,7 +174,16 @@ class OrganisationConfig:
                                  for r in data.get("domain_requirements", ()))
             overrides = tuple(OverrideRule.from_dict(r)
                               for r in data.get("override_rules", ()))
-        except (MethodologyError, KeyError, TypeError) as exc:
+            declarations = tuple(
+                MethodDeclaration(
+                    label=str(r.get("label") or r.get("method") or ""),
+                    character=str(r.get("character") or "").strip().upper(),
+                    declared_by=str(r.get("declared_by") or ""),
+                    detail=str(r.get("detail") or ""),
+                    not_for_producers=tuple(r.get("not_for_producers") or ()))
+                for r in data.get("method_declarations", ()))
+        except (MethodologyError, MethodError, KeyError, TypeError,
+                AttributeError) as exc:
             raise OrganisationConfigError(f"unreadable configuration: {exc}") from exc
         return cls(
             risk_appetite=data.get("risk_appetite"),
@@ -155,6 +193,7 @@ class OrganisationConfig:
             custom_capabilities=tuple(data.get("custom_capabilities", ())),
             methodology=(data.get("methodology") or None),
             override_rules=overrides,
+            method_declarations=declarations,
             organisation_id=str(data.get("organisation_id") or ""))
 
     @classmethod
@@ -196,8 +235,14 @@ class OrganisationConfig:
             "custom_capabilities": list(self.custom_capabilities),
             "methodology": self.methodology,
             "override_rules": [r.to_dict() for r in self.override_rules],
+            "method_declarations": [d.to_dict() for d in self.method_declarations],
             "schema_version": ORGANISATION_SCHEMA_VERSION,
         }
+
+    @property
+    def method_registry(self) -> MethodRegistry:
+        """The declarations, as the registry §10aw consults. Empty by default."""
+        return MethodRegistry(self.method_declarations)
 
     # ── applying ────────────────────────────────────────────────────────────
 

@@ -62,7 +62,7 @@ __all__ = [
     "VerificationTarget",
 ]
 
-VERIFICATION_SCHEMA_VERSION = 3
+VERIFICATION_SCHEMA_VERSION = 4
 
 
 class VerificationError(ValueError):
@@ -230,6 +230,14 @@ class VerificationAttempt:
     """
 
     method: VerificationMethod
+    #: What the producer called the method, when `method` is `OTHER`. A method
+    #: release-gate does not model used to be refused by the enum and then
+    #: swallowed by the ingest, which is release-gate omitting evidence — the
+    #: threat Invariant 13 names. The name survives here instead, so a future
+    #: formal method can be recorded, required by a methodology, and given a
+    #: character (§10aw) without a release-gate change. Only valid with `OTHER`:
+    #: a label beside a modelled method would be a second name for one thing.
+    method_label: str = ""
     target: Optional[VerificationTarget] = None
     verifier: str = ""
     target_digest: Optional[str] = None
@@ -254,6 +262,13 @@ class VerificationAttempt:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "method", VerificationMethod(self.method))
+        label = (self.method_label or "").strip()
+        if label and self.method is not VerificationMethod.OTHER:
+            raise VerificationError(
+                f"method_label {label!r} is only valid with method OTHER (got "
+                f"{VerificationMethod(self.method).value}); a modelled method "
+                "does not need a second name")
+        object.__setattr__(self, "method_label", label)
         object.__setattr__(self, "status", VerificationStatus(self.status))
         object.__setattr__(self, "trust_status", TrustStatus(self.trust_status))
         object.__setattr__(self, "evidence", tuple(self.evidence))
@@ -310,6 +325,11 @@ class VerificationAttempt:
         return {
             "schema_version": VERIFICATION_SCHEMA_VERSION,
             "method": self.method.value,
+            # Part of the identity: two attempts differing only in what their
+            # producer called the method are two different checks, and collapsing
+            # them would deduplicate a proof-carrying check against an empirical
+            # one because both arrived as OTHER.
+            "method_label": self.method_label,
             "target": self.target.to_dict() if self.target else None,
             "verifier": self.verifier,
             "target_digest": self.target_digest,
@@ -383,6 +403,7 @@ class VerificationAttempt:
             "stamped_on_arrival": self.stamped_on_arrival,
             "verifier": self.verifier,
             "method": self.method.value,
+            "method_label": self.method_label,
             "target": self.target.to_dict() if self.target else None,
             "target_digest": self.target_digest,
             "input_state": self.input_state,
@@ -410,6 +431,7 @@ class VerificationAttempt:
         target = data.get("target")
         return cls(
             method=VerificationMethod(data["method"]),
+            method_label=data.get("method_label", "") or "",
             target=VerificationTarget.from_dict(target) if target else None,
             verifier=data.get("verifier", ""),
             target_digest=data.get("target_digest"),

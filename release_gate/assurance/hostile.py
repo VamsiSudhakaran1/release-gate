@@ -680,6 +680,92 @@ def _t_verifier_name_squatting() -> AttackResult:
                 "coverage_rows": [r.dimension for r in report.expectations()]})
 
 
+def _t_method_character_self_declaration() -> AttackResult:
+    """Declare your own tool proof-carrying, then submit its output.
+
+    The attack §10aw's escape hatch opens. A method release-gate does not model
+    now reads as of unknown character rather than as not formal, and an
+    organisation may declare what kind of check its own tool is. Put the two
+    together and there is a route to "formally verified" that never involved a
+    proof: name a method, declare it PROOF_CARRYING, submit a passing attempt.
+
+    Every ingredient works. The declaration is well-formed, the attempt is
+    admissible, the label matches. Two things deny it the engine's voice. The
+    reading is `DECLARED` and says who declared it, so nothing reads as
+    release-gate having established the character. And where the declaration names
+    the producing party among those it may not cover, it is refused outright and
+    the character falls back to UNKNOWN — a party cannot classify its own check.
+
+    `was_possible` reads off the ingredients: the declaration is accepted and the
+    attempt lands. What it buys is a visibly declared reading, not an observed one.
+    """
+    from release_gate.assurance.chaos import _base as chaos_base
+    from release_gate.assurance.methods import (
+        CharacterBasis, MethodCharacter, MethodDeclaration, MethodRegistry,
+        character_of,
+    )
+    from release_gate.assurance.quality import EvidenceFact, FactState, facts_for
+
+    attacker = "agent://attacker/prover"
+    label = "PROPRIETARY_PROOF_ENGINE"
+
+    registry = MethodRegistry((MethodDeclaration(
+        label=label, character=MethodCharacter.PROOF_CARRYING,
+        declared_by=attacker,
+        detail="our engine emits proofs",
+        # The organisation that actually runs this declares it must not cover its
+        # own prover. An attacker writing its own config would omit this line,
+        # which is why the DECLARED basis carries the weight rather than this.
+        not_for_producers=(attacker,)),))
+
+    records = [dict(r) for r in chaos_base()]
+    for row in records:
+        if row.get("record_type") == "claim":
+            row["verification_attempts"] = list(row["verification_attempts"]) + [
+                {"method": label, "outcome": "PASSED", "verifier": attacker,
+                 "evidence": [], "detail": "proved by our engine"}]
+    outcome = _assure(records)
+
+    graph = outcome.analysis.verification_graph
+    landed = next((a for a in graph.attempts if a.method_label == label), None)
+    declaration_accepted = registry.of(label) is not None
+
+    # Read as a third party would: the declaration is in force.
+    third_party = character_of(landed, registry=registry,
+                               producers=("ci://someone-else",)) if landed else None
+    # Read as the case actually presents it: the attacker is the verifier.
+    as_submitted = character_of(landed, registry=registry,
+                               producers=(attacker,)) if landed else None
+
+    sheet = facts_for("case", case=outcome.case, analysis=outcome.analysis,
+                      methods=registry)
+    formal = next(f for f in sheet.findings
+                  if f.fact is EvidenceFact.FORMAL_VERIFIER_PASSED)
+
+    laundered = bool(third_party and third_party.basis is CharacterBasis.BUILT_IN)
+    self_declaration_refused = bool(
+        as_submitted and as_submitted.character is MethodCharacter.UNKNOWN)
+
+    return AttackResult(
+        name="method_character_self_declaration",
+        outcome=(Outcome.DECLARED
+                 if landed is not None and not laundered else Outcome.NOT_DEFENDED),
+        signal=(f"the declaration was accepted ({declaration_accepted}) and the "
+                f"attempt landed ({landed is not None}); read by a third party it "
+                f"is {third_party.basis.value if third_party else 'absent'} and "
+                f"names {third_party.declared_by if third_party else 'nobody'}, and "
+                f"read as submitted the declarer is the producer so it is refused "
+                f"({self_declaration_refused}); the formal fact reads "
+                f"{formal.state.value}"),
+        was_possible=declaration_accepted and landed is not None,
+        detail={"third_party_basis": third_party.basis.value if third_party else None,
+                "as_submitted_character":
+                    as_submitted.character.value if as_submitted else None,
+                "refused": as_submitted.refused if as_submitted else "",
+                "formal_fact": formal.state.value,
+                "laundered_into_our_voice": laundered})
+
+
 _THREAT_LIST: Tuple[Attack, ...] = (
     Attack("approval_forgery", "build an approval this engine never issued",
            Outcome.REFUSED, _t_approval_forgery),
@@ -729,6 +815,9 @@ _THREAT_LIST: Tuple[Attack, ...] = (
     Attack("verifier_name_squatting",
            "claim to be a verifier the organisation vetted, by using its name",
            Outcome.DECLARED, _t_verifier_name_squatting),
+    Attack("method_character_self_declaration",
+           "declare your own method proof-carrying, then submit its output",
+           Outcome.DECLARED, _t_method_character_self_declaration),
 )
 
 THREATS: Mapping[str, Attack] = {t.name: t for t in _THREAT_LIST}

@@ -30,10 +30,13 @@ class TestTheHarness:
     def test_every_named_fault_is_covered(self):
         """The thirteen the brief names, by the brief's own vocabulary.
 
-        Plus one this engine can inflict on itself: §10ap made a finalization reuse
+        Plus two this engine can inflict on itself. §10ap made a finalization reuse
         a provisional read's outcome, and a reuse that settled on a different
         commitment would be an approval bound to a digest no recomputation would
-        produce. That belongs under the same standard as every external fault.
+        produce. §10aw's is the passage of time: a verification method invented
+        after this release used to be dropped at the ingest with no trace, and what
+        survived read as no formal verification at all. Both belong under the same
+        standard as every external fault.
         """
         assert set(FAULTS) == {
             "ingestion_interruption", "duplicate_batches", "reordered_events",
@@ -41,7 +44,7 @@ class TestTheHarness:
             "concurrent_mutation", "approval_during_update",
             "verifier_arriving_late", "subject_mutation_during_review",
             "external_evidence_unavailable", "stale_digest",
-            "reused_finalization"}
+            "reused_finalization", "unmodelled_verification_method"}
 
     def test_every_fault_actually_perturbs_its_input(self, report):
         """The meta-guard. A fault that leaves the input alone would recover

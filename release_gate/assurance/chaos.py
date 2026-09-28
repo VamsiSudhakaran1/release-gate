@@ -619,6 +619,57 @@ def _f_reused_finalization() -> FaultResult:
         detail={"cold": cold, "warm": warm, "reuse": reused_name})
 
 
+def _f_unmodelled_verification_method() -> FaultResult:
+    """Validation moves on and release-gate's method vocabulary does not.
+
+    The fault PROMPT 78 asks about: if most validation becomes formal, and formal
+    means methods invented after this release, does the engine still say anything
+    useful? It used to say the wrong thing twice — the enum refused the value and
+    the ingest dropped the attempt with no skip and no note, and what survived
+    read as *no formal verification at all*.
+
+    Three things are checked here. The attempt is kept, under the name its
+    producer gave it. A note says release-gate does not model the method, so the
+    omission is not silent. And the formal fact reads NOT_ASSESSED rather than
+    DOES_NOT_HOLD, because nobody established what kind of check it was.
+    """
+    from release_gate.assurance.quality import EvidenceFact, FactState, facts_for
+
+    label = "INTERACTIVE_ORACLE_PROOF"
+    doc = []
+    for row in _base():
+        row = dict(row)
+        if row.get("record_type") == "claim":
+            row["verification_attempts"] = [
+                dict(a, method=label)
+                for a in (row.get("verification_attempts") or ())] or [
+                {"method": label, "outcome": "PASSED", "verifier": "iop://checker"}]
+        doc.append(row)
+    outcome = _assure(doc)
+
+    graph = outcome.analysis.verification_graph
+    kept = [a for a in graph.attempts if a.method_label == label]
+    noted = any("does not model" in n for n in outcome.normalisation.notes)
+    sheet = facts_for("case", case=outcome.case, analysis=outcome.analysis)
+    formal = next(f for f in sheet.findings
+                  if f.fact is EvidenceFact.FORMAL_VERIFIER_PASSED)
+    not_a_finding = formal.state in (FactState.NOT_ASSESSED,
+                                     FactState.NOT_APPLICABLE)
+
+    return FaultResult(
+        name="unmodelled_verification_method",
+        recovery=(Recovery.DECLARED if kept and noted and not_a_finding
+                  else Recovery.REFUSED),
+        signal=(f"{len(kept)} attempt(s) kept under the producer's own name "
+                f"({label}); the note says release-gate does not model it "
+                f"({noted}); whether a formal method passed reads "
+                f"{formal.state.value}"),
+        perturbed=bool(kept),
+        detail={"kept": len(kept), "noted": noted,
+                "formal_fact": formal.state.value,
+                "labels": sorted({a.method_label for a in kept})})
+
+
 _FAULT_LIST: Tuple[Fault, ...] = (
     Fault("ingestion_interruption",
           "the producer dies mid-stream and half the records never arrive",
@@ -686,6 +737,14 @@ _FAULT_LIST: Tuple[Fault, ...] = (
           why="UNVERIFIABLE, which is not UNCHANGED and not MUTATED. An "
               "unreachable store is a third thing and collapsing it into either "
               "would be a guess"),
+    Fault("unmodelled_verification_method",
+          "every check is run by a method this release has never heard of",
+          Recovery.DECLARED, _f_unmodelled_verification_method,
+          why="the checks are kept under the names their producers gave, and "
+              "whether any of them is formal reads NOT_ASSESSED. Dropping them "
+              "would be release-gate omitting evidence (Invariant 13); calling "
+              "them not-formal would be a finding where there is none "
+              "(Invariant 3)"),
     Fault("stale_digest",
           "an approval is checked against a case whose subject has moved",
           Recovery.REFUSED, _f_stale_digest,

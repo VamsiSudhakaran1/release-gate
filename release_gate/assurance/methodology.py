@@ -117,10 +117,28 @@ def _is_open(record: Mapping[str, Any]) -> bool:
     return not record.get(FIELD_RESOLVED)
 
 
+#: The field carrying what a producer called a method release-gate does not
+#: model. See `_method_of` for why a requirement reads it.
+FIELD_ATTEMPT_METHOD_LABEL = "method_label"
+
+
 def _method_of(record: Mapping[str, Any]) -> str:
-    """A record's verification method, under either spelling."""
-    return str(record.get(FIELD_VERIFICATION_METHOD)
-               or record.get(FIELD_ATTEMPT_METHOD) or "")
+    """A record's verification method, under either spelling.
+
+    An `OTHER` attempt carrying a label reads as that label, because the label is
+    what the method actually was. This is what lets a methodology require a method
+    release-gate does not model: a domain whose validation is formal in a way this
+    release has never heard of writes `methods=("INTERACTIVE_ORACLE_PROOF",)` and
+    matches exactly that, rather than either missing it or matching `OTHER` and so
+    crediting every unmodelled method indiscriminately (§10aw).
+    """
+    method = str(record.get(FIELD_VERIFICATION_METHOD)
+                 or record.get(FIELD_ATTEMPT_METHOD) or "")
+    if method.strip().upper() == "OTHER":
+        label = str(record.get(FIELD_ATTEMPT_METHOD_LABEL) or "").strip()
+        if label:
+            return label
+    return method
 
 
 def _independence_of(record: Mapping[str, Any]) -> str:

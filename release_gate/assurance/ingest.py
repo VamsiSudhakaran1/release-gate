@@ -792,7 +792,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             mapped += 1
             continue
         try:
-            claims.append(_claim_from(row, producer, id_map))
+            claims.append(_claim_from(row, producer, id_map, notes))
             if declared:
                 seen_claims.add(declared)
             mapped += 1
@@ -1107,8 +1107,33 @@ def _evidence_type_of(payload: Mapping[str, Any]) -> EvidenceType:
         return EvidenceType.OTHER
 
 
+def _method_of(raw: Mapping[str, Any],
+               notes: Optional[List[str]] = None) -> Tuple[VerificationMethod, str]:
+    """The method and, for one release-gate does not model, its producer's name.
+
+    An unmodelled method used to raise out of `VerificationMethod(...)` and be
+    caught by a bare `except: continue`, so the whole attempt vanished with no
+    skip count and no note. That is release-gate omitting evidence, which is the
+    threat Invariant 13 names and the reason this returns `OTHER` plus the name
+    rather than nothing: a formal method invented after this release can still be
+    recorded, and §10aw decides what kind of check it was — or says nobody has.
+    """
+    declared = str(raw.get("method") or "OTHER").strip()
+    try:
+        return VerificationMethod(declared.upper()), ""
+    except ValueError:
+        if notes is not None:
+            notes.append(
+                f"a verification attempt declares method {declared!r}, which "
+                "release-gate does not model; it is kept as OTHER under that "
+                "name, and what kind of check it is reads as not established "
+                "rather than as no formal verification")
+        return VerificationMethod.OTHER, declared
+
+
 def _claim_from(row: Mapping[str, Any], producer: Producer,
-                id_map: Optional[Mapping[str, str]] = None) -> Claim:
+                id_map: Optional[Mapping[str, str]] = None,
+                notes: Optional[List[str]] = None) -> Claim:
     resolve = (lambda i: (id_map or {}).get(i, i))
     attempts: List[VerificationAttempt] = []
     for raw in row.get("verification_attempts") or ():
@@ -1123,9 +1148,10 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
         # dropped — the evidence is real even when the attribution is coarse.
         verifier = str(raw.get("verifier") or raw.get("performed_by")
                        or producer.producer_id).strip()
+        method, method_label = _method_of(raw, notes)
         try:
             attempts.append(VerificationAttempt(
-                method=VerificationMethod(str(raw.get("method", "OTHER")).upper()),
+                method=method, method_label=method_label,
                 verifier="" if status is VerificationStatus.NOT_RUN else verifier,
                 # `target_digest` is passed through when the envelope records it
                 # and left absent when it does not. Absent means UNDETERMINED
@@ -1141,7 +1167,13 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
                 evidence=() if status is VerificationStatus.NOT_RUN else evidence_ids,
                 independence_lineage=tuple(_as_ids(raw.get("independence_lineage"))),
                 status=status, detail=str(raw.get("detail") or "")))
-        except (ValueError, VerificationError):
+        except (ValueError, VerificationError) as exc:
+            # Noted, never silent. A refused attempt is a record that arrived and
+            # did not make it, which a reviewer is entitled to know about.
+            if notes is not None:
+                notes.append(
+                    f"a verification attempt on {row.get('claim_id') or 'a claim'} "
+                    f"was refused: {exc}")
             continue
     extracted_by = row.get("extracted_by_model")
     return Claim(
