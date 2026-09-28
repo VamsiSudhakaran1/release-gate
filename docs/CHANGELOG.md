@@ -2,6 +2,70 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [Unreleased]
+
+### 🌐 The assurance engine has a page you can drop a file into
+
+`https://release-gate.com/assurance.html` takes a pasted or dropped run —
+an OpenTelemetry trace, a Langfuse export, the native envelope — and returns
+the case: the verdict, the banded list of what needs a person with what would
+close each item, the dimensions that were never assessed, and the full
+one-screen review. It runs the packaged engine behind `POST /api/assure`, with
+the demo's own bounds (512 KB, 2,000 lines, 30 runs an hour per address) and
+error text that points at the CLI, which has none.
+
+Its three samples **are** the files in `examples/assurance/`, generated from
+them rather than typed into the page, so a visitor who clicks a sample and a
+reader who runs the same file through the CLI submit identical bytes. The page
+prints that command, and `tests/test_site_demo.py` fails if the two ever
+diverge — in either direction.
+
+### 🎨 The site was rebuilt around what the product now is
+
+It led with the code scanner and never mentioned assurance. It now opens on the
+assurance engine, with the README's three claims and the same measured table,
+and the visual system was rebuilt: near-black canvas, hairline borders, one
+warm accent, and the product itself in the hero instead of a gradient. Dark is
+the default on every page; the toggle still serves a real light theme.
+
+Contrast was measured in a browser rather than eyeballed, which found defects
+rather than dim greys: twelve places paired a hardcoded white with an accent
+fill (fine over indigo, 1.5:1 over gold), terminals inherited the page's dark
+body text onto their own dark surface on the light theme, and the theme toggle
+read the OS preference as its default after the stylesheet had stopped
+following the OS — so the first click set the theme the page already showed.
+Ten page/theme combinations now pass WCAG AA, and ten page/viewport
+combinations have no horizontal overflow at 390px.
+
+### 🐛 Two calls that looked like they worked and did nothing
+
+- `Case.add_execution([...])` built no graph. Given the steps as a bare list,
+  they were flattened to a scalar, so the case reported
+  `execution_reconstruction: NOT_ASSESSED` and asked for the trace it had just
+  been handed. A sequence is now wrapped into the shape the ingest folds, and a
+  payload that cannot become a trace is refused rather than stored.
+- `create_case(methodology="research-mathematics-v1")` discarded the `-v1` and
+  `id@X.Y.Z` did not resolve at all. With one version published nobody could
+  tell; with two, a caller who named a version got a different one. `id@X.Y.Z`
+  now pins exactly, `id-vN` pins within the N line, and a bare id takes the
+  newest.
+
+### 📄 The README says three things instead of everything
+
+496 lines to 187: a bounded set of things that need a human, a verdict that
+states what it did *not* check, and the work order that comes back when it
+holds — each with the output that demonstrates it. The rest moved under "we
+also do this", with a link to where each is already documented, and a test
+asserts those links survive. `docs/DEMO.md` is the walkthrough it points at.
+
+### 🔒 The API no longer states a version of its own
+
+`/api/health` reads `release_gate.__version__`. The old arrangement kept a
+literal in step with a guard that only checked the literal was *present*, so
+the API sat three minors behind the package for several releases while the
+check passed. What is enforced now is the absence of a second place to state
+it.
+
 ## [0.10.1] — 2026-08-06
 
 ### 📡 The loop verifier reads platform exports too
