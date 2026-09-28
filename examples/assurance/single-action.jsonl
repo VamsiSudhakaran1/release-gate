@@ -1,0 +1,6 @@
+{"record_type":"consequence","REVERSIBILITY":"REVERSIBLE","SCOPE":"SINGLE_SUBJECT","DATA_IMPACT":"MODIFIED","source":"the change ticket"}
+{"record_type":"evidence","evidence_id":"e1","kind":"TEST_RESULT","producer":{"producer_id":"agent://assistant/1","kind":"agent"},"coverage_note":"the project's test suite, 412 of 412 passing; does not cover data migration under load"}
+{"record_type":"evidence","evidence_id":"e2","kind":"OBSERVATION","producer":{"producer_id":"agent://assistant/1","kind":"agent"},"coverage_note":"applied to a scratch copy of production; row counts match before and after"}
+{"record_type":"artifact","logical_id":"migration.sql","artifact_kind":"MIGRATION","digest_method":"SHA256_CONTENT"}
+{"record_type":"claim","claim_id":"C-1","proposition":"the 0042 migration applies cleanly and is reversible","supporting_evidence":["e1","e2"],"verification_attempts":[{"method":"TEST_SUITE","outcome":"PASSED","verifier":"ci://build/991"}]}
+{"record_type":"expectation","dimension":"migration rehearsal","expected":2,"observed":1,"source":{"kind":"CI_PLAN","declared_by":"ci://pipeline/migrations","authenticated":false,"detail":"the pipeline rehearses on staging and on a prod clone"}}

@@ -1,0 +1,76 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {"key": "service.name", "value": {"stringValue": "migration-agent"}}
+    ]
+   },
+   "scopeSpans": [
+    {
+     "spans": [
+      {
+       "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "spanId": "0000000000000001",
+       "name": "plan the change",
+       "startTimeUnixNano": "1700000000000000000",
+       "endTimeUnixNano": "1700000001000000000",
+       "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+        {"key": "gen_ai.system", "value": {"stringValue": "anthropic"}}
+       ]
+      },
+      {
+       "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "spanId": "0000000000000002",
+       "parentSpanId": "0000000000000001",
+       "name": "read schema",
+       "startTimeUnixNano": "1700000001000000000",
+       "endTimeUnixNano": "1700000002000000000",
+       "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+        {"key": "gen_ai.tool.name", "value": {"stringValue": "postgres_query"}}
+       ]
+      },
+      {
+       "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "spanId": "0000000000000003",
+       "parentSpanId": "0000000000000001",
+       "name": "write migration.sql",
+       "startTimeUnixNano": "1700000002000000000",
+       "endTimeUnixNano": "1700000003000000000",
+       "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+        {"key": "gen_ai.tool.name", "value": {"stringValue": "write_file"}}
+       ]
+      },
+      {
+       "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "spanId": "0000000000000004",
+       "parentSpanId": "0000000000000001",
+       "name": "run test suite",
+       "startTimeUnixNano": "1700000003000000000",
+       "endTimeUnixNano": "1700000004000000000",
+       "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+        {"key": "gen_ai.tool.name", "value": {"stringValue": "shell"}}
+       ]
+      },
+      {
+       "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "spanId": "0000000000000005",
+       "parentSpanId": "0000000000000001",
+       "name": "summarise",
+       "startTimeUnixNano": "1700000004000000000",
+       "endTimeUnixNano": "1700000005000000000",
+       "attributes": [
+        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+        {"key": "gen_ai.system", "value": {"stringValue": "anthropic"}}
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -73,11 +73,17 @@ def test_demo_agent_files_are_the_ones_analyzed():
 
 
 def test_published_pages_quote_the_live_output(demo_output):
-    """The website and READMEs must quote what the engine actually prints."""
+    """Wherever this output is published, it must be what the engine prints.
+
+    The main README is deliberately not in this set any more. It used to carry
+    the code-scanning demo inline; that lane now lives behind a link, so the
+    README publishes no demo output to keep honest. The guard follows the
+    content rather than the filename — a page that quotes it must quote it live,
+    and a page that does not quote it is not failed for the omission.
+    """
     claim = "traced to the model's own output at line 17"
     pages = {
         "examples/demo-code-risk/README.md": ROOT / "examples/demo-code-risk/README.md",
-        "README.md": ROOT / "README.md",
         "public/demo.html": ROOT / "public" / "demo.html",
     }
     for label, path in pages.items():
@@ -85,6 +91,19 @@ def test_published_pages_quote_the_live_output(demo_output):
         assert claim in text, (
             f"{label} no longer quotes the live demo output "
             f"({claim!r}) — regenerate it from `./build_demo.sh`")
+
+
+def test_the_readme_still_points_at_the_lane_it_stopped_quoting(demo_output):
+    """Moved, not dropped.
+
+    The code-scanning demo left the README to keep it readable. That is only
+    legitimate if a reader can still get to it, so the link is asserted — the
+    failure mode of "shorten the front page" is content that quietly becomes
+    unreachable.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "docs/RULES.md" in readme, "the rule catalog is no longer linked"
+    assert "benchmark/RESULTS.md" in readme, "the corpus results are no longer linked"
 
 
 def test_tier_contrast_case_stays_medium():
