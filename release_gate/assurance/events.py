@@ -65,7 +65,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from release_gate.assurance.canonical import digest_object, short_id
+from release_gate.assurance.canonical import (
+    digest_object, schema_version_refusal, short_id)
 from release_gate.assurance.evidence import (
     EpistemicStatus, EvidenceRecord, EvidenceType, Producer, ProducerKind,
 )
@@ -292,6 +293,10 @@ class AssuranceEvent:
     def from_dict(cls, data: Mapping[str, Any]) -> "AssuranceEvent":
         if not isinstance(data, Mapping):
             raise EventError("an event must be a JSON object")
+        refusal = schema_version_refusal(
+            data.get("schema_version"), EVENT_SCHEMA_VERSION, "event")
+        if refusal:
+            raise EventError(refusal)
         emitter = data.get("emitter")
         if isinstance(emitter, Mapping):
             emitter = Producer.from_dict(emitter)

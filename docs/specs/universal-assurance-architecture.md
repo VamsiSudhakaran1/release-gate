@@ -8264,9 +8264,31 @@ nothing in `verification.py`, where it wraps across two source lines. Writing
 that test also caught `Claim`'s message stating the problem without the remedy
 the other two give.
 
-Three of eight core schemas guard this. The other five sit at v1 and have never
-moved, so nothing can yet have been misread; a test pins that set so the
-exposure is noticed the first time one of them does move.
+**All eight core schemas guard this now**, and the sentence lives in one place.
+Until that change three carried their own copy of the message and five had none
+at all — a refusal a reader meets in one module and not another is a refusal
+nobody can rely on. `canonical.schema_version_refusal` returns the message rather
+than raising it, so each record type keeps its own exception class (callers catch
+`EvidenceSchemaError` or `CaseValidationError`, and a shared exception would break
+them) while the wording cannot drift. A test raises all eight and compares the
+messages with the noun and the supported version normalised out.
+
+Two of the five needed the guard placed with some care. `AssuranceSubject` and
+`AssuranceCase` recompute their ids and digests on read and treat a mismatch as
+tamper detection, so the version is checked **first**: a record from a newer
+release would fail that comparison for the honest reason that this reader dropped
+a field it does not know about, and reporting that as tampering would send
+somebody hunting an attacker who is not there. `ApprovalPacket` has no `from_dict`
+at all — it is written for a person and never read back by the engine — so its
+guard sits in `__post_init__`, where any future caller constructing one from a
+newer payload still meets it.
+
+Both keys are read as their own module spells them: `schema_version` for six,
+`model_version` for the subject and the case. An absent version is read as this
+reader's own, because omitting one is not a claim about a newer one.
+
+Each guard was confirmed load-bearing by disabling it: the shared helper and all
+five new call sites each fail the same three tests when switched off.
 
 #### 10ax.5 The suite was not reliably green, and the fix was to stop timing
 

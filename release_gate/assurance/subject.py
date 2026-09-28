@@ -61,6 +61,7 @@ from release_gate.assurance.canonical import (
     is_git_object_id,
     require_content_id,
     require_digest,
+    schema_version_refusal,
     short_id,
     thaw_value,
 )
@@ -613,7 +614,16 @@ class AssuranceSubject:
         A record whose stored `subject_id` or `state_digest` disagrees with its
         content has been edited after the fact. That is tamper detection on the
         record itself, and it is a hard error rather than a repair.
+
+        The version is checked first, before anything is parsed. A subject from a
+        newer release could fail the digest comparison below for the honest reason
+        that this reader dropped a field it does not know about — reporting that
+        as tampering would send somebody hunting for an attacker who is not there.
         """
+        refusal = schema_version_refusal(
+            data.get("model_version"), SUBJECT_MODEL_VERSION, "subject")
+        if refusal:
+            raise SubjectValidationError(refusal)
         subject = cls(
             subject_type=SubjectType(data["subject_type"]),
             requested_action=data["requested_action"],

@@ -60,7 +60,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from release_gate.assurance.canonical import digest_object, short_id
+from release_gate.assurance.canonical import (
+    digest_object, schema_version_refusal, short_id)
 from release_gate.assurance.methodology import RequirementEffect
 from release_gate.assurance.records import MaterialisationBasis
 from release_gate.assurance.verification import TargetKind, VerificationTarget
@@ -351,6 +352,14 @@ class EvidenceRequirement:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "EvidenceRequirement":
+        refusal = schema_version_refusal(
+            data.get("schema_version"), REQUIRED_EVIDENCE_SCHEMA_VERSION,
+            "required_evidence")
+        if refusal:
+            # `ValueError`, like the rest of this module: it defines no exception
+            # class of its own, and the three that do all subclass ValueError, so
+            # a caller catching that catches every version refusal.
+            raise ValueError(refusal)
         return cls(
             target=VerificationTarget.parse(str(data.get("target") or "")),
             requirement=EvidenceRequirementKind(

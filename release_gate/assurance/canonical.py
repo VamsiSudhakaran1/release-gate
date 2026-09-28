@@ -29,7 +29,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Iterable, List, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 #: Every digest this package emits carries its algorithm inline.
 DIGEST_PREFIX = "sha256:"
@@ -356,3 +356,44 @@ def short_id(prefix: str, digest: str, length: int = 16) -> str:
     the same handle.
     """
     return f"{prefix}_{require_digest(digest)[len(DIGEST_PREFIX):][:length]}"
+
+# ── reading a record from the future ────────────────────────────────────────
+#
+# One sentence, in one place. Eight record types refuse a payload whose declared
+# schema version is newer than the reader understands, and until this existed
+# three of them carried their own copy of the message while five had no guard at
+# all. A refusal a reader meets in one module and not another is a refusal nobody
+# can rely on.
+
+def schema_version_refusal(declared: Any, supported: int, what: str
+                           ) -> Optional[str]:
+    """Why this record cannot be read, or `None` when it can.
+
+    Returns a message rather than raising, so each record type keeps its own
+    exception class — callers catch `EvidenceSchemaError` or `CaseValidationError`
+    and a shared exception would break them — while the wording stays identical
+    everywhere.
+
+    A reader that accepted a newer record would drop whatever the newer version
+    added: silently, and into a case an approval then binds to (Invariant 5).
+    Dropping fields a producer sent is evidence omission, which is the threat
+    Invariant 13 names. Refusing and naming the upgrade is the only honest
+    option — a reader cannot know what it is missing.
+
+    `None` declared means the payload predates versioning or omits it, which is
+    read as this reader's own version: an absent version is not a claim about a
+    newer one.
+    """
+    if declared is None:
+        return None
+    try:
+        version = int(declared)
+    except (TypeError, ValueError):
+        return (f"{what} schema_version {declared!r} is not a version number; a "
+                "record that cannot say which schema it speaks cannot be read "
+                "safely")
+    if version > supported:
+        return (f"{what} schema version {version} is newer than this reader "
+                f"understands ({supported}); upgrade release-gate rather than "
+                "reading a record whose fields it would silently drop")
+    return None

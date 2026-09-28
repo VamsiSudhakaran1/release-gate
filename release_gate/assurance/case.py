@@ -40,6 +40,7 @@ from release_gate.assurance.canonical import (
     canonical_json,
     digest_object,
     freeze_value,
+    schema_version_refusal,
     short_id,
     thaw_value,
 )
@@ -685,7 +686,16 @@ class AssuranceCase:
         A stored digest that disagrees with the content means the record was
         edited after it was written. For a case that carries an approval, that is
         the difference between an audit trail and a document.
+
+        The version is checked before any of that. A case written by a newer
+        release would fail the digest comparison because this reader dropped
+        fields it does not know about, and reporting that as tampering would send
+        somebody looking for an attacker who is not there.
         """
+        refusal = schema_version_refusal(
+            data.get("model_version"), CASE_MODEL_VERSION, "case")
+        if refusal:
+            raise CaseValidationError(refusal)
         collections = {
             kind: RecordCollection.from_dict(payload, record_factory=record_factory)
             for kind, payload in (data.get("collections") or {}).items()

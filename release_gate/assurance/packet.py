@@ -49,7 +49,8 @@ from enum import Enum
 from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
                     Tuple)
 
-from release_gate.assurance.canonical import digest_object, short_id
+from release_gate.assurance.canonical import (
+    digest_object, schema_version_refusal, short_id)
 from release_gate.assurance.records import MaterialisationBasis
 
 __all__ = [
@@ -378,6 +379,15 @@ class ApprovalPacket:
     schema_version: int = PACKET_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        # In `__post_init__` rather than a `from_dict`, because this type has
+        # none: a packet is written for a person to read and never read back by
+        # the engine. The guard still belongs here — a packet constructed from a
+        # newer release's payload by any future caller must be refused rather
+        # than answered with eleven sections and a missing twelfth.
+        refusal = schema_version_refusal(
+            self.schema_version, PACKET_SCHEMA_VERSION, "approval packet")
+        if refusal:
+            raise ValueError(refusal)
         object.__setattr__(self, "sections", tuple(self.sections))
         present = [s.key for s in self.sections]
         missing = [k for k in _ORDER if k not in present]

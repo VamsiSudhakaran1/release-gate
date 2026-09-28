@@ -55,6 +55,7 @@ from release_gate.assurance.canonical import (
     freeze_value,
     is_content_id,
     require_content_id,
+    schema_version_refusal,
     short_id,
     thaw_value,
 )
@@ -408,11 +409,10 @@ class EvidenceRecord:
         if not isinstance(self.producer, Producer):
             raise EvidenceError("producer must be a Producer")
 
-        if int(self.schema_version) > EVIDENCE_SCHEMA_VERSION:
-            raise EvidenceSchemaError(
-                f"evidence schema version {self.schema_version} is newer than this reader "
-                f"understands ({EVIDENCE_SCHEMA_VERSION}); upgrade release-gate rather than "
-                "reading a record whose fields it would silently drop")
+        refusal = schema_version_refusal(
+            self.schema_version, EVIDENCE_SCHEMA_VERSION, "evidence")
+        if refusal:
+            raise EvidenceSchemaError(refusal)
 
         self._validate_verification()
         self._validate_claims()

@@ -54,6 +54,7 @@ from release_gate.assurance.canonical import (
     CanonicalisationError,
     digest_object,
     freeze_value,
+    schema_version_refusal,
     short_id,
     thaw_value,
 )
@@ -350,11 +351,10 @@ class Claim:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Claim":
-        if int(data.get("schema_version", CLAIM_SCHEMA_VERSION)) > CLAIM_SCHEMA_VERSION:
-            raise ClaimError(
-                f"claim schema version {data['schema_version']} is newer than this reader "
-                f"understands ({CLAIM_SCHEMA_VERSION}); upgrade release-gate rather "
-                "than reading a record whose fields it would silently drop")
+        refusal = schema_version_refusal(
+            data.get("schema_version"), CLAIM_SCHEMA_VERSION, "claim")
+        if refusal:
+            raise ClaimError(refusal)
         reference = data.get("statement_reference")
         # A producer-supplied status is ignored on purpose: status is computed
         # from evidence on every build, not carried in the document.

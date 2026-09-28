@@ -116,13 +116,6 @@ class TestForwardCompatibility:
             VerificationAttempt.from_dict({**self.BASE, "schema_version": 99})
         assert "newer than this reader" in str(exc.value)
 
-    def test_an_unparseable_version_is_refused_too(self):
-        from release_gate.assurance.verification import (
-            VerificationAttempt, VerificationError)
-
-        with pytest.raises(VerificationError):
-            VerificationAttempt.from_dict({**self.BASE, "schema_version": "v5"})
-
     @pytest.mark.parametrize("version", [None, 1, 2, 3, 4])
     def test_this_version_and_every_older_one_still_read(self, version):
         """The guard must not cost backward compatibility, which is the whole
@@ -134,59 +127,129 @@ class TestForwardCompatibility:
             payload["schema_version"] = version
         assert VerificationAttempt.from_dict(payload).method.value == "THEOREM_PROVER"
 
-    def test_the_guard_reads_the_same_wherever_it_fires(self):
-        """Same sentence, so a reader meeting it anywhere recognises it.
-
-        Compared by raising it, not by grepping the source: the phrase is split
-        across two source lines in `verification.py`, so a text search for it
-        finds nothing while the message a user sees is identical. Substring
-        checks read text, not meaning.
-        """
-        from release_gate.assurance.claims import Claim
+    #: Every core schema, with a way to build a payload declaring a version.
+    #: Held as data so the test below cannot cover seven and look complete.
+    @staticmethod
+    def _probes():
+        from release_gate.assurance.case import AssuranceCase, CaseValidationError
+        from release_gate.assurance.claims import Claim, ClaimError
+        from release_gate.assurance.events import (
+            AssuranceEvent, EventError, EventType)
         from release_gate.assurance.evidence import (
-            EvidenceRecord, EvidenceType, Producer, ProducerKind)
-        from release_gate.assurance.verification import VerificationAttempt
+            EvidenceRecord, EvidenceSchemaError, EvidenceType, Producer,
+            ProducerKind)
+        from release_gate.assurance.packet import ApprovalPacket, build_packet
+        from release_gate.assurance.required_evidence import EvidenceRequirement
+        from release_gate.assurance.subject import (
+            AssuranceSubject, SubjectValidationError)
+        from release_gate.assurance.verification import (
+            VerificationAttempt, VerificationError)
+        from release_gate.assurance.chaos import _assure, _base
 
-        messages = []
-        for build in (
-            lambda: Claim.from_dict({
+        outcome = _assure(_base())
+        subject = outcome.case.subject.to_dict()
+        case = outcome.case.to_dict()
+        packet = build_packet(outcome.case, outcome)
+        # A real event, so the probe exercises the guard and not the parse that
+        # follows it. A stub payload passed only because the guard fired first,
+        # which made the backward-compatibility half of this test a no-op.
+        event = AssuranceEvent(
+            event_type=EventType.CASE_CREATED,
+            emitter=Producer(producer_id="a://b", kind=ProducerKind.AGENT),
+        ).to_dict()
+
+        import dataclasses
+
+        return {
+            "claim": (ClaimError, lambda v: Claim.from_dict({
                 "claim_id": "C-1", "statement": "s", "claim_type": "ASSERTION",
-                "provenance": "DECLARED", "schema_version": 99,
-                "producer": {"producer_id": "a://b", "kind": "agent"}}),
-            lambda: EvidenceRecord(
+                "provenance": "DECLARED", "schema_version": v,
+                "producer": {"producer_id": "a://b", "kind": "agent"}})),
+            "evidence": (EvidenceSchemaError, lambda v: EvidenceRecord(
                 evidence_type=EvidenceType.TRACE, source="s",
                 producer=Producer(producer_id="a://b", kind=ProducerKind.AGENT),
-                coverage_note="n", schema_version=99),
-            lambda: VerificationAttempt.from_dict({
-                **self.BASE, "schema_version": 99}),
-        ):
-            with pytest.raises(Exception) as exc:
-                build()
-            messages.append(str(exc.value))
+                coverage_note="n", schema_version=v)),
+            "verification": (VerificationError, lambda v: VerificationAttempt.from_dict({
+                "method": "THEOREM_PROVER", "verifier": "x", "status": "PASSED",
+                "target": {"kind": "CLAIM", "target_id": "C-1"},
+                "schema_version": v})),
+            "event": (EventError, lambda v: AssuranceEvent.from_dict(
+                {**event, "schema_version": v})),
+            "required_evidence": (ValueError, lambda v: EvidenceRequirement.from_dict({
+                "target": "claim:C-1", "requirement": "formal_verification",
+                "schema_version": v})),
+            "subject": (SubjectValidationError, lambda v: AssuranceSubject.from_dict(
+                {**subject, "model_version": v})),
+            "case": (CaseValidationError, lambda v: AssuranceCase.from_dict(
+                {**case, "model_version": v})),
+            "approval_packet": (ValueError, lambda v: dataclasses.replace(
+                packet, schema_version=v)),
+        }
 
-        for message in messages:
-            assert "newer than this reader understands" in message
-            assert "upgrade release-gate" in message
+    def test_every_core_schema_refuses_a_record_from_the_future(self):
+        """All eight now. Three did and five did not, and `verification` — the
+        only one that has actually moved — was among the five.
 
-    def test_which_core_schemas_are_still_unguarded(self):
-        """Documented rather than asserted away, and probed rather than grepped.
-
-        Three of eight core schemas refuse a record from the future. The other
-        five sit at v1 and have never moved, so nothing can yet have been
-        misread — but the guard is cheap and the exposure begins the first time
-        one of them moves. This fails if the set changes in either direction, so
-        the decision gets taken deliberately rather than drifting.
+        A refusal a reader meets in one module and not another is a refusal
+        nobody can rely on.
         """
         from release_gate.assurance.protocol import PROTOCOL
 
-        guarded = {"evidence", "claim", "verification"}
-        unguarded = {"event", "subject", "case", "approval_packet",
-                     "required_evidence"}
-        assert guarded | unguarded == {
-            r.name for r in PROTOCOL.schemas if r.core}
-        assert all(PROTOCOL.schema(n).version == 1 for n in unguarded), (
-            "a core schema moved past v1 without a future-version guard; add one "
-            "before its reader can silently drop a newer record's fields")
+        probes = self._probes()
+        assert set(probes) == {r.name for r in PROTOCOL.schemas if r.core}, (
+            "a core schema has no probe here, so this test would pass while "
+            "leaving it unchecked")
+
+        unguarded = []
+        for name, (error, build) in probes.items():
+            try:
+                build(99)
+                unguarded.append(name)
+            except error as exc:
+                assert "newer than this reader understands" in str(exc), name
+                assert "upgrade release-gate" in str(exc), name
+        assert unguarded == [], f"still readable from the future: {unguarded}"
+
+    def test_and_still_reads_a_record_at_its_own_version(self):
+        """The guard must not cost backward compatibility, which is the whole
+        reason a reader tolerates old records at all."""
+        for name, (_error, build) in self._probes().items():
+            build(1)            # every core schema's v1
+            build(None)         # and a payload that omits the version entirely
+
+    def test_the_wording_comes_from_one_place(self):
+        """Eight copies of a sentence is eight chances for one to drift.
+
+        Compared by raising them, not by grepping: the phrase wraps across two
+        source lines in places, so a text search finds nothing while the message
+        a user sees is identical. Substring checks read text, not meaning.
+        """
+        messages = []
+        for name, (error, build) in self._probes().items():
+            with pytest.raises(error) as exc:
+                build(99)
+            messages.append(str(exc.value))
+
+        # Identical but for the noun naming the record and the version each
+        # reader supports, both of which differ legitimately.
+        import re
+
+        tails = {re.sub(r"\(\d+\)", "(N)", m.split("schema version", 1)[1])
+                 for m in messages}
+        assert len(tails) == 1, f"the wording has drifted: {sorted(tails)}"
+        assert "upgrade release-gate" in tails.pop()
+
+    def test_no_core_schema_reads_an_unparseable_version(self):
+        """A record that cannot say which schema it speaks is refused by all eight.
+
+        This method had the same name as a narrower one earlier in the class,
+        which Python silently shadowed — so the narrower one never ran. A test
+        that looks present and does nothing is worse than no test.
+        """
+        for name, (error, build) in self._probes().items():
+            with pytest.raises(error) as exc:
+                build("v5")
+            assert "not a version number" in str(exc.value), name
 
 
 # ── counts the README states about the engine ─────────────────────────────

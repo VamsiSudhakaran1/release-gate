@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from release_gate.assurance.canonical import digest_object, short_id
+from release_gate.assurance.canonical import digest_object, schema_version_refusal, short_id
 from release_gate.assurance.evidence import TrustStatus, VerificationMethod
 
 __all__ = [
@@ -434,20 +434,10 @@ class VerificationAttempt:
         # loses whatever v5 added: silently, and into a case an approval then
         # binds to (Invariant 5). Dropping fields a producer sent is evidence
         # omission, which is the threat Invariant 13 names.
-        declared = data.get("schema_version", VERIFICATION_SCHEMA_VERSION)
-        try:
-            declared = int(declared)
-        except (TypeError, ValueError):
-            raise VerificationError(
-                f"verification schema_version {declared!r} is not a version "
-                "number; a record that cannot say which schema it speaks cannot "
-                "be read safely") from None
-        if declared > VERIFICATION_SCHEMA_VERSION:
-            raise VerificationError(
-                f"verification schema version {declared} is newer than this "
-                f"reader understands ({VERIFICATION_SCHEMA_VERSION}); upgrade "
-                "release-gate rather than reading an attempt whose fields it "
-                "would silently drop")
+        refusal = schema_version_refusal(
+            data.get("schema_version"), VERIFICATION_SCHEMA_VERSION, "verification")
+        if refusal:
+            raise VerificationError(refusal)
         target = data.get("target")
         return cls(
             method=VerificationMethod(data["method"]),
