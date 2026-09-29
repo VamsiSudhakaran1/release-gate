@@ -269,3 +269,55 @@ class TestThePaletteCannotDriftBack:
             assert (r + g + b) / 3 < 80, (
                 f"{rel} defaults to a light background ({m.group(1)}) — the rest "
                 "of the site defaults to dark")
+
+
+class TestTheLayoutHasOneGrid:
+    """Alignment, asserted rather than eyeballed.
+
+    The page had four container widths, so it had four left edges and content
+    stepped sideways as you scrolled; section padding ran 84/72, 56/48, 8/0,
+    0/104 and 96/96 with no system behind it; and H3 rendered at 16, 18, 20 and
+    21px in four weights. None of that is visible in a diff, and all of it is
+    visible on the page.
+
+    These are static checks on the source — the real measurement was done in a
+    browser — but they catch the specific ways the grid came apart before, each
+    of which was a one-line style that looked harmless on its own.
+    """
+
+    def _index(self) -> str:
+        return (ROOT / "public" / "index.html").read_text(encoding="utf-8")
+
+    def test_no_container_sets_its_own_width(self):
+        """A narrow measure belongs on the text, not on the column holding it."""
+        import re
+
+        bad = re.findall(r'class="container"[^>]*style="[^"]*max-width:\s*\d+px',
+                         self._index())
+        assert not bad, (
+            f"{len(bad)} container(s) override the grid width — that is one extra "
+            "left edge each: " + "; ".join(b[-46:] for b in bad))
+
+    def test_section_children_are_not_centred_back_off_the_rail(self):
+        """`margin: 0 auto` inside the rail re-centres a block within it."""
+        assert "section:not(.hero) > .container > * {" in self._index(), (
+            "the rule that keeps section children on the rail is gone")
+
+    def test_one_rhythm_token_drives_section_padding(self):
+        text = self._index()
+        assert "--rhythm:" in text and "section { padding: var(--rhythm) 0 !important; }" in text, \
+            "section padding is no longer driven by a single token"
+
+    def test_headings_do_not_carry_their_own_size_inline(self):
+        """Inline sizes are how one heading level ends up at four sizes."""
+        import re
+
+        bad = re.findall(r'<h[123][^>]*style="[^"]*font-size', self._index())
+        assert not bad, (
+            f"{len(bad)} heading(s) set font-size inline; use .rg-card-title or "
+            ".rg-panel-title: " + "; ".join(b[:60] for b in bad))
+
+    def test_the_two_heading_roles_exist(self):
+        text = self._index()
+        for role in (".rg-card-title", ".rg-panel-title"):
+            assert role in text, f"{role} is not defined"
