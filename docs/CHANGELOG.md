@@ -2,7 +2,7 @@
 
 All notable changes to release-gate will be documented in this file.
 
-## [Unreleased]
+## [0.11.0] — 2026-09-29
 
 ### 🌐 The assurance engine has a page you can drop a file into
 
