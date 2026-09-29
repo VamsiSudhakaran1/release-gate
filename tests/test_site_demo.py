@@ -321,3 +321,71 @@ class TestTheLayoutHasOneGrid:
         text = self._index()
         for role in (".rg-card-title", ".rg-panel-title"):
             assert role in text, f"{role} is not defined"
+
+
+class TestTheEssayIsReachable:
+    """A published essay nobody can navigate to is a file, not a post.
+
+    `coverage.html` exists to be shared — the traffic arrives from a link
+    somewhere else, lands on it, and should be able to get to the product and
+    to the other essays. The failure mode is quiet: an essay stays on disk,
+    keeps rendering, and slowly stops being linked from anywhere as the pages
+    around it are edited.
+    """
+
+    ESSAY = ROOT / "public" / "coverage.html"
+
+    def test_it_exists(self):
+        assert self.ESSAY.exists(), "public/coverage.html is gone"
+
+    def test_the_homepage_links_it(self):
+        text = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
+        assert 'href="/coverage.html"' in text, (
+            "nothing on the homepage reaches the essay")
+
+    def test_the_research_index_links_it(self):
+        text = (ROOT / "public" / "research.html").read_text(encoding="utf-8")
+        assert "/coverage.html" in text
+
+    def test_the_other_essay_links_it(self):
+        text = (ROOT / "public" / "perfect-code.html").read_text(encoding="utf-8")
+        assert "/coverage.html" in text
+
+    def test_it_links_back_out(self):
+        """A reader who arrives from social has to be able to leave toward the product."""
+        text = self.ESSAY.read_text(encoding="utf-8")
+        for target in ("/assurance.html", "/research.html", "/index.html"):
+            assert target in text, f"the essay never links {target}"
+
+    def test_it_carries_the_social_cards_it_will_be_shared_with(self):
+        text = self.ESSAY.read_text(encoding="utf-8")
+        for tag in ('property="og:title"', 'property="og:description"',
+                    'property="og:url"', 'name="twitter:card"', 'rel="canonical"'):
+            assert tag in text, f"the essay is missing {tag} — it is meant to be shared"
+
+    def test_its_figures_are_the_measured_ones(self):
+        """The essay quotes the same numbers the README is held to."""
+        text = self.ESSAY.read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for figure in ("2,287,133", "10,254"):
+            assert figure in text and figure in readme, (
+                f"{figure} is quoted in the essay but not pinned in the README")
+
+    def test_it_does_not_make_a_claim_the_project_refuses(self):
+        """The refusals apply to an essay as much as to the report.
+
+        The check is *where* the phrase appears, not whether it appears. A
+        refusal has to name the claim in order to refuse it — the first version
+        of this test forbade "guaranteed correct" outright and failed on the
+        sentence that says release-gate will never tell you that. Reading for
+        the substring and not the position is the same mistake the essay is
+        about.
+        """
+        text = self.ESSAY.read_text(encoding="utf-8").lower()
+        refusal = text[text.index("what it will not tell you"):]
+        for phrase in ("guaranteed correct", "unhackable", "hallucinations",
+                       "release is safe", "replaced"):
+            outside = text.count(phrase) - refusal.count(phrase)
+            assert outside == 0, (
+                f"{phrase!r} appears {outside} time(s) outside the passage that "
+                "refuses it — in the essay's own voice that is a claim")
