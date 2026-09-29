@@ -109,6 +109,48 @@ def test_the_runner_is_executable():
     assert runner.stat().st_mode & 0o111, "run-all.sh is not executable"
 
 
+def test_there_is_a_runner_that_does_not_need_bash():
+    """Windows has no bash, and `./run-all.sh` is the first thing the README says.
+
+    The Python runner covers the same rows, so the two cannot drift: it is built
+    from a list this test compares against the one the shell script invokes.
+    """
+    import re
+
+    py = (AGENTS / "run_all.py").read_text(encoding="utf-8")
+    sh = (AGENTS / "run-all.sh").read_text(encoding="utf-8")
+    for name, methodology, _, _ in RUNS:
+        assert name in py, f"{name} is missing from run_all.py"
+        assert name in sh, f"{name} is missing from run-all.sh"
+        if methodology:
+            assert methodology in py and methodology in sh, methodology
+    shell_rows = len(re.findall(r"^run \S+", sh, re.M))
+    assert shell_rows == len(RUNS), (
+        f"run-all.sh runs {shell_rows} rows, the table has {len(RUNS)}")
+
+
+def test_the_typo_helper_writes_a_file_that_is_refused():
+    """The Windows-safe way to reproduce the 0.11.1 refusal notice."""
+    import subprocess
+    import sys
+    import tempfile
+
+    target = pathlib.Path(tempfile.mkdtemp()) / "typo.jsonl"
+    subprocess.run([sys.executable, str(AGENTS / "make_typo_example.py"), str(target)],
+                   check=True, capture_output=True)
+    assert target.exists()
+    outcome = _assure_path(target)
+    assert outcome.normalisation.refused_consequence, (
+        "the helper is supposed to produce a file whose consequence values are "
+        "refused — it no longer does")
+
+
+def _assure_path(path):
+    from release_gate.assurance.zero_config import assure
+
+    return assure(str(path))
+
+
 def test_the_consequence_vocabulary_table_is_the_real_one():
     """The README prints every dimension's admissible values.
 

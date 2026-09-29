@@ -6,7 +6,9 @@ verdicts are whatever the engine reaches.
 
 ```bash
 pip install release-gate
-cd examples/agents && ./run-all.sh
+cd examples/agents
+./run-all.sh              # macOS / Linux
+python run_all.py         # any OS, including Windows cmd and PowerShell
 ```
 
 ```
