@@ -129,14 +129,25 @@ close an open counterexample — but only one of them can see the concentration.
 
 ## Two things worth knowing before you write your own
 
-Both were found writing these examples.
+Both came out of writing these examples.
 
-**A mistyped consequence value is discarded without saying so.** Every other
-rejection in the ingest is reported (below); this one is not. Each dimension has
-a fixed vocabulary, and a value outside it is dropped with no note, no `skipped`
-tally and no trace in `--json`. The dimension then reads `UNKNOWN`, which is
-indistinguishable from never having declared it — so an operator who states the
-stakes and misspells one value is told the stakes were never stated.
+**A consequence value outside its dimension's vocabulary is refused, and the
+report says so.** It is not coerced into something close — release-gate does not
+guess at stakes. What you get instead, right under the `UNKNOWN:` list it
+explains:
+
+```
+UNKNOWN: EXTERNALITY, SCOPE, USER_IMPACT, DATA_IMPACT, ...
+REFUSED in consequence record 1 of the envelope: 'ALL_USERS' is not admissible
+  SCOPE, so that dimension stays UNKNOWN; known: SINGLE_SUBJECT, BOUNDED_SET,
+  BROAD, UNKNOWN
+```
+
+Writing these examples is how that line came to exist. Until 0.11.1 the refusal
+was silent: the dimension went to `UNKNOWN` with no note, no `skipped` tally and
+no trace in `--json`, so an operator who declared the stakes and misspelled one
+value was told the stakes were never stated. Worth knowing the vocabulary anyway
+— a refusal you have to read is still a round trip:
 
 ```jsonl
 {"record_type":"consequence","SCOPE":"ALL_USERS"}     # not a SCOPE value -> silently UNKNOWN
@@ -178,8 +189,9 @@ these examples: `expectation.source.kind` (`METHODOLOGY`,
 `OTHER`) and `adversarial.outcome` (`CANDIDATE_REFUTED`, `ARGUMENT_DEFECT`,
 `WEAKNESS_FOUND`, `NO_FINDING`, `INCONCLUSIVE`, `NOT_RUN`).
 
-The consequence record is the one exception, and it is why the vocabulary table
-above is worth reading: a bad *value* there produces no note at all.
+Consequence declarations report through the same channel, and additionally
+print in the stakes block as `REFUSED` (above), because that is the section
+whose `UNKNOWN:` list they explain.
 
 ---
 

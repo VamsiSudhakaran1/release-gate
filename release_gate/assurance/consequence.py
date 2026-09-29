@@ -39,7 +39,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, MutableSequence,
+                    Optional, Sequence, Tuple)
 
 from release_gate.assurance.canonical import digest_object
 
@@ -314,13 +315,22 @@ class ConsequenceProfile:
 
 def descriptors_from_mapping(data: Mapping[str, Any], *, source: str,
                              basis: ConsequenceBasis = ConsequenceBasis.DECLARED,
-                             strict: bool = False) -> List[ConsequenceDescriptor]:
+                             strict: bool = False,
+                             rejected: Optional[MutableSequence[str]] = None
+                             ) -> List[ConsequenceDescriptor]:
     """Turn `{"reversibility": "IRREVERSIBLE"}` into descriptors.
 
     Unrecognised dimensions and values are skipped rather than guessed at. With
     `strict=True` they raise instead — an API caller should learn that its
     declaration was not understood, while a best-effort sweep of case metadata
     should not fail a run over a stray key.
+
+    **Skipping is not silence.** Pass a list as `rejected` and every skip is
+    appended to it, one readable line each. Without that, a misspelled value
+    left the dimension reading UNKNOWN — identical to never having declared it —
+    so an operator who stated the stakes and typed `ALL_USERS` for a SCOPE was
+    told the stakes were never stated. Every other rejection in the ingest
+    reports itself; this one had no channel to report through.
     """
     out: List[ConsequenceDescriptor] = []
     for key, value in (data or {}).items():
@@ -331,6 +341,10 @@ def descriptors_from_mapping(data: Mapping[str, Any], *, source: str,
                 raise ConsequenceError(
                     f"unknown consequence dimension {key!r}; known: "
                     + ", ".join(d.value for d in ConsequenceDimension))
+            if rejected is not None:
+                rejected.append(
+                    f"{key!r} is not a consequence dimension, so it was not read; "
+                    "known: " + ", ".join(d.value for d in ConsequenceDimension))
             continue
         text = str(value).strip().upper()
         if text == UNKNOWN:
@@ -339,6 +353,11 @@ def descriptors_from_mapping(data: Mapping[str, Any], *, source: str,
             if strict:
                 raise ConsequenceError(
                     f"{text!r} is not admissible for {dimension.value}; known: "
+                    + ", ".join(values_for(dimension)))
+            if rejected is not None:
+                rejected.append(
+                    f"{text!r} is not admissible for {dimension.value}, so that "
+                    f"dimension stays UNKNOWN; known: "
                     + ", ".join(values_for(dimension)))
             continue
         out.append(ConsequenceDescriptor(dimension=dimension, value=text,

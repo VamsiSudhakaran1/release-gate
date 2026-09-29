@@ -2,6 +2,50 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.11.1] — 2026-09-29
+
+### 🔇 A refused consequence declaration no longer goes quiet
+
+Each consequence dimension has a fixed vocabulary, and a value outside it is
+refused rather than coerced into something close — release-gate does not guess at
+stakes. That part was right. The refusal was silent: the dimension went to
+`UNKNOWN`, nothing reached `skipped` or `notes`, and the value appeared nowhere
+in `--json`.
+
+So an operator who declared the stakes and typed `SCOPE: ALL_USERS` was told, in
+the report, that the stakes were never stated — a gap reading as a clean answer,
+which is the one failure this project exists to prevent. Every other rejection in
+the ingest already reported itself; the consequence parser was the single path
+with no channel to report through.
+
+It now prints where the person reading the report will see it, directly under the
+`UNKNOWN:` list it explains:
+
+```
+UNKNOWN: EXTERNALITY, SCOPE, USER_IMPACT, DATA_IMPACT, ...
+REFUSED in consequence record 1 of the envelope: 'ALL_USERS' is not admissible
+  SCOPE, so that dimension stays UNKNOWN; known: SINGLE_SUBJECT, BOUNDED_SET,
+  BROAD, UNKNOWN
+```
+
+A dimension that is `UNKNOWN` because nobody stated it and one that is `UNKNOWN`
+because somebody stated it and was refused are different facts, and only the
+second is something a person can go and fix. `Normalisation` carries them as
+`refused_consequence` so the report reads a typed field rather than matching on
+prose, and they also land in `notes`, where every other ingest rejection lands.
+
+`descriptors_from_mapping` keeps its return type; the channel is an opt-in
+`rejected` collector, and `strict=True` still raises as before.
+
+### 🧪 Five worked agent examples
+
+`examples/agents/` — an OpenTelemetry coding-agent trace, a well-evidenced
+release that PROMOTEs, a promptfoo eval whose failures arrive as refuted claims,
+a destructive production migration that holds on the operator's own runbook, and
+a thirteen-contributor research swarm where 76.9% of support collapses to one
+lineage. `./run-all.sh` prints the table the README quotes, and every verdict in
+it was measured against a clean `pip install`.
+
 ## [0.11.0] — 2026-09-29
 
 ### 🌐 The assurance engine has a page you can drop a file into

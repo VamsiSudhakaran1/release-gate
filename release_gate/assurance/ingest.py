@@ -184,6 +184,13 @@ class Normalisation:
     records_seen_by_kind: Mapping[str, int] = field(default_factory=dict)
     skipped: Mapping[str, int] = field(default_factory=dict)
     notes: Tuple[str, ...] = ()
+    #: Consequence declarations the vocabulary refused, one readable line each.
+    #: Kept as its own field rather than left among `notes` so the report can
+    #: print them beside the UNKNOWN list they explain without matching on
+    #: prose — a dimension is UNKNOWN because nobody stated it OR because
+    #: somebody stated it and the value was refused, and only the second is
+    #: something the operator can go and fix.
+    refused_consequence: Tuple[str, ...] = ()
 
     @property
     def skipped_total(self) -> int:
@@ -224,7 +231,8 @@ class Normalisation:
                 "records_seen_by_kind": dict(self.records_seen_by_kind),
                 "records_unaccounted": self.records_unaccounted,
                 "records_skipped": self.skipped_total,
-                "skipped_by_reason": dict(self.skipped), "notes": list(self.notes)}
+                "skipped_by_reason": dict(self.skipped), "notes": list(self.notes),
+                "refused_consequence": list(self.refused_consequence)}
 
 
 # ── loading ──────────────────────────────────────────────────────────────────
@@ -572,8 +580,9 @@ def _capabilities_from(doc: Any, detection: Detection,
 _CONSEQUENCE_KEYS = ("consequence", "consequences", "impact", "stakes")
 
 
-def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
-    """Consequence someone stated in the document, if any.
+def _consequence_from(doc: Any,
+                      source: str) -> Tuple[List[ConsequenceDescriptor], List[str]]:
+    """Consequence someone stated in the document, if any, and what was refused.
 
     Nothing is inferred here. A document that says nothing about stakes yields no
     descriptors, and every dimension stays UNKNOWN — which is the correct answer,
@@ -582,28 +591,44 @@ def _consequence_from(doc: Any, source: str) -> List[ConsequenceDescriptor]:
     Unrecognised dimensions and values are skipped rather than guessed at: a
     best-effort sweep of a document must not fail a run over a stray key, and it
     must not silently coerce `"impact": "very bad"` into a vocabulary value.
+    What it must also not do is skip without saying so, which is why this
+    returns notes alongside the descriptors the way `_execution_from` and
+    `_capabilities_from` already do. A stated dimension that reads UNKNOWN
+    because of a typo is indistinguishable from one nobody stated, and the
+    operator who typed it has no way to tell the difference from the report.
     """
     found: List[ConsequenceDescriptor] = []
+    refused: List[str] = []
     name = Path(source).name
 
-    def harvest(value: Any, origin: str) -> None:
-        if isinstance(value, Mapping):
-            found.extend(descriptors_from_mapping(value, source=origin))
+    def harvest(value: Any, origin: str, where: str) -> None:
+        if not isinstance(value, Mapping):
+            return
+        rejected: List[str] = []
+        found.extend(descriptors_from_mapping(value, source=origin,
+                                              rejected=rejected))
+        refused.extend(f"{where}: {line}" for line in rejected)
 
     if isinstance(doc, Mapping):
         for key in _CONSEQUENCE_KEYS:
-            harvest(doc.get(key), f"document:{name}#{key}")
+            harvest(doc.get(key), f"document:{name}#{key}",
+                    f"in the document's {key!r}")
     elif isinstance(doc, list):
         for index, row in enumerate(doc):
             if isinstance(row, Mapping) and row.get("record_type") == "consequence":
                 payload = {k: v for k, v in row.items()
                            if k not in ("record_type", "record_id", "source")}
                 producer = str(row.get("source") or f"envelope:{name}#{index}")
-                found.extend(descriptors_from_mapping(payload, source=producer))
+                # "record N", not "line N": the envelope is normally JSONL, where
+                # the two coincide, but a JSON array is also accepted and there
+                # they do not. An error message that sends someone to the wrong
+                # line of a pretty-printed file is worse than one that does not try.
+                harvest(payload, producer,
+                        f"in consequence record {index + 1} of the envelope")
 
     # One dimension, two different declared values, in one document: keep the
     # first and let the registry record the disagreement rather than dropping it.
-    return found
+    return found, refused
 
 
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
@@ -1456,7 +1481,10 @@ def normalise(doc: Any, detection: Detection, *, source: str,
     capabilities, cap_notes = _capabilities_from(doc, detection, execution)
     notes.extend(cap_notes)
 
-    declared_consequence = _consequence_from(doc, source)
+    declared_consequence, refused_consequence = _consequence_from(doc, source)
+    # Reported in both places on purpose: `notes` is where every other ingest
+    # rejection lands, and the dedicated field is what the report reads.
+    notes.extend(refused_consequence)
 
     verifier_report: Optional[VerifierReport] = None
     if detection.kind is InputKind.VERIFIER_REPORT:
@@ -1538,7 +1566,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         failed_branches=tuple(failed_branches), verifier_report=verifier_report,
         records_seen=seen, records_mapped=mapped,
         records_seen_by_kind=dict(seen_by_kind), skipped=dict(skipped),
-        notes=tuple(notes))
+        notes=tuple(notes), refused_consequence=tuple(refused_consequence))
 
 
 def _audit_records(doc: Mapping[str, Any], source: str,

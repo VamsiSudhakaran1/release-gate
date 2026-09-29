@@ -1359,6 +1359,12 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"    DISPUTED {conflict.dimension.value}: {conflict.kept.value!r} "
             f"({conflict.kept.source}) vs {conflict.rejected.value!r} "
             f"({conflict.rejected.source})")
+    # A dimension can read UNKNOWN because nobody stated it, or because somebody
+    # stated it and the value was refused. Those are different facts, and only
+    # the operator who typed the second one can fix it — so it is printed here,
+    # beside the UNKNOWN list it explains, rather than left in --json.
+    for line in outcome.normalisation.refused_consequence:
+        add(f"    REFUSED {line}")
 
     branches = outcome.failed_branches
     if branches.observed:
