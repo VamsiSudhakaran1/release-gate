@@ -25,6 +25,15 @@ Nothing to install first: **[drop a run into the browser demo](https://release-g
 — it runs this same engine, and its three sample runs are the files in
 [`examples/assurance/`](examples/assurance/), byte for byte.
 
+Or run the five worked examples — an OpenTelemetry agent trace, a promptfoo eval,
+a destructive migration, a research swarm, and one that **promotes**:
+
+```bash
+cd examples/agents && ./run-all.sh
+```
+
+[What each one demonstrates →](examples/agents/README.md)
+
 ---
 
 ## Three things it does that a scanner or a score cannot

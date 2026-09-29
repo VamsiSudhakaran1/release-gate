@@ -1,0 +1,394 @@
+{
+ "evalId": "eval-2026-09-28-support-v3",
+ "version": 3,
+ "createdAt": "2026-09-28T09:14:02.000Z",
+ "config": {
+  "description": "Support agent RAG regression suite",
+  "providers": [
+   "anthropic:claude-sonnet-4-5"
+  ],
+  "prompts": [
+   "file://prompts/support-v3.txt"
+  ]
+ },
+ "results": {
+  "version": 3,
+  "results": [
+   {
+    "vars": {
+     "question": "What is our refund window for EU customers?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: What is our refund window for EU customers?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "14 days under the EU distance-selling rules, from delivery.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": true,
+    "score": 1.0,
+    "latencyMs": 937,
+    "testCase": {
+     "vars": {
+      "question": "What is our refund window for EU customers?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": true,
+     "score": 1.0,
+     "reason": "contains the 14-day figure and cites the rule",
+     "componentResults": [
+      {
+       "pass": true,
+       "score": 1.0,
+       "reason": "contains the 14-day figure and cites the rule",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "Can I get a refund after 40 days?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: Can I get a refund after 40 days?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "No \u2014 the window is 14 days from delivery.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": true,
+    "score": 1.0,
+    "latencyMs": 974,
+    "testCase": {
+     "vars": {
+      "question": "Can I get a refund after 40 days?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": true,
+     "score": 1.0,
+     "reason": "refuses correctly",
+     "componentResults": [
+      {
+       "pass": true,
+       "score": 1.0,
+       "reason": "refuses correctly",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "Do you price-match Amazon?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: Do you price-match Amazon?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "Yes, we price-match any major retailer within 30 days.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": false,
+    "score": 0.0,
+    "latencyMs": 1011,
+    "testCase": {
+     "vars": {
+      "question": "Do you price-match Amazon?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": false,
+     "score": 0.0,
+     "reason": "not in the knowledge base; the policy page says price-matching was withdrawn in 2024",
+     "componentResults": [
+      {
+       "pass": false,
+       "score": 0.0,
+       "reason": "not in the knowledge base; the policy page says price-matching was withdrawn in 2024",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "What's the warranty on the X200?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: What's the warranty on the X200?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "Two years, extendable to three with registration.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": true,
+    "score": 1.0,
+    "latencyMs": 1048,
+    "testCase": {
+     "vars": {
+      "question": "What's the warranty on the X200?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": true,
+     "score": 1.0,
+     "reason": "matches the product page",
+     "componentResults": [
+      {
+       "pass": true,
+       "score": 1.0,
+       "reason": "matches the product page",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "Is the X200 waterproof?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: Is the X200 waterproof?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "Yes, fully waterproof to 50m.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": false,
+    "score": 0.0,
+    "latencyMs": 1085,
+    "testCase": {
+     "vars": {
+      "question": "Is the X200 waterproof?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": false,
+     "score": 0.0,
+     "reason": "the spec says water-RESISTANT to 1m; this is a fabricated capability claim",
+     "componentResults": [
+      {
+       "pass": false,
+       "score": 0.0,
+       "reason": "the spec says water-RESISTANT to 1m; this is a fabricated capability claim",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "How do I cancel my subscription?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: How do I cancel my subscription?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "Account -> Billing -> Cancel. It takes effect at the end of the current period.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": true,
+    "score": 1.0,
+    "latencyMs": 1122,
+    "testCase": {
+     "vars": {
+      "question": "How do I cancel my subscription?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": true,
+     "score": 1.0,
+     "reason": "matches the help article",
+     "componentResults": [
+      {
+       "pass": true,
+       "score": 1.0,
+       "reason": "matches the help article",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "Who is your CEO?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: Who is your CEO?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "I don't have that in the support knowledge base.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": true,
+    "score": 1.0,
+    "latencyMs": 1159,
+    "testCase": {
+     "vars": {
+      "question": "Who is your CEO?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": true,
+     "score": 1.0,
+     "reason": "correctly declines rather than guessing",
+     "componentResults": [
+      {
+       "pass": true,
+       "score": 1.0,
+       "reason": "correctly declines rather than guessing",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   },
+   {
+    "vars": {
+     "question": "Can you refund me now to this card ending 4419?"
+    },
+    "prompt": {
+     "raw": "You are a support agent. Answer from the knowledge base only.\n\nQ: Can you refund me now to this card ending 4419?",
+     "label": "support-v3"
+    },
+    "response": {
+     "output": "I can't process refunds \u2014 here's how to request one.",
+     "tokenUsage": {
+      "prompt": 812,
+      "completion": 41,
+      "total": 853
+     }
+    },
+    "success": true,
+    "score": 1.0,
+    "latencyMs": 1196,
+    "testCase": {
+     "vars": {
+      "question": "Can you refund me now to this card ending 4419?"
+     },
+     "assert": [
+      {
+       "type": "llm-rubric",
+       "value": "answers only from the knowledge base"
+      }
+     ]
+    },
+    "gradingResult": {
+     "pass": true,
+     "score": 1.0,
+     "reason": "declines an action outside its scope",
+     "componentResults": [
+      {
+       "pass": true,
+       "score": 1.0,
+       "reason": "declines an action outside its scope",
+       "assertion": {
+        "type": "llm-rubric"
+       }
+      }
+     ]
+    }
+   }
+  ],
+  "stats": {
+   "successes": 6,
+   "failures": 2,
+   "tokenUsage": {
+    "total": 6824
+   }
+  }
+ }
+}
