@@ -102,6 +102,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 
 | Command | What it does |
 |---------|-------------|
+| `release-gate assure <file>` | **The assurance engine** — submit a run, get the case a person decides from: a bounded list of what needs a human, what would close each item, and what was never assessed. Format is detected, not declared. |
 | `release-gate pr --base <ref>` | **AI-change review gate** — one PROMOTE/HOLD/BLOCK on what *this* diff introduced (net-new agent-risk + lockfile drift, folded into one verdict). Blocks only on net-new regressions. `--comment` for GitHub markdown, `--json` for CI. |
 | `release-gate lock [path]` | **Pin the agent context (AIBOM)** — model, prompts, governance, evals, MCP/tool config → `release-gate.lock` |
 | `release-gate audit [path\|url]` | **Scan any repo** — detects agent frameworks, scores **Agent Code Safety** (from real code findings) + **Governance** (declared safeguards), returns PROMOTE / HOLD / BLOCK. No config needed. Add `--full` for the per-finding breakdown. |
@@ -119,6 +120,126 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 | `release-gate verify <governance.yaml>` | **Loop Verifier** — CONTINUE / SHIP / ROLLBACK for one loop iteration |
 | `release-gate loop-sim <scenarios.yaml>` | **Loop Sim** — pre-deploy PROMOTE / HOLD / BLOCK from a scenario bank |
 | `release-gate agent-score <agent-spec>` | **Agent Score** — run a behavior battery against a live agent, 0-100 + decision |
+
+### `assure` — the assurance engine
+
+```
+release-gate assure <file> [--json] [--full] [--review]
+                           [--methodology REF] [--config FILE] [--case-output FILE]
+release-gate assure --list-methodologies
+```
+
+Takes one file. Nothing is discovered from the filesystem and nothing is
+required to run — a gate whose verdict depends on which directory it ran from
+is a gate whose verdict cannot be reproduced.
+
+#### What it accepts
+
+The shape is detected from the content; there is no `--format` flag. Detection
+reports its own confidence, and `UNRECOGNISED` is a real answer rather than a
+guess — an unrecognised file still yields a case, stating that it could map
+nothing.
+
+| Kind | Typical source |
+|------|----------------|
+| `OTLP_TRACE` | OpenTelemetry GenAI spans |
+| `NATIVE_TRACE` | release-gate's own trace shape |
+| `LANGFUSE_EXPORT` | Langfuse |
+| `ARIZE_EXPORT` | Arize / Phoenix |
+| `PROMPTFOO_EVAL` | `promptfoo eval -o results.json` |
+| `ORCHESTRATOR_EXPORT` | LangGraph, OpenAI Agents, CrewAI, AutoGen, Temporal |
+| `ASSURANCE_ENVELOPE` | release-gate's record format (JSONL or a JSON array) |
+| `AUDIT_REPORT` | release-gate's own audit output |
+| `VERIFIER_REPORT` | a prover, checker or lab report |
+
+#### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--methodology REF` | What *enough* means for this decision. `id@X.Y.Z` pins exactly; `id-vN` pins to the newest version in the N line; a bare id takes the newest. Without one, release-gate reports everything structural it can see and **holds** — it will not invent a standard. |
+| `--config FILE` | An organisation's own standards, layered on top. It can only ever **tighten**: raise the required assurance level, add requirements, name verifiers that must have run. There is deliberately no way to lower a bar through it. |
+| `--review` | The one-screen version: execution counts, the critical path, coverage, what a person must look at, and the verdict. Every figure on it is a field; the renderer computes none of them. |
+| `--json` | The whole outcome — case, findings, coverage ledger, capability surface, and the required-evidence protocol. `ingest.notes` is where a rejected record says *why* it was rejected. |
+| `--full` | Show every structural finding, including the advisory ones the default output summarises. |
+| `--case-output FILE` | Write the sealed case on its own, for an evidence pack or an approval packet. |
+| `--list-methodologies` | The built-ins, with each one's requirement count and digest. |
+| `--diagnostics` | Which optional backends are unavailable and why. A broken native dependency is reported here rather than taking the CLI down; assurance runs regardless. |
+
+#### `--config` — an organisation's own standards
+
+Layered on top of the methodology, and able only to **tighten**. An unknown key
+is refused rather than ignored, so a typo cannot silently widen a bar:
+
+```
+Error: unknown configuration key(s): required_assurance_level
+```
+
+| Key | What it does |
+|-----|-------------|
+| `organisation_id` | Who this config belongs to; recorded on the case. |
+| `methodology` | The default methodology, so CI does not have to pass `--methodology` on every call. |
+| `risk_appetite` | The assurance level required to promote — a name (`MINIMAL`, `ATTRIBUTED`, `ORCHESTRATED`, `CORROBORATED`, `FRONTIER`) or `0`–`4`. |
+| `required_verifiers` | Verifier identities that must appear in the case. |
+| `approval_roles` | Who may sign off. |
+| `domain_requirements` | Extra requirements for this organisation's domain. |
+| `custom_capabilities` | Tool names to classify that the built-in vocabulary does not know. |
+| `method_declarations` | What kind of check a given tool actually performs. |
+| `override_rules` | Where an override is permitted, and what it must record. |
+
+```json
+{
+  "organisation_id": "acme-platform",
+  "methodology": "general-autonomous-action@1.0.0",
+  "risk_appetite": "CORROBORATED",
+  "required_verifiers": ["ci://github-actions/run/9912841"]
+}
+```
+
+Against `examples/agents/02-release-promoted.jsonl` that config still promotes,
+because the case carries that verifier. Change it to one the case does not
+carry and the same input holds instead — the tightening is the whole point.
+
+#### Built-in methodologies
+
+```
+general-agent-action@1.0.0          production-database-change@1.0.0
+general-autonomous-action@1.0.0     research-assurance@1.0.0
+software-agent-assurance@1.0.0      research-mathematics@1.0.0
+software-change@1.0.0               research-mathematics@1.1.0
+```
+
+Always pass `id@version`. Resolving "the latest" implicitly is how an existing
+case silently acquires a different bar.
+
+#### What comes back
+
+Three blocks, in this order:
+
+1. **The verdict**, with the subject digest and the case digest. An approval
+   binds to an exact state; without a digest nobody can later establish what
+   was authorised.
+2. **The coverage ledger** — every dimension, marked `assessed` or
+   `NOT_ASSESSED`, with a reason. `NOT_ASSESSED` is a first-class answer kept
+   apart from *we looked and found nothing*; collapsing those is how a gap
+   comes to read as a clean bill of health.
+3. **What needs a person**, hardest first, each with what would close it. That
+   second list is machine-readable under `--json`, so the next agent run can
+   go and get the evidence rather than a human re-reading the case.
+
+#### Exit codes
+
+`0` PROMOTE · `10` HOLD · `1` BLOCK — the same three the rest of the CLI uses,
+so it drops into CI without a wrapper.
+
+#### Worked examples
+
+`examples/agents/` ships five runs in the shapes real systems emit — an
+OpenTelemetry coding-agent trace, a release that promotes, a promptfoo eval
+whose failures arrive as refuted claims, a destructive production migration,
+and a research swarm. `python examples/agents/run_all.py` prints what each one
+decides. [What each demonstrates](../examples/agents/README.md).
+
+---
 
 ### Flags for `audit` (team adoption)
 

@@ -48,6 +48,95 @@ it was measured against a clean `pip install`.
 
 ## [0.11.0] — 2026-09-29
 
+### 🧩 The assurance engine
+
+The release this is really about, and the one the entries below only package.
+Eighty-eight commits between 0.10.1 and here built a second thing beside the
+scanner: **a machine produced something consequential, a human has to decide
+whether the evidence is enough, and release-gate builds the case they decide
+from.** It does not generate results and it does not verify them.
+
+`release-gate assure <file>` takes one file and needs nothing else — no config,
+no YAML, no account, and nothing discovered from the filesystem, because a gate
+whose verdict depends on which directory it ran from is a gate whose verdict
+cannot be reproduced.
+
+**What it reads.** OpenTelemetry GenAI spans, Langfuse, Arize/Phoenix,
+promptfoo, LangGraph / OpenAI Agents / CrewAI / AutoGen / Temporal exports, and
+a native record envelope. The shape is detected from the content rather than
+declared, detection reports its own confidence, and `UNRECOGNISED` is a real
+answer — an unrecognised file still yields a case that says it could map
+nothing.
+
+**What it builds.** Five graphs over one case: what the system did
+(execution), what is being asserted (claims), what those rest on (evidence),
+whether the artifact is still the thing that was checked (artifacts), and what
+each check actually binds to (verification). A verification is bound to the
+state it ran against, so a check against content the work has since moved past
+is recorded as what it is — a record of a different action.
+
+**What it refuses to do.** Assume sufficiency. Without a methodology it reports
+everything structural it can see and **holds**, because "is this enough?" is a
+domain question and inventing an answer would be claiming a standard it does
+not have. Seven methodology profiles ship — one of them in two versions — from a
+conservative general default to research mathematics; an organisation's config layers on top and can only
+ever tighten.
+
+**The half most tools leave out.** Every verdict carries a coverage ledger:
+each dimension marked assessed or `NOT_ASSESSED`, with a reason. `NOT_ASSESSED`
+is kept apart from *we looked and found nothing* everywhere in the engine, as
+are `UNKNOWN` and a refuted check against an unresolved one. Collapsing those
+is how a gap comes to read as a clean bill of health.
+
+Some consequences of taking that seriously, each of which is a property in code
+rather than a note in the docs:
+
+- **Agreement is not corroboration.** Nine restatements of one preprint are one
+  piece of evidence wearing nine hats; lineage concentration is measured and
+  reported.
+- **Criticality comes from reachability**, never from volume. A claim one agent
+  emitted once is exactly as load-bearing as one four hundred agents discussed.
+- **Finding no counterexample bounds the search, not the claim.**
+- **A failed branch is evidence.** Structure is retained; a contradiction is
+  closed by evidence that answers it, never by a different branch succeeding.
+- **A percentage needs a denominator**, so an expectation states where its
+  denominator came from.
+- **A shorter attention list is not a better case** — it can equally mean
+  detection got worse.
+- **Capability discovery is bounded.** A tool it cannot identify is reported as
+  one, with the note that an unidentified tool can reach capabilities without
+  appearing as them.
+
+**What comes back to a person.** A bounded list, hardest first, each item with
+what would close it — machine-readable under `--json`, so the next agent run
+can go and get the evidence instead of a human re-reading the case. On the
+frontier demonstration, 2,287,133 records from 10,254 producers reduce to 13
+items, 7 of which cannot be dropped. `--review` puts the whole case on one
+screen, and every figure on it is a field the renderer does not compute.
+
+**Approval binds to an exact state.** The packet states what is being
+authorised, its digest, and who is answerable; an override is possible and goes
+on the record. Authorising an action is not certifying that a machine was
+right, and the engine does not conflate them.
+
+**Scale.** Measured before optimising, then fixed: deterministic compaction,
+streaming for long-running cases, and incremental recomputation so finalising a
+ten-million-event case does not rebuild it from zero. The single-agent path and
+the frontier path are one code path — 346 engine functions common to both, 87%
+of everything the single-agent run touches.
+
+**Adversarial work, and what it found.** Twenty attacks run against the engine
+as authorization infrastructure (three false `SATISFIED` fixed when the first
+eighteen landed), thirteen
+faults injected into the evidence path (two bit), six defects found by attacking
+it directly, and a benchmark corpus of constructed cases that found more. One
+attack is recorded `NOT_DEFENDED`, with what bounds it instead, because the
+alternative is claiming the gate is unhackable.
+
+**Neutrality.** Any model or none, any orchestrator or none — read a framework,
+depend on none. The engine under `release_gate/assurance/` is standard-library
+only: no network, no subprocess, no `eval` on any path.
+
 ### 🌐 The assurance engine has a page you can drop a file into
 
 `https://release-gate.com/assurance.html` takes a pasted or dropped run —
