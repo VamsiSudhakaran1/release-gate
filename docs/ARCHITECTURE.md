@@ -46,7 +46,8 @@ admitted?*
 | `release_gate/agent_analysis.py` | The AST engine — resolves which objects are LLM clients, does intra-procedural taint, classifies exec/deserialization/prompt/loop/token-ceiling risks. Precision-first (not grep). |
 | `release_gate/verify.py` | File scanners (Python + JS/TS), the secret scan, and governance-safeguard verification; produces `code_findings` + safeguard results. |
 | `release_gate/rules.py` | The **rule registry** — the single source of truth for stable rule ids, rationale, and compliance mappings. Generates `docs/RULES.md`. |
-| `release_gate/audit.py` | Report assembly + two-axis scoring, decision modes, **baseline comparison** (net-new vs inherited), the **AI-change `pr` verdict**, SARIF emit, PR-comment rendering, badge/markdown. |
+| `release_gate/audit.py` | Report assembly + two-axis scoring, decision modes, **baseline comparison** (net-new vs inherited), the **AI-change `pr` verdict**, SARIF emit, PR-comment rendering, badge/markdown. Records the report's `evidence_provenance` block (repository, commit, tree state, scanner/rule/analyser digests, a digest of the exact bytes scanned). |
+| `release_gate/assurance/static_producer.py` | The scanner as a **first-class evidence producer** (`release_gate_static`): turns an audit report into Universal Evidence. Each finding becomes a scoped observation with what it does *not* establish and its source→sink path, bound to the scanned code. `assure audit.json` and `audit --evidence-out` both go through it. |
 | `release_gate/lockfile.py` | The **AIBOM / context lock** — pins model + prompts + governance + evals + MCP/tool config with a TTL; `compare_lock()` detects behaviour drift. |
 | `release_gate/loop_verifier.py`, `loop_sim.py`, `agent_score.py` | The *behavioural* half — actually run an agent/loop for SHIP/CONTINUE/ROLLBACK and a 0-100 score. (Advanced; complements the static gate.) |
 | `release_gate/trace_validator.py` | Judges one execution trace against `trace_policies` — forbidden tools, retry storms, token overruns, and an agent repeating an *identical* call instead of progressing. |
@@ -66,8 +67,31 @@ repo path / GitHub URL
       · production vs example/test partitioned (examples never touch the score)
   → verify governance safeguards         declared, enforceable checks
   → compute two axes + apply_decision_mode(audit|ci|strict|public-advisory)
+  → record evidence_provenance           what the findings were raised against
   → PROMOTE / HOLD / BLOCK  (+ badge, SARIF, markdown, evidence pack)
+  → optional: --evidence-out             the findings as Universal Evidence
 ```
+
+### The scanner as an evidence producer
+
+The static scanner's findings are **evidence of what the analyser saw, not
+conclusions about the world**. Each rule has a profile, kept as data, that says
+what it observed and what it does not establish. A rule that reports a
+*missing* mitigation (no gate, no token ceiling, no iteration cap) says what
+static analysis did not identify, and where it looked. So RG-GATE-001 reads
+*"static analysis did not identify a code-level approval gate on this path"*,
+never "no human approval exists". Each record carries:
+
+- the producer and its type, and the scanner version;
+- the rule and its digest, and its framework mappings;
+- the source→sink path and the lines it spans, with a digest of each;
+- the repository, the commit and whether the tree was clean;
+- a digest of every file the analyser read, which is what the evidence is
+  bound to.
+
+The `audit` verdict and every rendering are unchanged. The evidence feeds an
+assurance case alongside traces, evals, tests and human review, and the scanner
+has no special standing there.
 
 ### `pr` — the AI-change review gate
 
@@ -130,6 +154,7 @@ number of things a person must inspect before accepting responsibility.
 - Data model, wire protocol, binding algorithm: [`docs/specs/assurance-data-model.md`](specs/assurance-data-model.md)
 - Hosted endpoint — intake, idempotency, concurrency, versioning: [`docs/specs/assurance-protocol.md`](specs/assurance-protocol.md)
 
-Both are **specifications, not shipped code**. Nothing in this document has changed
-yet; the migration plan in the spec keeps every command, JSON key, SARIF field,
-Action output and exit code on this page working unchanged.
+The engine ships as `release-gate assure` (since 0.11.0), and the audit feeds
+it through the static evidence producer above. The migration plan in the spec
+(§15) keeps every command, JSON key, SARIF field, Action output and exit code on
+this page working unchanged; what the static producer added is listed in §15.3a.

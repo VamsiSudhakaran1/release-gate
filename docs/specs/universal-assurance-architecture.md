@@ -2070,11 +2070,14 @@ produces a claim only where the audit actually assessed it:
 * A scan that could not run (`applicable: false` — no agent detected, or a
   language the analyser cannot parse) produces **no claim at all**, because
   asserting code safety there would assert something nobody established.
-* Each declared safeguard becomes `sw:safeguard:<name>`, supported by an
-  `ATTESTATION` (DECLARED — a governance file saying a kill switch exists is the
-  team's account of their own system, not a runtime guarantee, Invariant 1) or
+* Each declared safeguard becomes `sw:safeguard:<name>` — *"this repository
+  carries a valid <name> declaration"* — supported by an `ATTESTATION`
+  (DECLARED — a governance file saying a kill switch exists is the team's
+  account of their own system, not a runtime guarantee, Invariant 1) or
   contradicted by release-gate's own observation that it looked and did not find
-  it (DERIVED).
+  one (DERIVED). The claim is about the repository, because that is all a
+  static read of the repository can answer; see §10ag.6 for why it no longer
+  says "the kill switch safeguard is in place".
 * The audit's own `coverage` rows become `EvidenceExpectation`s, so a dimension
   the checks could not reach reads as `NOT_ASSESSED` on the case rather than
   being absent and therefore invisible (Invariant 3). `partial` is recorded as
@@ -5464,8 +5467,10 @@ only evidence that kind of guard ever gives.
 > `Producer.release_gate` and the audit fold.
 
 The scanner is **preserved exactly**: 139 rule ids, the benchmark corpus, the
-precision-first tier system, `audit.py` / `agent_analysis.py` / `rules.py` /
-`verify.py` untouched. What changes is what it is *described as*.
+precision-first tier system. What changes is what it is *described as* — and,
+since §10ag.6, what it *emits*. That step touched the scanner modules in three
+additive places and no detection logic: `verify.py` hashes the bytes it already
+reads, `rules.py` gains rule digests, and `audit.py` records a provenance block.
 
     Agent Code Scanner ───┐
     Runtime Trace ─────────┤
@@ -5569,7 +5574,96 @@ whole suite passing but for the protocol guard.
 `producers.py` introduced `PRODUCERS_SCHEMA_VERSION`, and §10ae's drift guard
 failed the build until it joined `rg.assurance.v1`. Second prompt running, second
 catch. That is what the guard is for, and it is the only evidence such a guard
-ever gives.
+ever gives. (It caught `STATIC_EVIDENCE_SCHEMA_VERSION` too, in §10ag.6.)
+
+### 10ag.6 The scanner emits evidence (`StaticEvidenceProducer`)
+
+> **Implemented.** `release_gate/assurance/static_producer.py` —
+> `StaticEvidenceProducer`, `ScanProvenance`, `RuleEvidenceProfile`,
+> `RULE_PROFILES`, `emit_from_report()`. The audit bridge (`_audit_records`)
+> now delegates to it; `release_gate/audit.py` records the provenance block
+> (`compute_evidence_provenance`); `release-gate audit --evidence-out` writes
+> the emission. Tests: `tests/test_static_evidence_producer.py`.
+
+§10ag.1–5 described the scanner as a lane. This subsection makes it emit, through
+**one conversion** that both roads into a case share: `release-gate assure
+audit.json` (a document someone hands over, so the producer is *attributed*,
+§10ag.4) and `release-gate audit --evidence-out` (this process ran the scan, so
+the producer is `in-process`). The producer's lane description is still
+`lane_for(CODE_SCANNER)` — what it cannot establish is stated once.
+
+```
+repo ─► scan_code_findings()  ── hashes each file it reads (LAST_SCAN_DIGESTS)
+     ─► build_report()        ── + evidence_provenance  (git, rule/analyser digests,
+                                   scanned-set manifest, per-file / per-line digests)
+     ─► StaticEvidenceProducer.emit(report)
+            ├─ STATIC_FINDING per finding   (DERIVED, scoped, bound to the bytes)
+            ├─ ATTESTATION / STATIC_FINDING per safeguard
+            ├─ claims sw:code-safety, sw:safeguard:*, sw:admissible (root)
+            ├─ the audit's coverage rows as expectations
+            └─ the scanned code as a SOURCE_CODE artifact (SHA256_MANIFEST)
+```
+
+**Evidence is not conclusion.** Every rule carries a `RuleEvidenceProfile`, as
+data: what the analyser `observed`; for a rule that reports something *missing*,
+what it looked for and did not find (`not_identified`); and what the finding
+`does_not_establish`. A rule is `PRESENCE` (a tainted value reaching `eval`) or
+`SCOPED_ABSENCE` (no gate, no ceiling, no try/except, no iteration cap). The
+second kind is where the universal negative lives, so its `not_identified` is
+**required at construction** to begin *"static analysis did not identify"*.
+RG-GATE-001's evidence is *"static analysis did not identify a code-level
+approval gate on this path"*, and its `does_not_establish` begins *"that no human
+approval exists anywhere"*. A rule id with no profile is `UNCLASSIFIED` and says
+so, rather than borrowing a polarity from its name. A test holds the profile set
+equal to `rules.RULES`, and pins which eight rules are scoped absences.
+
+**The same failure was in the safeguard claims, and it was a claim-wording
+defect.** Measured before the change: on a repository with no governance file,
+all eight `sw:safeguard:*` claims — *"the kill switch safeguard is in place"* —
+were REFUTED by release-gate's observation that it read the repository and found
+no declaration. That observation is true and scoped. The claim it refuted was
+global: a kill switch can live in infrastructure the repository never mentions.
+The claim now asks what the evidence can answer — *"this repository carries a
+valid kill switch declaration"*, with `metadata.does_not_ask` naming the deployed
+system. The refutation, the claim statuses, criticality and the verdict are all
+**unchanged** (a test compares them against the same report with the provenance
+stripped, under zero-config and under `software-agent-assurance`). No verdict
+moved from BLOCK to HOLD; the case stopped saying more than was looked at.
+
+**Bound to the exact state.** `applies_to_digest` is the *scanned-set digest*:
+canonical sha256 over the sorted `[posix path, sha256]` pairs of every file the
+analyser read, hashed from the bytes it read rather than re-read afterwards. The
+commit and tree state are recorded beside it. The commit alone is not the binding,
+because a dirty tree or an ignored-but-scanned file makes the commit describe
+different bytes. The scanned code is registered as a `SOURCE_CODE` artifact
+carrying that digest (`SHA256_MANIFEST`; DECLARED when read from a document,
+OBSERVED in-process), so RG-SW-007 and RG-DRIFT-005 find it held — a measured zero
+change in structural findings. Region digests cover the exact lines a finding
+spans. A cross-module origin (`llm() [pkg/llm.py]`) is kept out of the span,
+because its line number belongs to another file.
+
+**Nothing is invented.** The pure layer runs no subprocess, so git is asked in
+`audit.py`. A report written before the block existed binds to its own digest as
+it always did (`binding: REPORT`, `provenance_recorded: false`, a stated
+limitation). Malformed values — a commit that is not hex, a digest that is not a
+digest — are dropped rather than trusted. A document's `scanned_at` is kept as
+`metadata.declared_timestamp`, the key the envelope ingest uses, and never
+written into `timestamp`, which means "observed here". Remote URLs have userinfo,
+query and fragment stripped before they are written anywhere.
+
+**Credibility still travels beside the finding.** `RuleCredibility` is not copied
+into the evidence: a benchmark number inside a record would put a measurement
+into its identity, and §10ag.3's test that flushing `CREDIBILITY` moves no
+verdict still holds.
+
+**What `--evidence-out` writes** is a JSON list of each record's own
+serialisation: the candidate artifact, the claims, the evidence and the audit's
+coverage rows as expectations. Every evidence row passes
+`EvidenceRecord.from_dict`, which recomputes its id and refuses a row edited after
+it was written. The list is also an assurance envelope: `release-gate assure`
+reads it with every record mapped. Because it is a file, the envelope ingest
+demotes it to EXTERNAL / DECLARED, and the coverage rows keep runtime behaviour
+NOT_ASSESSED rather than dropping it.
 
 ---
 
@@ -8661,6 +8755,24 @@ into evidence records. The ADMISSION verdict is **not recomputed** by new logic 
 A golden corpus of existing reports is asserted equal before and after, at the
 JSON level. If that test cannot be made to pass, the design is wrong and gets
 fixed, rather than the expectations being lowered.
+
+### 15.3a Static findings as evidence — what moved (§10ag.6)
+
+| Surface | Change | Compatibility |
+|---|---|---|
+| `audit` text, `--markdown`, `--pr-comment`, `--badge`, `--sarif` | none | tests render each with and without the new block and assert equality |
+| `audit --json`, `--write-baseline`, hosted report | new top-level key `evidence_provenance` | additive; no existing key or finding key changes. The hosted free tier, which withholds findings, also withholds the block's `files` and `regions`, because those name where the findings are |
+| `audit --evidence-out FILE` | new, opt-in | no effect on output or exit code; confirmation on stderr |
+| exit codes, `pr`, `score` | none | — |
+| `assure audit.json` evidence | producer `release-gate/static` (was `release-gate/audit`), `version` set; richer `content` / `metadata`; `coverage_status: PARTIAL`; `applies_to_digest` = scanned-set digest when recorded | evidence and case **ids change** (content-addressed); verdicts and claim statuses do not |
+| `assure audit.json` claims | `sw:safeguard:*` statements now read "this repository carries a valid … declaration" | claim ids unchanged; statuses unchanged |
+| `assure audit.json` artifacts | the scanned code is added as a `SOURCE_CODE` artifact | no structural finding changes (measured) |
+| older audit reports (no block) | still read; evidence binds to the report digest, as before | provenance fields read `null` with a stated limitation |
+
+An approval or override already bound to an audit-derived **case digest** will
+read as stale after upgrading, because the evidence it binds to now carries more
+of its provenance. That is the binding working as designed. Re-run `assure` and
+re-approve.
 
 ### 15.4 Phasing
 

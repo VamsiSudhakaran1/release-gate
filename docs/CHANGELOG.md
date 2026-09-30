@@ -2,6 +2,65 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [Unreleased]
+
+### 🧾 The static scanner is a first-class evidence producer
+
+The scanner's findings now become **Universal Evidence**, through one conversion
+(`release_gate/assurance/static_producer.py`) that both `release-gate assure
+audit.json` and the new `release-gate audit --evidence-out FILE` use. The
+producer's type is `release_gate_static`.
+
+**A finding is evidence of what the analyser saw, not a conclusion about the
+world.** Every rule has a profile, kept as data, with three parts: what it
+observed; for a rule that reports something missing, what static analysis did
+not identify and where it looked; and what the finding does *not* establish.
+RG-GATE-001's evidence reads *"static analysis did not identify a code-level
+approval gate on this path"*, and lists "that no human approval exists anywhere"
+among the things it does not establish. A profile that phrases an absence as a
+fact about the world is refused at construction.
+
+**Every record is attributable and bound to the exact state scanned.** Each
+`audit` report carries a new `evidence_provenance` block with:
+
+- the scanner version, plus a digest of the analyser's own source;
+- a digest of the rule catalogue and of each rule;
+- the repository (with any credentials in the remote removed), the commit, and
+  whether the tree was clean;
+- a sha256 of every file the analyser read, folded into one scanned-set digest;
+- a sha256 of each file a finding is in, and of the exact lines it spans.
+
+Evidence binds to the scanned-set digest. The scanned code enters the case as a
+`SOURCE_CODE` artifact carrying that digest. Each record keeps its finding's
+source→sink path with both coordinates.
+
+**Unchanged:** the `audit` text output, `--markdown`, `--pr-comment`,
+`--badge`, SARIF, every existing JSON key and finding key, exit codes, `pr` and
+`score`. The verdicts and claim statuses `assure` reaches on an audit report are
+also unchanged. Tests compare each against the same report with the new block
+removed.
+
+#### Migration notes
+
+- **`audit --json` has a new top-level key, `evidence_provenance`.** It is
+  additive. A consumer that rejects unknown keys needs to allow it. The hosted
+  free tier, which withholds findings, also withholds the block's `files` and
+  `regions`, since they name the files and lines findings sit in.
+- **Safeguard claims in `assure audit.json` are worded to what a scan can
+  answer.** `sw:safeguard:<name>` read *"the kill switch safeguard is in
+  place"*, a claim about the deployed system, and it was refuted by
+  release-gate not finding a declaration in the repository. The claim now reads
+  *"this repository carries a valid kill switch declaration"*. The claim ids,
+  the refutation, the claim statuses and the verdict are all unchanged.
+- **Audit-derived evidence and case ids change.** The producer is now
+  `release-gate/static` (it was `release-gate/audit`) and carries a version.
+  Records hold more content and bind to the scanned code. Ids are
+  content-addressed, so they move. An approval bound to an earlier
+  audit-derived case digest will read as stale: re-run `assure` and re-approve.
+- **Older audit reports still work.** A report without the block binds to its
+  own digest, as before, and each record says the provenance was not recorded.
+  Nothing is filled in from the version or clock running now.
+
 ## [0.11.2] — 2026-09-30
 
 ### 🔭 An OpenTelemetry SDK span is read, not mistaken for a Temporal workflow

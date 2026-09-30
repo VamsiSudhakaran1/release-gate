@@ -26,6 +26,7 @@ ticket is invalid, not just stamp it.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -542,6 +543,12 @@ _SUMMARY_MARKER_RE = re.compile(
 # how many were actually analyzed, and whether we hit the ceiling. build_report
 # surfaces this so a truncated scan can never masquerade as a clean one.
 LAST_SCAN_COVERAGE: Dict[str, Any] = {}
+# Set by the same call: repo-relative path -> sha256 of the exact bytes each
+# analysed file held when it was read. Kept out of LAST_SCAN_COVERAGE on
+# purpose — that dict is copied into every report, and a 25,000-entry map does
+# not belong in one. The audit folds it into a single manifest digest, which is
+# what binds a finding to the precise code state it was raised against.
+LAST_SCAN_DIGESTS: Dict[str, str] = {}
 
 
 def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
@@ -557,8 +564,9 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
     files than `max_files` we analyze the first `max_files` and mark the scan
     TRUNCATED — the caller must say so rather than imply the repo is clean.
     """
-    global LAST_SCAN_COVERAGE
+    global LAST_SCAN_COVERAGE, LAST_SCAN_DIGESTS
     findings: List[Dict[str, Any]] = []
+    digests: Dict[str, str] = {}
     skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv",
                  "dist", "build", "site-packages", ".tox", "tests", "test"}
 
@@ -616,16 +624,22 @@ def scan_code_findings(root: Path, max_files: int = MAX_SCAN_FILES,
                 continue
             fpath = Path(dirpath) / fname
             try:
-                text = fpath.read_bytes()[:max_bytes].decode("utf-8", errors="ignore")
+                raw = fpath.read_bytes()
             except OSError:
                 continue
+            text = raw[:max_bytes].decode("utf-8", errors="ignore")
             scanned += 1
             rel = str(fpath.relative_to(root))
+            # The whole file, not the analysed prefix: the digest identifies
+            # the candidate state, and two files sharing a 200KB prefix are
+            # still two states.
+            digests[rel] = "sha256:" + hashlib.sha256(raw).hexdigest()
             if any(fname.endswith(ext) for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs")):
                 findings.extend(_scan_js_file(rel, text))
             else:
                 findings.extend(_scan_file(rel, text, index=index, egress=egress))
     findings.extend(_pii_divergence_findings(egress))
+    LAST_SCAN_DIGESTS = digests
     LAST_SCAN_COVERAGE = {
         "files_scanned": scanned,
         "files_scannable": scannable,

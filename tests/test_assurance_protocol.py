@@ -94,7 +94,8 @@ class TestNoDrift:
         assert moved.digest() != PROTOCOL.digest()
 
     def test_the_count_is_what_was_measured(self):
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 68
+        # 69 since STATIC_EVIDENCE_SCHEMA_VERSION: the scanner emitting evidence.
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 69
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────

@@ -1053,9 +1053,22 @@ def clone_and_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
             raise RuntimeError(f"git clone failed: {err}")
         report = build_report(Path(tmpdir))
         report["path"] = url
+        _name_remote_repository(report, url)
         return report
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _name_remote_repository(report: Dict[str, Any], url: str) -> None:
+    """A remote audit scans a temporary directory; the repository is the URL.
+
+    Only fills an identity git could not supply. A clone keeps `origin`, and
+    what git reports for it is the better answer.
+    """
+    block = report.get("evidence_provenance")
+    repo = block.get("repository") if isinstance(block, dict) else None
+    if isinstance(repo, dict) and not repo.get("identity"):
+        repo["identity"] = public_remote(url)
 
 
 def _github_api_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
@@ -1131,9 +1144,220 @@ def _github_api_audit(url: str, token: Optional[str] = None) -> Dict[str, Any]:
         report = build_report(repo_root)
         report["path"] = url
         report["source"] = "github-tarball"
+        _name_remote_repository(report, url)
         return report
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────── Evidence provenance ────────────────────────────
+#
+# What a finding was raised against, recorded when the scan runs so it can be
+# re-derived later: the scanner and its ruleset, the repository and commit, and a
+# digest of the exact bytes analysed. `release_gate.assurance.static_producer`
+# reads this block and turns each finding into Universal Evidence bound to that
+# state. The assurance package runs no subprocess, so this is where git is asked.
+# Every field that cannot be established is left empty and named in
+# `limitations`; nothing is filled in from a default.
+
+#: The scanner modules whose source decides what a rule detects. Their digest is
+#: the analyser's identity between releases, when the version string is stale.
+_ANALYSER_MODULES = ("agent_analysis.py", "verify.py", "audit.py", "rules.py")
+
+
+def _git_out(root: Path, *args: str) -> Optional[str]:
+    """One git query against `root`, or None when git cannot answer it."""
+    if not shutil.which("git"):
+        return None
+    try:
+        result = subprocess.run(["git", "-C", str(root), *args],
+                                capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def public_remote(url: Optional[str]) -> Optional[str]:
+    """A remote URL with any credentials, query or fragment removed.
+
+    Remotes carry tokens more often than anyone intends
+    (`https://x-access-token:ghs_…@github.com/o/r`), and this string is written
+    into a report that is uploaded, attached and pasted. The identity of a
+    repository never needs its password.
+    """
+    text = (url or "").strip()
+    if not text:
+        return None
+    if "://" in text:
+        from urllib.parse import urlsplit, urlunsplit
+        try:
+            parts = urlsplit(text)
+        except ValueError:
+            return None
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return urlunsplit((parts.scheme, host, parts.path, "", "")) or None
+    # scp-like `[user[:password]@]host:path` — everything up to the last `@`
+    # before the path is userinfo, and is dropped whatever it holds.
+    slash = text.find("/")
+    at = text.rfind("@", 0, slash if slash >= 0 else len(text))
+    return text[at + 1:] if at >= 0 else text
+
+
+def _sha256_bytes(raw: bytes) -> str:
+    import hashlib
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _region_digest(raw: bytes, start: int, end: int) -> Optional[str]:
+    """sha256 over lines start..end (1-based, inclusive), joined with b"\\n"."""
+    lines = raw.split(b"\n")
+    if start < 1 or end < start or end > len(lines):
+        return None
+    return _sha256_bytes(b"\n".join(lines[start - 1:end]))
+
+
+def _analyser_digest() -> Optional[str]:
+    here = Path(__file__).resolve().parent
+    parts = {}
+    for name in _ANALYSER_MODULES:
+        try:
+            parts[name] = _sha256_bytes((here / name).read_bytes())
+        except OSError:
+            return None
+    from release_gate.assurance.canonical import digest_object
+    return digest_object(sorted(parts.items()))
+
+
+def compute_evidence_provenance(root: Path, *, scanned_digests: Dict[str, str],
+                                findings: List[Dict[str, Any]],
+                                gov_path: Optional[Path],
+                                scan_coverage: Dict[str, Any]) -> Dict[str, Any]:
+    """The `evidence_provenance` block of a report. Never raises.
+
+    `scanned_digests` is what the analyser recorded while it read each file, so
+    the manifest names the bytes it analysed rather than whatever is on disk a
+    moment later. Region digests are computed from a fresh read and kept only
+    when that read still matches the scanned digest; a file that changed
+    mid-scan gets no region digest rather than one for different content.
+    """
+    from datetime import datetime, timezone
+    from release_gate import __version__ as _rg_version
+    from release_gate.assurance.canonical import digest_object
+    from release_gate.assurance.static_producer import (
+        PRODUCER_TYPE, SCAN_PROVENANCE_SCHEMA, finding_span, origin_file, region_key)
+    from release_gate.rules import RULES, rule_digest, ruleset_digest
+
+    limitations: List[str] = []
+
+    # ── the repository and the candidate state ──────────────────────────────
+    toplevel = _git_out(root, "rev-parse", "--show-toplevel")
+    # Being *inside* a work tree is not being *part of* it. A directory nobody
+    # committed — a GitHub tarball extracted under a TMPDIR that happens to sit
+    # in a CI checkout — would otherwise be credited with the enclosing
+    # repository's commit, which describes none of its bytes. Only a directory
+    # that repository tracks files in is described by its commit.
+    untracked = bool(toplevel) and not _git_out(root, "ls-files", "--", ".")
+    if untracked:
+        toplevel = None
+        limitations.append("the scanned directory is inside a git work tree that "
+                           "tracks none of its files, so that repository's commit "
+                           "does not describe it and none is recorded")
+    commit = _git_out(root, "rev-parse", "HEAD") if toplevel else None
+    if toplevel:
+        # Scoped to the scanned directory: an edit elsewhere in the repository
+        # does not change what was scanned here.
+        status = _git_out(root, "status", "--porcelain", "--untracked-files=normal",
+                          "--", ".")
+        tree_state = "unknown" if status is None else ("dirty" if status else "clean")
+        try:
+            rel = root.resolve().relative_to(Path(toplevel).resolve()).as_posix()
+        except ValueError:
+            rel = ""
+        remote = public_remote(_git_out(root, "remote", "get-url", "origin"))
+        vcs = "git"
+        if not commit:
+            limitations.append("git reports no commit here (an empty repository?), "
+                               "so no commit is recorded")
+        if tree_state == "dirty":
+            limitations.append("the working tree differs from the commit, so the "
+                               "commit alone does not identify what was scanned; "
+                               "the scanned-set digest does")
+    else:
+        tree_state, rel, remote = "unknown", "", None
+        vcs = "none" if shutil.which("git") else "unknown"
+        if not untracked:
+            limitations.append("no git repository was found (or git is unavailable), "
+                               "so no commit is recorded; the scanned-set digest "
+                               "identifies the code")
+
+    manifest = sorted((Path(path).as_posix(), digest)
+                      for path, digest in scanned_digests.items())
+    if scan_coverage.get("truncated"):
+        limitations.append(
+            f"the scan stopped at its ceiling of {scan_coverage.get('max_files')} "
+            f"file(s); {scan_coverage.get('files_scannable')} were scannable")
+
+    # ── the files and lines the findings rest on ────────────────────────────
+    files: Dict[str, str] = {}
+    regions: Dict[str, str] = {}
+    for finding in findings:
+        name = str(finding.get("file") or "")
+        for path in (name, origin_file(finding)):
+            if path and path in scanned_digests:
+                files[path] = scanned_digests[path]
+        span = finding_span(finding)
+        if not name or span is None or name not in scanned_digests:
+            continue
+        key = region_key(name, *span)
+        if key in regions:
+            continue
+        try:
+            raw = (root / name).read_bytes()
+        except OSError:
+            continue
+        if _sha256_bytes(raw) != scanned_digests[name]:
+            limitations.append(f"{name} changed while the scan ran; its line "
+                               "digests were not recorded")
+            continue
+        region = _region_digest(raw, *span)
+        if region:
+            regions[key] = region
+
+    governance = None
+    if gov_path is not None:
+        try:
+            governance = {"path": Path(os.path.relpath(gov_path, root)).as_posix(),
+                          "sha256": _sha256_bytes(Path(gov_path).read_bytes())}
+        except (OSError, ValueError):
+            governance = None
+
+    return {
+        "schema": SCAN_PROVENANCE_SCHEMA,
+        "scanner": {"producer_type": PRODUCER_TYPE, "name": "release-gate",
+                    "version": _rg_version, "analyser_digest": _analyser_digest(),
+                    "analyser_modules": list(_ANALYSER_MODULES)},
+        "ruleset": {"digest": ruleset_digest(),
+                    "rules": {r.id: {"digest": rule_digest(r), "category": r.category,
+                                     "type_key": r.type_key} for r in RULES}},
+        "repository": {"vcs": vcs, "identity": remote, "root_relative": rel},
+        "candidate": {
+            "commit": commit, "tree_state": tree_state,
+            "scanned_set": {
+                "digest": digest_object([list(pair) for pair in manifest])
+                if manifest else None,
+                "files": len(manifest),
+                "method": ("canonical-JSON sha256 over the sorted [posix path, "
+                           "sha256 of the file's bytes] pairs of every file the "
+                           "analyser read")}},
+        "files": files,
+        "regions": regions,
+        "governance_file": governance,
+        "scanned_at": datetime.now(timezone.utc).replace(microsecond=0)
+                      .isoformat().replace("+00:00", "Z"),
+        "limitations": limitations,
+    }
 
 
 # ─────────────────────────── Report builder ─────────────────────────────────
@@ -1182,12 +1406,14 @@ def build_report(root: Path, mode: str = "ci",
     from release_gate import verify as _verify
     from release_gate.verify import scan_code_findings
     scan_coverage: Dict[str, Any] = {}
+    scanned_digests: Dict[str, str] = {}
     if agent_detected:
         raw_findings, raw_examples = scan_code_findings(root, return_excluded=True)
         # Coverage is part of the verdict's honesty: if we could not read the
         # whole repo, "no findings" does not mean "no risk", and the report has
         # to say which one it is.
         scan_coverage = dict(_verify.LAST_SCAN_COVERAGE)
+        scanned_digests = dict(_verify.LAST_SCAN_DIGESTS)
     else:
         raw_findings, raw_examples = [], []
     def _tag(f):
@@ -1299,6 +1525,19 @@ def build_report(root: Path, mode: str = "ci",
     # honest counterweight to a one-line verdict (see compute_coverage).
     has_py, has_js = _languages_present(root)
     report["coverage"] = compute_coverage(report, has_py, has_js, sorted(other_langs))
+    # Additive, and read by nothing that renders a verdict: the text, markdown,
+    # SARIF and PR outputs are unchanged by it. It is what lets each finding be
+    # attributed to an exact tool, ruleset and code state (see
+    # compute_evidence_provenance).
+    try:
+        report["evidence_provenance"] = compute_evidence_provenance(
+            root, scanned_digests=scanned_digests,
+            findings=code_findings + example_findings + suppressed_findings,
+            gov_path=gov_path, scan_coverage=scan_coverage)
+    except Exception as exc:  # provenance must never cost a report
+        report["evidence_provenance"] = {
+            "schema": "release-gate/scan-provenance@1",
+            "limitations": [f"provenance could not be recorded: {type(exc).__name__}"]}
     if not governance_applicable:
         report["decision_reason"] = (
             "Not a deployed agent — LLM usage appears only in tests/examples/"

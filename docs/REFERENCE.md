@@ -251,6 +251,7 @@ decides. [What each demonstrates](../examples/agents/README.md).
 | `--pr-comment` | **Concise delta comment** for a PR (pair with `--baseline`). Leads with the net-new verdict + score delta, not a 200-line report. Auto-written to `$GITHUB_STEP_SUMMARY`. |
 | `--sarif [file]` | Emit **SARIF 2.1.0** so findings show up in GitHub Code Scanning. |
 | `--no-suppress` | Ignore `.release-gate-ignore` and show every finding. |
+| `--evidence-out <file.json>` | Also write the findings as **Universal Evidence**: one record per finding with its scoped observation, what it does *not* establish, the source→sink path, and the code, commit, scanner and rule digests it was raised against. The file is an assurance envelope `release-gate assure` reads. Changes nothing about the report, output or exit code. See [static evidence](#static-findings-as-evidence). |
 | `--verify` | **LLM second opinion** on high/medium findings — `confirmed / refuted / uncertain` + reason. Opt-in, **bring-your-own model** (cloud or local), advisory only. |
 
 #### `--verify` — an optional LLM second opinion
@@ -314,6 +315,40 @@ jobs:
 ```
 
 Commit `release-gate-baseline.json` once (`release-gate audit . --write-baseline release-gate-baseline.json`); after that, CI only fails when a PR makes things **worse**.
+
+#### Static findings as evidence
+
+The scanner is one evidence producer among many (`producer_type: release_gate_static`). Every `audit` report now carries an `evidence_provenance` block recording what the findings were raised against, and `--evidence-out` writes each finding as a Universal Evidence record. The text, markdown, SARIF, badge and PR-comment outputs are unchanged, and so is every existing JSON key.
+
+```bash
+release-gate audit . --evidence-out static-evidence.json   # one record per finding
+release-gate assure static-evidence.json                     # read back as an envelope
+release-gate assure audit.json                               # or fold the report itself
+```
+
+**`evidence_provenance`** (additive JSON key):
+
+| Field | What it records |
+|---|---|
+| `scanner` | release-gate version, and `analyser_digest` — a digest of the analyser's own source, so two builds with one version string are still told apart |
+| `ruleset` | a digest of the rule catalogue, and each rule's own digest, category and type |
+| `repository` | `vcs`, `identity` (the `origin` remote with any credentials removed) and `root_relative` (where in the repository the scan ran) |
+| `candidate` | `commit`, `tree_state` (`clean` / `dirty` / `unknown`), and `scanned_set` — one sha256 over every file the analyser read, from the bytes it read |
+| `files`, `regions` | sha256 of each file a finding is in, and of the exact lines each finding spans (`path#Lstart-Lend`) |
+| `governance_file` | the governance file's path and sha256 |
+| `scanned_at`, `limitations` | when the scan ran, and everything that could not be recorded (no git, a dirty tree, a truncated scan) |
+
+A field that cannot be established is left empty and named in `limitations`. Nothing is filled in from a default.
+
+**Each evidence record** keeps the finding's original keys (`rule_id`, `title`, `file`, `line`, `severity`, `basis`, `confidence`, `evidence`, `compliance_tags`) and adds:
+
+- `observation`: one scoped sentence saying what the analyser saw. For a rule that reports a *missing* mitigation, `not_identified` says what it looked for and did not find, and always begins "static analysis did not identify". RG-GATE-001 reads *"static analysis did not identify a code-level approval gate on this path"*. It is never read as "no human approval exists".
+- `does_not_establish`: what a reader must not conclude from the finding.
+- `path`: the source→sink chain with origin and sink coordinates (`TRACED`), in prose only (`DESCRIBED`), or `NOT_RECORDED`.
+- `code`, `rule`, and `metadata`: the file and line digests, the rule digest, and the repository, commit, tree state, scanner version and ruleset digest.
+- `applies_to_digest`: the scanned-set digest, which binds the evidence to the exact bytes analysed. The scanned code is registered in the case as a `SOURCE_CODE` artifact carrying that digest.
+
+A report written before this block existed still works: its evidence binds to the report's own digest, as before, and records that no provenance was available.
 
 ### Flags for `score`
 

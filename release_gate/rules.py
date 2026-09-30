@@ -17,6 +17,8 @@ keeps them in sync so the catalog can never drift from the engine.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Dict, List, NamedTuple, Optional
 
@@ -210,6 +212,31 @@ def rule_id_for_title(title: str) -> Optional[str]:
 
 def get_rule(rule_id: str) -> Optional[Rule]:
     return _BY_ID.get(rule_id)
+
+
+def rule_digest(rule: Rule) -> str:
+    """A content id for one rule's catalogue entry — its version, in effect.
+
+    Ids are permanent and titles may change, so neither says *which* definition
+    a finding was raised under. The digest does: it moves when the title,
+    severity, rationale, remedy or framework mapping moves, and not otherwise.
+    It covers the catalogue entry only. The detection logic lives in the
+    analyser, and the audit records a digest of that separately.
+    """
+    body = json.dumps(rule._asdict(), sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def ruleset_digests() -> Dict[str, str]:
+    """rule id -> `rule_digest`, for every rule in the catalogue."""
+    return {r.id: rule_digest(r) for r in RULES}
+
+
+def ruleset_digest() -> str:
+    """One content id for the whole catalogue, over the per-rule digests."""
+    body = json.dumps(sorted(ruleset_digests().items()), separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def render_catalog_md() -> str:

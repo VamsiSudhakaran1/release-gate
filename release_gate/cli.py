@@ -1142,6 +1142,7 @@ def print_help():
     print("  release-gate audit [path|url] --sarif [FILE] # Emit SARIF 2.1.0 for GitHub Code Scanning")
     print("  release-gate audit [path|url] --baseline FILE  # Only fail on net-new regressions")
     print("  release-gate audit [path|url] --write-baseline FILE  # Save current audit as a baseline")
+    print("  release-gate audit [path|url] --evidence-out FILE  # Also write the findings as Universal Evidence (assure-readable)")
     print("  release-gate pr --base origin/main           # AI-change review gate: one PROMOTE/HOLD/BLOCK on what THIS diff introduced")
     print("      Folds net-new agent-risk + lockfile drift into one verdict; blocks only on net-new regressions, never inherited debt.")
     print("      Exit 0 PROMOTE · 10 HOLD · 1 BLOCK. Add --comment for GitHub-ready markdown, --json for CI.")
@@ -1445,6 +1446,21 @@ def main():
                 report['_baseline_comparison'] = baseline_comparison
             except (OSError, json.JSONDecodeError) as exc:
                 print(f"Warning: could not load baseline file: {exc}")
+
+        # The scanner's findings as Universal Evidence, for any consumer — the
+        # same conversion `release-gate assure audit.json` uses, run here as the
+        # in-process producer because this process did the scan. Opt-in, and it
+        # changes nothing about the report, the output or the exit code. The
+        # confirmation goes to stderr so `--json` stdout stays parseable.
+        evidence_out = _flag(sys.argv, '--evidence-out')
+        if evidence_out:
+            # Broad on purpose: an opt-in side output must never change the
+            # audit's own verdict or exit code by failing.
+            try:
+                _write_static_evidence(report, evidence_out)
+            except Exception as exc:
+                print(f"Warning: could not write evidence: "
+                      f"{type(exc).__name__}: {exc}", file=sys.stderr)
 
         if emit:
             if not report.get('agent_detected', True):
@@ -1764,6 +1780,31 @@ def main():
         print(f"Unknown command: {command}")
         print_help()
         sys.exit(1)
+
+
+def _write_static_evidence(report: Dict[str, Any], path: str) -> int:
+    """Write the audit's findings as Universal Evidence; return the row count.
+
+    A JSON list of records in their own serialised form — the candidate code
+    artifact, the claims, the evidence and the audit's coverage — which is also
+    an assurance envelope `release-gate assure` can read.
+    """
+    from pathlib import Path as _Path
+    from release_gate.assurance.static_producer import (
+        ScanProvenance, StaticEvidenceProducer)
+
+    provenance = ScanProvenance.from_report(report)
+    handle = provenance.repository or _Path(str(report.get('path') or '.')).name or 'scan'
+    if provenance.root_relative:
+        handle = f"{handle}/{provenance.root_relative}"
+    emission = StaticEvidenceProducer(provenance, in_process=True).emit(
+        report, source=f"release-gate-static:{handle}")
+    rows = emission.records()
+    with open(path, 'w', encoding='utf-8') as handle_out:
+        json.dump(rows, handle_out, indent=2, sort_keys=True, default=str)
+    print(f"Evidence written to: {path} ({len(emission.evidence)} evidence "
+          f"record(s), bound to {emission.binding.value})", file=sys.stderr)
+    return len(rows)
 
 
 def _run_assure_command():

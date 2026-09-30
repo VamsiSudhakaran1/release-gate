@@ -350,8 +350,15 @@ def _redact_for_free(report: Dict) -> Dict:
             present = v if isinstance(v, bool) else v.get("present", False)
             redacted[k] = {"present": present, "redacted": True}
     findings = report.get("code_findings", []) or []
+    # The provenance block names the files and line ranges findings sit in, so
+    # its per-finding parts are locked with the findings themselves. What was
+    # scanned (scanner, ruleset, commit, scanned-set digest) stays visible.
+    provenance = report.get("evidence_provenance")
+    if isinstance(provenance, dict):
+        provenance = {**provenance, "files": {}, "regions": {}, "_redacted": True}
     return {
         **report,
+        **({"evidence_provenance": provenance} if provenance is not None else {}),
         "safeguards": redacted,
         "checks": [],           # hide detailed check results
         "next_steps": [],

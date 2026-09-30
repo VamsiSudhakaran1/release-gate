@@ -117,6 +117,17 @@ from release_gate.assurance.producers import (
     credibility_for,
     lane_for,
 )
+from release_gate.assurance.static_producer import (
+    RULE_PROFILES,
+    STATIC_EVIDENCE_SCHEMA_VERSION,
+    ObservationKind,
+    RuleEvidenceProfile,
+    ScanProvenance,
+    StaticEmission,
+    StaticEvidenceProducer,
+    emit_from_report,
+    evidence_profile_for,
+)
 from release_gate.assurance.progress import (
     PROGRESS_SCHEMA_VERSION,
     AssuranceProgress,
@@ -1195,6 +1206,15 @@ __all__ = [
     "EvidenceIntegrityError",
     "EvidenceLane",
     "EvidenceProducer",
+    "RULE_PROFILES",
+    "STATIC_EVIDENCE_SCHEMA_VERSION",
+    "ObservationKind",
+    "RuleEvidenceProfile",
+    "ScanProvenance",
+    "StaticEmission",
+    "StaticEvidenceProducer",
+    "emit_from_report",
+    "evidence_profile_for",
     "EvidenceRecord",
     "EvidenceRequirement",
     "EvidenceRequirementKind",

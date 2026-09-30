@@ -253,7 +253,8 @@ class Producer:
                    attested_by=data.get("attested_by"))
 
     @classmethod
-    def release_gate(cls, component: str, *, in_process: bool = True) -> "Producer":
+    def release_gate(cls, component: str, *, in_process: bool = True,
+                     version: Optional[str] = None) -> "Producer":
         """release-gate's own analysis, identified by component.
 
         `in_process=False` for output that arrived as a **document**. The
@@ -269,6 +270,10 @@ class Producer:
         release-gate's ruleset speaking about code, and the audit fold's existing
         DERIVED/DECLARED split is argued in place. What changes is that the
         record no longer claims a provenance it does not have.
+
+        `version` is the producing release, where one is known. For a document
+        it is the version the document names — attributed, like the rest of
+        the identity, and never filled in from the version running here.
         """
         return cls(
             producer_id=f"release-gate/{component}",
@@ -276,7 +281,8 @@ class Producer:
                   else ProducerKind.EXTERNAL),
             identity_basis=("in-process" if in_process
                             else "ingested-document: attributed to release-gate "
-                                 "by the document, not established here"))
+                                 "by the document, not established here"),
+            version=(str(version).strip() or None) if version else None)
 
 
 @dataclass(frozen=True)
