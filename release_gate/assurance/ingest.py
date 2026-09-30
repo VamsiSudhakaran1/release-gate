@@ -306,6 +306,23 @@ def _looks_like_otlp(doc: Any) -> int:
     return 65 if identified else 55
 
 
+def _otlp_basis(doc: Any) -> str:
+    """Say which OpenTelemetry shape matched, not which one usually does.
+
+    The wire format and the SDK's console export are both OpenTelemetry and
+    neither is the other. Reporting "resource/scope/span structure" for a file
+    that has no `resourceSpans` in it is a small lie in the one line whose job
+    is to tell the reader what release-gate thought it was reading.
+    """
+    if isinstance(doc, Mapping) and (doc.get("resourceSpans") or doc.get("resource_spans")):
+        return "OTLP resource/scope/span structure"
+    if isinstance(doc, list) and any(
+            isinstance(row, Mapping) and (row.get("resourceSpans") or row.get("resource_spans"))
+            for row in doc[:5]):
+        return "OTLP resource/scope/span structure"
+    return "OpenTelemetry SDK span export (ids under `context`, flat attributes)"
+
+
 def _looks_like_verifier_report(doc: Any) -> int:
     """A machine verifier's output, via whatever adapters are registered."""
     try:
@@ -338,8 +355,7 @@ def detect_document(doc: Any, *, filename: str = "") -> Detection:
                        "objects carrying trace steps in release-gate's native shape"))
     score = _looks_like_otlp(doc)
     if score:
-        native.append((InputKind.OTLP_TRACE, score,
-                       "OTLP resource/scope/span structure"))
+        native.append((InputKind.OTLP_TRACE, score, _otlp_basis(doc)))
     score = _looks_like_verifier_report(doc)
     if score:
         native.append((InputKind.VERIFIER_REPORT, score,

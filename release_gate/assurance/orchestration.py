@@ -184,12 +184,32 @@ class OrchestratorProfile:
                 score += 40
         if _walk(document, self.step_path):
             score += 35
+        matched_value = False
         for key, wanted in self.detect_values.items():
             for row in _walk(document, self.step_path):
                 value = str(row.get(key) or "")
                 if any(w in value for w in wanted):
                     score += 25
+                    matched_value = True
                     break
+        # A declared distinguishing value is NECESSARY, not a bonus.
+        #
+        # `detect_keys` are key names — `events`, `traces`, `chat_history` — and
+        # plenty of documents that have nothing to do with these frameworks
+        # carry them. A single OpenTelemetry span exported by the Python SDK has
+        # a top-level `events` list, which scored 40 + 35 = 75 against Temporal:
+        # comfortably over the floor, with no Temporal event type anywhere in
+        # it. The engine then announced "Temporal workflow history at 75%" and
+        # mapped 0 of 0 records from it.
+        #
+        # That is the failure this module's own docstring warns about — reading
+        # one framework's export with another's key names — arriving by a route
+        # the scoring allowed. So where a profile names the values that identify
+        # it, their absence caps the score below the floor: the document still
+        # appears in `alternatives` as a weak structural resemblance, and never
+        # resolves to a framework on shape alone.
+        if self.detect_values and not matched_value:
+            return min(score, DETECT_FLOOR - 1)
         return min(score, 100)
 
     @staticmethod

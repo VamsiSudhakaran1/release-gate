@@ -220,18 +220,79 @@ def otlp_attributes(attributes: Any) -> Dict[str, Any]:
     return out
 
 
+def _sdk_span(doc: Any) -> Optional[Dict[str, Any]]:
+    """An OpenTelemetry SDK console/file span, normalised — or None.
+
+    The wire format is not the only shape people have. `ConsoleSpanExporter`
+    and the file exporters write one JSON object per span with the ids under
+    `context`, the parent as `parent_id`, and attributes already flat:
+
+        {"name": "/v1/sys/health",
+         "context": {"trace_id": "7bba…", "span_id": "086e…"},
+         "parent_id": "", "start_time": "…", "attributes": {...}}
+
+    That is a real OpenTelemetry span and the commonest way a person gets one
+    into a file to hand to something else. Reading it is the difference between
+    "UNRECOGNISED" and a case, so the id keys are mapped onto the wire names the
+    rest of the pipeline already reads. Nothing is invented: a span without ids
+    is not claimed as one.
+    """
+    if not isinstance(doc, dict):
+        return None
+    context = doc.get("context")
+    if not isinstance(context, dict):
+        return None
+    span_id = context.get("span_id") or context.get("spanId")
+    trace_id = context.get("trace_id") or context.get("traceId")
+    if not span_id or not trace_id:
+        return None
+    span = dict(doc)
+    span.pop("context", None)
+    span["spanId"] = str(span_id)
+    span["traceId"] = str(trace_id)
+    parent = doc.get("parent_id") or doc.get("parentId")
+    # An empty string is how this exporter spells "root". Carrying it through as
+    # a parent id would make every root span the child of a span that is not there.
+    if parent:
+        span["parentSpanId"] = str(parent)
+    span.pop("parent_id", None)
+    span.pop("parentId", None)
+    status_code = doc.get("status_code") or doc.get("statusCode")
+    if status_code and "status" not in span:
+        span["status"] = {"code": str(status_code)}
+    return span
+
+
 def iter_otlp_spans(doc: Any) -> Iterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """Yield `(span, resource_attributes)` from an OTLP/JSON document.
 
     Handles both the camelCase (`resourceSpans`/`scopeSpans`) and snake_case
     (`resource_spans`/`scope_spans`) spellings, plus the legacy
-    `instrumentationLibrarySpans` name still emitted by older collectors.
+    `instrumentationLibrarySpans` name still emitted by older collectors, and
+    the SDK's own console/file shape (see `_sdk_span`).
     """
     if isinstance(doc, list):
         for item in doc:
             yield from iter_otlp_spans(item)
         return
     if not isinstance(doc, dict):
+        return
+
+    sdk = _sdk_span(doc)
+    if sdk is not None:
+        resource = doc.get("resource")
+        attrs = otlp_attributes(
+            resource.get("attributes", resource) if isinstance(resource, dict) else [])
+        yield sdk, attrs
+        return
+
+    # Some exporters wrap a batch as {"spans": [...]} with SDK-shaped rows.
+    batch = doc.get("spans")
+    if isinstance(batch, list) and batch and _sdk_span(batch[0]) is not None:
+        for row in batch:
+            normalised = _sdk_span(row)
+            if normalised is not None:
+                yield normalised, {}
         return
 
     resource_spans = doc.get("resourceSpans") or doc.get("resource_spans") or []
