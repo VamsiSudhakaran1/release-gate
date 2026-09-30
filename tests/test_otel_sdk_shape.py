@@ -159,6 +159,18 @@ class TestTheSdkExportShapeIsRead:
 
         assert len(list(iter_otlp_spans([VAULT_SPAN, VAULT_SPAN]))) == 2
 
+    def test_a_spans_batch_is_read_with_its_parent_links(self):
+        """The changelog says a `{"spans": [...]}` batch is read. This is that."""
+        from release_gate.adapters.common import iter_otlp_spans
+
+        child = dict(VAULT_SPAN, name="child", parent_id="086e83747d0e381e",
+                     context={"trace_id": VAULT_SPAN["context"]["trace_id"],
+                              "span_id": "1111111111111111"})
+        spans = [s for s, _ in iter_otlp_spans({"spans": [VAULT_SPAN, child]})]
+        assert [s["name"] for s in spans] == ["/v1/sys/health", "child"]
+        assert "parentSpanId" not in spans[0]
+        assert spans[1]["parentSpanId"] == "086e83747d0e381e"
+
     def test_the_wire_format_is_untouched(self):
         """The branch must not shadow the format it sits in front of."""
         import pathlib

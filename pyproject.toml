@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "release-gate"
-version = "0.11.1"
+version = "0.11.2"
 description = "Assurance for autonomous work: submit a run, get the case a person decides from - what needs a human, what would resolve it, and what was never assessed."
 readme = "README.md"
 license = {text = "MIT"}

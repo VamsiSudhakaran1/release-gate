@@ -2,6 +2,75 @@
 
 All notable changes to release-gate will be documented in this file.
 
+## [0.11.2] — 2026-09-30
+
+### 🔭 An OpenTelemetry SDK span is read, not mistaken for a Temporal workflow
+
+A single span from the OpenTelemetry sample traces — a Consul health check
+against Vault, written by the Python SDK's console exporter — found two defects.
+It is a useful input precisely because it has nothing to do with agents: the
+honest answers are "this is a trace" and "there is nothing about an agent in
+it", and release-gate gave neither.
+
+**It was identified as Temporal workflow history at 75%**, then mapped 0 of 0
+records out of it. The Temporal profile scored 40 for a top-level `events` key
+and 35 for that key holding a non-empty list — both true of any span with
+events. Its `eventType` check, the thing that actually identifies Temporal,
+contributed nothing and did not need to, because 75 already cleared the floor.
+
+Where an orchestrator profile names the values that identify it, their absence
+now caps the score below the detection floor. The document still appears in
+`alternatives` as a weak structural resemblance, and never resolves to a
+framework on key names alone.
+
+> **Behaviour change.** This applies to every profile that declares
+> distinguishing values — `temporal`, `openai_agents` and `autogen`. A document
+> that previously resolved to one of them on shape alone will now report
+> `UNRECOGNISED` (or match another format) instead. A real export carries the
+> values and still resolves; one that does not was being read with the wrong
+> framework's key names.
+
+**The console/file span shape is now read as `OTLP_TRACE`.** The wire format
+(`resourceSpans` / `scopeSpans`) is not the only shape OpenTelemetry comes in,
+and `ConsoleSpanExporter` piped to a file is the commonest way a person gets a
+span to hand to something else. Ids are taken from `context`, `status_code` is
+folded into `status`, and an empty `parent_id` — how that exporter spells
+"root" — is treated as a root rather than a reference to a span that is not
+there. A single span, a list of them, and a `{"spans": [...]}` batch are all
+read.
+
+The detection line now names the shape it matched. It used to report
+"OTLP resource/scope/span structure" for a file with no `resourceSpans` in it.
+
+That span now reads as `OTLP_TRACE`, one record mapped, a `NETWORK` capability
+**observed** from the HTTP attributes rather than guessed from a tool name,
+`EXTERNALITY` derived as `CROSSES_SYSTEM_BOUNDARY`, and a HOLD with
+`METHODOLOGY_REQUIRED` — the correct answer for a health check.
+
+### 📖 The reference documents the command it was missing
+
+`docs/REFERENCE.md` had no entry for `release-gate assure`, the command the
+README calls the product. It now covers the nine input kinds, every flag, the
+organisation config with its real keys (an unknown key is refused, not
+ignored), the built-in methodologies, what comes back, and the exit codes.
+A test holds it to the CLI in both directions, so a flag cannot be added
+without a row or documented after it is gone.
+
+### 🧪 The worked examples run without bash
+
+`examples/agents/run_all.py` runs the same seven rows as `run-all.sh` through
+the Python API, so the examples work in Windows `cmd` and PowerShell.
+`make_typo_example.py` writes the file that demonstrates the 0.11.1 consequence
+refusal without a shell heredoc. A test keeps the two runners in step.
+
+### 🌐 Site
+
+The assurance demo's review no longer reads as truncated — its longest line was
+237 characters of prose, 463px of which sat behind a horizontal scrollbar — and
+every result can now be downloaded as JSON, saved as PDF, or copied. The page
+layout moved to one grid, one vertical rhythm and one type scale. A new essay,
+*What Did It Not Check?*, is at `/coverage.html`.
+
 ## [0.11.1] — 2026-09-29
 
 ### 🔇 A refused consequence declaration no longer goes quiet

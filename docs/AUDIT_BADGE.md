@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: VamsiSudhakaran1/release-gate@v0.11.1
+      - uses: VamsiSudhakaran1/release-gate@v0.11.2
         with:
           command: audit
           path: .
