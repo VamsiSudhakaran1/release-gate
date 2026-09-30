@@ -257,7 +257,12 @@ class TestThePaletteCannotDriftBack:
             # A default block is any :root selector list with no [data-theme]
             # and no :not() on it — ":root {", ":root,\n:root[data-theme=\"dark\"] {"
             # both qualify for the unset case, and the last one wins.
-            roots = re.findall(r"(:root[^{}@]*)\{([^}]*)\}", text)
+            # A `:root` inside `@media print` is not the page default — the
+            # assurance demo redefines the palette to white so a printed case
+            # does not cost a toner cartridge. Print blocks are cut out before
+            # the scan rather than special-cased in it.
+            scanned = re.sub(r"@media\s+print\s*\{.*?\n  \}", "", text, flags=re.S)
+            roots = re.findall(r"(:root[^{}@]*)\{([^}]*)\}", scanned)
             defaults = [body for sel, body in roots
                         if "--bg:" in body and ":not(" not in sel
                         and not re.search(r':root\s*\[data-theme="light"\]', sel)]
@@ -389,3 +394,53 @@ class TestTheEssayIsReachable:
             assert outside == 0, (
                 f"{phrase!r} appears {outside} time(s) outside the passage that "
                 "refuses it — in the essay's own voice that is a claim")
+
+
+class TestTheResultCanLeaveTheBrowser:
+    """A case a person is asked to decide from should be something they can keep.
+
+    The JSON is the API's whole response — case, coverage ledger, attention
+    items, required-evidence protocol — not a rendering of it, so it is the same
+    artifact `--json` writes from the CLI. The PDF goes through the browser's
+    own print rather than a server round trip: this demo is anonymous and
+    rate-limited, and rendering a PDF per click is load the engine does not need
+    to carry to answer the question.
+    """
+
+    def _page(self) -> str:
+        return (ROOT / "public" / "assurance.html").read_text(encoding="utf-8")
+
+    def test_the_three_actions_are_offered(self):
+        page = self._page()
+        for label in ("Download JSON", "Save as PDF", "Copy the review"):
+            assert label in page, f"the result offers no {label!r}"
+
+    def test_the_json_is_the_whole_response_not_a_rendering(self):
+        page = self._page()
+        assert "JSON.stringify(data, null, 2)" in page, (
+            "the download serialises something other than the API's own response")
+
+    def test_printing_opens_the_review_however_it_is_triggered(self):
+        """Ctrl+P is the same request as the button and must print the same page."""
+        page = self._page()
+        assert "beforeprint" in page, (
+            "only the button opens the review; Ctrl+P would print a heading "
+            "with nothing under it")
+
+    def test_there_is_a_print_stylesheet(self):
+        page = self._page()
+        assert "@media print" in page
+        assert ".no-print" in page, "the controls would print alongside the findings"
+
+    def test_the_review_wraps_rather_than_hiding_its_long_lines(self):
+        """237 characters of prose in an 846px box is 463px behind a scrollbar."""
+        page = self._page()
+        assert "white-space:pre-wrap" in page.replace(" ", "").replace("\n", "") or \
+               "white-space: pre-wrap" in page, (
+            "the review text scrolls horizontally again — long lines read as truncated")
+
+    def test_long_identifiers_break_rather_than_the_layout(self):
+        page = self._page()
+        assert "overflow-wrap:break-word" in page.replace(" ", ""), (
+            "an attention item titled with an unbroken id would push the page "
+            "sideways on a phone")

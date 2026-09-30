@@ -112,6 +112,40 @@
   .item.blocks .band { background:var(--high-bg); color:var(--high); }
   .item.holds  .band { background:var(--med-bg);  color:var(--med); }
   .focus { font-weight:600; margin-left:.45rem; }
+  /* An attention item is titled with whatever the engine is pointing at, and
+     some of those are unbroken identifiers — `cex_6d74237f13fc5e3a`,
+     `independence.evidence.ancestry`. On a phone they ran past the right edge
+     of their own box and took the page with them, so the identifier breaks
+     rather than the layout. The band chip stays whole; it is three words. */
+  .item { overflow-wrap:break-word; word-break:break-word; min-width:0; }
+  .item .band { white-space:nowrap; }
+  .resolve, .why { overflow-wrap:break-word; }
+
+  .actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;
+             margin:1.3rem 0 .2rem; }
+  .actions button { font-size:.85rem; padding:.4rem .8rem; }
+  .actions .note { margin:0; font-size:.82rem; color:var(--accent); }
+
+  /* Save-as-PDF is the browser's own print, so the print stylesheet is the
+     report's layout. Everything that is a control rather than a finding comes
+     off the page, the case prints on white so it does not cost a cartridge of
+     toner, and `<details>` is forced open — a collapsed review would print as
+     a heading with nothing under it. */
+  @media print {
+    .no-print, header.top, .panel:has(#input), #hero-actions,
+    footer, .samples, .drop { display:none !important; }
+    :root { --bg:#fff; --surface:#fff; --ink:#111; --muted:#333; --faint:#555;
+            --hair:#ccc; --hair-strong:#999; --code-bg:#f5f5f5; }
+    body { background:#fff; color:#111; font-size:11pt; }
+    main.wrap { max-width:none; padding:0; }
+    #out details { display:block !important; }
+    #out details > summary { list-style:none; font-weight:600; margin-bottom:.4rem; }
+    #out pre { background:#f5f5f5; border:1px solid #ddd; font-size:8.5pt;
+               white-space:pre-wrap; page-break-inside:auto; }
+    .item, .panel { page-break-inside:avoid; }
+    h1, h2, h3 { page-break-after:avoid; }
+    @page { margin:16mm 14mm; }
+  }
   .why { color:var(--muted); font-size:.95rem; margin:.3rem 0 0; }
   .resolve { font-size:.92rem; margin:.45rem 0 0; padding-left:.9rem;
              border-left:2px solid var(--accent-dec); color:var(--ink); }
@@ -128,6 +162,13 @@
   pre { background:var(--code-bg); border:1px solid var(--hair); border-radius:8px;
         padding:.9rem; overflow-x:auto; font-family:var(--mono); font-size:12.5px;
         line-height:1.5; }
+  /* The review is a report, not a code listing. Its longest line is 237
+     characters of prose, which in an 846px box meant 463px of it sat past the
+     right edge behind a horizontal scrollbar nobody looks for — the text simply
+     appeared cut off. Wrapping costs nothing here: the aligned rows (the
+     coverage ledger, the attention bands) are all under 80 characters and do
+     not wrap, so only the explanatory sentences reflow. */
+  #out pre { white-space:pre-wrap; overflow-wrap:break-word; overflow-x:visible; }
   code { font-family:var(--mono); font-size:.9em; background:var(--code-bg);
          padding:.1rem .3rem; border-radius:4px; }
   .err { background:var(--high-bg); color:var(--high); border-radius:8px;
@@ -325,12 +366,81 @@ $('run').addEventListener('click', async () => {
       return;
     }
     out.innerHTML = render(data);
+    wireDownloads(data);
   } catch (err) {
     out.innerHTML = '<div class="err">' + esc(err.message) + '</div>';
   } finally {
     $('run').disabled = false;
   }
 });
+
+/* The case a person is asked to decide from should be something they can keep.
+   The JSON is the whole outcome the API returned — case, coverage ledger,
+   attention items and the required-evidence protocol — not a rendering of it,
+   so it is the same artifact `--json` writes from the CLI. The PDF goes
+   through the browser's own print-to-PDF rather than a server round trip:
+   this demo is anonymous and rate-limited, and rendering a PDF per click is
+   load the engine does not need to carry to answer the question. */
+function wireDownloads(data) {
+  const note = $('dl-note');
+  const stamp = new Date().toISOString().slice(0, 10);
+  const base = 'release-gate-case-' + (data.case && data.case.case_id ? data.case.case_id : stamp);
+
+  function say(msg) {
+    note.textContent = msg;
+    setTimeout(() => { if (note.textContent === msg) note.textContent = ''; }, 4000);
+  }
+
+  const json = $('dl-json');
+  if (json) json.addEventListener('click', () => {
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = base + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      // Revoking immediately can cancel the download in some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      say('saved ' + base + '.json');
+    } catch (e) { say('could not save: ' + e.message); }
+  });
+
+  const pdf = $('dl-pdf');
+  if (pdf) pdf.addEventListener('click', () => window.print());
+
+  const copy = $('copy-review');
+  if (copy) copy.addEventListener('click', async () => {
+    const text = data.review_text || '';
+    try {
+      await navigator.clipboard.writeText(text);
+      say('the review is on your clipboard');
+    } catch (e) {
+      // Clipboard access is refused without a user gesture in some contexts,
+      // and over plain http in others. Selecting it is still useful.
+      const pre = document.querySelector('#out details pre');
+      if (pre) {
+        const r = document.createRange(); r.selectNodeContents(pre);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        say('clipboard blocked — the review is selected, press Ctrl/Cmd+C');
+      } else { say('clipboard blocked: ' + e.message); }
+    }
+  });
+}
+
+/* Opening the review on `beforeprint` rather than inside the button handler:
+   Ctrl/Cmd+P is the same request and has to produce the same document. Hooked
+   once, not per render, so repeated runs do not stack listeners. A collapsed
+   <details> prints as a heading with nothing under it, which looks like the
+   report simply has no review in it. */
+(function () {
+  const openAll = () => document.querySelectorAll('#out details')
+    .forEach(el => { el.open = true; });
+  if (window.matchMedia) {
+    const mq = window.matchMedia('print');
+    if (mq.addEventListener) mq.addEventListener('change', e => { if (e.matches) openAll(); });
+  }
+  window.addEventListener('beforeprint', openAll);
+})();
 
 function render(d) {
   const kindRows = Object.entries(d.counts.by_kind || {}).sort((a,b) => b[1]-a[1]);
@@ -364,6 +474,13 @@ function render(d) {
     .map(g => `<li>${esc(g)}</li>`).join('');
 
   return `
+  <div class="actions no-print">
+    <button id="dl-json" class="ghost">Download JSON</button>
+    <button id="dl-pdf" class="ghost">Save as PDF</button>
+    <button id="copy-review" class="ghost">Copy the review</button>
+    <span class="note" id="dl-note"></span>
+  </div>
+
   <div class="panel">
     <span class="verdict v-${esc(d.decision)}">${esc(d.decision)}</span>
     <div class="meta">
