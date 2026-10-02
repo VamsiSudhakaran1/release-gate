@@ -473,6 +473,21 @@ function render(d) {
   const gaps = (d.not_assessed || [])
     .map(g => `<li>${esc(g)}</li>`).join('');
 
+  // Evidence about a different state of the release does not support a claim
+  // about this one. Shown only when something was rejected or a candidate was
+  // stated, each record with the engine's own reason.
+  const sb = d.state_binding;
+  const bindings = sb && ((sb.records || []).length || (sb.candidate && sb.candidate.explicit))
+    ? `<h3>Evidence against the candidate — support withheld from ${Number(sb.support_withheld) || 0}</h3>
+       <p class="note">candidate ${esc((sb.candidate.digest || '').slice(0, 26))}… ·
+         ${esc(sb.candidate.source)} · ${Object.entries(sb.by_match || {})
+           .map(([m, n]) => `${Number(n) || 0} ${esc(m.toLowerCase())}`).join(', ')}</p>`
+      + (sb.records || []).map(r => `<div class="item ${r.withheld ? 'holds' : ''}">
+          <span class="band">${esc(r.match)}</span><span class="focus">${esc(r.record_id)}</span>
+          <p class="why">${esc(r.reason)}</p></div>`).join('')
+      + (sb.records_not_listed ? `<p class="note">${Number(sb.records_not_listed) || 0} more not listed.</p>` : '')
+    : '';
+
   return `
   <div class="actions no-print">
     <button id="dl-json" class="ghost">Download JSON</button>
@@ -494,6 +509,8 @@ function render(d) {
 
   <h3>What a person has to look at — ${(d.attention||[]).length} item(s)</h3>
   ${items}
+
+  ${bindings}
 
   <h3>What it did not assess — ${(d.not_assessed||[]).length} dimension(s)</h3>
   <ul class="gaps">${gaps}</ul>

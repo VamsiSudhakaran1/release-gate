@@ -1174,6 +1174,29 @@ class AssureRequest(BaseModel):
     methodology: Optional[str] = None
 
 
+def _state_binding_view(outcome: Any) -> Optional[Dict[str, Any]]:
+    """The binding report as the demo page shows it, or None when there is none."""
+    report = getattr(getattr(outcome, "analysis", None), "state_binding", None)
+    if report is None:
+        return None
+    candidate = report.candidate
+    flagged = [b for b in report.bindings
+               if b.match.value in ("STALE", "INCOMPATIBLE")
+               or (candidate.explicit and b.match.value == "UNKNOWN" and b.supports)]
+    summary = report.summary()
+    return {
+        "candidate": {"digest": candidate.digest(), "source": candidate.source.value,
+                      "explicit": candidate.explicit,
+                      "components": dict(candidate.components)},
+        "by_match": summary["by_match"],
+        "support_withheld": summary["support_withheld"],
+        "records": [{"record_id": b.record_id, "match": b.match.value,
+                     "reason": b.reason, "withheld": b.withholds_support}
+                    for b in flagged[:25]],
+        "records_not_listed": max(0, len(flagged) - 25),
+    }
+
+
 @app.post("/api/assure")
 async def assure_demo(body: AssureRequest, request: Request = None):
     """Build the assurance case for a submitted run and return what a person reads.
@@ -1274,6 +1297,9 @@ async def assure_demo(body: AssureRequest, request: Request = None):
                 {"dimension": row.dimension, "state": row.state, "shown": row.shown}
                 for row in review.coverage],
             "limits": list(review.limits),
+            # Which evidence was about this release, and which was not — the
+            # records whose support was withheld, each with the reason.
+            "state_binding": _state_binding_view(outcome),
             "review_text": render_review(review),
         }
     except HTTPException:

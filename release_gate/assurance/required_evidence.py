@@ -173,6 +173,12 @@ _RULE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "RG-DRIFT-003": _K.RE_VERIFICATION,
     "RG-DRIFT-004": _K.PROVENANCE_ATTESTATION,
     "RG-DRIFT-005": _K.PROVENANCE_ATTESTATION,
+    # Re-run against the candidate; evidence about this subject; a stated
+    # binding; and the components the candidate leaves out.
+    "RG-DRIFT-006": _K.RE_VERIFICATION,
+    "RG-DRIFT-007": _K.MISSING_EVIDENCE,
+    "RG-DRIFT-008": _K.PROVENANCE_ATTESTATION,
+    "RG-DRIFT-009": _K.DEPENDENCY_DECLARATION,
     "RG-COV-001": _K.MISSING_EVIDENCE,
     "RG-COV-002": _K.MISSING_EVIDENCE,
     "RG-COV-003": _K.FORMAL_VERIFICATION,

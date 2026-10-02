@@ -40,6 +40,10 @@ from release_gate.assurance.latency import LatencyRecorder, Stage
 from release_gate.assurance.consequence import (
     ConsequenceProfile, ConsequenceRegistry, default_consequence_registry,
 )
+from release_gate.assurance.candidate import (
+    CANDIDATE_METADATA_KEY,
+    CandidateState,
+)
 from release_gate.assurance.case import (
     COLLECTION_KINDS,
     AssuranceCase, AssuranceCaseBuilder, CaseVerdict, Decision, MethodologyRef,
@@ -711,13 +715,47 @@ def _analysis_records(analysis: AnalysisResult
             domain.value.lower(), True,
             f"{len(found)} finding(s) in the {domain.value.lower()} analysers",
             findings=len(found)))
+    rows.append(_state_binding_coverage(analysis.state_binding))
     return contradictions, rows
+
+
+def _state_binding_coverage(report: Optional[Any]) -> SimpleRecord:
+    """Whether the evidence was checked against the release being admitted.
+
+    ASSESSED only against a candidate somebody stated. Checked against the case's
+    own artifacts it is still NOT_ASSESSED — staleness was caught where a record
+    names a digest the case does not hold, but nobody said what the release is,
+    so nothing could be bound to it (Invariant 3).
+    """
+    if report is None:
+        return _coverage_row(
+            "state_binding", False,
+            "no candidate state was stated and the case holds no artifact digest; "
+            "whether the evidence is about the release being admitted was not assessed")
+    summary = report.summary()
+    counts = summary["by_match"]
+    tally = ", ".join(f"{counts[m]} {m.lower()}" for m in
+                      ("EXACT", "PARTIAL", "STALE", "INCOMPATIBLE", "UNKNOWN"))
+    if not report.candidate.explicit:
+        return _coverage_row(
+            "state_binding", False,
+            (f"no candidate state was stated; {summary['records']} claim-bearing "
+             f"record(s) were checked only against the case's current artifacts "
+             f"({tally}); support withheld from {summary['support_withheld']}"),
+            **{k: v for k, v in summary.items() if k != "by_match"}, **counts)
+    return _coverage_row(
+        "state_binding", True,
+        (f"{summary['records']} claim-bearing record(s) bound against candidate "
+         f"{summary['candidate_digest'][:19]}… ({summary['candidate_source']}): "
+         f"{tally}; support withheld from {summary['support_withheld']}"),
+        **{k: v for k, v in summary.items() if k != "by_match"}, **counts)
 
 
 def _case_prefix(subject: AssuranceSubject, normalisation: Normalisation, *,
                  objective: str, requested_decision: str,
                  methodology: Optional[AssuranceMethodology],
-                 consequence: ConsequenceProfile) -> AssuranceCaseBuilder:
+                 consequence: ConsequenceProfile,
+                 candidate: Optional[CandidateState] = None) -> AssuranceCaseBuilder:
     """Everything a case over these records holds whatever the analysers conclude.
 
     Split out from `_build_case` because this path builds three cases over one
@@ -751,6 +789,9 @@ def _case_prefix(subject: AssuranceSubject, normalisation: Normalisation, *,
             "objective_basis": ("default" if objective.startswith("Assurance of ")
                                 else "supplied"),
             "input_kind": normalisation.detection.kind.value,
+            # Only when one was stated or derived. With none, the key is absent
+            # rather than null, so the metadata says nothing it does not know.
+            **({CANDIDATE_METADATA_KEY: candidate.to_dict()} if candidate else {}),
         })
 
     builder.collection("evidence", basis=MaterialisationBasis.COMPLETE)
@@ -1108,8 +1149,19 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
            requested_decision: Optional[str] = None,
            requested_action: Optional[str] = None,
            consequence_registry: Optional[ConsequenceRegistry] = None,
-           declared_consequence: Optional[Any] = None) -> AssuranceOutcome:
+           declared_consequence: Optional[Any] = None,
+           producers: Optional[Any] = None,
+           candidate: Optional[CandidateState] = None) -> AssuranceOutcome:
     """Ingest, analyse, assess and decide — with nothing configured.
+
+    `producers` is a `ProducerRegistry` holding any evidence adapters beyond the
+    built-in ones. Registering an adapter there is the whole of adding a
+    producer: nothing in the ingest or the decision path names one.
+
+    `candidate` is the exact release being admitted (`CandidateState`). Stated
+    here, it wins over one the submission declares about itself or one derived
+    from an audit report; with none of those, the case's own current artifacts
+    stand in, and only stale or incompatible bindings are reported.
 
     Built in two passes. The first case carries the ingested records and is what
     the structural analysers read. The second carries their conclusions as well,
@@ -1122,11 +1174,12 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     """
     source = Path(path)
     return assure_normalisation(
-        ingest_path(source), source_name=source.name, source_path=source,
+        ingest_path(source, producers=producers), source_name=source.name,
+        source_path=source,
         methodology=methodology, objective=objective,
         requested_decision=requested_decision, requested_action=requested_action,
         consequence_registry=consequence_registry,
-        declared_consequence=declared_consequence)
+        declared_consequence=declared_consequence, candidate=candidate)
 
 
 def assure_normalisation(normalisation: Normalisation, *, source_name: str,
@@ -1138,7 +1191,8 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
                          consequence_registry: Optional[ConsequenceRegistry] = None,
                          declared_consequence: Optional[Any] = None,
                          subject: Optional[AssuranceSubject] = None,
-                         recorder: Optional[LatencyRecorder] = None
+                         recorder: Optional[LatencyRecorder] = None,
+                         candidate: Optional[CandidateState] = None
                          ) -> AssuranceOutcome:
     """Everything `assure` does after reading the file.
 
@@ -1187,9 +1241,18 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
     folded = (len(normalisation.evidence) + len(normalisation.claims)
               + len(normalisation.artifacts))
     with timer.stage(Stage.FOLD, records=folded):
+        resolved_candidate = candidate or normalisation.candidate
+        if (candidate is not None and normalisation.candidate is not None
+                and candidate.digest() != normalisation.candidate.digest()):
+            normalisation = dataclasses.replace(normalisation, notes=(
+                *normalisation.notes,
+                f"the submission described its candidate as "
+                f"{normalisation.candidate.digest()}; the caller's candidate "
+                f"{candidate.digest()} was used instead"))
         prefix = _case_prefix(subject, normalisation, objective=objective,
                               requested_decision=requested_decision,
-                              methodology=methodology, consequence=consequence)
+                              methodology=methodology, consequence=consequence,
+                              candidate=resolved_candidate)
         provisional = _case_tail(prefix.fork(), normalisation,
                                  consequence=consequence).build()
 
@@ -1417,6 +1480,32 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
                 add(f"      -> {assessment.independent_confirmations} independent "
                     f"confirmation(s), {assessment.unattributed_confirmations} whose "
                     "independence is unrecorded")
+
+    binding = getattr(outcome.analysis, "state_binding", None)
+    if binding is not None:
+        flagged = [b for b in binding.bindings
+                   if b.match.value in ("STALE", "INCOMPATIBLE")
+                   or (binding.candidate.explicit and b.match.value == "UNKNOWN"
+                       and b.supports)]
+        summary = binding.summary()
+        if flagged or binding.candidate.explicit:
+            counts = summary["by_match"]
+            add("")
+            add("  STATE BINDING")
+            add(f"    Candidate  {binding.candidate.digest()}  "
+                f"[{binding.candidate.source.value}]")
+            if binding.candidate.explicit:
+                for key, value in binding.candidate.components.items():
+                    add(f"      {key:<22} {value}")
+            add("    " + ", ".join(f"{counts[m]} {m.lower()}" for m in
+                                   ("EXACT", "PARTIAL", "STALE", "INCOMPATIBLE", "UNKNOWN"))
+                + f"; support withheld from {summary['support_withheld']}")
+            shown = flagged if full else flagged[:6]
+            for b in shown:
+                add(f"    [{b.match.value:>12}]  {b.record_id}")
+                add(f"                    {b.reason}")
+            if len(flagged) > len(shown):
+                add(f"    ({len(flagged) - len(shown)} more — pass --full)")
 
     surface = outcome.capabilities
     if surface is not None and len(surface):

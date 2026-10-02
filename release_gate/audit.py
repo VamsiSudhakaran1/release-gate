@@ -1325,6 +1325,27 @@ def compute_evidence_provenance(root: Path, *, scanned_digests: Dict[str, str],
         if region:
             regions[key] = region
 
+    # The behaviour-determining files the AIBOM lock pins (lockfile.py), folded
+    # into one digest per candidate component. The same collector `release-gate
+    # lock` uses, so the lock and the candidate cannot disagree about which
+    # files are prompts. A kind with no files is left out, not zeroed.
+    behaviour: Dict[str, Any] = {}
+    try:
+        from release_gate.lockfile import collect_components
+        kinds = {"prompt": "prompt", "mcp": "tool_manifest", "evals": "eval_definition"}
+        grouped: Dict[str, List[List[str]]] = {}
+        for component in collect_components(root):
+            name = kinds.get(component.get("kind"))
+            if name and component.get("path") and component.get("sha256"):
+                grouped.setdefault(name, []).append(
+                    [component["path"], component["sha256"]])
+        for name, pairs in sorted(grouped.items()):
+            behaviour[name] = {"digest": digest_object(sorted(pairs)),
+                               "files": len(pairs)}
+    except Exception as exc:
+        limitations.append(f"the prompt, tool and eval files could not be collected "
+                           f"({type(exc).__name__}), so the candidate omits them")
+
     governance = None
     if gov_path is not None:
         try:
@@ -1354,6 +1375,7 @@ def compute_evidence_provenance(root: Path, *, scanned_digests: Dict[str, str],
         "files": files,
         "regions": regions,
         "governance_file": governance,
+        "behaviour": behaviour,
         "scanned_at": datetime.now(timezone.utc).replace(microsecond=0)
                       .isoformat().replace("+00:00", "Z"),
         "limitations": limitations,

@@ -51,6 +51,13 @@ from release_gate.assurance.verifiers import (
     VerifierError, VerifierReport, default_verifier_registry,
 )
 from release_gate.assurance.claims import Claim, ClaimProvenance, ClaimType
+from release_gate.assurance.producer_contract import (
+    ProducerContractError,
+    ProducerDeclaration,
+    ProducerNormalisation,
+    default_producer_registry,
+    normalise_output,
+)
 from release_gate.assurance.verification import (
     VerificationAttempt, VerificationError, VerificationStatus,
 )
@@ -83,7 +90,13 @@ DETECT_FLOOR = 50
 
 ENVELOPE_RECORD_TYPES = frozenset(
     {"claim", "evidence", "artifact", "execution", "edge", "completeness",
-     "counterexample", "failed_branch", "adversarial", "expectation"})
+     "counterexample", "failed_branch", "adversarial", "expectation",
+     # A `ProducerDeclaration` (producer_contract.py): what one producer's
+     # evidence means, stated by the submission before that evidence is read.
+     "producer",
+     # A `CandidateState` (candidate.py): the release the submission says it is
+     # evidence about. Labelled as the submission's own description.
+     "candidate"})
 
 
 class IngestError(ValueError):
@@ -106,6 +119,12 @@ class InputKind(str, Enum):
     #: One kind for all of them, because the orchestrator is a fact about the
     #: input rather than a mode the engine runs in.
     ORCHESTRATOR_EXPORT = "ORCHESTRATOR_EXPORT"
+    #: A document a registered evidence adapter reads — SARIF, an external
+    #: decision, or any producer an organisation registers. One kind for all of
+    #: them, for the same reason as ORCHESTRATOR_EXPORT: which producer it was is
+    #: a fact about the input, carried in `Detection.adapter`, not a mode of the
+    #: engine. A new producer needs a registration, never a new kind.
+    PRODUCER_EXPORT = "PRODUCER_EXPORT"
     UNRECOGNISED = "UNRECOGNISED"
 
 
@@ -129,6 +148,7 @@ _SUBJECT_TYPE = {
     InputKind.ASSURANCE_ENVELOPE: SubjectType.GENERAL_RESULT,
     InputKind.AUDIT_REPORT: SubjectType.DEPLOYMENT,
     InputKind.VERIFIER_REPORT: SubjectType.GENERAL_RESULT,
+    InputKind.PRODUCER_EXPORT: SubjectType.GENERAL_RESULT,
     InputKind.UNRECOGNISED: SubjectType.GENERAL_RESULT,
 }
 
@@ -191,6 +211,10 @@ class Normalisation:
     #: somebody stated it and the value was refused, and only the second is
     #: something the operator can go and fix.
     refused_consequence: Tuple[str, ...] = ()
+    #: The candidate the document states or implies: an envelope's `candidate`
+    #: record (the submitter describing its own release), or an audit report's
+    #: provenance. None when the document says nothing about one.
+    candidate: Optional[Any] = None
 
     @property
     def skipped_total(self) -> int:
@@ -332,7 +356,8 @@ def _looks_like_verifier_report(doc: Any) -> int:
     return scored[0][1] if scored else 0
 
 
-def detect_document(doc: Any, *, filename: str = "") -> Detection:
+def detect_document(doc: Any, *, filename: str = "",
+                    producers: Optional[Any] = None) -> Detection:
     """Identify a document, or say plainly that we could not.
 
     Native release-gate shapes are checked before the platform adapters, because
@@ -377,12 +402,28 @@ def detect_document(doc: Any, *, filename: str = "") -> Detection:
     except Exception:
         adapter_scores = []
 
+    # Registered evidence producers that have no kind of their own. Adapters
+    # serving an existing kind (promptfoo) are left out here: that kind is
+    # already detected above, and counting it twice would let one document
+    # compete with itself.
+    producer_scores: List[Tuple[str, int]] = []
+    try:
+        registry = producers if producers is not None else default_producer_registry()
+        producer_scores = list(registry.detect(doc, include_routed=False))
+    except Exception:
+        producer_scores = []
+
     ranked: List[Tuple[str, int, str, Optional[str], InputKind]] = [
         (k.value, c, basis, None, k) for k, c, basis in native
     ] + [
         (n, c, f"matched the {n} adapter at {c}% confidence", n,
          _ADAPTER_KIND.get(n, InputKind.UNRECOGNISED))
         for n, c in adapter_scores
+    ] + [
+        (f"{InputKind.PRODUCER_EXPORT.value}:{n}", c,
+         f"the registered {n} evidence producer recognised this document at {c}%",
+         n, InputKind.PRODUCER_EXPORT)
+        for n, c in producer_scores
     ]
     ranked.sort(key=lambda row: (-row[1], row[0]))
 
@@ -680,6 +721,11 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     evidence_rows: List[Tuple[Mapping[str, Any], Producer]] = []
     seen_artifacts: Set[str] = set()
     absorbed_artifacts = 0
+    # Producer id -> what that producer declared its evidence means. Read in the
+    # same pass as everything else and applied when evidence is built, which
+    # happens after the pass, so a declaration's position in the file does not
+    # matter.
+    declarations: Dict[str, ProducerDeclaration] = {}
 
     for row in doc:
         if not isinstance(row, Mapping):
@@ -729,6 +775,25 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                 evidence_rows.append((row, producer))
             elif record_type == "claim":
                 claim_rows.append((row, producer))
+            elif record_type == "candidate":
+                # Parsed by `_envelope_candidate` before this loop; counted here so
+                # a submission stating its candidate is not told it was unmapped.
+                mapped += 1
+            elif record_type == "producer":
+                declaration = ProducerDeclaration.from_dict(row)
+                named = str(row.get("producer_id") or declaration.default_producer_id)
+                held = declarations.get(named)
+                if held is not None and held != declaration:
+                    # Two meanings for one producer's evidence. Neither is chosen:
+                    # the second is refused and said so (Invariant 4).
+                    skip("producer declared twice with different meanings")
+                    notes.append(
+                        f"producer {named!r} is declared twice with different "
+                        "semantics; the first declaration stands and the second "
+                        "was refused rather than chosen between")
+                else:
+                    declarations[named] = declaration
+                    mapped += 1
             elif record_type == "artifact":
                 built_artifact = _artifact_from(row, producer)
                 if built_artifact.record_id in seen_artifacts:
@@ -805,7 +870,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
         try:
             built = _build_evidence(payload, source=source, producer=producer,
                                     parents=resolved_parents, supports=supports,
-                                    contradicts=contradicts, notes=notes)
+                                    contradicts=contradicts, notes=notes,
+                                    declaration=declarations.get(producer.producer_id))
         except Exception as exc:
             skip(f"record rejected: {type(exc).__name__}")
             notes.append(f"an evidence record was rejected: {exc}")
@@ -852,7 +918,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
 
 def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
                     parents: Tuple[str, ...], supports: Tuple[str, ...],
-                    contradicts: Tuple[str, ...], notes: List[str]
+                    contradicts: Tuple[str, ...], notes: List[str],
+                    declaration: Optional[ProducerDeclaration] = None
                     ) -> List[EvidenceRecord]:
     """Build a record, splitting one that cuts both ways rather than dropping it.
 
@@ -878,6 +945,11 @@ def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Produc
     unresolved = payload.pop("unresolved_parent_evidence", None)
     if unresolved:
         metadata["unresolved_parent_evidence"] = list(unresolved)
+    # What the producer declared its evidence means, beside the evidence and
+    # never folded into it: the payload stays exactly what was submitted.
+    if declaration is not None:
+        metadata.update(declaration.summary())
+        metadata["declared_limitations"] = list(declaration.limitations)
 
     # What the producer says this evidence was produced against. Dropped
     # silently until now, which blinded every check that asks "is this evidence
@@ -1412,64 +1484,15 @@ def _enum_or(enum_cls, value: Any, default):
         return default
 
 
-def _eval_records(doc: Any, source: str, producer: Producer
-                  ) -> Tuple[List[EvidenceRecord], List[Claim], int, Dict[str, int]]:
-    """promptfoo-shaped eval output: each case is a declared result, pass or fail."""
-    from release_gate.adapters import convert
-    skipped: Dict[str, int] = {}
-    evidence: List[EvidenceRecord] = []
-    claims: List[Claim] = []
-    try:
-        converted = convert(doc, source="promptfoo")
-    except Exception as exc:
-        return [], [], 0, {f"eval conversion failed: {type(exc).__name__}": 1}
-
-    # The adapter's own coverage is folded in rather than discarded: rows it could
-    # not map are gaps in this case too, and losing them here would be the exact
-    # silent shortfall the adapter counted them to prevent.
-    adapter_coverage = converted.get("coverage") or {}
-    for reason, count in (adapter_coverage.get("skipped_by_reason") or {}).items():
-        skipped[f"promptfoo: {reason}"] = skipped.get(f"promptfoo: {reason}", 0) + count
-
-    cases = (converted.get("payload") or {}).get("results") or []
-    for index, case in enumerate(cases):
-        if not isinstance(case, Mapping):
-            skipped["eval case is not an object"] = skipped.get("eval case is not an object", 0) + 1
-            continue
-        name = str(case.get("name") or case.get("id") or f"eval-{index}")
-        passed = bool(case.get("passed", case.get("pass", False)))
-        claim_id = f"cl_eval_{index}"
-        claims.append(Claim(
-            claim_id=claim_id, statement=f"eval case {name!r} passes",
-            claim_type=ClaimType.ASSERTION, producer=producer,
-            provenance=ClaimProvenance.DECLARED,
-            verification_attempts=(VerificationAttempt(
-                method=VerificationMethod.TEST_SUITE,
-                verifier=producer.producer_id,
-                # Evidence is attached below, once the record it describes exists.
-                status=(VerificationStatus.PASSED if passed
-                        else VerificationStatus.FAILED),
-                detail=f"reported by {producer.producer_id} in {Path(source).name}"),)))
-        reference, _ = inline_content(json.dumps(dict(case), sort_keys=True), label=name)
-        record = EvidenceRecord.from_producer(
-            dict(case), evidence_type=EvidenceType.EVAL_RESULT, source=source,
-            producer=producer, status=EpistemicStatus.DECLARED,
-            content_reference=reference,
-            supports_claims=(claim_id,) if passed else (),
-            contradicts_claims=() if passed else (claim_id,),
-            coverage_note="eval outcome as reported by the run; release-gate did not re-run it")
-        evidence.append(record)
-        # The attempt is rewritten now that the record has a content-derived id.
-        # A verification nobody can open is weaker evidence than one they can.
-        claims[-1] = dataclasses.replace(claims[-1], verification_attempts=(
-            dataclasses.replace(claims[-1].verification_attempts[0],
-                                evidence=(record.evidence_id,)),))
-    return evidence, claims, len(cases), skipped
-
-
 def normalise(doc: Any, detection: Detection, *, source: str,
-              content: Optional[bytes] = None) -> Normalisation:
-    """Fold one document into records. Never raises on unmappable content."""
+              content: Optional[bytes] = None,
+              producers: Optional[Any] = None) -> Normalisation:
+    """Fold one document into records. Never raises on unmappable content.
+
+    `producers` is the `ProducerRegistry` to read registered formats with; the
+    built-in one when omitted. Passing one is how an organisation's own adapter
+    reaches a case without this function changing.
+    """
     producer = _document_producer(doc, detection, source)
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
@@ -1523,11 +1546,25 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         adversarial.extend(adv)
         notes.extend(env_notes)
 
-    elif detection.kind is InputKind.PROMPTFOO_EVAL:
-        ev, cl, seen, skipped = _eval_records(doc, source, producer)
-        evidence.extend(ev)
-        claims.extend(cl)
-        mapped = len(ev)
+    elif detection.kind in (InputKind.PROMPTFOO_EVAL, InputKind.PRODUCER_EXPORT):
+        # Both through the producer contract: promptfoo is a registered adapter
+        # that happens to have its own input kind, and every other registered
+        # producer arrives as PRODUCER_EXPORT. Neither has a code path here.
+        registry = producers if producers is not None else default_producer_registry()
+        producer_type = ("promptfoo" if detection.kind is InputKind.PROMPTFOO_EVAL
+                         else detection.adapter)
+        try:
+            produced = registry.normalise(doc, source=source,
+                                          producer_type=producer_type)
+        except ProducerContractError as exc:
+            produced = ProducerNormalisation()
+            notes.append(f"the {producer_type} producer recognised this document but "
+                         f"could not read it: {exc}")
+        evidence.extend(produced.evidence)
+        claims.extend(produced.claims)
+        seen, mapped = produced.records_seen, produced.records_mapped
+        skipped.update(produced.skipped)
+        notes.extend(produced.notes)
 
     elif execution is not None:
         seen = len(execution.nodes)
@@ -1573,7 +1610,15 @@ def normalise(doc: Any, detection: Detection, *, source: str,
             "the file was hashed and recorded, but nothing in it could be mapped to "
             "evidence, claims or execution")
 
+    candidate = None
+    if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
+        candidate = _envelope_candidate(doc, notes)
+    elif detection.kind is InputKind.AUDIT_REPORT and isinstance(doc, Mapping):
+        from release_gate.assurance.static_producer import ScanProvenance
+        candidate = ScanProvenance.from_report(doc).candidate_state(doc)
+
     return Normalisation(
+        candidate=candidate,
         detection=detection, source=source, evidence=tuple(evidence),
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,
         capabilities=capabilities, declared_consequence=tuple(declared_consequence),
@@ -1583,6 +1628,36 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         records_seen=seen, records_mapped=mapped,
         records_seen_by_kind=dict(seen_by_kind), skipped=dict(skipped),
         notes=tuple(notes), refused_consequence=tuple(refused_consequence))
+
+
+def _envelope_candidate(doc: Sequence[Any], notes: List[str]) -> Optional[Any]:
+    """The candidate an envelope states about itself, if it states exactly one."""
+    from release_gate.assurance.candidate import (
+        CandidateError, CandidateSource, CandidateState)
+    stated: List[Any] = []
+    for row in doc:
+        if not (isinstance(row, Mapping) and row.get("record_type") == "candidate"):
+            continue
+        declared_by = ""
+        producer = row.get("producer")
+        if isinstance(producer, Mapping):
+            declared_by = str(producer.get("producer_id") or "")
+        elif isinstance(producer, str):
+            declared_by = producer
+        try:
+            stated.append(CandidateState.from_dict(
+                row, source=CandidateSource.DECLARED_BY_SUBMISSION,
+                declared_by=declared_by or "the submission"))
+        except (CandidateError, ValueError) as exc:
+            notes.append(f"a candidate record could not be read and was not used: {exc}")
+    distinct = {c.digest(): c for c in stated}
+    if len(distinct) > 1:
+        # Two descriptions of one release. Neither is chosen (Invariant 4); the
+        # case falls back to its artifacts and says why.
+        notes.append(f"the submission states {len(distinct)} different candidates; "
+                     "none was used, and the case's own artifacts stand in")
+        return None
+    return next(iter(distinct.values()), None)
 
 
 def _audit_records(doc: Mapping[str, Any], source: str,
@@ -1630,8 +1705,8 @@ def _audit_records(doc: Mapping[str, Any], source: str,
 
 # ── the one-call path ────────────────────────────────────────────────────────
 
-def ingest_path(path: str | Path) -> Normalisation:
+def ingest_path(path: str | Path, *, producers: Optional[Any] = None) -> Normalisation:
     """Read, identify and fold one file. The whole zero-config front door."""
     doc = load_input(path)
-    detection = detect_document(doc, filename=Path(path).name)
-    return normalise(doc, detection, source=str(path))
+    detection = detect_document(doc, filename=Path(path).name, producers=producers)
+    return normalise(doc, detection, source=str(path), producers=producers)

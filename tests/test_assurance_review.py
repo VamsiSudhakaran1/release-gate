@@ -98,6 +98,9 @@ def _strings(review: CaseReview):
     for item in review.attention:
         parts += [item.band, item.focus, item.why, item.criticality,
                   *item.resolves]
+    parts.append(review.candidate)
+    for line in review.state_lines:
+        parts += [line.record_id, line.match, line.reason]
     return "\n".join(p for p in parts if p)
 
 

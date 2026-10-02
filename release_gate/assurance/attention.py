@@ -72,6 +72,10 @@ _FOCUS_KIND = {
     "RG-BRANCH-003": "case",
     "RG-DRIFT-001": "subject", "RG-DRIFT-002": "subject",
     "RG-DRIFT-003": "artifact", "RG-DRIFT-004": "artifact", "RG-DRIFT-005": "evidence",
+    # State binding (candidate.py): the record bound to another state is what a
+    # reviewer opens; an incomplete candidate is a property of the case.
+    "RG-DRIFT-006": "evidence", "RG-DRIFT-007": "evidence", "RG-DRIFT-008": "evidence",
+    "RG-DRIFT-009": "case",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
     "RG-COV-004": "execution", "RG-COV-005": "case",
     "RG-CAP-001": "manifest", "RG-CAP-002": "tools", "RG-CAP-003": "case",
@@ -905,6 +909,8 @@ _TARGETS_PER_RULE = 200
 _NON_MONOTONE_RULES = frozenset({
     "RG-CONTRA-001", "RG-CONTRA-002", "RG-CONTRA-003", "RG-CONTRA-004",
     "RG-VERIF-002", "RG-VERIF-003", "RG-DRIFT-001", "RG-DRIFT-003", "RG-DRIFT-005",
+    # A changed candidate, or a record re-produced against it, can reopen these.
+    "RG-DRIFT-006", "RG-DRIFT-007", "RG-DRIFT-008",
     # More evidence can reveal a capability that was exercised and undeclared, so
     # a clean capability comparison is never settled by arrival.
     "RG-CAP-001", "RG-CAP-002",

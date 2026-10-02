@@ -76,6 +76,13 @@ from release_gate.assurance.evidence import (
     VerificationMethod,
 )
 from release_gate.assurance.expectation import EvidenceExpectation
+from release_gate.assurance.producer_contract import (
+    ConfidenceSemantics,
+    CoverageSemantics,
+    Determinism,
+    Independence,
+    ProducerDeclaration,
+)
 from release_gate.assurance.producers import EvidenceLane, EvidenceProducer, lane_for
 from release_gate.assurance.subject import DigestMethod, DigestStatus
 
@@ -85,6 +92,7 @@ __all__ = [
     "RULE_PROFILES",
     "SCAN_PROVENANCE_KEY",
     "SCAN_PROVENANCE_SCHEMA",
+    "STATIC_DECLARATION",
     "STATIC_EVIDENCE_SCHEMA_VERSION",
     "Binding",
     "ObservationKind",
@@ -110,9 +118,40 @@ PRODUCER_TYPE = "release_gate_static"
 #: `producer_id` is `release-gate/static`.
 PRODUCER_COMPONENT = "static"
 
+#: This producer, stated in the contract every producer meets
+#: (`producer_contract.py`). Its records are built here rather than by the
+#: contract's normaliser, because release-gate ran the analysis and the records
+#: are DERIVED — but what they mean is declared in the same terms as anyone
+#: else's, and its limitations are the code-scanner lane's, not a second copy.
+STATIC_DECLARATION = ProducerDeclaration(
+    producer_type=PRODUCER_TYPE,
+    label="release-gate static analysis",
+    origin="release-gate",
+    modality=EvidenceLane.CODE_SCANNER,
+    determinism=Determinism.DETERMINISTIC,
+    evidence_types=(EvidenceType.STATIC_FINDING, EvidenceType.ATTESTATION),
+    supported_claims=(
+        "that static analysis found, or did not identify, a pattern its ruleset "
+        "reports, in the scanned code",
+        "that this repository carries a valid declaration of a safeguard"),
+    confidence=ConfidenceSemantics.ORDINAL_LABEL,
+    confidence_note=("`basis` (confirmed / inferred / heuristic) and `confidence` "
+                     "(high / medium / low): tiers of the analyser's own evidence, "
+                     "not probabilities"),
+    coverage=CoverageSemantics.SCOPED_TO_TARGETS,
+    coverage_note="the files in the scanned set, under the recorded ruleset",
+    limitations=lane_for(EvidenceLane.CODE_SCANNER).cannot_establish,
+    independence=Independence(independent_of_subject=True, operated_by="release-gate",
+                              note="the scanner reads the code; it is not the agent "
+                                   "that wrote it"),
+    default_producer_id=f"release-gate/{PRODUCER_COMPONENT}")
+
 #: Where `release_gate.audit.build_report` records the provenance block.
 SCAN_PROVENANCE_KEY = "evidence_provenance"
 SCAN_PROVENANCE_SCHEMA = "release-gate/scan-provenance@1"
+
+#: Candidate components the provenance block's `behaviour` section may carry.
+_BEHAVIOUR_COMPONENTS = frozenset({"prompt", "tool_manifest", "eval_definition"})
 
 #: The one prefix a scoped-absence profile may use. Enforced at construction.
 _ABSENCE_PREFIX = "static analysis did not identify"
@@ -453,6 +492,10 @@ class ScanProvenance:
     file_digests: Mapping[str, str] = field(default_factory=dict)
     region_digests: Mapping[str, str] = field(default_factory=dict)
     governance_digest: Optional[str] = None
+    #: Candidate components beyond the code (prompt, tool_manifest,
+    #: eval_definition), each a digest over the files the lockfile collector
+    #: classes as that kind. Empty for a component with no files.
+    behaviour: Mapping[str, str] = field(default_factory=dict)
     scanned_at: Optional[str] = None
     limitations: Tuple[str, ...] = ()
 
@@ -483,6 +526,11 @@ class ScanProvenance:
         files_scanned = scanned.get("files")
         governance = block.get("governance_file")
         limitations = block.get("limitations")
+        behaviour_block = block.get("behaviour") if isinstance(
+            block.get("behaviour"), Mapping) else {}
+        behaviour = {str(k): v["digest"] for k, v in behaviour_block.items()
+                     if isinstance(v, Mapping) and is_digest(v.get("digest"))
+                     and str(k) in _BEHAVIOUR_COMPONENTS}
         return cls(
             recorded=True,
             scanner_version=_text(scanner.get("version")),
@@ -502,6 +550,7 @@ class ScanProvenance:
             region_digests=_digest_map(block.get("regions")),
             governance_digest=(_digest(governance.get("sha256"))
                                if isinstance(governance, Mapping) else None),
+            behaviour=behaviour,
             scanned_at=_text(block.get("scanned_at")),
             limitations=tuple(str(x) for x in limitations
                               if isinstance(x, str) and x.strip())
@@ -510,6 +559,45 @@ class ScanProvenance:
     @property
     def binding(self) -> Binding:
         return Binding.SCANNED_FILES if self.scanned_set_digest else Binding.REPORT
+
+    def code_state(self, *, governance: bool = False) -> Dict[str, str]:
+        """What a static record was produced against, as candidate components.
+
+        A finding is about the code, so it names the repository, commit and the
+        scanned tree. A safeguard check also read the governance file, so it
+        names that too. Components the report did not record are left out.
+        """
+        state = {"repository": self.repository, "commit": self.commit,
+                 "tree": self.scanned_set_digest}
+        if governance:
+            state["governance_policy"] = self.governance_digest
+        return {k: v for k, v in state.items() if v}
+
+    def candidate_state(self, doc: Mapping[str, Any]) -> Optional[Any]:
+        """The candidate an audit report implies: what it scanned, and with what.
+
+        Attributed to the document, like the rest of the block. None for a
+        report that carries no provenance — nothing is inferred to replace it.
+        """
+        if not self.recorded:
+            return None
+        from release_gate.assurance.candidate import (
+            CandidateError, CandidateSource, CandidateState)
+        components: Dict[str, str] = dict(self.code_state(governance=True))
+        components.update(self.behaviour)
+        model = doc.get("detected_model") if isinstance(doc, Mapping) else None
+        if isinstance(model, str) and model.strip():
+            components["model"] = model.strip()
+        if not components:
+            return None
+        try:
+            return CandidateState(
+                components=components, source=CandidateSource.DERIVED_FROM_AUDIT,
+                declared_by="release-gate/audit, attributed by the document",
+                note="what the audit scanned: code, governance file, model, and the "
+                     "prompt / tool / eval files the lockfile collector found")
+        except CandidateError:
+            return None
 
     def candidate(self) -> Dict[str, Any]:
         """The code state, as the report describes it. None means not recorded."""
@@ -613,7 +701,7 @@ class StaticEvidenceProducer:
     def _reproducibility(self, binding: Binding, **extra: Any) -> Dict[str, Any]:
         p = self.provenance
         meta: Dict[str, Any] = {
-            "producer_type": PRODUCER_TYPE,
+            **STATIC_DECLARATION.summary(),
             "provenance_recorded": p.recorded,
             "scanner_version": p.scanner_version,
             "analyser_digest": p.analyser_digest,
@@ -628,6 +716,11 @@ class StaticEvidenceProducer:
             # never written into `timestamp`, which means "observed here".
             meta["declared_timestamp"] = p.scanned_at
         return meta
+
+    def _state_field(self, *, governance: bool = False) -> Dict[str, Any]:
+        """`content.state`: the candidate components this record was produced against."""
+        state = self.provenance.code_state(governance=governance)
+        return {"state": state} if state else {}
 
     def _timestamp(self) -> str:
         return (self.provenance.scanned_at or "") if self.in_process else ""
@@ -706,6 +799,7 @@ class StaticEvidenceProducer:
             "framework_mappings": sorted({str(t) for t in tags}) if isinstance(
                 tags, (list, tuple)) else [],
             "rule": {"id": rid, "digest": self.provenance.rule_digests.get(rid or "")},
+            **self._state_field(),
             "limitations": self._limitations(
                 "" if path["status"] == PathStatus.TRACED.value else
                 (f"no source-to-sink coordinates were recorded for this finding "
@@ -787,6 +881,7 @@ class StaticEvidenceProducer:
                     content={"findings": 0, "score": code_safety.get("score"),
                              "method": VerificationMethod.STATIC_ANALYSIS.value,
                              "producer_type": PRODUCER_TYPE,
+                             **self._state_field(),
                              "observation_kind": ObservationKind.SCOPED_ABSENCE.value,
                              "observation": ("static analysis did not identify a "
                                              "pattern its ruleset reports in the "
@@ -836,7 +931,8 @@ class StaticEvidenceProducer:
                              "observation_kind": profile.kind.value,
                              "observation": profile.observation,
                              "does_not_establish": list(profile.does_not_establish),
-                             "scope": profile.scope, "code": code},
+                             "scope": profile.scope, "code": code,
+                             **self._state_field(governance=True)},
                     coverage_status=CoverageStatus.PARTIAL,
                     coverage_note="declared safeguard; a declaration is not a runtime "
                                   "guarantee",
@@ -862,6 +958,7 @@ class StaticEvidenceProducer:
                              "not_identified": profile.not_identified,
                              "does_not_establish": list(profile.does_not_establish),
                              "scope": profile.scope, "code": code,
+                             **self._state_field(governance=True),
                              "limitations": self._limitations()},
                     contradicts_claims=(claim_id,),
                     coverage_status=CoverageStatus.PARTIAL,

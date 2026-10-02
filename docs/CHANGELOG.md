@@ -4,6 +4,76 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🔌 An evidence producer contract — new sources without engine changes
+
+Every source of evidence now meets the engine through one contract
+(`release_gate/assurance/producer_contract.py`). Before any of its evidence
+arrives, a producer declares what that evidence means. Its modality is one of
+the seven evidence lanes. It also states whether it is deterministic, what its
+confidence and coverage figures are, how independent it is of what it assesses,
+and what it cannot establish (required). An adapter reports what the producer
+said. Only the normaliser writes records, the same way for every producer:
+
+- every record is DECLARED;
+- promptfoo's `47 / 50` stays *"promptfoo reported 47 of 50 declared test cases
+  passed"*, with no percentage derived;
+- a SonarQube `CRITICAL` stays SonarQube's `CRITICAL` and is never mapped onto
+  release-gate's severities;
+- a review bot's "review" is recorded as that bot's decision. It cannot bear on a
+  claim and never moves release-gate's verdict;
+- source fields no adapter maps are kept under `content.native`.
+
+Built in: promptfoo (now read through the contract), **SARIF 2.1.0** from any
+static analyser, a documented **external decision** shape, and release-gate's own
+scanner. A new producer is a registration: subclass `EvidenceAdapter`, register
+it on a `ProducerRegistry`, and pass `producers=` to `assure()`. Or put a
+`producer` declaration in an envelope. Documents read this way arrive as the new
+`PRODUCER_EXPORT` input kind. `check_adapter_contract()` runs any adapter
+against the contract.
+
+### 🎯 Candidate state — evidence must be about the release being admitted
+
+Before this release, a formal proof of `transfer_tool_v2`, presented beside a
+candidate that ships v3, made the claim it supported read **VERIFIED**. That
+happened under every shipped methodology. Evidence is now bound to an exact
+**candidate state**: the repository, commit, tree, image, model, prompt, tool
+manifest, governance policy, eval definition, deployment configuration, dataset
+and environment, plus named artifacts. Each claim-bearing record binds as
+`EXACT`, `PARTIAL`, `STALE`, `INCOMPATIBLE` or `UNKNOWN`.
+
+Support from a stale or incompatible record no longer counts, and the claim's
+status says why. A **refutation** from an earlier state still stands. New findings:
+
+- RG-DRIFT-006: stale evidence (HOLD);
+- RG-DRIFT-007: evidence about a different repository or environment (HOLD);
+- RG-DRIFT-008: support that names no component of a stated candidate (HOLD);
+- RG-DRIFT-009: a candidate that omits components its evidence names (advisory).
+
+The report, the one-screen review, the JSON and the web demo name each rejected
+record, the component that differs and both values.
+
+State a candidate with `assure --candidate FILE`, or put a `candidate` record in
+an envelope. An audit report also implies one: what it scanned, plus the model
+and the prompt, tool and eval files. With none of these, the case's own current
+artifacts stand in, and that alone catches the stale proof above.
+
+#### Migration notes (producer contract and candidate state)
+
+- **Claim status can drop.** A claim supported only by evidence about a different
+  state of the release now reads UNKNOWN rather than VERIFIED or UNVERIFIED, and
+  the case holds on RG-DRIFT-006 or -007. Over the full test suite this changed no
+  existing verdict, but a real case whose evidence names digests the case no longer
+  holds will see it.
+- **Every case gains a `state_binding` coverage row,** so case digests change.
+  Re-run `assure` and re-approve anything bound to an earlier case digest.
+- **Promptfoo evidence in `assure`** carries its source row and producer type. Its
+  producer id is now `promptfoo` (it was `promptfoo-export`). Claim ids
+  (`cl_eval_N`) and statuses are unchanged; evidence ids change.
+- **A file that was `UNRECOGNISED`** may now be read as `PRODUCER_EXPORT`
+  (SARIF, external decisions).
+- `release-gate score --eval-results` and `release-gate ingest` keep their existing
+  converters unchanged.
+
 ### 🧾 The static scanner is a first-class evidence producer
 
 The scanner's findings now become **Universal Evidence**, through one conversion

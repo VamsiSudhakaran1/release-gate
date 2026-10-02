@@ -8584,6 +8584,134 @@ this section fixes is that the mechanism now exists and is exercised, and that t
 one domain whose stated purpose depends on corroboration has a version that
 requires it.
 
+
+---
+
+### 10az. The evidence producer contract (`ProducerDeclaration`, `EvidenceAdapter`)
+
+> **Implemented.** `release_gate/assurance/producer_contract.py` —
+> `ProducerDeclaration`, `ProducerIdentity`, `NativeResult`, `Measurement`,
+> `EvidenceAdapter`, `normalise_output()`, `ProducerRegistry`,
+> `check_adapter_contract()`. Built-in adapters in `producer_adapters.py`
+> (promptfoo, SARIF 2.1.0, external decision); the static scanner's
+> `STATIC_DECLARATION` in `static_producer.py`. The ingest gains one kind,
+> `PRODUCER_EXPORT`, and one envelope record type, `producer`. Tests:
+> `tests/test_producer_contract.py`.
+
+**What existed, and what was reused.** `producers.py` already had the seven
+lanes and what each cannot establish, `verifiers.py` a detect/convert adapter and
+registry for machine verifiers, `adapters/` the vendor converters for the
+governance plane, and `federation.py` the rule that a vendor is a data row, not a
+code path. The contract reuses the lane as a producer's *modality* rather than
+inventing a second taxonomy, reuses `VerifierAdapter.status_for` as the one
+result-word table (`unknown` is never a pass), reuses the promptfoo row reader so
+the governance path and the assurance path cannot disagree about which cases
+passed, and takes the registry stance from `plugin.py`: an adapter is an object
+passed in, never a module named in configuration, and a conflict is refused, never
+resolved by registration order.
+
+**Declaration before evidence.** Every producer states: `producer_type`, label
+and origin; modality (an `EvidenceLane`); determinism; the evidence types it may
+emit; what claims its results can bear on; its confidence semantics (`NONE`,
+`ORDINAL_LABEL`, `PRODUCER_SCORE`, `DECLARED_PROBABILITY`); its coverage
+semantics (`ENUMERATED`, `DECLARED_DENOMINATOR`, `SCOPED_TO_TARGETS`,
+`UNSTATED`); its independence (three-valued — `None` is "nobody said"); and,
+required and non-empty, what it cannot establish. Per document, a
+`ProducerIdentity` carries the producer id, version, origin, source identity and
+source state *as the document states them* — none authenticated, none filled in
+from the environment.
+
+**The adapter reports; the normaliser writes.** An adapter returns
+`NativeResult`s and cannot construct a record. The normaliser makes every record
+`DECLARED`; refuses a result whose evidence type the declaration does not list;
+renders the one observation sentence itself; keeps a count as two integers
+(`"promptfoo reported 47 of 50 declared test cases passed"`, never 94%); keeps a
+severity as the tool's own (`native_severity`); keeps a `DECISION` as an external
+decision that may bear on no claim and whose word never reaches the verdict; and
+keeps every source field under `content.native`, bounded, with the overflow named
+in `native_omitted`. Promptfoo's own totals become a `MEASUREMENT` only when
+promptfoo states them; a count release-gate computed from the rows would be
+release-gate's figure, not the producer's.
+
+**No vendor format is guessed.** SARIF is read because it is a standard; the tool
+is named by the file, so a SonarQube finding is SonarQube's without a SonarQube
+code path. A review bot's or policy engine's output arrives through one documented
+external-decision shape rather than a parser written against a format nobody here
+can test — the stance `verifiers.py` already takes for proof assistants.
+
+**Extension without central edits, measured.** A test registers an adapter for a
+format this build has never seen and assures a document of it end to end; another
+reads the ingest's AST and asserts it names no registry producer. Envelopes can
+declare a producer with a `producer` record, so a system with no Python
+integration states its semantics too; two different declarations for one producer
+are refused, not chosen between. `check_adapter_contract` is the contract as a
+check — detect never raises on hostile input, every record is DECLARED and inside
+the declaration, a decision bears on no claim, reading twice is identical, nothing
+seen goes unaccounted — and the suite runs every built-in and the test adapter
+through it.
+
+**Scope, stated.** Traces (OTLP, Langfuse, Arize, orchestrator exports) still
+arrive through execution reconstruction, which builds a graph rather than
+records-per-result; their evidence does not yet carry a declaration.
+`--eval-results` and `release-gate ingest` keep the governance-plane converters
+unchanged.
+
+### 10ba. Candidate state and exact-state binding (`CandidateState`)
+
+> **Implemented.** `release_gate/assurance/candidate.py` — `CandidateState`,
+> `StateComponent`, `StateMatch`, `StateBinding`, `StateBindingReport`,
+> `bind_case()`, `candidate_for_case()`. `ClaimGraph.from_case` withholds stale
+> support; RG-DRIFT-006 to -009 and a `state_binding` coverage row in
+> `analysis.py` / `zero_config.py`; `assure --candidate`; the envelope `candidate`
+> record; the audit's derived candidate (`ScanProvenance.candidate_state`).
+> Tests: `tests/test_candidate_state.py`.
+
+**The defect, measured first.** An envelope holding `transfer_tool` at digest v3,
+and a PASSED formal-proof attempt whose `target_digest` was v2: the claim read
+**VERIFIED under all eight shipped methodology versions and under zero-config**. RG-CLAIM-007
+and RG-SW-007 held the case where a methodology asked; the claim itself said
+VERIFIED everywhere, which is what every reader of claim status saw.
+
+**A candidate is components.** `repository`, `commit`, `tree`, `image`, `model`,
+`prompt`, `tool_manifest`, `governance_policy`, `eval_definition`,
+`deployment_config`, `dataset`, `environment`, plus `artifact:<name>` and
+`custom:<name>`. Values are canonicalised (repository to `host/path`; digests,
+commits, model ids and environments to lowercase) and the set is digested by the
+canonical encoder; who declared it is not part of the digest. A misspelt
+component, an empty value or a control character is refused.
+
+**Five bindings, one effect table.** `EXACT`, `PARTIAL` (counts), `STALE`,
+`INCOMPATIBLE` (support withheld), `UNKNOWN` (counts; a finding only against a
+stated candidate). `repository` and `environment` are identity components — a
+mismatch there is a different subject (`INCOMPATIBLE`); every other component is a
+revision (`STALE`). A bare digest that matches no component is content the
+candidate does not contain. Abbreviated commits match on git's seven-character
+floor.
+
+**Withheld in one place.** `ClaimGraph.from_case` is the single construction path
+for claim status, so withholding there reaches the analysers, every methodology
+predicate and the review at once. Only support is withheld: a refutation from an
+earlier state still stands, and the claim stays REFUTED — converting a known
+defect into a gap is the weakening this engine refuses. Tests tamper with each
+half and fail.
+
+**Where the candidate comes from, and the blast radius.** Caller > submission >
+audit provenance > the case's current artifacts. The last is what catches the
+measured defect with no configuration; it reports only stale and incompatible
+bindings, because with nothing stated there is nothing unbound support should
+have been bound to. The case stores a stated candidate in its metadata (so the
+approval digest covers it) and stores nothing otherwise. Measured over the full
+suite before the findings were added: withholding changed no existing verdict
+and no existing test.
+
+**Explained where a person looks.** The terminal report prints a STATE BINDING
+block; the one-screen review carries it as fields (counts as `Figure`s, each
+rejected record with its reason verbatim, so the digit guard still holds); the
+JSON outcome carries every binding; `/api/assure` returns it and the demo page
+renders it escaped. Each reason names the component and both values: *"model is
+gpt-4o-2024-08-06 in the record and gpt-5 in the candidate — its support was
+withheld"*.
+
 ---
 
 ## 11. Methodology behaviour
@@ -8768,6 +8896,13 @@ fixed, rather than the expectations being lowered.
 | `assure audit.json` claims | `sw:safeguard:*` statements now read "this repository carries a valid … declaration" | claim ids unchanged; statuses unchanged |
 | `assure audit.json` artifacts | the scanned code is added as a `SOURCE_CODE` artifact | no structural finding changes (measured) |
 | older audit reports (no block) | still read; evidence binds to the report digest, as before | provenance fields read `null` with a stated limitation |
+
+| promptfoo in `assure` | read through the producer contract; adds the source row (`content.native`), `producer_type`, and a `MEASUREMENT` record when promptfoo states its own totals; producer id `promptfoo` (was `promptfoo-export`) | claim ids (`cl_eval_N`) and statuses unchanged; evidence ids change |
+| new input kind | `PRODUCER_EXPORT` (SARIF, external decisions, registered adapters) | a document that was `UNRECOGNISED` may now be read |
+| envelope record types | `producer`, `candidate` added | additive |
+| claim status | support bound to a different candidate state is withheld (§10ba) | stricter only; refutations unaffected; no existing verdict moved in the suite |
+| coverage | a `state_binding` row on every case | case digests change |
+| `assure --candidate FILE` | new | — |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

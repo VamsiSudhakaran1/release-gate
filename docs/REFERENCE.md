@@ -126,6 +126,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 ```
 release-gate assure <file> [--json] [--full] [--review]
                            [--methodology REF] [--config FILE] [--case-output FILE]
+                           [--candidate FILE]
 release-gate assure --list-methodologies
 ```
 
@@ -151,6 +152,7 @@ nothing.
 | `ASSURANCE_ENVELOPE` | release-gate's record format (JSONL or a JSON array) |
 | `AUDIT_REPORT` | release-gate's own audit output |
 | `VERIFIER_REPORT` | a prover, checker or lab report |
+| `PRODUCER_EXPORT` | anything a registered evidence producer reads: SARIF 2.1.0 from any static analyser, an external decision (a review bot, a policy engine), or an organisation's own adapter. `Detection.adapter` names which producer |
 
 #### Flags
 
@@ -162,8 +164,58 @@ nothing.
 | `--json` | The whole outcome — case, findings, coverage ledger, capability surface, and the required-evidence protocol. `ingest.notes` is where a rejected record says *why* it was rejected. |
 | `--full` | Show every structural finding, including the advisory ones the default output summarises. |
 | `--case-output FILE` | Write the sealed case on its own, for an evidence pack or an approval packet. |
+| `--candidate FILE` | The exact release being admitted, as a JSON object of components (see [candidate state](#candidate-state--what-the-evidence-must-be-about)). Evidence bound to a different state of it stops supporting the claims it names, and the report says which records and why. Wins over a candidate the submission states about itself. |
 | `--list-methodologies` | The built-ins, with each one's requirement count and digest. |
 | `--diagnostics` | Which optional backends are unavailable and why. A broken native dependency is reported here rather than taking the CLI down; assurance runs regardless. |
+
+#### Candidate state — what the evidence must be about
+
+An approval binds to an exact state, and so must the evidence behind it. A candidate is a JSON object of the components that identify the release:
+
+```json
+{"repository": "https://github.com/acme/agent",
+ "commit": "9f2c1a7e4b...",
+ "model": "gpt-4o-2024-08-06",
+ "prompt": "sha256:…", "tool_manifest": "sha256:…",
+ "governance_policy": "sha256:…", "environment": "prod-eu",
+ "artifact:transfer_tool": "sha256:…"}
+```
+
+The named components are `repository`, `commit`, `tree`, `image`, `model`, `prompt`, `tool_manifest`, `governance_policy`, `eval_definition`, `deployment_config`, `dataset` and `environment`. You can add `artifact:<name>` for generated artifacts and `custom:<name>` for your own dimensions. A misspelt component is refused rather than silently matching nothing. Values are canonicalised (repository URLs to `host/path`, digests and commits to lowercase) and the set is digested.
+
+A record names what it was produced against in `state` (on an envelope row, or set by an adapter). Its `applies_to_digest` and a verification attempt's `target_digest` are compared too. Each claim-bearing record then binds in one of five ways:
+
+| Binding | Meaning | Effect |
+|---|---|---|
+| `EXACT` | every component the candidate states is named, and matches | counts |
+| `PARTIAL` | what it names matches; it names only some components | counts |
+| `STALE` | it names a different revision of something the candidate holds | **support withheld**; RG-DRIFT-006 (HOLD) |
+| `INCOMPATIBLE` | another repository or environment altogether | **support withheld**; RG-DRIFT-007 (HOLD) |
+| `UNKNOWN` | names nothing the candidate states | counts; against a stated candidate, RG-DRIFT-008 (HOLD) |
+
+Only *support* is withheld. A refutation from an earlier state still stands: a defect is not answered by the release having moved on. When the candidate omits components that its evidence names, RG-DRIFT-009 (advisory) lists the bindings that could not be checked.
+
+The candidate comes from, in order: `--candidate`; an envelope `candidate` record (labelled as the submission's own description); an audit report's provenance block (repository, commit, scanned tree, governance file, model, and the prompt, tool and eval files the lockfile collector finds). If none of these exists, the case's current artifacts stand in. A stale binding is still caught then, but unbound support is not a finding, because nobody said what it should have been bound to. The `state_binding` coverage row is `ASSESSED` only against a stated candidate.
+
+#### Evidence producers — adding a source without changing the engine
+
+Every source of evidence meets the engine through one contract (`release_gate/assurance/producer_contract.py`). A producer **declares** what its evidence means before any arrives. Its modality is one of the seven evidence lanes, and it states whether it is deterministic, its confidence semantics (an ordinal label, a score on its own scale, a probability it says is calibrated), its coverage semantics, its independence, and what it cannot establish (required). An **adapter** reads one format and reports `NativeResult`s: the producer's own identifiers, outcome words, severities, counts and source fields. Only the normaliser builds records, the same way for every producer:
+
+- every record is `DECLARED`;
+- a count stays a count: promptfoo's `47 / 50` reads *"promptfoo reported 47 of 50 declared test cases passed"*, with no percentage derived;
+- a severity stays the tool's own (`native_severity: "CRITICAL"` from SonarQube) and is never mapped onto release-gate's;
+- a `DECISION` (a review bot's "review", a policy engine's "deny") is recorded as an external decision in its producer's vocabulary. It cannot bear on a claim, and its value never moves release-gate's verdict;
+- source fields no adapter maps are kept under `content.native`. They are bounded, and any field that does not fit is named in `native_omitted`.
+
+Built in: promptfoo, SARIF 2.1.0 (any static analyser; the tool is named by the file), the external-decision shape below, and release-gate's own static scanner (declared in the same terms).
+
+```json
+{"external_decision": {"producer": {"id": "proofagent", "version": "1.4.0"},
+                       "decision": "review", "subject": "PR #418",
+                       "state": {"commit": "9f2c1a7"}}}
+```
+
+There are two ways to add a producer, and neither edits the engine. From Python, subclass `EvidenceAdapter`, register it on a `ProducerRegistry`, and pass `producers=registry` to `assure()`. From a file, put a `producer` record (a declaration) in an envelope ahead of that producer's evidence. `check_adapter_contract(adapter, sample)` runs any adapter against the contract.
 
 #### `--config` — an organisation's own standards
 

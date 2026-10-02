@@ -142,6 +142,9 @@ class AnalysisResult:
     assumptions: Optional[AssumptionGraph] = None
     counterexamples: Optional[CounterexampleLedger] = None
     failed_branches: Optional[FailedBranchLedger] = None
+    #: How each claim-bearing record binds to the candidate (candidate.py), or
+    #: None when the case has no candidate and holds no artifact digest.
+    state_binding: Optional[Any] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -1362,6 +1365,91 @@ def _analyse_drift(case: AssuranceCase, artifact_graph: Optional[ArtifactGraph],
     return findings
 
 
+def _analyse_state_binding(report: Optional[Any]) -> List[Finding]:
+    """RG-DRIFT-006 to -009: evidence about a state that is not the candidate's.
+
+    The claim graph has already withheld the support (claims.py); these findings
+    are what makes the withholding visible and what would resolve it. They share
+    the drift family because drift is what this is — RG-DRIFT-005 reports a record
+    naming content the case does not hold; these report what that does to claims.
+    """
+    if report is None:
+        return []
+    from release_gate.assurance.candidate import StateMatch
+    findings: List[Finding] = []
+
+    def reasons(bindings: Sequence[Any]) -> str:
+        shown = "; ".join(f"{b.record_id}: {b.reason}" for b in bindings[:4])
+        more = f" (+{len(bindings) - 4} more)" if len(bindings) > 4 else ""
+        return shown + more
+
+    stale = report.of(StateMatch.STALE)
+    if stale:
+        withheld = sum(1 for b in stale if b.withholds_support)
+        findings.append(Finding(
+            rule_id="RG-DRIFT-006", domain=AnalysisDomain.DRIFT,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(stale)} record(s) bearing on claims are bound to a different "
+                     f"state of the candidate; support from {withheld} was withheld"),
+            detail=("Evidence about a previous revision is evidence about the previous "
+                    "revision. Its support no longer counts toward the claim it names; "
+                    "a refutation among these still stands, because a defect is not "
+                    "answered by the state having moved. " + reasons(stale)),
+            remedy="re-produce the evidence against the candidate, or state why the "
+                   "earlier state is the one that matters",
+            refs=tuple(b.record_id for b in stale[:12]),
+            observed={"stale": len(stale), "support_withheld": withheld,
+                      "candidate_digest": report.candidate.digest()}))
+    incompatible = report.of(StateMatch.INCOMPATIBLE)
+    if incompatible:
+        withheld = sum(1 for b in incompatible if b.withholds_support)
+        findings.append(Finding(
+            rule_id="RG-DRIFT-007", domain=AnalysisDomain.DRIFT,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(incompatible)} record(s) bearing on claims are about a "
+                     f"different subject; support from {withheld} was withheld"),
+            detail=("They name another repository or environment than the candidate. "
+                    "That is not an older version of this release; it is evidence "
+                    "about something else. " + reasons(incompatible)),
+            remedy="supply evidence produced against the candidate's own repository "
+                   "and environment",
+            refs=tuple(b.record_id for b in incompatible[:12]),
+            observed={"incompatible": len(incompatible), "support_withheld": withheld}))
+    if report.candidate.explicit:
+        unbound = [b for b in report.of(StateMatch.UNKNOWN) if b.supports]
+        if unbound:
+            findings.append(Finding(
+                rule_id="RG-DRIFT-008", domain=AnalysisDomain.DRIFT,
+                effect=RequirementEffect.HOLD,
+                summary=(f"{len(unbound)} supporting record(s) name no component of the "
+                         "candidate, so whether they are about it cannot be checked"),
+                detail=("A candidate was stated, and this support does not say what it "
+                        "was produced against. It still counts — nothing shows it is "
+                        "about another state — but an admission made against an exact "
+                        "candidate should not rest on evidence that could be about any. "
+                        + reasons(unbound)),
+                remedy="have the producer record the commit, model, prompt or artifact "
+                       "digest it ran against (`state` on each record)",
+                refs=tuple(b.record_id for b in unbound[:12]),
+                observed={"unbound_support": len(unbound)}))
+        unchecked = report.unchecked_components()
+        if unchecked:
+            findings.append(Finding(
+                rule_id="RG-DRIFT-009", domain=AnalysisDomain.DRIFT,
+                effect=RequirementEffect.ADVISORY,
+                summary=(f"the candidate does not state {len(unchecked)} component(s) "
+                         f"its evidence is bound to: {', '.join(unchecked)}"),
+                detail=("Evidence names these, and the candidate is silent on them, so "
+                        "those bindings were not checked. An incomplete candidate "
+                        "identity is not a mismatch; it is a comparison nobody could "
+                        "make."),
+                remedy="add these components to the candidate state",
+                refs=tuple(unchecked[:12]),
+                observed={"unchecked_components": list(unchecked),
+                          "missing_named_components": list(report.candidate.missing())}))
+    return findings
+
+
 # ── coverage (RG-COV-*) ──────────────────────────────────────────────────────
 
 def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
@@ -1836,6 +1924,8 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_counterexamples(counterexamples, critical))
     findings.extend(_analyse_failed_branches(failed_branches))
     findings.extend(_analyse_drift(case, artifact_graph, records))
+    state_binding = claim_graph.state_binding if claim_graph is not None else None
+    findings.extend(_analyse_state_binding(state_binding))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
         capabilities = getattr(normalisation, "capabilities", None)
@@ -1854,4 +1944,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           contradictions=ledger,
                           assumptions=assumption_graph,
                           counterexamples=counterexamples,
-                          failed_branches=failed_branches)
+                          failed_branches=failed_branches,
+                          state_binding=state_binding)

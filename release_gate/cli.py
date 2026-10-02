@@ -1919,8 +1919,25 @@ def _run_assure_command():
     if org is not None and methodology is not None:
         methodology = org.apply_to(methodology)
 
+    # The exact release being admitted. Stated here, it is the caller's word and
+    # wins over one the submission states about itself; evidence about any other
+    # state of it stops supporting claims about it.
+    candidate = None
+    candidate_ref = _flag(argv, '--candidate')
+    if candidate_ref:
+        from release_gate.assurance.candidate import (
+            CandidateError, CandidateSource, CandidateState)
+        try:
+            candidate = CandidateState.from_dict(
+                _json.loads(_Path(candidate_ref).read_text(encoding='utf-8')),
+                source=CandidateSource.DECLARED_BY_CALLER,
+                declared_by=f"--candidate {_Path(candidate_ref).name}")
+        except (OSError, ValueError, CandidateError) as exc:
+            print(f"Error: {candidate_ref} is not a readable candidate state: {exc}")
+            sys.exit(1)
+
     try:
-        outcome = assure(target, methodology=methodology)
+        outcome = assure(target, methodology=methodology, candidate=candidate)
     except IngestError as exc:
         print(f"Error: {exc}")
         sys.exit(1)

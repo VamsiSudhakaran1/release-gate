@@ -442,8 +442,18 @@ class ClaimGraph:
     def __init__(self, claims: Iterable[Claim],
                  evidence: Optional[Mapping[str, EvidenceRecord]] = None,
                  *, resolved_contradictions: Iterable[str] = (),
-                 notes: Iterable[str] = ()) -> None:
+                 notes: Iterable[str] = (),
+                 withheld_evidence: Iterable[str] = (),
+                 withheld_attempts: Iterable[str] = (),
+                 state_binding: Optional[Any] = None) -> None:
         self._evidence: Dict[str, EvidenceRecord] = dict(evidence or {})
+        # Support bound to a different state of the candidate (candidate.py). It
+        # stays in the graph and is reported; it stops counting toward a claim.
+        # Only support: a refutation from an earlier state still stands.
+        self._withheld_evidence: Set[str] = set(withheld_evidence)
+        self._withheld_attempts: Set[str] = set(withheld_attempts)
+        #: The `StateBindingReport` the withholding came from, when there was one.
+        self.state_binding = state_binding
         # Evidence names the claims it bears on, so a claim need not know in
         # advance which records will arrive. Linking happens here rather than in
         # one construction path, or the same inputs would mean different things
@@ -708,6 +718,15 @@ class ClaimGraph:
 
         passed = [a for a in claim.verification_attempts
                   if a.status is VerificationStatus.PASSED]
+        # Support about a different state of the candidate is not support for
+        # this one. Withheld here, once, so every reader of a claim's status —
+        # the analysers, every methodology predicate, the review — sees the
+        # same answer (candidate.py). Failures are not filtered: a defect found
+        # in an earlier state is not answered by the state having moved.
+        withheld = (sum(1 for e in supporting if e.evidence_id in self._withheld_evidence)
+                    + sum(1 for a in passed if a.verification_id in self._withheld_attempts))
+        supporting = [e for e in supporting if e.evidence_id not in self._withheld_evidence]
+        passed = [a for a in passed if a.verification_id not in self._withheld_attempts]
         failed = [a for a in claim.verification_attempts
                   if a.status is VerificationStatus.FAILED]
         inconclusive = [a for a in claim.verification_attempts
@@ -725,6 +744,9 @@ class ClaimGraph:
                              for e in unresolved] + ([3] if failed else []), default=0)
 
         def build(status: ClaimStatus, basis: str) -> ClaimAssessment:
+            if withheld:
+                basis = (f"{basis}; {withheld} supporting record(s) bound to a different "
+                         "state of the candidate were withheld")
             return ClaimAssessment(claim.claim_id, status, None, status, basis, **counts)
 
         if refute_weight:
@@ -753,6 +775,9 @@ class ClaimGraph:
         if supporting:
             return build(ClaimStatus.UNVERIFIED,
                          "evidence supports this claim, but none of it is a verification")
+        if withheld:
+            return build(ClaimStatus.UNKNOWN,
+                         "nothing bound to this candidate supports the claim")
         if claim.supporting_evidence:
             return build(ClaimStatus.UNKNOWN,
                          "the evidence this claim cites is not present in the case")
@@ -895,4 +920,13 @@ class ClaimGraph:
                     if record.content.get("resolved"):
                         resolved.append(record.evidence_id)
 
-        return cls(claims, evidence, resolved_contradictions=resolved, notes=notes)
+        # Bound against the candidate the case is judged against: the one it
+        # declares, or its own current artifacts when it declares none.
+        from release_gate.assurance.candidate import bind_case
+        binding = bind_case(case, claims=claims, evidence=evidence)
+        if binding is not None:
+            notes.extend(binding.notes)
+        return cls(claims, evidence, resolved_contradictions=resolved, notes=notes,
+                   withheld_evidence=binding.withheld_evidence if binding else (),
+                   withheld_attempts=binding.withheld_attempts if binding else (),
+                   state_binding=binding)

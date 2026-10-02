@@ -56,6 +56,7 @@ __all__ = [
     "CoverageLine",
     "Figure",
     "ReviewError",
+    "StateLine",
     "SubjectLine",
     "build_review",
     "render_review",
@@ -194,6 +195,30 @@ class AttentionLine:
 
 
 @dataclass(frozen=True)
+class StateLine:
+    """One record whose binding to the candidate a reviewer needs to see.
+
+    Shown when evidence was rejected or downgraded: support withheld because it
+    is about another state, or about another subject, or — against a stated
+    candidate — support that names no component and so cannot be checked. The
+    reason is the binding's own sentence (candidate.py), carried verbatim.
+    """
+
+    record_id: str
+    match: str
+    reason: str
+    withheld: bool = False
+
+    @property
+    def shown(self) -> str:
+        return f"[{self.match}] {self.record_id}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"record_type": "review_state_line", "record_id": self.record_id,
+                "match": self.match, "reason": self.reason, "withheld": self.withheld}
+
+
+@dataclass(frozen=True)
 class CaseReview:
     """The whole screen, typed. Nothing in `render_review` is not in here."""
 
@@ -223,6 +248,13 @@ class CaseReview:
     expert_judgment: Figure = field(
         default_factory=lambda: Figure("Expert judgment items", 0))
     limits: Tuple[str, ...] = ()
+    #: The candidate the evidence was bound against, as one line, or empty when
+    #: there was nothing to bind against.
+    candidate: str = ""
+    state_figures: Tuple[Figure, ...] = ()
+    state_lines: Tuple[StateLine, ...] = ()
+    #: How many such records were not listed, as a figure, so the cut is stated.
+    state_not_listed: Optional[Figure] = None
 
     # ── what a one-screen summary must not be read as ────────────────────────
     @property
@@ -255,7 +287,11 @@ class CaseReview:
         tail = [self.review_items, self.required_evidence, self.expert_judgment]
         if self.counted_over is not None:
             tail.insert(1, self.counted_over)
-        return tuple(self.execution) + tuple(self.critical_path) + tuple(tail)
+        state = list(self.state_figures)
+        if self.state_not_listed is not None:
+            state.append(self.state_not_listed)
+        return (tuple(self.execution) + tuple(self.critical_path) + tuple(state)
+                + tuple(tail))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -277,6 +313,11 @@ class CaseReview:
             "required_evidence": self.required_evidence.to_dict(),
             "expert_judgment": self.expert_judgment.to_dict(),
             "limits": list(self.limits),
+            "candidate": self.candidate,
+            "state_binding": [f.to_dict() for f in self.state_figures],
+            "state_lines": [line.to_dict() for line in self.state_lines],
+            "state_not_listed": (self.state_not_listed.to_dict()
+                                 if self.state_not_listed is not None else None),
             "is_a_safety_assessment": self.is_a_safety_assessment,
             "establishes_that_the_subject_is_correct":
                 self.establishes_that_the_subject_is_correct,
@@ -562,6 +603,36 @@ def _attention_lines(outcome: Any, limit: int) -> Tuple[AttentionLine, ...]:
     return tuple(lines)
 
 
+def _state_parts(outcome: Any, limit: int) -> Dict[str, Any]:
+    """The candidate, the binding counts, and the records a reviewer must see."""
+    analysis = getattr(outcome, "analysis", None)
+    report = getattr(analysis, "state_binding", None) if analysis is not None else None
+    if report is None:
+        return {}
+    summary = report.summary()
+    candidate = report.candidate
+    figures = tuple(
+        _figure(f"Bound {match.lower()}", count)
+        for match, count in summary["by_match"].items())
+    figures += (_figure("Support withheld", summary["support_withheld"],
+                        "records whose support no longer counts toward the claim "
+                        "they name"),)
+    shown = [b for b in report.bindings
+             if b.match.value in ("STALE", "INCOMPATIBLE")
+             or (candidate.explicit and b.match.value == "UNKNOWN" and b.supports)]
+    lines = tuple(StateLine(record_id=b.record_id, match=b.match.value,
+                            reason=b.reason, withheld=b.withholds_support)
+                  for b in shown[:limit])
+    return {
+        "candidate": (f"{candidate.digest()}  [{candidate.source.value}]"
+                      + (f"  {candidate.note}" if candidate.note else "")),
+        "state_figures": figures,
+        "state_lines": lines,
+        "state_not_listed": (_figure("Bindings not listed", len(shown) - len(lines))
+                             if len(shown) > len(lines) else None),
+    }
+
+
 def build_review(outcome: Any, *, attention_limit: int = 8) -> CaseReview:
     """Read one assurance outcome into the shape a person reads.
 
@@ -623,6 +694,7 @@ def build_review(outcome: Any, *, attention_limit: int = 8) -> CaseReview:
             "Expert judgment items", len(judgement) if required else None,
             "no machine closes these: a rule asks for human review, or "
             "release-gate can see the gap and cannot name a closer"),
+        **_state_parts(outcome, attention_limit),
         limits=(
             "Release-gate has not evaluated whether the subject is correct. It "
             "reports what the evidence establishes and what it does not.",
@@ -686,6 +758,15 @@ def render_review(review: CaseReview) -> str:
         if not coverage_rows:
             lines += ["", _rule(), "", "COVERAGE", ""]
         lines += ["", "NOT ASSESSED"] + [f"  {d}" for d in review.not_assessed]
+
+    if review.candidate:
+        lines += ["", _rule(), "", "STATE BINDING", "", "Candidate", review.candidate, ""]
+        lines += [_row(f.label, f.shown) for f in review.state_figures]
+        for line in review.state_lines:
+            lines += ["", line.shown, line.reason]
+        if review.state_not_listed is not None:
+            lines += ["", _row(review.state_not_listed.label,
+                               review.state_not_listed.shown)]
 
     if review.attention:
         lines += ["", _rule(), "", "HUMAN ATTENTION", ""]
