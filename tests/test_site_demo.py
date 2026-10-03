@@ -161,6 +161,28 @@ class TestThePageIsReachableAndCurrent:
         assert "NOT_ASSESSED" in text, (
             "the homepage no longer states that a verdict carries its coverage")
 
+    def test_the_hero_is_the_assurance_engine_and_the_repo_scan_has_its_own_section(self):
+        """The repo scan box sat in the middle of a hero about assurance, which
+        read as if scanning a repo were the assurance case. The hero now leads
+        with assure; the scan, its hints and its results are a section of their
+        own, and a scan result never replaces the hero."""
+        text = INDEX.read_text(encoding="utf-8")
+        hero = text[text.index('<section class="hero"'):]
+        hero = hero[:hero.index("</section>")]
+        assert 'href="/assurance.html" class="hero-cta"' in hero
+        assert "release-gate assure" in hero
+        for scan_only in ('id="pg-url-input"', 'id="playground-results"',
+                          "release-gate-ai/installations", 'href="/demo.html"'):
+            assert scan_only not in hero, f"{scan_only} is back in the hero"
+        scan = text[text.index('<section id="scan">'):]
+        scan = scan[:scan.index("</section>")]
+        for part in ('id="pg-url-input"', 'id="pg-run-btn"', 'id="playground-results"',
+                     'id="sample-output-section"', "release-gate pr --base main",
+                     "release-gate-ai/installations", 'href="/demo.html"'):
+            assert part in scan, f"{part} is missing from the scan section"
+        assert text.index('id="assurance"') < text.index('<section id="scan">')
+        assert "getElementById('hero-inner')" not in text
+
     def test_the_embedded_copy_matches_the_live_page(self):
         """`public/index.html` is bundled as a module for the serverless function.
 

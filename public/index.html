@@ -277,19 +277,6 @@
       filter: blur(2px);
     }
     .hero-inner { width: 100%; position: relative; }
-    /* Side-by-side mode: once a scan completes, hero text sits left and the
-       results panel sits on the right so the page doesn't jump/scroll down. */
-    .hero-inner.has-results {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-      gap: 44px; align-items: start; text-align: left;
-      max-width: 1180px; margin: 0 auto;
-    }
-    .hero-inner.has-results .hero-left { text-align: left; }
-    .hero-inner.has-results .hero-sub { margin-left: 0; margin-right: 0; }
-    .hero-inner.has-results .hero-scan-row { justify-content: flex-start; margin-left: 0; }
-    .hero-inner.has-results .hero-scan-hint { text-align: left; }
-    .hero-inner.has-results .pg-wrap { max-width: none; margin: 0; }
     .hero h1 {
       font-size: clamp(2.2rem, 5vw, 3.6rem);
       font-weight: 900; color: var(--accent);
@@ -362,23 +349,6 @@
     }
     .hero-scan-hint a { color: var(--accent); font-weight: 600; text-decoration: none; }
     .hero-scan-hint a:hover { text-decoration: underline; }
-    /* "New: release-gate pr" ribbon under the hero scan row */
-    .hero-pr-ribbon {
-      display: inline-flex; align-items: center; gap: 12px;
-      margin: 18px auto 0; max-width: 660px;
-      padding: 11px 18px; border-radius: 999px;
-      background: var(--accent-tint); border: 1px solid var(--border);
-      color: var(--heading); font-size: .9rem; line-height: 1.35;
-      transition: border-color .15s, box-shadow .15s, transform .15s;
-    }
-    .hero-pr-ribbon:hover { text-decoration: none; border-color: var(--accent); box-shadow: 0 6px 20px var(--accent-glow); transform: translateY(-1px); }
-    .hero-pr-ribbon strong { color: var(--accent-strong); font-family: ui-monospace, monospace; font-size: .92em; }
-    .hpr-badge {
-      flex: none; font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
-      background: var(--accent); color: var(--on-accent); padding: 3px 9px; border-radius: 999px;
-    }
-    .hpr-arrow { flex: none; color: var(--accent); font-weight: 800; }
-    .hero-inner.has-results .hero-pr-ribbon { margin-left: 0; }
 
     .pg-score-circle {
       width: 80px; height: 80px; border-radius: 50%;
@@ -931,12 +901,6 @@
       .cli-grid  { grid-template-columns: 1fr; }
       .checks-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 900px) {
-      /* Stack the side-by-side layout back to a single column on small screens */
-      .hero-inner.has-results {
-        grid-template-columns: 1fr; gap: 24px; max-width: 640px;
-      }
-    }
     @media (max-width: 960px) {
       .nav-toggle { display: block; }
       .nav-links {
@@ -1348,21 +1312,55 @@ section + section { padding-top: 0; }
 .hero-scan-hint a { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border-strong); }
 .hero-scan-hint a:hover { color: var(--heading); }
 
-.hero-pr-ribbon {
-  margin-left: 0 !important; margin-right: 0; max-width: 34rem;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 11px; padding: 13px 15px; gap: 11px;
-  font-size: .865rem; color: var(--text); box-shadow: none;
+.hero-sub { margin-bottom: 20px; }
+.hero-points {
+  list-style: none; padding: 0; margin: 0 0 26px; max-width: 34rem;
+  display: grid; gap: 10px;
 }
-.hero-pr-ribbon:hover { border-color: var(--border-strong); box-shadow: none; transform: none; }
-.hero-pr-ribbon strong { color: var(--heading); }
-.hpr-badge {
-  background: var(--accent-tint); color: var(--accent);
-  border: 1px solid var(--border-strong); border-radius: 5px;
-  font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;
-  text-transform: uppercase; padding: 3px 7px;
+.hero-points li {
+  position: relative; padding-left: 22px;
+  font-size: .93rem; line-height: 1.55; color: var(--text);
 }
-.hpr-arrow { color: var(--accent); }
+.hero-points li::before {
+  content: ""; position: absolute; left: 2px; top: .58em;
+  width: 7px; height: 7px; border-radius: 2px; background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.hero-points b { color: var(--heading); font-weight: 550; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.hero-cta {
+  background: var(--accent); color: #0A0A0C; border-radius: 9px;
+  padding: 12px 20px; font-size: .92rem; font-weight: 600; letter-spacing: -.01em;
+  text-decoration: none;
+}
+.hero-cta:hover { background: var(--accent-strong); text-decoration: none; }
+.hero-cta-ghost {
+  color: var(--heading); border: 1px solid var(--border-strong); border-radius: 9px;
+  padding: 11px 18px; font-size: .92rem; font-weight: 550; text-decoration: none;
+}
+.hero-cta-ghost:hover { background: var(--surface-2); text-decoration: none; }
+.hero-cmd { margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.hero-cmd code {
+  font-family: var(--mono); font-size: .8rem; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; overflow-wrap: anywhere;
+}
+.scan-exit { font-family: var(--mono); font-size: .74rem; color: var(--faint); }
+
+/* ── Repo scan & PR gate: its own section, its results under it ─────────── */
+.scan-grid {
+  display: grid; gap: 52px; align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr);
+}
+.scan-left .section-subtitle { margin-bottom: 24px; }
+.scan-left .hero-scan-row { display: flex; margin-bottom: 12px; }
+.scan-left .hero-cmd { margin-top: 20px; }
+.scan-left .hero-scan-hint { max-width: 40rem; }
+.scan-grid.has-results { grid-template-columns: minmax(0, 1fr); }
+.scan-grid.has-results .scan-right { display: none; }
+@media (max-width: 940px) {
+  .scan-grid { grid-template-columns: 1fr; gap: 36px; }
+}
 
 /* The right column of the hero: a product surface, not empty space. */
 .pg-wrap { max-width: none !important; margin: 0 !important; }
@@ -1784,6 +1782,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
         <button type="button" class="nav-dd-trigger" aria-haspopup="true" aria-expanded="false" onclick="toggleNavDropdown(this, event)">Product <span class="nav-caret" aria-hidden="true">▾</span></button>
         <div class="nav-dropdown-panel" role="menu">
           <a href="/assurance.html" role="menuitem"><span class="ndp-t">Assurance</span><span class="ndp-d">Submit a run — get the case a person decides from</span></a>
+          <a href="#scan" role="menuitem"><span class="ndp-t">Repo audit</span><span class="ndp-d">Scan an agent repo in 10 seconds</span></a>
           <a href="#agent-scan" role="menuitem"><span class="ndp-t">Agent Scan</span><span class="ndp-d">Find the agent-layer risks SAST misses</span></a>
           <a href="#pr-gate" role="menuitem"><span class="ndp-t">Review Gate</span><span class="ndp-d">Gate AI-generated PRs on what they introduced</span></a>
           <a href="/demo.html" role="menuitem"><span class="ndp-t">Live demo</span><span class="ndp-d">Watch it block a bad AI change — reproducible</span></a>
@@ -1824,29 +1823,27 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
       under and a list of what still needs a human.
     </p>
 
-    <!-- Hero playground input -->
-    <div class="hero-scan-row">
-      <input type="url" id="pg-url-input" placeholder="github.com/your-org/agent" autocomplete="off" aria-label="GitHub repository URL to audit" onkeydown="if(event.key==='Enter')runPlaygroundAudit()" />
-      <button id="pg-run-btn" onclick="runPlaygroundAudit()">Audit in 10 seconds &rarr;</button>
+    <ul class="hero-points">
+      <li><b>Every claim resolved, with the rule that decided it</b> &mdash; established,
+        contradicted or not assessed. One counterexample outranks any number of passes.</li>
+      <li><b>What it did not check, named</b> &mdash; <code>NOT_ASSESSED</code> is never
+        read as a pass.</li>
+      <li><b>A bounded list for a person</b> &mdash; and, for each item, the evidence
+        that would close it.</li>
+    </ul>
+    <div class="hero-actions">
+      <a href="/assurance.html" class="hero-cta">Drop a run in &mdash; live &rarr;</a>
+      <a href="#assurance" class="hero-cta-ghost">How it decides</a>
     </div>
+    <p class="hero-cmd"><code>pip install release-gate &amp;&amp; release-gate assure run.jsonl</code></p>
     <p class="hero-scan-hint">
-      <span class="hint-mark"></span>Scanning a private repo?
-      <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
-      to grant read access — public repos work without it.
+      <span class="hint-mark"></span>Reads an OpenTelemetry trace, a Langfuse or Arize export,
+      a promptfoo run, SARIF or its own records &mdash; the shape is detected, not declared.
     </p>
-    <p class="hero-scan-hint">
-      <span class="hint-mark"></span>No repo handy? <a href="/demo.html"><strong>Watch it block a bad AI change</strong></a>
-      — a real pull request, real output, reproducible on your machine in 30 seconds.
-    </p>
-    <a href="/assurance.html" class="hero-pr-ribbon">
-      <span class="hpr-badge">New</span>
-      <span><strong>release-gate&nbsp;assure</strong> — a machine produced something consequential; drop the run in and get the case a person decides from</span>
-      <span class="hpr-arrow">&rarr;</span>
-    </a>
    </div>
 
     <div class="pg-wrap">
-      <div id="sample-output-section">
+      <div>
         <div class="hero-terminal">
           <div class="ht-bar">
             <span class="ht-dot" style="background:#E8705C"></span>
@@ -1874,42 +1871,6 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
           <div class="hero-stat"><b>2,287,133</b><span>records folded</span></div>
           <div class="hero-stat"><b>13</b><span>reach a person</span></div>
           <div class="hero-stat"><b>0</b><span>config files</span></div>
-        </div>
-      </div>
-      <div class="pg-spinner" id="pg-spinner">
-        <div class="pg-spinner-ring"></div>
-        <p>Running audit&hellip;</p>
-      </div>
-      <div class="pg-error" id="pg-error"></div>
-
-      <!-- Inline results — shown here once a scan completes -->
-      <div id="playground-results" style="display:none;background:var(--surface);border-radius:18px;box-shadow:0 4px 32px rgba(99,102,241,.12);padding:28px 32px;margin-top:20px;text-align:left;">
-        <div style="display:flex;align-items:center;gap:20px;margin-bottom:14px;">
-          <div class="pg-score-circle" id="pg-score-circle"></div>
-          <div>
-            <div id="pg-decision-badge" class="pg-decision-badge"></div>
-            <div id="pg-repo-label" style="margin-top:6px;font-size:.85rem;color:var(--text);"></div>
-          </div>
-        </div>
-        <!-- Two-axis scorecard: Agent Code Safety (objective, from findings) + Governance (declared) -->
-        <div id="pg-axes" style="display:none;gap:14px;margin-bottom:14px;flex-wrap:wrap;"></div>
-        <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
-        <div id="pg-stack-tags" style="display:none;margin-bottom:14px;flex-wrap:wrap;gap:6px;align-items:center;"></div>
-        <div id="pg-findings" style="margin-top:14px;"></div>
-        <div class="pg-checklist" id="pg-checklist" style="margin-top:14px;"></div>
-        <div id="pg-run-link" style="display:none;margin-top:14px;"></div>
-        <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
-          <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
-        </div>
-        <div id="pg-fix-cta" style="display:none;margin-top:16px;padding:16px;background:var(--accent-tint);border:1px solid var(--border-strong);border-radius:12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <div>
-              <div style="font-weight:700;color:var(--accent-strong);font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
-              <div style="font-size:.82rem;color:var(--text);margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
-            </div>
-            <button id="pg-fix-btn" onclick="runAutoFix()" style="background:var(--accent);color:var(--on-accent);border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Create fix PR &rarr;</button>
-          </div>
-          <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
         </div>
       </div>
     </div>
@@ -2036,6 +1997,107 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
   </div>
 </section>
 
+
+<!-- ═══════════════════════ REPO SCAN & PR GATE ═══════════════════════ -->
+<!--
+  The static half, on its own: scanning a repository and gating a pull request
+  are not the assurance case, and putting the scan box in the hero read as if
+  they were. Its findings feed a case as evidence (release-gate audit
+  --evidence-out); on their own they are a scan, not an approval.
+-->
+<section id="scan">
+  <div class="container">
+    <div class="scan-grid" id="scan-grid">
+      <div class="scan-left">
+        <span class="section-eyebrow">The static half &middot; release-gate audit &amp; pr</span>
+        <h2 class="section-title">Scan an agent repo. Gate the AI pull request.</h2>
+        <p class="section-subtitle">
+          AST and taint analysis over the code an agent ships: model output reaching
+          <code>eval</code> or a shell, untrusted input in a system prompt, LLM calls
+          with no token ceiling. On a pull request it rules only on what that change
+          introduced, never on inherited debt. Its findings can feed an assurance case
+          as evidence; on their own they are a scan, not an approval.
+        </p>
+        <div class="hero-scan-row">
+          <input type="url" id="pg-url-input" placeholder="github.com/your-org/agent" autocomplete="off" aria-label="GitHub repository URL to audit" onkeydown="if(event.key==='Enter')runPlaygroundAudit()" />
+          <button id="pg-run-btn" onclick="runPlaygroundAudit()">Audit in 10 seconds &rarr;</button>
+        </div>
+        <p class="hero-scan-hint">
+          <span class="hint-mark"></span>Scanning a private repo?
+          <a href="https://github.com/apps/release-gate-ai/installations/new" target="_blank" rel="noopener">Install the release-gate-ai App</a>
+          to grant read access &mdash; public repos work without it.
+        </p>
+        <p class="hero-scan-hint">
+          <span class="hint-mark"></span>No repo handy? <a href="/demo.html"><strong>Watch it block a bad AI change</strong></a>
+          &mdash; a real pull request, real output, reproducible on your machine in 30 seconds.
+        </p>
+        <p class="hero-cmd"><code>release-gate pr --base main</code> <span class="scan-exit">exit 0 promote &middot; 10 hold &middot; 1 block</span></p>
+      </div>
+
+      <div class="scan-right pg-wrap">
+        <div id="sample-output-section">
+          <div class="hero-terminal">
+            <div class="ht-bar">
+              <span class="ht-dot" style="background:#E8705C"></span>
+              <span class="ht-dot" style="background:#E0A93F"></span>
+              <span class="ht-dot" style="background:#5FD08A"></span>
+              <span class="ht-cmd">$ release-gate pr --base main</span>
+            </div>
+            <div class="ht-body">
+              <div><span class="ht-hi" style="color:var(--term-red)">BLOCK</span> <span class="ht-k">this change made things net-worse</span></div>
+              <div class="ht-k">Agent Code Safety 100 &rarr; 76</div>
+              <div class="ht-rule"></div>
+              <div class="ht-k" style="font-size:.71rem;letter-spacing:.1em">INTRODUCED BY THIS CHANGE &mdash; NOT PRE-EXISTING</div>
+              <div><span style="color:var(--term-red)">[HIGH]</span> <span class="ht-hi">Dangerous execution sink</span> <span class="ht-k">agent.py:25</span></div>
+              <div class="ht-k" style="padding-left:18px">confirmed &mdash; client.chat.completions.create() (L17) &rarr; expr &rarr; eval() (L25)</div>
+              <div><span style="color:var(--term-yellow)">[LOW]</span> <span class="ht-hi">LLM call with no token ceiling</span> <span class="ht-k">agent.py:17</span></div>
+              <div class="ht-k" style="padding-left:18px">inferred &mdash; no max_tokens</div>
+              <div class="ht-rule"></div>
+              <div class="ht-k">1 source file changed &middot; exit code 1</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+        <div class="pg-spinner" id="pg-spinner">
+          <div class="pg-spinner-ring"></div>
+          <p>Running audit&hellip;</p>
+        </div>
+        <div class="pg-error" id="pg-error"></div>
+
+        <!-- Inline results — shown here once a scan completes -->
+        <div id="playground-results" style="display:none;background:var(--surface);border-radius:18px;box-shadow:0 4px 32px rgba(99,102,241,.12);padding:28px 32px;margin-top:20px;text-align:left;">
+          <div style="display:flex;align-items:center;gap:20px;margin-bottom:14px;">
+            <div class="pg-score-circle" id="pg-score-circle"></div>
+            <div>
+              <div id="pg-decision-badge" class="pg-decision-badge"></div>
+              <div id="pg-repo-label" style="margin-top:6px;font-size:.85rem;color:var(--text);"></div>
+            </div>
+          </div>
+          <!-- Two-axis scorecard: Agent Code Safety (objective, from findings) + Governance (declared) -->
+          <div id="pg-axes" style="display:none;gap:14px;margin-bottom:14px;flex-wrap:wrap;"></div>
+          <div id="pg-score-note" style="font-size:.85rem;color:var(--text);margin-bottom:10px;min-height:1.4em;"></div>
+          <div id="pg-stack-tags" style="display:none;margin-bottom:14px;flex-wrap:wrap;gap:6px;align-items:center;"></div>
+          <div id="pg-findings" style="margin-top:14px;"></div>
+          <div class="pg-checklist" id="pg-checklist" style="margin-top:14px;"></div>
+          <div id="pg-run-link" style="display:none;margin-top:14px;"></div>
+          <div class="pg-cta-row" id="pg-anon-cta" style="display:none">
+            <a href="#" onclick="openAuthModal('signup');return false;">Sign up free to unlock full report + history &rarr;</a>
+          </div>
+          <div id="pg-fix-cta" style="display:none;margin-top:16px;padding:16px;background:var(--accent-tint);border:1px solid var(--border-strong);border-radius:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div>
+                <div style="font-weight:700;color:var(--accent-strong);font-size:.95rem;">&#x1F527; Auto-fix missing safeguards</div>
+                <div style="font-size:.82rem;color:var(--text);margin-top:3px;">We'll open a PR in your repo with <span id="pg-fix-files-preview">governance.yaml and safeguard scaffolding</span>. You review &amp; merge — nothing deploys without your approval.</div>
+              </div>
+              <button id="pg-fix-btn" onclick="runAutoFix()" style="background:var(--accent);color:var(--on-accent);border:none;border-radius:8px;padding:10px 20px;font-size:.9rem;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;">Create fix PR &rarr;</button>
+            </div>
+            <div id="pg-fix-result" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;font-size:.875rem;"></div>
+          </div>
+        </div>
+  </div>
+</section>
 
 <!-- ═══════════════════════ CHECKS EXPLAINED ═══════════════════════ -->
 <section id="checks-explained">
@@ -4804,7 +4866,8 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
     var url = ctaInput.value.trim();
     if (!url) { ctaInput.focus(); return; }
     document.getElementById('pg-url-input').value = url;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    var scanSection = document.getElementById('scan');
+    if (scanSection) scanSection.scrollIntoView({ behavior: 'smooth' });
     setTimeout(function() { runPlaygroundAudit(); }, 400);
   }
 
@@ -5112,10 +5175,10 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
     }
 
     document.getElementById('playground-results').style.display = 'block';
-    // Move into the side-by-side layout so the page doesn't jump downward.
-    var heroInner = document.getElementById('hero-inner');
-    if (heroInner) heroInner.classList.add('has-results');
-    // Hide sample output once a real scan has run
+    // The real result replaces the sample PR output beside the scan box, and
+    // takes the section's full width.
+    var scanGrid = document.getElementById('scan-grid');
+    if (scanGrid) scanGrid.classList.add('has-results');
     var sampleSection = document.getElementById('sample-output-section');
     if (sampleSection) sampleSection.style.display = 'none';
   }
