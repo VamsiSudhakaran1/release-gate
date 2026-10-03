@@ -27,9 +27,9 @@ Action steps in `action.yml` are pinned to full commit SHAs to prevent supply-ch
 via mutable tags:
 
 ```yaml
-- uses: actions/setup-python@0a5c61591373683505ea898e09424647f5f1c7db  # v5.4.0
-- uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4.6.0
-- uses: github/codeql-action/upload-sarif@65c74964a9ed8c44ed9f19d4bbc5757a6a8af9e4  # v3.25.0
+- uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
+- uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
+- uses: github/codeql-action/upload-sarif@df5a14dc28094dc936e103b37d749c6628682b60  # v3.25.0
 ```
 
 Pinning to a SHA rather than a tag ensures that even if the upstream action's tag is moved

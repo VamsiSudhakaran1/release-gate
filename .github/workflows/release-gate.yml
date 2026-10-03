@@ -5,9 +5,12 @@ on:
     paths:
       - "governance.yaml"
       - "**/*.py"
+      # This job runs the Action itself, so a change to the Action must run it.
+      - "action.yml"
   pull_request:
     paths:
       - "governance.yaml"
+      - "action.yml"
 
 jobs:
   governance:
