@@ -7,6 +7,7 @@ nothing but try to reach PROMOTE without a methodology.
 """
 
 import json
+import pathlib
 
 import pytest
 
@@ -276,6 +277,55 @@ class TestIngestBoundary:
 
 
 # ── analysers ────────────────────────────────────────────────────────────────
+
+class TestPlatformExportsReconstructExecution:
+    """A Langfuse or Phoenix export is a trace, and the case must say what ran.
+
+    The ingest read the adapters' payload as a mapping when it is the list of
+    traces itself, so every such export failed reconstruction, mapped nothing,
+    and reported that no execution telemetry was present. That was found by
+    running a real Phoenix export (Arize's published agent traces) through
+    `assure`; the repository's own integration samples failed the same way.
+    """
+
+    ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+    @pytest.mark.parametrize("sample", ["integrations/langfuse/example-trace.json",
+                                        "integrations/arize/example-spans.json"])
+    def test_the_shipped_samples_reconstruct_execution(self, sample):
+        outcome = assure(str(self.ROOT / sample))
+        assert outcome.detection.kind in (InputKind.LANGFUSE_EXPORT,
+                                          InputKind.ARIZE_EXPORT)
+        assert outcome.analysis.execution_graph is not None
+        assert outcome.analysis.execution_graph.nodes
+        rows = {r.to_dict().get("dimension"): r.to_dict()
+                for r in outcome.case.collection("coverage").materialised}
+        assert rows["execution_reconstruction"]["status"] == "ASSESSED"
+        assert not any("did not complete" in n for n in outcome.normalisation.notes)
+
+    def test_a_phoenix_dataframe_export_with_two_runs_says_what_it_skipped(self, tmp_path):
+        """`get_spans_dataframe().to_json(orient="records")`, two traces."""
+        def span(trace, sid, kind, name, parent=None, **attrs):
+            return {"name": name, "span_kind": kind, "parent_id": parent,
+                    "start_time": f"2025-04-28T00:00:0{sid[-1]}.000Z",
+                    "end_time": f"2025-04-28T00:00:0{sid[-1]}.500Z",
+                    "status_code": "OK", "context.span_id": sid,
+                    "context.trace_id": trace,
+                    "attributes.openinference.span.kind": kind,
+                    **{f"attributes.{k}": v for k, v in attrs.items()}}
+        rows = [span("t1", "a1", "AGENT", "agent"),
+                span("t1", "a2", "LLM", "ChatOpenAI", "a1", **{"llm.model_name": "gpt-4o"}),
+                span("t1", "a3", "TOOL", "product_search", "a1",
+                     **{"tool.name": "product_search"}),
+                span("t2", "b1", "AGENT", "agent"),
+                span("t2", "b2", "LLM", "ChatOpenAI", "b1", **{"llm.model_name": "gpt-4o"})]
+        outcome = assure(_write(tmp_path, "phoenix.json", rows))
+        assert outcome.detection.kind is InputKind.ARIZE_EXPORT
+        assert outcome.analysis.execution_graph is not None
+        assert outcome.analysis.execution_graph.nodes
+        assert any("2 traces in one" in n and "the other 1 were not" in n
+                   for n in outcome.normalisation.notes)
+
 
 class TestStructuralAnalysis:
 

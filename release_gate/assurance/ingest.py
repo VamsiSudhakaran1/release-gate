@@ -591,8 +591,19 @@ def _execution_from(doc: Any, detection: Detection) -> Tuple[Optional[ExecutionG
         if detection.kind in (InputKind.LANGFUSE_EXPORT, InputKind.ARIZE_EXPORT):
             from release_gate.adapters import convert
             converted = convert(doc, source=detection.adapter)
-            traces = (converted.get("payload") or {}).get("traces") or []
+            # A trace adapter's payload is the list of traces itself. This read
+            # it as a mapping, so every Langfuse and Phoenix export failed here
+            # and the case reported that no execution telemetry was present.
+            payload = converted.get("payload")
+            traces = payload.get("traces") if isinstance(payload, Mapping) else payload
+            traces = [t for t in (traces or []) if isinstance(t, Mapping)]
             if traces:
+                if len(traces) > 1:
+                    notes.append(
+                        f"{len(traces)} traces in one {converted.get('label') or 'trace'} "
+                        "export; the first was reconstructed and the other "
+                        f"{len(traces) - 1} were not — export one trace per case to "
+                        "assess a different run")
                 return ExecutionGraph.from_native_trace(traces[0]), notes
     except Exception as exc:  # a malformed export must not crash the run
         notes.append(f"execution reconstruction did not complete: {exc}")

@@ -53,6 +53,17 @@ There is no independence score. Independence changes a claim only through the
 policy's `min_independent_groups`. RG-INDEP-005 (correlated) and RG-INDEP-006
 (cannot be placed) are advisory and name the shared provenance.
 
+### 🩹 Langfuse and Arize / Phoenix exports reconstruct execution again
+
+`assure` recognised a Langfuse or Phoenix export, then read nothing from it.
+The ingest expected the trace adapters to return a mapping, but they return the
+list of traces itself. Every such export failed execution reconstruction, mapped
+0 records and reported "no execution telemetry was present". The repository's
+own `integrations/langfuse` and `integrations/arize` samples failed the same way.
+It was found by running a real Phoenix export (Arize's published gpt-4o agent
+traces) through `assure`. An export holding several runs now rebuilds the first
+and says how many it did not.
+
 ### 🔒 Promptfoo text no longer reaches a persisted case
 
 The promptfoo producer had kept each result row whole, prompt and completion text
