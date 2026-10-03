@@ -6372,7 +6372,8 @@ and has no limit of its own, so a small file raised `RecursionError` in
 it applied to records could matter. For something standing in front of a
 deployment, "small file, whole service" is the cheapest denial there is. Bounded
 at the loader with a character scan that skips brackets inside strings, so a
-payload spelling `{{{{` in a field does not read as depth, plus a `RecursionError`
+payload with a run of opening braces inside a string field does not read as
+depth, plus a `RecursionError`
 guard underneath because "unreachable" is a claim about code rather than about
 every input somebody will send.
 

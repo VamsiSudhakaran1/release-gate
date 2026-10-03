@@ -82,6 +82,22 @@ Found by reading the review of a real agent trace on the live demo:
   — could not be classified", beside a mapping of N of N. They are now counted
   as execution records.
 
+### 🕰️ Local parity no longer depends on the clock
+
+`records_digest` is how a local run checks a decision made elsewhere. It
+removed `created_at` but kept a `timestamp` release-gate had stamped on arrival.
+Evidence ids already leave that stamp out. So the file path and the session path
+disagreed whenever they ran either side of a second boundary, and CI failed
+intermittently on Python 3.10. Arrival stamps are now removed at any depth. A
+timestamp the record supplies still counts.
+
+### 📄 The docs site builds again
+
+Every GitHub Pages build of `docs/` had failed since late September. A spec line
+quoted four opening braces, and Pages renders every page through Liquid, which
+read them as an unterminated tag. The line is reworded, and a test now checks
+every docs page for a Liquid opener with no closer.
+
 ### 🔒 Promptfoo text no longer reaches a persisted case
 
 The promptfoo producer had kept each result row whole, prompt and completion text

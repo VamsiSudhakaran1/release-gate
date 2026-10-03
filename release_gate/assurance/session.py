@@ -72,7 +72,11 @@ def records_digest(case: Any) -> str:
 
     `created_at` is excluded because it records when a record was built, not what
     it says, and two runs of the same records are not different evidence for
-    having happened at different times.
+    having happened at different times. A `timestamp` release-gate stamped on
+    arrival (`stamped_on_arrival`) is excluded for the same reason, at any depth.
+    Evidence ids already leave it out; the digest kept it, so the two paths
+    disagreed whenever they ran either side of a second boundary. A supplied
+    timestamp is what the record says, and it stays.
 
     Parity holds for the same records under the same `source`. That is not a
     loophole: `source` is provenance, it flows into every derived evidence id,
@@ -95,8 +99,19 @@ def records_digest(case: Any) -> str:
                 # between the two paths.
                 continue
             payload.pop("created_at", None)
-            items.append({"collection": kind, "record": payload})
+            items.append({"collection": kind, "record": _without_arrival_stamps(payload)})
     return digest_items(items)
+
+
+def _without_arrival_stamps(value: Any) -> Any:
+    """The record with every timestamp release-gate stamped on arrival removed."""
+    if isinstance(value, Mapping):
+        stamped = value.get("stamped_on_arrival") is True
+        return {k: _without_arrival_stamps(v) for k, v in value.items()
+                if not (stamped and k == "timestamp")}
+    if isinstance(value, (list, tuple)):
+        return [_without_arrival_stamps(v) for v in value]
+    return value
 
 
 class SessionError(RuntimeError):

@@ -119,6 +119,30 @@ class TestLocalParity:
             source_name=str(path), methodology=PROFILE).extend(RECORDS).finalize()
         assert records_digest(from_file.case) == records_digest(from_session.case)
 
+    def test_parity_does_not_depend_on_the_clock(self, tmp_path, monkeypatch):
+        """The two paths a second apart. The records carry no timestamp, so
+        release-gate stamps one on arrival; that stamp is a fact about the run,
+        and this test failed in CI whenever the two builds straddled a second."""
+        import itertools
+
+        from release_gate.assurance import evidence, verification
+        ticks = (f"2026-10-03T15:57:{s:02d}Z" for s in itertools.count())
+        monkeypatch.setattr(evidence, "_utc_now", lambda: next(ticks))
+        monkeypatch.setattr(verification, "_utc_now", lambda: next(ticks))
+        path = written(tmp_path)
+        from_file = assure(str(path), methodology=PROFILE)
+        from_session = AssuranceSession.open(
+            source_name=str(path), methodology=PROFILE).extend(RECORDS).finalize()
+        assert records_digest(from_file.case) == records_digest(from_session.case)
+
+    def test_a_supplied_timestamp_still_counts(self, tmp_path):
+        """What a record says about when it happened is evidence, not noise."""
+        early = [{**RECORDS[0], "timestamp": "2026-03-01T00:00:00Z"}, *RECORDS[1:]]
+        late = [{**RECORDS[0], "timestamp": "2026-10-01T00:00:00Z"}, *RECORDS[1:]]
+        a = AssuranceSession.open(methodology=PROFILE).extend(early).finalize()
+        b = AssuranceSession.open(methodology=PROFILE).extend(late).finalize()
+        assert records_digest(a.case) != records_digest(b.case)
+
     def test_case_digests_differ_because_the_inputs_differ(self, tmp_path):
         """Not a defect, and deliberately not papered over.
 
