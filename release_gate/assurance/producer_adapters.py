@@ -25,8 +25,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from release_gate.assurance.canonical import digest_bytes
+from release_gate.assurance.canonical import digest_bytes, digest_object
 from release_gate.assurance.evidence import EvidenceType
+from release_gate.assurance.privacy import (
+    SENSITIVE_CLASSES,
+    DataClass,
+    Disposition,
+    RedactionPolicy,
+    minimise,
+)
 from release_gate.assurance.producer_contract import (
     AdapterOutput,
     ConfidenceSemantics,
@@ -45,6 +52,7 @@ from release_gate.assurance.producers import EvidenceLane
 __all__ = [
     "EXTERNAL_DECISION_DECLARATION",
     "PROMPTFOO_DECLARATION",
+    "PROMPTFOO_NATIVE_POLICY",
     "SARIF_DECLARATION",
     "ExternalDecisionAdapter",
     "PromptfooAdapter",
@@ -88,6 +96,51 @@ PROMPTFOO_DECLARATION = ProducerDeclaration(
         note="an LLM-rubric assertion is graded by a model, which may share lineage "
              "with the model under test"),
     default_producer_id="promptfoo")
+
+
+#: What the source row keeps of promptfoo's content-bearing fields: the field and
+#: a digest, never the text. A result row carries the prompt, the test's `vars`
+#: (which are substituted into it, so they are prompt text and often customer
+#: data), the completion and the grader's reasoning. Keeping the row's fields is
+#: the contract; keeping their text would put a prompt, a completion or an email
+#: address into every persisted case, which the privacy contract says no adapter
+#: does. Digests still tell two runs apart and show that a field was there.
+PROMPTFOO_NATIVE_POLICY = RedactionPolicy(
+    policy_id="rg-promptfoo-native", declared_by="release-gate",
+    residency="LOCAL_ONLY",
+    basis=("an eval row's text fields are recorded as digests; the verdict reads "
+           "the outcome, the score and the state the case ran against"),
+    dispositions={**{c: Disposition.DIGESTED for c in SENSITIVE_CLASSES},
+                  DataClass.TOOL_ARGUMENTS: Disposition.DIGESTED,
+                  DataClass.TOOL_OUTPUT: Disposition.DIGESTED},
+    extra_fields={DataClass.PROMPT: ("vars",),
+                  DataClass.COMPLETION: ("output",),
+                  DataClass.FREE_TEXT: ("reason",)})
+
+
+def _content_withheld(row: Mapping[str, Any]) -> Dict[str, Any]:
+    kept, _ = minimise(dict(row), PROMPTFOO_NATIVE_POLICY)
+    return kept
+
+
+def _case_name(row: Mapping[str, Any], test_case: Mapping[str, Any],
+               mapped_name: str, index: int) -> str:
+    """The case's name as its author wrote it; otherwise a name that names no input.
+
+    `release-gate score` names an undescribed case after its first two vars,
+    which is readable in a local report and is test input in a persisted case. So
+    here such a case is named by its position and a digest of its vars: still
+    stable, still distinct from its neighbours, and carrying none of their text.
+    """
+    prompt = row.get("prompt")
+    described = (test_case.get("description") or row.get("description")
+                 or (prompt.get("label") if isinstance(prompt, Mapping) else None))
+    if described:
+        return mapped_name
+    variables = test_case.get("vars") or row.get("vars")
+    if isinstance(variables, Mapping) and variables:
+        return f"promptfoo case {index} (vars {digest_object(dict(variables))[7:19]})"
+    return f"promptfoo case {index}"
 
 
 class PromptfooAdapter(EvidenceAdapter):
@@ -141,7 +194,12 @@ class PromptfooAdapter(EvidenceAdapter):
             grading = (row.get("gradingResult")
                        if isinstance(row.get("gradingResult"), Mapping) else {})
             mapped = promptfoo._map_row(dict(row), "medium")
-            name = mapped["name"]
+            name = _case_name(row, test_case, mapped["name"], index)
+            mapped["name"] = name
+            if mapped.get("response") is not None:
+                mapped["response"] = {
+                    "digest": digest_bytes(str(mapped["response"]).encode("utf-8")),
+                    "redacted": DataClass.COMPLETION.value}
             declared_severity = ""
             metadata = test_case.get("metadata")
             if isinstance(metadata, Mapping) and _text(metadata.get("severity")):
@@ -163,7 +221,7 @@ class PromptfooAdapter(EvidenceAdapter):
                 native_confidence=row.get("score", grading.get("score")),
                 claim_statement=f"eval case {name!r} passes",
                 claim_id=f"cl_eval_{index}",
-                state=state, native=dict(row),
+                state=state, native=_content_withheld(row),
                 compatibility={k: mapped.get(k) for k in
                                ("name", "severity", "category", "passed",
                                 "failure_reason", "response", "expected")}))

@@ -330,11 +330,53 @@ class TestSourceFieldsAreKept:
         assert native["latencyMs"] == 812
 
     def test_an_oversized_field_is_truncated_and_marked(self, tmp_path):
-        doc = promptfoo_run(1, 1, extra={"response": {"output": "x" * (MAX_NATIVE_STRING + 50)}})
+        doc = promptfoo_run(1, 1, extra={"x_acme_trace": {"id": "x" * (MAX_NATIVE_STRING + 50)}})
         [check] = [e for e in _records(_assure(tmp_path, doc), "promptfoo")
                    if e.content["result_kind"] == "CHECK"]
-        kept = check.content["native"]["response"]["output"]
+        kept = check.content["native"]["x_acme_trace"]["id"]
         assert kept.endswith("[truncated 50 chars]")
+
+    def test_content_fields_are_kept_as_digests_not_text(self, tmp_path):
+        """The field travels; its text does not. A prompt, a completion, the
+        test's vars and the grader's reasoning are each recorded as a digest, so
+        a persisted case holds none of them and still shows they were there."""
+        secret = "alice@corp.example said the pin is 4417"
+        doc = promptfoo_run(1, 1, extra={
+            "prompt": {"raw": secret, "label": "p"},
+            "response": {"output": secret},
+            "vars": {"customer": secret},
+            "gradingResult": {"pass": True, "score": 1, "reason": secret}})
+        outcome = _assure(tmp_path, doc)
+        [check] = [e for e in _records(outcome, "promptfoo")
+                   if e.content["result_kind"] == "CHECK"]
+        native = check.content["native"]
+        assert {"prompt", "response", "vars", "gradingResult"} <= set(native)
+        assert native["response"]["redacted"] == "COMPLETION"
+        assert native["vars"]["redacted"] == "PROMPT"
+        assert native["gradingResult"]["score"] == 1
+        assert native["gradingResult"]["reason"]["digest"].startswith("sha256:")
+        assert check.content["response"]["redacted"] == "COMPLETION"
+        assert secret not in json.dumps(outcome.case.to_dict(), default=str)
+        assert secret not in json.dumps(outcome.to_dict(), default=str)
+
+    def test_an_undescribed_case_is_named_without_its_inputs(self, tmp_path):
+        """`release-gate score` names it after its vars; a persisted case may not."""
+        doc = promptfoo_run(1, 1)
+        row = doc["results"]["results"][0]
+        row.pop("description", None)
+        row.setdefault("testCase", {}).pop("description", None)
+        row["prompt"] = {"raw": "You are a support agent."}
+        row["testCase"]["vars"] = {"email": "bob@corp.example"}
+        row["vars"] = {"email": "bob@corp.example"}
+        outcome = _assure(tmp_path, doc)
+        [check] = [e for e in _records(outcome, "promptfoo")
+                   if e.content["result_kind"] == "CHECK"]
+        assert check.content["name"].startswith("promptfoo case 0 (vars ")
+        assert "bob@corp.example" not in json.dumps(outcome.case.to_dict(), default=str)
+        again = _assure(tmp_path, doc)
+        [same] = [e for e in _records(again, "promptfoo")
+                  if e.content["result_kind"] == "CHECK"]
+        assert same.content["name"] == check.content["name"]
 
     def test_fields_that_do_not_fit_are_named_not_dropped(self, tmp_path):
         many = {f"f{i:03d}": i for i in range(MAX_NATIVE_FIELDS + 5)}

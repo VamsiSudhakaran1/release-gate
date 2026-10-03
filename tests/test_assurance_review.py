@@ -101,6 +101,9 @@ def _strings(review: CaseReview):
     parts.append(review.candidate)
     for line in review.state_lines:
         parts += [line.record_id, line.match, line.reason]
+    parts.append(review.claim_policy)
+    for line in review.claim_lines:
+        parts += [line.claim_id, line.status, line.rule, line.statement, line.basis]
     return "\n".join(p for p in parts if p)
 
 

@@ -1936,8 +1936,22 @@ def _run_assure_command():
             print(f"Error: {candidate_ref} is not a readable candidate state: {exc}")
             sys.exit(1)
 
+    # What it takes to establish a claim, and what a required claim must reach.
+    # The built-in policy when none is named; recorded on the case either way.
+    resolution_policy = None
+    policy_ref = _flag(argv, '--resolution-policy')
+    if policy_ref:
+        from release_gate.assurance.resolution import ResolutionError, ResolutionPolicy
+        try:
+            resolution_policy = ResolutionPolicy.from_dict(
+                _json.loads(_Path(policy_ref).read_text(encoding='utf-8')))
+        except (OSError, ValueError, ResolutionError) as exc:
+            print(f"Error: {policy_ref} is not a readable resolution policy: {exc}")
+            sys.exit(1)
+
     try:
-        outcome = assure(target, methodology=methodology, candidate=candidate)
+        outcome = assure(target, methodology=methodology, candidate=candidate,
+                         resolution_policy=resolution_policy)
     except IngestError as exc:
         print(f"Error: {exc}")
         sys.exit(1)

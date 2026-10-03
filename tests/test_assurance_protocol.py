@@ -95,8 +95,9 @@ class TestNoDrift:
 
     def test_the_count_is_what_was_measured(self):
         # 69 since STATIC_EVIDENCE_SCHEMA_VERSION: the scanner emitting evidence.
-        # 71 since PRODUCER_CONTRACT_SCHEMA_VERSION and CANDIDATE_SCHEMA_VERSION.
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 71
+        # 71 since PRODUCER_CONTRACT_SCHEMA_VERSION and CANDIDATE_SCHEMA_VERSION;
+        # 73 since RESOLUTION_SCHEMA_VERSION and CORRELATION_SCHEMA_VERSION.
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 73
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────

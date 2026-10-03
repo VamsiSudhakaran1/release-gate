@@ -4,6 +4,81 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### ⚖️ Claims are at the centre of the admission decision
+
+Every claim in a case now gets one of seven statuses, the rule that reached it,
+and the evidence for it, against it and set aside: **ESTABLISHED**, **SUPPORTED**,
+**PARTIALLY_SUPPORTED**, **CONTRADICTED**, **UNSUPPORTED**, **UNKNOWN**,
+**NOT_ASSESSED** (`release_gate/assurance/resolution.py`). The rules (CR-01 to
+CR-11) are an order, and the first one that applies decides. Nothing is weighed,
+summed or averaged:
+
+- one open counterexample outranks any number of passes, and adding support never
+  moves a contradicted claim;
+- a proof about the wrong artifact (transfer_tool v2, for a candidate shipping v3)
+  is set aside and does not count;
+- a claim nothing bears on is NOT_ASSESSED, never passed;
+- a declaration supports a claim and never establishes one, and neither does a
+  model reviewing a model;
+- ESTABLISHED takes a passed proof bound to the candidate, or passing checks from
+  enough **independent** groups (below).
+
+A claim can say what it `requires` and what evidence is `admissible_evidence`.
+What establishes a claim, and what a required claim must reach, is a declared
+**resolution policy** (`--resolution-policy FILE`). The default is
+`rg-resolution@1`, and every case records the policy it was resolved under. A new
+finding, **RG-CRIT-006 (HOLD)**, fires when a claim the decision rests on is below
+the policy's admission level. The text report, the one-screen review, the JSON
+(`analysis.claim_resolution`) and `/api/assure` each show the claims.
+
+### 🧬 Independence by provenance, not by label
+
+Five passing checks that one Codex session produced, under five verifier names
+and five lineage tags, used to count as **5 independent confirmations**. They
+now count as 1. Each source is placed in a **correlation group** by what it
+states about what produced it: provider, model family and version, session,
+agent, reviewer, toolchain, prompt lineage, dataset, generated artifacts, and
+what it `relied_on` (`release_gate/assurance/correlation.py`).
+
+- Sources sharing any of these are one group. A shared provider alone is not,
+  unless a policy says so.
+- Reliance inherits: a person's review of an AI-written summary is in the
+  summary's group.
+- A formal verifier checking the same artifact as a test is a second source.
+  Examining one thing is not a correlation.
+- A source that states nothing about what generated it is never counted as
+  independent. The result is **INDEPENDENCE_UNKNOWN**, not a guess.
+
+There is no independence score. Independence changes a claim only through the
+policy's `min_independent_groups`. RG-INDEP-005 (correlated) and RG-INDEP-006
+(cannot be placed) are advisory and name the shared provenance.
+
+### 🔒 Promptfoo text no longer reaches a persisted case
+
+The promptfoo producer had kept each result row whole, prompt and completion text
+included, and named an undescribed case after its vars, such as an email
+address. The row's fields are still kept, but prompt, completion, vars and grader
+reasoning are now kept as digests. An undescribed case is named by its position
+and a digest of its vars. A test now checks the persisted case, as well as the
+outcome, for every adapter shape.
+
+#### Migration notes (claim resolution and independence)
+
+- **Case digests change.** Every case records its resolution policy
+  (`metadata.resolution_policy`) and gains a `claim_resolution` coverage row.
+  Re-run `assure` and re-approve anything bound to an earlier case digest.
+- **RG-CRIT-006 can hold a case that promoted before:** for example, a required
+  claim nothing bears on, or one resting on a dependency that is only partly
+  supported. Over the test suite and the shipped example agents, no PROMOTE moved.
+- **Independent-confirmation counts can only fall.** The verification graph now
+  groups attempts by their provenance and what they cite, as well as by lineage
+  tags.
+- **The claim graph's own statuses are unchanged.** Each resolution carries the
+  graph's status beside it (`claim_status`).
+- **Promptfoo `content.native`** carries digests where it carried prompt,
+  completion and vars text. Undescribed cases have new names in `assure`.
+  `release-gate score` is unchanged.
+
 ### 🔌 An evidence producer contract — new sources without engine changes
 
 Every source of evidence now meets the engine through one contract
@@ -66,7 +141,8 @@ artifacts stand in, and that alone catches the stale proof above.
   holds will see it.
 - **Every case gains a `state_binding` coverage row,** so case digests change.
   Re-run `assure` and re-approve anything bound to an earlier case digest.
-- **Promptfoo evidence in `assure`** carries its source row and producer type. Its
+- **Promptfoo evidence in `assure`** carries its source row (text fields as
+  digests, see above) and producer type. Its
   producer id is now `promptfoo` (it was `promptfoo-export`). Claim ids
   (`cl_eval_N`) and statuses are unchanged; evidence ids change.
 - **A file that was `UNRECOGNISED`** may now be read as `PRODUCER_EXPORT`

@@ -128,6 +128,15 @@ class TestAdaptersRetainNothing:
         assert leaks(assure(str(path)).to_dict()) == []
 
     @pytest.mark.parametrize("shape", sorted(ALL_SHAPES))
+    def test_the_persisted_case_carries_no_sensitive_text(self, shape, tmp_path):
+        """The case is what `--case-output` writes. The promptfoo producer once
+        kept each result row whole, prompt and completion included, and named an
+        undescribed case after its vars; the outcome hid both, the case did not."""
+        path = tmp_path / f"{shape}.json"
+        path.write_text(json.dumps(ALL_SHAPES[shape]))
+        assert leaks(assure(str(path)).case.to_dict()) == []
+
+    @pytest.mark.parametrize("shape", sorted(ALL_SHAPES))
     def test_the_evidence_pack_carries_no_sensitive_text(self, shape, tmp_path):
         """The pack is the thing that leaves."""
         from release_gate.assurance.pack import build_pack

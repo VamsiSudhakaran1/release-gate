@@ -44,6 +44,11 @@ from release_gate.assurance.candidate import (
     CANDIDATE_METADATA_KEY,
     CandidateState,
 )
+from release_gate.assurance.resolution import (
+    DEFAULT_RESOLUTION_POLICY,
+    POLICY_METADATA_KEY,
+    ResolutionPolicy,
+)
 from release_gate.assurance.case import (
     COLLECTION_KINDS,
     AssuranceCase, AssuranceCaseBuilder, CaseVerdict, Decision, MethodologyRef,
@@ -716,7 +721,29 @@ def _analysis_records(analysis: AnalysisResult
             f"{len(found)} finding(s) in the {domain.value.lower()} analysers",
             findings=len(found)))
     rows.append(_state_binding_coverage(analysis.state_binding))
+    rows.append(_claim_resolution_coverage(analysis.resolution))
     return contradictions, rows
+
+
+def _claim_resolution_coverage(report: Optional[Any]) -> SimpleRecord:
+    """Whether the claims the decision needs were resolved, and to what."""
+    if report is None or not report.resolutions:
+        return _coverage_row(
+            "claim_resolution", False,
+            "no claims were stated, so no claim could be resolved; the decision rests "
+            "on structural findings alone")
+    summary = report.summary()
+    counts = {k: v for k, v in summary["by_status"].items() if v}
+    tally = ", ".join(f"{v} {k.lower()}" for k, v in counts.items())
+    required = (f"{summary['required']} required, {summary['required_below_admission']} "
+                f"below the admission level, {summary['required_contradicted']} "
+                "contradicted" if summary["criticality_determinable"]
+                else "which are required could not be determined")
+    return _coverage_row(
+        "claim_resolution", True,
+        f"{summary['claims']} claim(s) resolved under {summary['policy']}: {tally}; "
+        f"{required}",
+        **{k: v for k, v in summary.items() if k != "by_status"}, **summary["by_status"])
 
 
 def _state_binding_coverage(report: Optional[Any]) -> SimpleRecord:
@@ -755,7 +782,9 @@ def _case_prefix(subject: AssuranceSubject, normalisation: Normalisation, *,
                  objective: str, requested_decision: str,
                  methodology: Optional[AssuranceMethodology],
                  consequence: ConsequenceProfile,
-                 candidate: Optional[CandidateState] = None) -> AssuranceCaseBuilder:
+                 candidate: Optional[CandidateState] = None,
+                 resolution_policy: Optional[ResolutionPolicy] = None
+                 ) -> AssuranceCaseBuilder:
     """Everything a case over these records holds whatever the analysers conclude.
 
     Split out from `_build_case` because this path builds three cases over one
@@ -792,6 +821,9 @@ def _case_prefix(subject: AssuranceSubject, normalisation: Normalisation, *,
             # Only when one was stated or derived. With none, the key is absent
             # rather than null, so the metadata says nothing it does not know.
             **({CANDIDATE_METADATA_KEY: candidate.to_dict()} if candidate else {}),
+            # The policy every claim was resolved under, named and digested — the
+            # built-in one unless a caller stated another.
+            POLICY_METADATA_KEY: (resolution_policy or DEFAULT_RESOLUTION_POLICY).to_dict(),
         })
 
     builder.collection("evidence", basis=MaterialisationBasis.COMPLETE)
@@ -1151,12 +1183,17 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
            consequence_registry: Optional[ConsequenceRegistry] = None,
            declared_consequence: Optional[Any] = None,
            producers: Optional[Any] = None,
-           candidate: Optional[CandidateState] = None) -> AssuranceOutcome:
+           candidate: Optional[CandidateState] = None,
+           resolution_policy: Optional[ResolutionPolicy] = None) -> AssuranceOutcome:
     """Ingest, analyse, assess and decide — with nothing configured.
 
     `producers` is a `ProducerRegistry` holding any evidence adapters beyond the
     built-in ones. Registering an adapter there is the whole of adding a
     producer: nothing in the ingest or the decision path names one.
+
+    `resolution_policy` states what it takes to establish a claim and what a
+    required claim must reach (`ResolutionPolicy`); the built-in one otherwise.
+    Either way the policy is recorded on the case.
 
     `candidate` is the exact release being admitted (`CandidateState`). Stated
     here, it wins over one the submission declares about itself or one derived
@@ -1179,7 +1216,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         methodology=methodology, objective=objective,
         requested_decision=requested_decision, requested_action=requested_action,
         consequence_registry=consequence_registry,
-        declared_consequence=declared_consequence, candidate=candidate)
+        declared_consequence=declared_consequence, candidate=candidate,
+        resolution_policy=resolution_policy)
 
 
 def assure_normalisation(normalisation: Normalisation, *, source_name: str,
@@ -1192,7 +1230,8 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
                          declared_consequence: Optional[Any] = None,
                          subject: Optional[AssuranceSubject] = None,
                          recorder: Optional[LatencyRecorder] = None,
-                         candidate: Optional[CandidateState] = None
+                         candidate: Optional[CandidateState] = None,
+                         resolution_policy: Optional[ResolutionPolicy] = None
                          ) -> AssuranceOutcome:
     """Everything `assure` does after reading the file.
 
@@ -1252,7 +1291,8 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
         prefix = _case_prefix(subject, normalisation, objective=objective,
                               requested_decision=requested_decision,
                               methodology=methodology, consequence=consequence,
-                              candidate=resolved_candidate)
+                              candidate=resolved_candidate,
+                              resolution_policy=resolution_policy)
         provisional = _case_tail(prefix.fork(), normalisation,
                                  consequence=consequence).build()
 
@@ -1480,6 +1520,33 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
                 add(f"      -> {assessment.independent_confirmations} independent "
                     f"confirmation(s), {assessment.unattributed_confirmations} whose "
                     "independence is unrecorded")
+
+    resolution = getattr(outcome.analysis, "resolution", None)
+    if resolution is not None and resolution.resolutions:
+        summary = resolution.summary()
+        add("")
+        add(f"  CLAIMS ({summary['claims']}), resolved under {summary['policy']}")
+        add("    " + ", ".join(f"{n} {status.lower().replace('_', ' ')}"
+                               for status, n in summary["by_status"].items() if n))
+        if summary["criticality_determinable"]:
+            add(f"    {summary['required']} required; "
+                f"{summary['required_below_admission']} below "
+                f"{resolution.policy.admission_level.value}, "
+                f"{summary['required_contradicted']} contradicted")
+        else:
+            add("    which claims are required could not be determined")
+        order = {"CONTRADICTED": 0, "NOT_ASSESSED": 1, "UNKNOWN": 2, "UNSUPPORTED": 3,
+                 "PARTIALLY_SUPPORTED": 4, "SUPPORTED": 5, "ESTABLISHED": 6}
+        listed = sorted((r for r in resolution.resolutions
+                         if full or r.required or r.status.value == "CONTRADICTED"),
+                        key=lambda r: (order[r.status.value], r.claim_id))
+        shown = listed if full else listed[:6]
+        for r in shown:
+            mark = "  (required)" if r.required else ""
+            add(f"    [{r.status.value:>19}]  {r.claim_id}  {r.rule}{mark}")
+            add(f"                           {r.basis}")
+        if len(listed) > len(shown):
+            add(f"    ({len(listed) - len(shown)} more — pass --full)")
 
     binding = getattr(outcome.analysis, "state_binding", None)
     if binding is not None:

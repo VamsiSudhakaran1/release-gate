@@ -49,6 +49,8 @@ admitted?*
 | `release_gate/audit.py` | Report assembly + two-axis scoring, decision modes, **baseline comparison** (net-new vs inherited), the **AI-change `pr` verdict**, SARIF emit, PR-comment rendering, badge/markdown. Records the report's `evidence_provenance` block (repository, commit, tree state, scanner/rule/analyser digests, a digest of the exact bytes scanned). |
 | `release_gate/assurance/producer_contract.py` | The **evidence producer contract**: what every producer declares (modality, determinism, confidence and coverage semantics, independence, limitations), the adapter interface, the one normaliser that writes records, and the registry new producers are added to without engine changes. Built-in adapters (promptfoo, SARIF, external decisions) in `producer_adapters.py`. |
 | `release_gate/assurance/candidate.py` | **Candidate state**: the exact release being admitted (repository, commit, tree, image, model, prompt, tool manifest, governance, evals, deployment config, dataset, environment, artifacts), and how each piece of evidence binds to it. Support from a different state of the release does not count toward a claim about this one. |
+| `release_gate/assurance/resolution.py` | **Claim resolution**: every claim gets one of seven statuses (ESTABLISHED … NOT_ASSESSED), the rule that reached it, and the evidence for it, against it and set aside. An ordered rule list with no weighing, so a counterexample outranks any amount of support and a proof about the wrong artifact does not count. What establishes a claim is a declared policy, and the case records it. |
+| `release_gate/assurance/correlation.py` | **Evidence independence**: places each source in a correlation group by what it states produced it (provider, model family, session, agent, reviewer, toolchain, prompt, dataset, generated artifacts) and by what it relied on. Five outputs of one model session are one group. A source that states nothing is `INDEPENDENCE_UNKNOWN`, never independent, and there is no score. |
 | `release_gate/assurance/static_producer.py` | The scanner as a **first-class evidence producer** (`release_gate_static`): turns an audit report into Universal Evidence. Each finding becomes a scoped observation with what it does *not* establish and its source→sink path, bound to the scanned code. `assure audit.json` and `audit --evidence-out` both go through it. |
 | `release_gate/lockfile.py` | The **AIBOM / context lock** — pins model + prompts + governance + evals + MCP/tool config with a TTL; `compare_lock()` detects behaviour drift. |
 | `release_gate/loop_verifier.py`, `loop_sim.py`, `agent_score.py` | The *behavioural* half — actually run an agent/loop for SHIP/CONTINUE/ROLLBACK and a 0-100 score. (Advanced; complements the static gate.) |
@@ -157,6 +159,8 @@ number of things a person must inspect before accepting responsibility.
 - Hosted endpoint — intake, idempotency, concurrency, versioning: [`docs/specs/assurance-protocol.md`](specs/assurance-protocol.md)
 
 The engine ships as `release-gate assure` (since 0.11.0), and the audit feeds
-it through the static evidence producer above. The migration plan in the spec
+it through the static evidence producer above. Admission there is a decision
+about claims: each one is resolved against evidence bound to the exact candidate,
+and corroboration is counted in independent groups of sources, not in records. The migration plan in the spec
 (§15) keeps every command, JSON key, SARIF field, Action output and exit code on
 this page working unchanged; what the static producer added is listed in §15.3a.

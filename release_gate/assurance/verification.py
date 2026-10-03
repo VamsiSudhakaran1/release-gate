@@ -566,14 +566,26 @@ class TargetVerification:
                 "basis": self.basis}
 
 
-def _lineage_groups(attempts: Sequence[VerificationAttempt]) -> Tuple[int, int]:
+def _lineage_groups(attempts: Sequence[VerificationAttempt],
+                    index: Any = None) -> Tuple[int, int]:
     """Count disjoint lineage groups, and attempts whose lineage is unrecorded.
 
     Union-find over lineage elements: two attempts sharing any element are in one
     group and corroborate each other only once. Attempts with no lineage at all
     are counted apart rather than credited — provenance nobody recorded is not
     independence, and counting it as such would manufacture corroboration.
+
+    The elements are the declared lineage *and* the correlation keys the
+    attempt's provenance yields (correlation.py): its verifier, and the provider,
+    model family, session, agent, reviewer or toolchain it states. Lineage tags
+    alone let one agent report five checks under five tags as five independent
+    confirmations; one verifier, or one model session, is one group whatever it
+    tags its work with. An attempt is attributed when it records a lineage or
+    provenance that places it. What it cites or says it relied on correlates it
+    too, and with the case's provenance `index` that record's own provenance is
+    folded in: a review of a model's summary is in the model's group.
     """
+    from release_gate.assurance.correlation import attempt_keys
     parent: Dict[str, str] = {}
 
     def find(x: str) -> str:
@@ -590,26 +602,41 @@ def _lineage_groups(attempts: Sequence[VerificationAttempt]) -> Tuple[int, int]:
 
     unattributed = 0
     roots: Set[str] = set()
-    for index, attempt in enumerate(attempts):
-        if not attempt.independence_lineage:
-            unattributed += 1
-            continue
-        marker = f"__attempt_{index}"
+    attributed: List[int] = []
+    provenance = index
+    for position, attempt in enumerate(attempts):
+        keys, placed = attempt_keys(attempt, index=provenance)
+        marker = f"__attempt_{position}"
         find(marker)
         for element in attempt.independence_lineage:
+            union(marker, f"lineage:{element}")
+        for element in keys:
             union(marker, element)
-    for index, attempt in enumerate(attempts):
-        if attempt.independence_lineage:
-            roots.add(find(f"__attempt_{index}"))
+        if attempt.independence_lineage or placed:
+            attributed.append(position)
+        else:
+            unattributed += 1
+    for position in attributed:
+        roots.add(find(f"__attempt_{position}"))
     return len(roots), unattributed
+
+
+def _independence_policy(case: Any) -> Any:
+    """The independence policy the case declares (through its resolution policy)."""
+    from release_gate.assurance.resolution import policy_for_case
+    return policy_for_case(case).independence
 
 
 class VerificationGraph:
     """Attempts, hung off the targets they bear on."""
 
     def __init__(self, attempts: Iterable[VerificationAttempt] = (), *,
-                 digests: Optional[Mapping[Tuple[str, str], str]] = None) -> None:
+                 digests: Optional[Mapping[Tuple[str, str], str]] = None,
+                 provenance: Any = None) -> None:
         held = [a for a in attempts if isinstance(a, VerificationAttempt)]
+        #: The case's `correlation.ProvenanceIndex`, when the graph was read from
+        #: a case: what an attempt relied on is then grouped by its provenance.
+        self._provenance = provenance
         held.sort(key=lambda a: (a.target.key if a.target else ("", ""),
                                  a.timestamp, a.verification_id))
         self._attempts: Tuple[VerificationAttempt, ...] = tuple(held)
@@ -625,6 +652,11 @@ class VerificationGraph:
     @property
     def attempts(self) -> Tuple[VerificationAttempt, ...]:
         return self._attempts
+
+    @property
+    def provenance(self) -> Any:
+        """The case's provenance index this graph groups attempts by, or None."""
+        return self._provenance
 
     @property
     def edges(self) -> Tuple[VerificationEdge, ...]:
@@ -650,7 +682,8 @@ class VerificationGraph:
                     digest: str) -> "VerificationGraph":
         digests = dict(self._digests)
         digests[target.key] = digest
-        return VerificationGraph(self._attempts, digests=digests)
+        return VerificationGraph(self._attempts, digests=digests,
+                                 provenance=self._provenance)
 
     # ── the fold ────────────────────────────────────────────────────────────
 
@@ -731,7 +764,7 @@ class VerificationGraph:
             status = VerificationStatus.UNKNOWN
             basis = "no verification attempts on this target"
 
-        independent, unattributed = _lineage_groups(passed)
+        independent, unattributed = _lineage_groups(passed, self._provenance)
         return TargetVerification(
             target=target, status=status, current_digest=digest,
             attempts_total=len(attempts), applies=len(applies),
@@ -887,7 +920,12 @@ class VerificationGraph:
             resolved.setdefault(
                 VerificationTarget(kind=TargetKind.SUBJECT,
                                    target_id=subject.subject_id).key, subject.digest)
-        return cls(attempts, digests=resolved)
+        from release_gate.assurance.correlation import ProvenanceIndex
+        records = [r for kind in ("evidence", "verification", "contradictions",
+                                  "counterexamples")
+                   for r in case.records(kind) if hasattr(r, "evidence_id")]
+        return cls(attempts, digests=resolved,
+                   provenance=ProvenanceIndex(records, _independence_policy(case)))
 
 
 def _retarget(attempt: VerificationAttempt,

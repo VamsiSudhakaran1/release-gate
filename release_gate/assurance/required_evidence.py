@@ -179,6 +179,11 @@ _RULE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "RG-DRIFT-007": _K.MISSING_EVIDENCE,
     "RG-DRIFT-008": _K.PROVENANCE_ATTESTATION,
     "RG-DRIFT-009": _K.DEPENDENCY_DECLARATION,
+    # A required claim short of the admission level needs evidence for it; a
+    # correlated or unplaceable source needs an independent one.
+    "RG-CRIT-006": _K.MISSING_EVIDENCE,
+    "RG-INDEP-005": _K.INDEPENDENT_VERIFICATION,
+    "RG-INDEP-006": _K.INDEPENDENT_VERIFICATION,
     "RG-COV-001": _K.MISSING_EVIDENCE,
     "RG-COV-002": _K.MISSING_EVIDENCE,
     "RG-COV-003": _K.FORMAL_VERIFICATION,

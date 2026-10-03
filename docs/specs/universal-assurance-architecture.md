@@ -8712,6 +8712,179 @@ renders it escaped. Each reason names the component and both values: *"model is
 gpt-4o-2024-08-06 in the record and gpt-5 in the candidate — its support was
 withheld"*.
 
+### 10bb. Claim resolution — the claim at the centre of admission (`resolve_claims`)
+
+> **Implemented.** `release_gate/assurance/resolution.py` — `ResolutionStatus`,
+> `ResolutionPolicy`, `ClaimResolution`, `ClaimResolutionReport`,
+> `resolve_claims()`, `policy_for_case()`. RG-CRIT-006 in `analysis.py`; a
+> `claim_resolution` coverage row, the policy in case metadata and a CLAIMS block
+> in `zero_config.py`; `ClaimLine` and the CLAIMS section of `review.py`;
+> `assure --resolution-policy`; `claims` on `/api/assure`. Tests:
+> `tests/test_claim_resolution.py`.
+
+**What existed, and why it was not enough.** `ClaimGraph` gives each claim a
+status (REFUTED … VERIFIED) and an inherited ceiling, and the analysers block on
+refutation. It does not say why a claim stands where it does, and three readings
+were wrong. Measured on the commit before this one: a claim with five supporting
+records and one open counterexample read `UNVERIFIED`. The case blocked, but the
+claim did not say it was contradicted. A claim whose three passing checks came
+from one model session read `VERIFIED`, the same as one with three independent
+checks. A claim nothing bore on read `UNKNOWN` and raised nothing of its own.
+
+**Seven statuses, never collapsed.** `ESTABLISHED`, `SUPPORTED`,
+`PARTIALLY_SUPPORTED`, `CONTRADICTED`, `UNSUPPORTED`, `UNKNOWN`, `NOT_ASSESSED`.
+Each resolution carries its rule id, a sentence of basis, every item that bore on
+it with its role (`SUPPORTS`, `CONTRADICTS`, `COUNTEREXAMPLE`, `FAILED_CHECK`,
+`INCONCLUSIVE`, `NOT_RUN`, `SEARCHED_NOT_FOUND`, `WITHHELD_STATE`,
+`NOT_ADMISSIBLE`, `NOT_RELIED_UPON`, `INVALIDATED`, `RESOLVED`), its strength,
+its binding to the candidate and its correlation group, plus the claim graph's
+own status beside it, unchanged.
+
+**An order, not a weighing.** CR-01 open counterexample, CR-02 failed check,
+CR-03 unresolved evidence against, CR-04 contradicted dependency (all
+`CONTRADICTED`). Then, when nothing counts: CR-05 `NOT_ASSESSED`, CR-06
+`UNSUPPORTED`, CR-07 `UNKNOWN`, CR-11 for a conclusion resting only on its
+dependencies. When something counts: CR-08 `PARTIALLY_SUPPORTED` for a named gap,
+CR-09 `ESTABLISHED`, CR-10 `SUPPORTED`. The first rule that applies decides.
+There is no weight, sum or ratio, so adding support can never move a
+contradicted claim. A test adds up to twenty independent passes and a bound proof
+to a claim with one open counterexample, and it stays `CONTRADICTED`.
+
+**What does not count is still listed.** Support bound to another state of the
+candidate (§10ba) is `WITHHELD_STATE`, so a proof of transfer_tool v2 does not
+count toward a claim about v3. Evidence outside the claim's declared
+`admissible_evidence` is `NOT_ADMISSIBLE`. A check by a verifier the organisation
+ruled against, an invalidated result and a source whose trust is rejected or
+revoked are set aside too. A counterexample search that found nothing is
+`SEARCHED_NOT_FOUND`, which is not support. A claim can state what it `requires`
+(`FORMAL_PROOF`, or a strength such as `PROOF`); if none of it counted, the claim
+is `PARTIALLY_SUPPORTED`.
+
+**Strength is a kind.** `PROOF`, `MECHANICAL`, `EMPIRICAL` and `JUDGEMENT` come
+from the method characters of §10aw, and `OBSERVATION`, `DECLARATION` and
+`UNCLASSIFIED` cover evidence that is not a check. They are not ranked. The
+policy names which kinds may establish a claim.
+
+**The policy is declared and recorded.** `ResolutionPolicy` (default
+`rg-resolution@1`):
+
+- a passed proof-carrying check bound `EXACT` or `PARTIAL` establishes on its own;
+- otherwise it takes `min_independent_groups` (2) groups among the establishing
+  checks (§10bc);
+- `CROSS_MODEL_REVIEW` never establishes;
+- a required claim must reach `SUPPORTED`.
+
+A policy cannot lower `admission_level` below `SUPPORTED`, and cannot let
+`DECLARATION` or `UNCLASSIFIED` establish. Every case records the policy it was
+resolved under in its metadata, so the approval digest covers it and the case
+resolves the same way from what it holds.
+
+**How it reaches the verdict.** A required claim (per criticality, §6.2a)
+below the admission level raises RG-CRIT-006 (HOLD): not assessed and unknown
+are not passed. A contradicted required claim is not counted again. The rule that
+reads its refutation already blocks: RG-CEX-001 for a counterexample,
+RG-CONTRA-002 for a failed check or evidence against. A claim contradicted
+through a dependency is blocked by that dependency's own refutation, because
+criticality marks what a required claim rests on as required too. A test runs
+six ways of contradicting a required claim, including a stale failed check and a
+contradicted dependency, and asserts each one BLOCKs. Where criticality cannot
+be determined, no claim is marked required, and RG-CRIT-001 already holds on
+that.
+
+**The transfer-threshold claim, end to end.** One claim, *"All transfers above the
+configured threshold require affirmative human authorization before execution"*,
+with six kinds of evidence, all bound to the candidate:
+
+- the scanner's static path;
+- a behavioural test;
+- a ProofAgent scenario;
+- a TLA+ proof;
+- a production trace;
+- a human review.
+
+All present and bound gives `ESTABLISHED` (CR-09). With the proof bound to the
+previous tool, the proof is withheld and RG-DRIFT-006 holds the case. The claim
+is still `ESTABLISHED`, by four independent checks and not by the proof. Add
+ProofAgent's counterexample and it is `CONTRADICTED` (CR-01) with six items still
+counting, and the case blocks. Produce every check from one Codex session and it
+is `SUPPORTED` (CR-10), with RG-INDEP-005 naming the shared session.
+
+### 10bc. Evidence independence — correlation groups (`assess_independence`)
+
+> **Implemented.** `release_gate/assurance/correlation.py` —
+> `ProvenanceDimension`, `IndependencePolicy`, `SourceProvenance`,
+> `ProvenanceIndex`, `CorrelationGroup`, `IndependenceAssessment`,
+> `assess_independence()`. `verification._lineage_groups` counts with it;
+> RG-INDEP-005 and RG-INDEP-006 in `analysis.py`. Tests:
+> `tests/test_evidence_independence.py`.
+
+**The defect, measured first.** Five passing checks produced in one Codex
+session, under verifier names `codex-0` to `codex-4` and lineage tags to match.
+On the commit before this one the verification graph counted **5 independent
+confirmations**. `independence.py` follows derivation ancestry and
+`_lineage_groups` follows declared lineage tags. Neither knew what produced a
+record, so five labels read as five sources. It now counts 1.
+
+**Provenance is read, never guessed.** It comes from what a record states. A
+`provenance` object on an envelope evidence row or verification attempt can
+carry:
+
+- `provider`, `model_family`, `model_version`;
+- `session`, `agent`, `reviewer`, `toolchain`;
+- `prompt_lineage`, `dataset`, `generated_from`;
+- `relied_on`.
+
+A record also contributes its producer's model and kind (a `human` producer is
+its reviewer), its prompt digest, its declared `independence_group`, an attempt's
+`independence_lineage` and verifier, and its derivation ancestry. A model id is
+not parsed into a family, and nothing is inferred from a name.
+
+**Groups, by shared provenance.** Two sources share a group when they share a
+value on any dimension the policy correlates on: model family (with its
+provider), session, agent, reviewer, toolchain, prompt lineage, dataset,
+generated artifact, upstream record, declared lineage, producer or verifier.
+Union-find makes this transitive. **Reliance inherits:** a record or check that
+cites another, or says it `relied_on` it, carries that record's keys and its
+ancestors' keys. So a person's review of an AI-written summary is in the
+summary's group, and a review of a digest of that summary is too. **What is
+checked is not a correlation:** a TLA+ proof and a test suite examining the same
+artifact are two checks, because examining one thing is the point. Only what a
+source was generated from or relied on joins it to another.
+
+**Unknown is an answer.** A source that states no generative dimension (model
+family, reviewer, toolchain, session, agent or lineage) cannot be placed. A
+producer or verifier name is an unauthenticated label, and two labels may be one
+agent. Such a source is in no counted group. A set that includes one reads
+`INDEPENDENCE_UNKNOWN` unless two or more placed groups already exist. The other
+statuses are `INDEPENDENT`, `CORRELATED`, `SINGLE_SOURCE` and `NO_SOURCES`. The
+output is the groups, their members, the keys that joined them, and a status.
+There is no score.
+
+**The policy decides what is enough.** `IndependencePolicy.min_independent_groups`
+is read by CR-09 alone, and over the establishing checks alone: correlated
+declarations move nothing, so they are grouped and shown but never reported as a
+problem. A shared provider does not correlate by default (two model families
+from one provider are not assumed to be one source). A policy can add
+`provider`. It cannot drop any other dimension: a policy that dropped `session`
+would make five outputs of one model in five sessions five confirmations, which
+would be independence written into a policy rather than found in evidence.
+RG-INDEP-005 (correlated) and RG-INDEP-006 (cannot be placed) are advisory and
+fire only where several establishing checks fell short of `ESTABLISHED` for that
+reason. What independence does to a claim is already in its status, and a
+verdict effect would count it twice.
+
+**The five scenarios, as tests.**
+
+1. Five sources with disjoint provenance form five groups, and the claim is
+   established.
+2. Five outputs from one model and session form one group. The claim is
+   supported, the graph counts 1, and no report says "5 independent".
+3. Three model families running one generated dataset form one group.
+4. A reviewer who `relied_on` the model's summary, or cites it as evidence, is in
+   the model's group. A reviewer who read the code is a second source.
+5. A formal verifier checking the same artifact as a model-written test is a
+   second group. The same verifier run inside the model's session is not.
+
 ---
 
 ## 11. Methodology behaviour
@@ -8903,6 +9076,12 @@ fixed, rather than the expectations being lowered.
 | claim status | support bound to a different candidate state is withheld (§10ba) | stricter only; refutations unaffected; no existing verdict moved in the suite |
 | coverage | a `state_binding` row on every case | case digests change |
 | `assure --candidate FILE` | new | — |
+| promptfoo `content.native` | prompt, completion, vars and grader-reason fields kept as digests (`{"digest", "redacted"}`); an undescribed case is named `promptfoo case N (vars <digest>)` | stricter only: no prompt, completion or test-input text reaches a persisted case. `release-gate score` names are unchanged |
+| claim resolution (§10bb) | every case carries `analysis.claim_resolution` and the policy it was resolved under (`metadata.resolution_policy`); a `claim_resolution` coverage row | case digests change; claim graph statuses unchanged |
+| RG-CRIT-006 | HOLD when a required claim is below the policy's admission level | stricter only; over the suite and the shipped examples no PROMOTE moved |
+| RG-INDEP-005 / -006 | advisory | — |
+| independent confirmations (§10bc) | the verification graph's count groups by provenance and reliance as well as lineage tags | can only fall: five outputs of one session were 5, are 1 |
+| `assure --resolution-policy FILE` | new | — |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

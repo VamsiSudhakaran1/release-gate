@@ -126,7 +126,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 ```
 release-gate assure <file> [--json] [--full] [--review]
                            [--methodology REF] [--config FILE] [--case-output FILE]
-                           [--candidate FILE]
+                           [--candidate FILE] [--resolution-policy FILE]
 release-gate assure --list-methodologies
 ```
 
@@ -165,6 +165,7 @@ nothing.
 | `--full` | Show every structural finding, including the advisory ones the default output summarises. |
 | `--case-output FILE` | Write the sealed case on its own, for an evidence pack or an approval packet. |
 | `--candidate FILE` | The exact release being admitted, as a JSON object of components (see [candidate state](#candidate-state--what-the-evidence-must-be-about)). Evidence bound to a different state of it stops supporting the claims it names, and the report says which records and why. Wins over a candidate the submission states about itself. |
+| `--resolution-policy FILE` | What it takes to establish a claim, and what a required claim must reach, as JSON (see [claim resolution](#claim-resolution--where-each-claim-stands)). It is recorded on the case and digested with it. A policy that would let a declaration or an unclassified method establish, or that drops a correlation dimension, is refused. |
 | `--list-methodologies` | The built-ins, with each one's requirement count and digest. |
 | `--diagnostics` | Which optional backends are unavailable and why. A broken native dependency is reported here rather than taking the CLI down; assurance runs regardless. |
 
@@ -197,6 +198,85 @@ Only *support* is withheld. A refutation from an earlier state still stands: a d
 
 The candidate comes from, in order: `--candidate`; an envelope `candidate` record (labelled as the submission's own description); an audit report's provenance block (repository, commit, scanned tree, governance file, model, and the prompt, tool and eval files the lockfile collector finds). If none of these exists, the case's current artifacts stand in. A stale binding is still caught then, but unbound support is not a finding, because nobody said what it should have been bound to. The `state_binding` coverage row is `ASSESSED` only against a stated candidate.
 
+#### Claim resolution — where each claim stands
+
+An admission decision is a decision about claims. For example: *all transfers above the configured threshold require affirmative human authorization before execution*. Every claim in a case gets one of seven statuses, the rule that reached it, and the items for it, against it and set aside:
+
+| Status | Meaning |
+|---|---|
+| `ESTABLISHED` | a passed proof-carrying check bound to the candidate, or passed checks from enough independent groups; every dependency established |
+| `SUPPORTED` | something counts toward it, short of that |
+| `PARTIALLY_SUPPORTED` | something counts, with a gap the claim itself names: an inconclusive check, an expected check that never ran, a method it `requires` that did not count, a dependency that is not supported, or (against a stated candidate) support that names no component of it |
+| `CONTRADICTED` | an open counterexample, a failed check, unresolved evidence against it, or a contradicted dependency |
+| `UNSUPPORTED` | things bear on it and none of them counts |
+| `UNKNOWN` | what bears on it cannot settle it |
+| `NOT_ASSESSED` | nothing bears on it |
+
+The rules are an order. The first that applies decides, and nothing is weighed, summed or averaged:
+
+| Rule | Status | When |
+|---|---|---|
+| CR-01 | `CONTRADICTED` | a found counterexample is open |
+| CR-02 | `CONTRADICTED` | a check ran and failed |
+| CR-03 | `CONTRADICTED` | evidence against it is unresolved |
+| CR-04 | `CONTRADICTED` | a claim it depends on is contradicted |
+| CR-05 | `NOT_ASSESSED` | nothing bears on it and it has no dependencies |
+| CR-06 | `UNSUPPORTED` | items bear on it and none counts (all set aside, or a search that found nothing) |
+| CR-07 | `UNKNOWN` | only inconclusive checks, a dependency that cannot settle it, an unknown claim id, or a dependency cycle |
+| CR-08 | `PARTIALLY_SUPPORTED` | something counts and a named gap remains |
+| CR-09 | `ESTABLISHED` | the establishing rule of the policy is met |
+| CR-10 | `SUPPORTED` | something counts and CR-09 is not met |
+| CR-11 | `SUPPORTED` / `PARTIALLY_SUPPORTED` | nothing of its own, and it rests on dependencies that are |
+
+Because contradiction comes first, one open counterexample outranks any number of passes, and adding support never moves a contradicted claim. Support bound to a different state of the candidate is set aside: a proof about transfer_tool v2 does not count toward a claim about v3. So are evidence outside what the claim declares `admissible_evidence`, a check by a verifier ruled against, and an invalidated result. Each is listed with its reason. A search that found nothing is not support.
+
+A required claim (one the decision rests on, per criticality) below the policy's `admission_level` raises **RG-CRIT-006 (HOLD)**. A contradicted required claim already blocks through the rule that reads the refutation (RG-CEX-001, RG-CONTRA-002 and others), so it is not counted twice.
+
+A claim row in an envelope can state what it needs:
+
+```json
+{"record_type": "claim", "claim_id": "c-transfer", "is_root": true,
+ "proposition": "All transfers above the configured threshold require affirmative human authorization before execution",
+ "requires": ["FORMAL_PROOF"], "admissible_evidence": ["FORMAL_PROOF", "TEST_SUITE", "HUMAN_REVIEW"]}
+```
+
+The default policy, `rg-resolution@1`:
+
+```json
+{"policy_id": "rg-resolution", "version": "1",
+ "proof_establishes_alone": true,
+ "establishing": ["EMPIRICAL", "JUDGEMENT", "MECHANICAL", "PROOF"],
+ "non_establishing_methods": ["CROSS_MODEL_REVIEW"],
+ "admission_level": "SUPPORTED",
+ "independence": {"policy_id": "rg-independence", "version": "1", "min_independent_groups": 2}}
+```
+
+`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION` or `UNCLASSIFIED`. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+
+#### Independence — how many sources agreement rests on
+
+Five artifacts written by one model in one session are one opinion. Each supporting record and check is placed in a **correlation group** by what it states about what produced it. On an envelope evidence row or a verification attempt this is a `provenance` object:
+
+```json
+"provenance": {"provider": "openai", "model_family": "codex", "model_version": "codex-1",
+               "session": "run-4471", "agent": "builder", "reviewer": "j.doe",
+               "toolchain": ["pytest"], "prompt_lineage": ["sha256:…"],
+               "dataset": ["sha256:…"], "generated_from": ["sha256:…"],
+               "relied_on": ["e-summary"]}
+```
+
+Two sources fall into one group when they share a model family, session, agent, reviewer, toolchain, prompt lineage, dataset, generated artifact, upstream record, declared lineage, producer or verifier. A shared provider alone does not correlate by default; a policy can add `provider` (`correlate_on`), and it cannot remove a dimension. `relied_on` inherits: a person's review of an AI-written summary carries the summary's provenance and lands in its group. What two checks *examine* never correlates them. A formal verifier and a test suite checking the same artifact are two checks.
+
+| Status | Meaning |
+|---|---|
+| `INDEPENDENT` | two or more groups that stated provenance separates |
+| `CORRELATED` | several sources, one group |
+| `SINGLE_SOURCE` | one source |
+| `INDEPENDENCE_UNKNOWN` | some sources state nothing about what generated them (no model family, reviewer, toolchain, session, agent or lineage), so they are counted in no group |
+| `NO_SOURCES` | nothing to group |
+
+Provenance is the producer's declaration and is read as stated. A model id is not parsed into a family, and nothing is inferred from a name. Independence is never assumed, and there is no score. It changes a claim only through CR-09: corroboration needs `min_independent_groups` groups among the checks the policy lets establish. Where several such checks fall short because they are correlated or cannot be placed, RG-INDEP-005 or RG-INDEP-006 (advisory) say so. The verification section's *independent confirmations* count uses the same grouping, so five passes from one model session read as one.
+
 #### Evidence producers — adding a source without changing the engine
 
 Every source of evidence meets the engine through one contract (`release_gate/assurance/producer_contract.py`). A producer **declares** what its evidence means before any arrives. Its modality is one of the seven evidence lanes, and it states whether it is deterministic, its confidence semantics (an ordinal label, a score on its own scale, a probability it says is calibrated), its coverage semantics, its independence, and what it cannot establish (required). An **adapter** reads one format and reports `NativeResult`s: the producer's own identifiers, outcome words, severities, counts and source fields. Only the normaliser builds records, the same way for every producer:
@@ -205,7 +285,7 @@ Every source of evidence meets the engine through one contract (`release_gate/as
 - a count stays a count: promptfoo's `47 / 50` reads *"promptfoo reported 47 of 50 declared test cases passed"*, with no percentage derived;
 - a severity stays the tool's own (`native_severity: "CRITICAL"` from SonarQube) and is never mapped onto release-gate's;
 - a `DECISION` (a review bot's "review", a policy engine's "deny") is recorded as an external decision in its producer's vocabulary. It cannot bear on a claim, and its value never moves release-gate's verdict;
-- source fields no adapter maps are kept under `content.native`. They are bounded, and any field that does not fit is named in `native_omitted`.
+- source fields no adapter maps are kept under `content.native`. They are bounded, and any field that does not fit is named in `native_omitted`. Fields that carry prompt, completion, test-variable or grader text are kept as a digest (`{"digest": …, "redacted": "PROMPT"}`), never as text, so a persisted case holds none of it. An undescribed promptfoo case is named by its position and a digest of its vars, not by their values.
 
 Built in: promptfoo, SARIF 2.1.0 (any static analyser; the tool is named by the file), the external-decision shape below, and release-gate's own static scanner (declared in the same terms).
 

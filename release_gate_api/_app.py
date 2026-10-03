@@ -1197,6 +1197,51 @@ def _state_binding_view(outcome: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+_CLAIM_ORDER = {"CONTRADICTED": 0, "NOT_ASSESSED": 1, "UNKNOWN": 2, "UNSUPPORTED": 3,
+                "PARTIALLY_SUPPORTED": 4, "SUPPORTED": 5, "ESTABLISHED": 6}
+
+
+def _claims_view(outcome: Any) -> Optional[Dict[str, Any]]:
+    """Each claim's resolution as the demo page shows it, or None without claims.
+
+    Required and contradicted claims first, then the rest, bounded. Every word is
+    the resolver's: the status, the rule that reached it, its reason, and how the
+    checks that could establish it group by provenance.
+    """
+    report = getattr(getattr(outcome, "analysis", None), "resolution", None)
+    if report is None or not report.resolutions:
+        return None
+    ordered = sorted(report.resolutions,
+                     key=lambda r: (not (r.required or r.status.value == "CONTRADICTED"),
+                                    _CLAIM_ORDER.get(r.status.value, 9), r.claim_id))
+
+    def grouping(assessment: Any) -> Optional[Dict[str, Any]]:
+        if assessment is None:
+            return None
+        return {"status": assessment.status.value, "sources": assessment.sources,
+                "independent_groups": assessment.independent_groups,
+                "basis": assessment.basis}
+
+    summary = report.summary()
+    return {
+        **{k: v for k, v in summary.items() if k != "claims"},
+        "claims_total": summary["claims"],
+        "admission_level": report.policy.admission_level.value,
+        "claims": [{"claim_id": r.claim_id, "statement": r.statement,
+                    "status": r.status.value, "rule": r.rule, "basis": r.basis,
+                    "required": r.required,
+                    "independence": grouping(r.establishing_independence),
+                    "items": [{"item_id": i.item_id, "kind": i.item_kind,
+                               "role": i.role.value,
+                               "strength": i.strength.value if i.strength else None,
+                               "binding": i.binding or None, "group": i.group or None,
+                               "reason": i.reason or None} for i in r.items[:12]],
+                    "items_not_listed": max(0, len(r.items) - 12)}
+                   for r in ordered[:25]],
+        "claims_not_listed": max(0, len(ordered) - 25),
+    }
+
+
 @app.post("/api/assure")
 async def assure_demo(body: AssureRequest, request: Request = None):
     """Build the assurance case for a submitted run and return what a person reads.
@@ -1300,6 +1345,7 @@ async def assure_demo(body: AssureRequest, request: Request = None):
             # Which evidence was about this release, and which was not — the
             # records whose support was withheld, each with the reason.
             "state_binding": _state_binding_view(outcome),
+            "claims": _claims_view(outcome),
             "review_text": render_review(review),
         }
     except HTTPException:

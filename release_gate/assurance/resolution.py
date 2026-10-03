@@ -1,0 +1,751 @@
+"""Claim resolution — which claims this release needs, and where each one stands.
+
+An admission decision is a decision about claims: *all transfers above the
+threshold require affirmative human authorization before execution*; *the agent
+cannot call the payments API without a ticket*. A score cannot say which of them
+holds. This module answers, for every claim in a case, a status a person can act
+on, the rule that produced it, and the evidence for, against, and set aside —
+deterministically, from the case and a declared policy.
+
+    ESTABLISHED          verification-grade support the policy accepts: a passed
+                         proof bound to the candidate, or passed checks from enough
+                         independent sources; every dependency established
+    SUPPORTED            counted support, short of that
+    PARTIALLY_SUPPORTED  counted support with a gap the claim itself names: an
+                         unsettled check, an expected check that never ran, a
+                         declared requirement unmet, a dependency not supported
+    CONTRADICTED         a found counterexample, a failed check, or evidence against
+                         it stands — however much else supports it
+    UNSUPPORTED          things bear on it, and none of them counts as support
+    UNKNOWN              what bears on it cannot settle it
+    NOT_ASSESSED         nothing bears on it; nobody looked
+
+**No averaging, anywhere.** There is no weight, no sum and no ratio. The rules are
+an order, and the first that applies decides. Contradiction comes first, so one
+open counterexample outranks any number of passing observations, and adding
+support can never move a contradicted claim. The order is the whole of the logic
+and it is pinned by tests rule by rule.
+
+**What does not count, and is still shown.** Support bound to a different state
+of the candidate (`candidate.py`) is set aside — a proof about the wrong artifact
+does not count. So is evidence outside what the claim declares admissible, a
+check by a verifier the organisation has ruled against, and an invalidated
+result. Each is listed with the reason, because a resolution that silently
+dropped evidence would be the omission Invariant 13 names.
+
+**Strength is a kind, not a size.** A counted item is a proof, a mechanical check,
+an empirical check, a judgement, an observation or a declaration — the method
+characters of `methods.py`, plus the two kinds of evidence that are not checks.
+Characters are not ranked; the policy says which kinds may *establish* a claim,
+and a declaration never does.
+
+**Independence decides corroboration, by groups.** Two passing checks from one
+model session are one source (`correlation.py`). ESTABLISHED by corroboration
+needs `min_independent_groups` groups the stated provenance separates; sources
+that state too little to be placed are counted apart and never fill the quota.
+
+**This module concludes; it does not decide.** The verdict reads it through one
+structural finding (RG-CRIT-006, a required claim below the policy's admission
+level) and the findings that already block on refutation. The claim graph's own
+status is kept beside each resolution, unchanged, so the two can be compared.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+
+from release_gate.assurance.canonical import digest_object
+from release_gate.assurance.correlation import (
+    DEFAULT_INDEPENDENCE_POLICY,
+    IndependenceAssessment,
+    IndependencePolicy,
+    ProvenanceIndex,
+    SourceProvenance,
+    assess_independence,
+)
+from release_gate.assurance.evidence import EpistemicStatus, TrustStatus, VerificationMethod
+from release_gate.assurance.methods import CHARACTERS, MethodCharacter
+
+__all__ = [
+    "DEFAULT_RESOLUTION_POLICY",
+    "RESOLUTION_SCHEMA_VERSION",
+    "ClaimResolution",
+    "ClaimResolutionReport",
+    "ItemRole",
+    "ResolutionPolicy",
+    "ResolutionStatus",
+    "ResolvedItem",
+    "Strength",
+    "resolve_claims",
+]
+
+RESOLUTION_SCHEMA_VERSION = 1
+
+#: Where a caller's resolution policy is stored on a case.
+POLICY_METADATA_KEY = "resolution_policy"
+
+
+class ResolutionError(ValueError):
+    """A resolution policy was described in a way that could not be applied."""
+
+
+class ResolutionStatus(str, Enum):
+    ESTABLISHED = "ESTABLISHED"
+    SUPPORTED = "SUPPORTED"
+    PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
+    CONTRADICTED = "CONTRADICTED"
+    UNSUPPORTED = "UNSUPPORTED"
+    UNKNOWN = "UNKNOWN"
+    NOT_ASSESSED = "NOT_ASSESSED"
+
+
+#: The order a dependency caps a claim by. Used only for "is this dependency
+#: at least as good as that level" — never added, never averaged.
+_LEVEL = {ResolutionStatus.ESTABLISHED: 3, ResolutionStatus.SUPPORTED: 2,
+          ResolutionStatus.PARTIALLY_SUPPORTED: 1}
+
+
+class Strength(str, Enum):
+    """What kind of support a counted item is. A kind, not a magnitude."""
+
+    PROOF = "PROOF"                # a proof-carrying check
+    MECHANICAL = "MECHANICAL"      # a fixed property a tool always checks
+    EMPIRICAL = "EMPIRICAL"        # a test, a simulation, a runtime assertion
+    JUDGEMENT = "JUDGEMENT"        # a person or a model read it
+    OBSERVATION = "OBSERVATION"    # evidence release-gate observed or derived; not a check
+    DECLARATION = "DECLARATION"    # an actor's account; never establishes
+    UNCLASSIFIED = "UNCLASSIFIED"  # a method nobody classified
+
+
+_FROM_CHARACTER = {MethodCharacter.PROOF_CARRYING: Strength.PROOF,
+                   MethodCharacter.MECHANICAL: Strength.MECHANICAL,
+                   MethodCharacter.EMPIRICAL: Strength.EMPIRICAL,
+                   MethodCharacter.JUDGEMENT: Strength.JUDGEMENT,
+                   MethodCharacter.UNKNOWN: Strength.UNCLASSIFIED}
+
+#: Kinds that are checks — the only kinds that can establish.
+_VERIFICATION_GRADE = frozenset({Strength.PROOF, Strength.MECHANICAL,
+                                 Strength.EMPIRICAL, Strength.JUDGEMENT})
+
+
+@dataclass(frozen=True)
+class ResolutionPolicy:
+    """What it takes to establish a claim, and what a required claim must reach.
+
+    Declared and digested; a case records the policy it was resolved under.
+    """
+
+    policy_id: str = "rg-resolution"
+    version: str = "1"
+    independence: IndependencePolicy = DEFAULT_INDEPENDENCE_POLICY
+    #: A passed proof-carrying check bound to the candidate establishes on its
+    #: own: a proof does not need a second proof to be a proof of what it states.
+    proof_establishes_alone: bool = True
+    #: Kinds that count toward corroboration. A declaration and an observation
+    #: support; they do not establish.
+    establishing: Tuple[Strength, ...] = (Strength.PROOF, Strength.MECHANICAL,
+                                          Strength.EMPIRICAL, Strength.JUDGEMENT)
+    #: Methods that never establish, whatever their kind. A model reading a model
+    #: is correlation until a methodology says otherwise (`methods.py`).
+    non_establishing_methods: Tuple[VerificationMethod, ...] = (
+        VerificationMethod.CROSS_MODEL_REVIEW,)
+    #: What a required claim must reach for the case not to hold on it.
+    admission_level: ResolutionStatus = ResolutionStatus.SUPPORTED
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "establishing",
+                           tuple(sorted({Strength(s) for s in self.establishing},
+                                        key=lambda s: s.value)))
+        object.__setattr__(self, "non_establishing_methods",
+                           tuple(sorted({VerificationMethod(m)
+                                         for m in self.non_establishing_methods},
+                                        key=lambda m: m.value)))
+        object.__setattr__(self, "admission_level", ResolutionStatus(self.admission_level))
+        if self.admission_level not in (ResolutionStatus.ESTABLISHED,
+                                        ResolutionStatus.SUPPORTED):
+            raise ResolutionError(
+                "admission_level is ESTABLISHED or SUPPORTED: a lower bar would admit "
+                "a required claim nothing counted toward")
+        if Strength.DECLARATION in self.establishing:
+            raise ResolutionError("a declaration cannot establish a claim — it is an "
+                                  "actor's account, with no check behind it")
+        if Strength.UNCLASSIFIED in self.establishing:
+            raise ResolutionError("an unclassified method cannot establish a claim — "
+                                  "what nobody has said a check is cannot count as one")
+
+    @property
+    def ref(self) -> str:
+        return f"{self.policy_id}@{self.version}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"policy_id": self.policy_id, "version": self.version,
+                "independence": self.independence.to_dict(),
+                "proof_establishes_alone": self.proof_establishes_alone,
+                "establishing": [s.value for s in self.establishing],
+                "non_establishing_methods": [m.value for m in self.non_establishing_methods],
+                "admission_level": self.admission_level.value, "note": self.note,
+                "schema_version": RESOLUTION_SCHEMA_VERSION}
+
+    def digest(self) -> str:
+        return digest_object(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ResolutionPolicy":
+        default = DEFAULT_RESOLUTION_POLICY
+        if not isinstance(data, Mapping):
+            raise ResolutionError(
+                f"a resolution policy is a JSON object, not {type(data).__name__}")
+        if data.get("independence") is not None and not isinstance(
+                data["independence"], Mapping):
+            raise ResolutionError("`independence` is an object; anything else would be "
+                                  "read as the default without saying so")
+        try:
+            return cls(
+                policy_id=str(data.get("policy_id") or "custom"),
+                version=str(data.get("version") or "1"),
+                independence=(IndependencePolicy.from_dict(data["independence"])
+                              if isinstance(data.get("independence"), Mapping)
+                              else default.independence),
+                proof_establishes_alone=bool(data.get(
+                    "proof_establishes_alone", default.proof_establishes_alone)),
+                establishing=tuple(Strength(str(s)) for s in (
+                    data.get("establishing") or [s.value for s in default.establishing])),
+                non_establishing_methods=tuple(VerificationMethod(str(m)) for m in (
+                    data.get("non_establishing_methods")
+                    if data.get("non_establishing_methods") is not None
+                    else [m.value for m in default.non_establishing_methods])),
+                admission_level=ResolutionStatus(str(
+                    data.get("admission_level") or default.admission_level.value)),
+                note=str(data.get("note") or ""))
+        except (TypeError, ValueError) as exc:
+            if isinstance(exc, ResolutionError):
+                raise
+            raise ResolutionError(f"unusable resolution policy: {exc}") from exc
+
+
+DEFAULT_RESOLUTION_POLICY = ResolutionPolicy(
+    note="a bound proof establishes alone; otherwise two independent groups of "
+         "passing checks; a required claim must be at least SUPPORTED")
+
+
+# ── the items a resolution is made of ────────────────────────────────────────
+
+class ItemRole(str, Enum):
+    SUPPORTS = "SUPPORTS"
+    CONTRADICTS = "CONTRADICTS"
+    COUNTEREXAMPLE = "COUNTEREXAMPLE"
+    FAILED_CHECK = "FAILED_CHECK"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    NOT_RUN = "NOT_RUN"
+    SEARCHED_NOT_FOUND = "SEARCHED_NOT_FOUND"
+    WITHHELD_STATE = "WITHHELD_STATE"            # bound to another state of the candidate
+    NOT_ADMISSIBLE = "NOT_ADMISSIBLE"            # outside what the claim declares admissible
+    NOT_RELIED_UPON = "NOT_RELIED_UPON"          # a verifier or source ruled against
+    INVALIDATED = "INVALIDATED"
+    RESOLVED = "RESOLVED"                        # a contradiction or counterexample answered
+
+
+#: Roles that are evidence *set aside*: they bear on the claim and do not count.
+_SET_ASIDE = frozenset({ItemRole.WITHHELD_STATE, ItemRole.NOT_ADMISSIBLE,
+                        ItemRole.NOT_RELIED_UPON, ItemRole.INVALIDATED})
+
+
+@dataclass(frozen=True)
+class ResolvedItem:
+    item_id: str
+    item_kind: str                    # evidence | verification | counterexample
+    role: ItemRole
+    strength: Optional[Strength] = None
+    method: str = ""
+    binding: str = ""                 # the StateMatch, where the item was bound
+    group: str = ""                   # its correlation group, for counted support
+    reason: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"item_id": self.item_id, "item_kind": self.item_kind,
+                "role": self.role.value,
+                "strength": self.strength.value if self.strength else None,
+                "method": self.method, "binding": self.binding, "group": self.group,
+                "reason": self.reason}
+
+
+@dataclass(frozen=True)
+class ClaimResolution:
+    claim_id: str
+    statement: str
+    status: ResolutionStatus
+    rule: str
+    basis: str
+    required: Optional[bool] = None   # None: criticality could not be determined
+    items: Tuple[ResolvedItem, ...] = ()
+    independence: Optional[IndependenceAssessment] = None
+    dependencies: Tuple[Tuple[str, str], ...] = ()
+    claim_status: str = ""            # the claim graph's own status, beside
+    #: The same grouping over only the support the policy lets establish — the
+    #: one CR-09 reads. Declarations and observations can be as correlated as
+    #: they like without moving a claim, so this, not `independence`, is the
+    #: grouping that held a claim at SUPPORTED.
+    establishing_independence: Optional[IndependenceAssessment] = None
+
+    @property
+    def held_by_independence(self) -> bool:
+        """Several establishing checks, short of ESTABLISHED for want of independence."""
+        grade = self.establishing_independence
+        return (grade is not None and grade.sources > 1
+                and self.status in (ResolutionStatus.SUPPORTED,
+                                    ResolutionStatus.PARTIALLY_SUPPORTED)
+                and grade.status.value in ("CORRELATED", "INDEPENDENCE_UNKNOWN"))
+
+    def of(self, *roles: ItemRole) -> Tuple[ResolvedItem, ...]:
+        wanted = set(roles)
+        return tuple(i for i in self.items if i.role in wanted)
+
+    @property
+    def counted(self) -> Tuple[ResolvedItem, ...]:
+        return self.of(ItemRole.SUPPORTS)
+
+    @property
+    def set_aside(self) -> Tuple[ResolvedItem, ...]:
+        return tuple(i for i in self.items if i.role in _SET_ASIDE)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"record_type": "claim_resolution", "record_id": self.claim_id,
+                "claim_id": self.claim_id, "statement": self.statement,
+                "status": self.status.value, "rule": self.rule, "basis": self.basis,
+                "required": self.required, "claim_status": self.claim_status,
+                "items": [i.to_dict() for i in self.items],
+                "independence": self.independence.to_dict() if self.independence else None,
+                "establishing_independence": (self.establishing_independence.to_dict()
+                                              if self.establishing_independence else None),
+                "dependencies": [{"claim_id": c, "status": s} for c, s in self.dependencies]}
+
+
+@dataclass(frozen=True)
+class ClaimResolutionReport:
+    resolutions: Tuple[ClaimResolution, ...] = ()
+    policy: ResolutionPolicy = DEFAULT_RESOLUTION_POLICY
+    criticality_determinable: bool = False
+    notes: Tuple[str, ...] = ()
+
+    def of(self, claim_id: str) -> Optional[ClaimResolution]:
+        return next((r for r in self.resolutions if r.claim_id == claim_id), None)
+
+    def required(self) -> Tuple[ClaimResolution, ...]:
+        return tuple(r for r in self.resolutions if r.required)
+
+    def below_admission(self) -> Tuple[ClaimResolution, ...]:
+        """Required claims short of the policy's admission level, not contradicted.
+
+        Contradicted claims are not here: they are already blocked on by the
+        findings that read refutation, and listing them twice would count one
+        disagreement as two reasons.
+        """
+        floor = _LEVEL[self.policy.admission_level]
+        return tuple(r for r in self.required()
+                     if r.status is not ResolutionStatus.CONTRADICTED
+                     and _LEVEL.get(r.status, 0) < floor)
+
+    def summary(self) -> Dict[str, Any]:
+        return {"claims": len(self.resolutions),
+                "required": len(self.required()),
+                "criticality_determinable": self.criticality_determinable,
+                "by_status": {s.value: sum(1 for r in self.resolutions if r.status is s)
+                              for s in ResolutionStatus},
+                "required_below_admission": len(self.below_admission()),
+                "required_contradicted": sum(
+                    1 for r in self.required()
+                    if r.status is ResolutionStatus.CONTRADICTED),
+                "policy": self.policy.ref, "policy_digest": self.policy.digest()}
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"record_type": "claim_resolution_report", **self.summary(),
+                "policy_detail": self.policy.to_dict(),
+                "resolutions": [r.to_dict() for r in self.resolutions],
+                "notes": list(self.notes)}
+
+
+# ── reading a claim's material ──────────────────────────────────────────────
+
+def _admissible(claim: Any) -> Optional[Set[str]]:
+    """What the claim declares may bear on it: methods, evidence types or lanes."""
+    stated = (getattr(claim, "metadata", None) or {}).get("admissible_evidence")
+    if not stated:
+        return None
+    items = stated if isinstance(stated, (list, tuple)) else [stated]
+    return {str(x).strip().upper() for x in items if str(x).strip()}
+
+
+def _required_methods(claim: Any) -> Tuple[str, ...]:
+    stated = (getattr(claim, "metadata", None) or {}).get("requires")
+    if not stated:
+        return ()
+    items = stated if isinstance(stated, (list, tuple)) else [stated]
+    return tuple(sorted({str(x).strip().upper() for x in items if str(x).strip()}))
+
+
+def _evidence_strength(record: Any) -> Tuple[Strength, str]:
+    method = getattr(record, "verification_method", None)
+    if method is not None and record.epistemic_status is EpistemicStatus.VERIFIED:
+        return _FROM_CHARACTER[CHARACTERS.get(method, MethodCharacter.UNKNOWN)], method.value
+    if record.epistemic_status in (EpistemicStatus.OBSERVED, EpistemicStatus.DERIVED):
+        return Strength.OBSERVATION, ""
+    return Strength.DECLARATION, ""
+
+
+def _attempt_strength(attempt: Any) -> Tuple[Strength, str]:
+    method = attempt.method
+    return (_FROM_CHARACTER[CHARACTERS.get(method, MethodCharacter.UNKNOWN)],
+            method.value if not getattr(attempt, "method_label", "")
+            else f"OTHER:{attempt.method_label}")
+
+
+def _matches(admissible: Optional[Set[str]], *names: str) -> bool:
+    if admissible is None:
+        return True
+    return any(n and n.upper() in admissible for n in names)
+
+
+# ── the resolver ─────────────────────────────────────────────────────────────
+
+class _Resolver:
+    def __init__(self, claim_graph: Any, *, counterexamples: Any, criticality: Any,
+                 records: Sequence[Any], policy: ResolutionPolicy) -> None:
+        self.graph = claim_graph
+        self.policy = policy
+        self.counterexamples = counterexamples
+        self.critical: Optional[Set[str]] = (
+            set(criticality.critical_ids) if criticality is not None
+            and getattr(criticality, "determinable", False) else None)
+        self.evidence = {r.evidence_id: r for r in records if hasattr(r, "evidence_id")}
+        self.provenance = ProvenanceIndex(self.evidence.values(), policy.independence)
+        binding = getattr(claim_graph, "state_binding", None)
+        self.bindings = {b.record_id: b for b in (binding.bindings if binding else ())}
+        self.explicit_candidate = bool(binding and binding.candidate.explicit)
+        self.resolved_ids = set(getattr(claim_graph, "_resolved", set()))
+        self.done: Dict[str, ClaimResolution] = {}
+        self.stack: Set[str] = set()
+
+    # Records named on either side, from both directions of the link.
+    def _linked(self, claim: Any) -> Tuple[List[Any], List[Any]]:
+        support = list(dict.fromkeys(
+            [e for e in claim.supporting_evidence if e in self.evidence]
+            + [r.evidence_id for r in self.evidence.values()
+               if claim.claim_id in getattr(r, "supports_claims", ())]))
+        against = list(dict.fromkeys(
+            [e for e in claim.contradicting_evidence if e in self.evidence]
+            + [r.evidence_id for r in self.evidence.values()
+               if claim.claim_id in getattr(r, "contradicts_claims", ())]))
+        return [self.evidence[e] for e in support], [self.evidence[e] for e in against]
+
+    def resolve(self, claim_id: str) -> ClaimResolution:
+        if claim_id in self.done:
+            return self.done[claim_id]
+        claim = self.graph.claim(claim_id)
+        if claim is None:
+            return ClaimResolution(claim_id, "", ResolutionStatus.UNKNOWN, "CR-07",
+                                   "this claim is depended on and is not in the case")
+        if claim_id in self.stack:
+            return ClaimResolution(claim_id, claim.statement, ResolutionStatus.UNKNOWN,
+                                   "CR-07", "a dependency cycle reaches this claim; "
+                                   "nothing in a cycle can be grounded")
+        self.stack.add(claim_id)
+        try:
+            result = self._resolve(claim)
+        finally:
+            self.stack.discard(claim_id)
+        self.done[claim_id] = result
+        return result
+
+    def _resolve(self, claim: Any) -> ClaimResolution:
+        cid = claim.claim_id
+        admissible = _admissible(claim)
+        items: List[ResolvedItem] = []
+        sources: Dict[str, SourceProvenance] = {}
+        grade: List[Tuple[ResolvedItem, SourceProvenance]] = []
+
+        support, against = self._linked(claim)
+        for record in support:
+            strength, method = _evidence_strength(record)
+            binding = self.bindings.get(record.evidence_id)
+            bound = binding.match.value if binding is not None else ""
+            if binding is not None and binding.withholds_support:
+                items.append(ResolvedItem(record.evidence_id, "evidence",
+                                          ItemRole.WITHHELD_STATE, strength, method, bound,
+                                          reason=binding.reason))
+                continue
+            if not _matches(admissible, method, record.evidence_type.value):
+                items.append(ResolvedItem(
+                    record.evidence_id, "evidence", ItemRole.NOT_ADMISSIBLE, strength,
+                    method, bound, reason=(f"{record.evidence_type.value} is not among "
+                                           "the evidence this claim declares admissible")))
+                continue
+            if record.trust_status in (TrustStatus.REJECTED, TrustStatus.REVOKED):
+                items.append(ResolvedItem(record.evidence_id, "evidence",
+                                          ItemRole.NOT_RELIED_UPON, strength, method, bound,
+                                          reason=f"its source is {record.trust_status.value}"))
+                continue
+            provenance = self.provenance.of(record.evidence_id)
+            item = ResolvedItem(record.evidence_id, "evidence", ItemRole.SUPPORTS,
+                                strength, method, bound)
+            items.append(item)
+            if provenance is not None:
+                sources[record.evidence_id] = provenance
+                if strength in _VERIFICATION_GRADE:
+                    grade.append((item, provenance))
+
+        for record in against:
+            if record.evidence_id in self.resolved_ids:
+                items.append(ResolvedItem(record.evidence_id, "evidence", ItemRole.RESOLVED,
+                                          reason="a resolution answers it"))
+                continue
+            binding = self.bindings.get(record.evidence_id)
+            items.append(ResolvedItem(
+                record.evidence_id, "evidence", ItemRole.CONTRADICTS,
+                _evidence_strength(record)[0], binding=binding.match.value if binding else "",
+                reason=("bound to another state of the candidate, and a refutation from "
+                        "an earlier state still stands") if binding is not None
+                and binding.match.value in ("STALE", "INCOMPATIBLE") else ""))
+
+        from release_gate.assurance.verification import VerificationStatus
+        for attempt in claim.verification_attempts:
+            strength, method = _attempt_strength(attempt)
+            binding = self.bindings.get(attempt.verification_id)
+            bound = binding.match.value if binding is not None else ""
+            vid = attempt.verification_id
+            status = attempt.status
+            if status is VerificationStatus.NOT_RUN:
+                items.append(ResolvedItem(vid, "verification", ItemRole.NOT_RUN, strength,
+                                          method, reason="expected and never ran"))
+            elif status is VerificationStatus.INVALIDATED:
+                items.append(ResolvedItem(vid, "verification", ItemRole.INVALIDATED,
+                                          strength, method, reason="its result was retracted"))
+            elif not attempt.relied_upon:
+                items.append(ResolvedItem(
+                    vid, "verification", ItemRole.NOT_RELIED_UPON, strength, method, bound,
+                    reason=f"its verifier is {attempt.trust_status.value}"))
+            elif status is VerificationStatus.FAILED:
+                items.append(ResolvedItem(vid, "verification", ItemRole.FAILED_CHECK,
+                                          strength, method, bound, reason=attempt.detail))
+            elif status in (VerificationStatus.INCONCLUSIVE, VerificationStatus.UNKNOWN):
+                items.append(ResolvedItem(vid, "verification", ItemRole.INCONCLUSIVE,
+                                          strength, method, bound))
+            elif status is VerificationStatus.PASSED:
+                if binding is not None and binding.withholds_support:
+                    items.append(ResolvedItem(vid, "verification", ItemRole.WITHHELD_STATE,
+                                              strength, method, bound, reason=binding.reason))
+                    continue
+                if not _matches(admissible, method, attempt.method.value):
+                    items.append(ResolvedItem(
+                        vid, "verification", ItemRole.NOT_ADMISSIBLE, strength, method,
+                        bound, reason=(f"{method} is not among the evidence this claim "
+                                       "declares admissible")))
+                    continue
+                # What it cites or relied on is folded in: a review of a model's
+                # summary is in the model's group.
+                provenance = self.provenance.attempt_source(attempt)
+                item = ResolvedItem(vid, "verification", ItemRole.SUPPORTS, strength,
+                                    method, bound)
+                items.append(item)
+                sources[vid] = provenance
+                if (strength in _VERIFICATION_GRADE
+                        and attempt.method not in self.policy.non_establishing_methods):
+                    grade.append((item, provenance))
+
+        if self.counterexamples is not None:
+            for found in self.counterexamples.attempts:
+                if found.target_claim != cid:
+                    continue
+                ident = f"cex:{found.producer or 'unnamed'}:{found.detail[:40]}"
+                if found.is_open:
+                    items.append(ResolvedItem(ident, "counterexample", ItemRole.COUNTEREXAMPLE,
+                                              method=found.method.value, reason=found.detail))
+                elif found.found:
+                    items.append(ResolvedItem(ident, "counterexample", ItemRole.RESOLVED,
+                                              method=found.method.value,
+                                              reason=found.resolution or "resolved"))
+                elif found.result.value == "NOT_FOUND":
+                    items.append(ResolvedItem(
+                        ident, "counterexample", ItemRole.SEARCHED_NOT_FOUND,
+                        method=found.method.value,
+                        reason=f"searched {found.search_bound}; a search that "
+                               "found nothing does not prove absence"))
+
+        # Groups over every counted source, and over the verification-grade ones
+        # that may establish. Items carry their group so the reader can see which
+        # agreements are one source.
+        independence = assess_independence(list(sources.values()), self.policy.independence)
+        group_of = {m: g.group_id for g in independence.groups for m in g.members}
+        items = [ResolvedItem(i.item_id, i.item_kind, i.role, i.strength, i.method,
+                              i.binding, group_of.get(i.item_id, ""), i.reason)
+                 if i.role is ItemRole.SUPPORTS else i for i in items]
+        establishing = [(it, prov) for it, prov in grade
+                        if it.strength in self.policy.establishing]
+        grade_independence = assess_independence([p for _, p in establishing],
+                                                 self.policy.independence)
+
+        dependencies = tuple((d, self.resolve(d).status.value) for d in claim.depends_on)
+        status, rule, basis = self._rule(claim, items, establishing, grade_independence,
+                                         dependencies)
+        required = (None if self.critical is None else cid in self.critical)
+        return ClaimResolution(
+            claim_id=cid, statement=claim.statement, status=status, rule=rule, basis=basis,
+            required=required, items=tuple(items), independence=independence,
+            dependencies=dependencies,
+            claim_status=self.graph.status(cid).value if self.graph else "",
+            establishing_independence=grade_independence)
+
+    # The order. First match decides; nothing is weighed against anything.
+    def _rule(self, claim: Any, items: Sequence[ResolvedItem],
+              establishing: Sequence[Tuple[ResolvedItem, SourceProvenance]],
+              grade_independence: IndependenceAssessment,
+              dependencies: Tuple[Tuple[str, str], ...]
+              ) -> Tuple[ResolutionStatus, str, str]:
+        roles = [i.role for i in items]
+        counted = [i for i in items if i.role is ItemRole.SUPPORTS]
+        S = ResolutionStatus
+
+        open_cex = [i for i in items if i.role is ItemRole.COUNTEREXAMPLE]
+        if open_cex:
+            return (S.CONTRADICTED, "CR-01",
+                    f"{len(open_cex)} found counterexample(s) stand unanswered: "
+                    f"{open_cex[0].reason or open_cex[0].item_id}. A counterexample "
+                    f"outranks any amount of support ({len(counted)} item(s) here)")
+        failed = [i for i in items if i.role is ItemRole.FAILED_CHECK]
+        if failed:
+            return (S.CONTRADICTED, "CR-02",
+                    f"{len(failed)} check(s) ran and failed ({failed[0].method}); a "
+                    "failed check is a refutation, and passes alongside it do not "
+                    "cancel it")
+        refuting = [i for i in items if i.role is ItemRole.CONTRADICTS]
+        if refuting:
+            return (S.CONTRADICTED, "CR-03",
+                    f"{len(refuting)} record(s) contradict it and nothing resolves them; "
+                    "support does not make a contradiction go away")
+        contradicted_dep = [c for c, s in dependencies if s == S.CONTRADICTED.value]
+        if contradicted_dep:
+            return (S.CONTRADICTED, "CR-04",
+                    f"it rests on {', '.join(contradicted_dep)}, which is contradicted")
+
+        if not counted:
+            own = [r for r in roles if r is not ItemRole.NOT_RUN]
+            if own:
+                if any(r is ItemRole.INCONCLUSIVE for r in roles):
+                    return (S.UNKNOWN, "CR-07",
+                            "the only checks that bear on it reached no conclusion")
+                set_aside = [i for i in items if i.role in _SET_ASIDE]
+                why = (set_aside[0].reason if set_aside else
+                       "a search for a counterexample that found none is not support"
+                       if ItemRole.SEARCHED_NOT_FOUND in roles
+                       else "what bears on it was answered or set aside")
+                return (S.UNSUPPORTED, "CR-06",
+                        f"{len(own)} item(s) bear on it and none counts as support: {why}")
+            if not dependencies:
+                expected = sum(1 for r in roles if r is ItemRole.NOT_RUN)
+                return (S.NOT_ASSESSED, "CR-05",
+                        "nothing bears on it — no evidence, no check that ran"
+                        + (f"; {expected} expected check(s) never ran" if expected else "")
+                        + ". Not assessed is not passed")
+            # A conclusion with nothing of its own, resting on its dependencies.
+            # It follows from them at best as far as they go, and never to
+            # ESTABLISHED: the step from premises to conclusion is not itself
+            # checked by anything in the case.
+            levels = [_LEVEL.get(ResolutionStatus(s), 0) for _, s in dependencies]
+            weakest = [c for c, s in dependencies
+                       if _LEVEL.get(ResolutionStatus(s), 0) == min(levels)]
+            if min(levels) >= _LEVEL[S.SUPPORTED]:
+                return (S.SUPPORTED, "CR-11",
+                        f"it rests on {len(dependencies)} claim(s), all at least "
+                        "supported; nothing bears on it directly, and the step from "
+                        "them to it is not itself checked")
+            if min(levels) >= _LEVEL[S.PARTIALLY_SUPPORTED]:
+                return (S.PARTIALLY_SUPPORTED, "CR-11",
+                        f"it rests on {', '.join(weakest)}, which is only partially "
+                        "supported, and nothing bears on it directly")
+            return (S.UNKNOWN, "CR-07",
+                    f"it rests on {', '.join(weakest)}, which cannot settle it, and "
+                    "nothing bears on it directly")
+
+        # From here something counts. Gaps the claim itself names come first.
+        gaps: List[str] = []
+        if any(r is ItemRole.INCONCLUSIVE for r in roles):
+            gaps.append("a check reached no conclusion")
+        if any(r is ItemRole.NOT_RUN for r in roles):
+            gaps.append("an expected check never ran")
+        requires = _required_methods(claim)
+        if requires:
+            have = {i.method.upper() for i in counted} | {
+                (i.strength.value if i.strength else "") for i in counted}
+            missing = [m for m in requires if m not in have]
+            if missing:
+                gaps.append(f"it requires {', '.join(missing)} and none counted")
+        weak_dep = [c for c, s in dependencies
+                    if _LEVEL.get(ResolutionStatus(s), 0) < _LEVEL[S.SUPPORTED]]
+        if weak_dep:
+            gaps.append(f"it rests on {', '.join(weak_dep)}, which is not supported")
+        if self.explicit_candidate and counted and all(
+                i.binding in ("", "UNKNOWN") for i in counted):
+            gaps.append("none of its support names the candidate it is about")
+        if gaps:
+            return (S.PARTIALLY_SUPPORTED, "CR-08",
+                    f"{len(counted)} item(s) count toward it, but " + "; ".join(gaps))
+
+        deps_established = all(s == S.ESTABLISHED.value for _, s in dependencies)
+        proof = [it for it, _ in establishing if it.strength is Strength.PROOF
+                 and it.binding in ("EXACT", "PARTIAL")]
+        if deps_established and self.policy.proof_establishes_alone and proof:
+            return (S.ESTABLISHED, "CR-09",
+                    f"a passed proof-carrying check bound to the candidate "
+                    f"({proof[0].method}, {proof[0].binding})")
+        # Groups the stated provenance separates. A source that states nothing
+        # about what generated it is in no counted group, so it can neither
+        # supply a group nor take one away.
+        needed = self.policy.independence.min_independent_groups
+        groups = grade_independence.independent_groups
+        if deps_established and groups >= needed:
+            return (S.ESTABLISHED, "CR-09",
+                    f"passing checks from {groups} independent group(s) "
+                    f"(the policy asks for {needed})")
+
+        why: List[str] = []
+        if not establishing:
+            kinds = sorted({i.strength.value for i in counted if i.strength})
+            why.append(f"its support is {', '.join(kinds) or 'unclassified'}, which the "
+                       "policy does not accept as establishing")
+        elif groups < needed:
+            why.append(f"its checks form {groups} independent group(s) and the policy asks "
+                       f"for {needed} ({grade_independence.status.value}: "
+                       f"{grade_independence.basis})")
+        if not deps_established:
+            why.append("not every dependency is established")
+        return (S.SUPPORTED, "CR-10", f"{len(counted)} item(s) count toward it; "
+                + "; ".join(why or ["the policy's establishing rule is not met"]))
+
+
+def policy_for_case(case: Any) -> ResolutionPolicy:
+    """The policy a case declares, or the built-in one. Never silently a third."""
+    stored = (getattr(case, "metadata", None) or {}).get(POLICY_METADATA_KEY)
+    if isinstance(stored, Mapping):
+        return ResolutionPolicy.from_dict(stored)
+    return DEFAULT_RESOLUTION_POLICY
+
+
+def resolve_claims(claim_graph: Any, *, records: Iterable[Any] = (),
+                   counterexamples: Any = None, criticality: Any = None,
+                   policy: ResolutionPolicy = DEFAULT_RESOLUTION_POLICY
+                   ) -> ClaimResolutionReport:
+    """Resolve every claim in the graph, in a stable order."""
+    if claim_graph is None or not claim_graph.claims:
+        return ClaimResolutionReport(policy=policy, notes=(
+            "no claims were stated, so no claim could be resolved",))
+    resolver = _Resolver(claim_graph, counterexamples=counterexamples,
+                         criticality=criticality, records=list(records), policy=policy)
+    resolutions = tuple(resolver.resolve(c.claim_id) for c in claim_graph.claims)
+    determinable = resolver.critical is not None
+    notes: Tuple[str, ...] = () if determinable else (
+        "which claims the decision rests on could not be determined, so no claim is "
+        "marked required",)
+    return ClaimResolutionReport(resolutions=resolutions, policy=policy,
+                                 criticality_determinable=determinable, notes=notes)

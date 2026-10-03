@@ -76,6 +76,8 @@ _FOCUS_KIND = {
     # reviewer opens; an incomplete candidate is a property of the case.
     "RG-DRIFT-006": "evidence", "RG-DRIFT-007": "evidence", "RG-DRIFT-008": "evidence",
     "RG-DRIFT-009": "case",
+    # Claim resolution (resolution.py): the claim is what a reviewer opens.
+    "RG-CRIT-006": "claim", "RG-INDEP-005": "claim", "RG-INDEP-006": "claim",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
     "RG-COV-004": "execution", "RG-COV-005": "case",
     "RG-CAP-001": "manifest", "RG-CAP-002": "tools", "RG-CAP-003": "case",
@@ -180,6 +182,8 @@ _RULE_REASON = {
     "RG-CRIT-001": AttentionReason.CRITICALITY_UNDETERMINED,
     "RG-CRIT-002": AttentionReason.CRITICALITY_UNDETERMINED,
     "RG-CRIT-005": AttentionReason.NOT_CORROBORATED,
+    # A required claim the evidence does not carry to the admission level.
+    "RG-CRIT-006": AttentionReason.NOT_VERIFIED,
     "RG-EXPECT-001": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-003": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-005": AttentionReason.SELECTIVE_EVIDENCE,
@@ -911,6 +915,9 @@ _NON_MONOTONE_RULES = frozenset({
     "RG-VERIF-002", "RG-VERIF-003", "RG-DRIFT-001", "RG-DRIFT-003", "RG-DRIFT-005",
     # A changed candidate, or a record re-produced against it, can reopen these.
     "RG-DRIFT-006", "RG-DRIFT-007", "RG-DRIFT-008",
+    # A claim's resolution moves both ways as evidence arrives: a found
+    # counterexample or an expected check can take a supported claim down.
+    "RG-CRIT-006", "RG-INDEP-005", "RG-INDEP-006",
     # More evidence can reveal a capability that was exercised and undeclared, so
     # a clean capability comparison is never settled by arrival.
     "RG-CAP-001", "RG-CAP-002",

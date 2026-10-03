@@ -296,6 +296,12 @@ def _schemas() -> Tuple[SchemaRef, ...]:
              "PRODUCER_CONTRACT_SCHEMA_VERSION", 1,
              note="what a producer declares before its evidence arrives, and the "
                   "one normaliser that turns any adapter's results into records"),
+        _ref("claim_resolution", "resolution", "RESOLUTION_SCHEMA_VERSION", 1,
+             note="the seven claim resolutions and the ordered rules that reach "
+                  "them; no score, no average, and a counterexample wins"),
+        _ref("correlation", "correlation", "CORRELATION_SCHEMA_VERSION", 1,
+             note="the provenance of each source and the correlation groups it "
+                  "falls into; independence that cannot be read is said so"),
         _ref("static_evidence", "static_producer", "STATIC_EVIDENCE_SCHEMA_VERSION", 1,
              note="the scanner emitting Universal Evidence: per-rule scoped "
                   "observations, what each finding does not establish, and the "

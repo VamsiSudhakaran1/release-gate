@@ -1276,7 +1276,13 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
                                if raw.get("target_digest") else None),
                 input_state=(str(raw["input_state"])
                              if raw.get("input_state") else None),
-                result=raw.get("result") if isinstance(raw.get("result"), Mapping) else {},
+                # What the check's producer says about what produced it — model,
+                # session, reviewer, toolchain (correlation.py) — kept with the
+                # result so the attempt can be placed in a correlation group.
+                result={**(dict(raw["result"]) if isinstance(raw.get("result"), Mapping)
+                           else {}),
+                        **({"provenance": dict(raw["provenance"])}
+                           if isinstance(raw.get("provenance"), Mapping) else {})},
                 evidence=() if status is VerificationStatus.NOT_RUN else evidence_ids,
                 independence_lineage=tuple(_as_ids(raw.get("independence_lineage"))),
                 status=status, detail=str(raw.get("detail") or "")))
@@ -1312,7 +1318,12 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
         criticality=(str(row.get("consequence_weight")) if row.get("consequence_weight")
                      else None),
         is_root=bool(row.get("is_root")),
-        extracted_by_model=str(extracted_by) if extracted_by else None)
+        extracted_by_model=str(extracted_by) if extracted_by else None,
+        # What the claim says it needs, and what may bear on it at all. Read by
+        # the claim resolver (resolution.py); absent unless the submission says.
+        metadata={k: [str(x) for x in (row[k] if isinstance(row[k], (list, tuple))
+                                       else [row[k]])]
+                  for k in ("requires", "admissible_evidence") if row.get(k)})
 
 
 def _counterexample_from(row: Mapping[str, Any],

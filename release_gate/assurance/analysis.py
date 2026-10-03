@@ -145,6 +145,9 @@ class AnalysisResult:
     #: How each claim-bearing record binds to the candidate (candidate.py), or
     #: None when the case has no candidate and holds no artifact digest.
     state_binding: Optional[Any] = None
+    #: Every claim's resolution under the case's resolution policy
+    #: (resolution.py): which claims the decision needs, and where each stands.
+    resolution: Optional[Any] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -163,7 +166,11 @@ class AnalysisResult:
     def to_dict(self) -> Dict[str, Any]:
         return {"ruleset_version": self.ruleset_version,
                 "findings": [f.to_dict() for f in self.findings],
-                "counts": {e.value: len(self.by_effect(e)) for e in RequirementEffect}}
+                "counts": {e.value: len(self.by_effect(e)) for e in RequirementEffect},
+                "claim_resolution": (self.resolution.to_dict()
+                                     if self.resolution is not None else None),
+                "state_binding": (self.state_binding.to_dict()
+                                  if self.state_binding is not None else None)}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -1450,6 +1457,84 @@ def _analyse_state_binding(report: Optional[Any]) -> List[Finding]:
     return findings
 
 
+def _analyse_resolution(report: Optional[Any]) -> List[Finding]:
+    """RG-CRIT-006 and RG-INDEP-005/006: what the claim resolution says the case lacks.
+
+    One HOLD, for required claims short of the policy's admission level. A
+    contradicted required claim is not counted here: the refutation, failed check
+    or counterexample that contradicts it already blocks through the rule that
+    reads it, and a second reason for one disagreement would double-count it.
+    The independence findings are advisory — what independence *does* to a claim
+    is already in its status (ESTABLISHED needs independent groups under the
+    policy), so reporting it again as a verdict would weigh it twice.
+    """
+    if report is None or not report.resolutions:
+        return []
+    findings: List[Finding] = []
+    below = report.below_admission()
+    if below:
+        shown = "; ".join(f"{r.claim_id}: {r.status.value} ({r.rule}) — {r.basis}"
+                          for r in below[:4])
+        findings.append(Finding(
+            rule_id="RG-CRIT-006", domain=AnalysisDomain.CRITICALITY,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(below)} required claim(s) are below the admission level "
+                     f"{report.policy.admission_level.value}"),
+            detail=("The decision rests on these claims, and what the case holds for "
+                    "them does not reach what the resolution policy "
+                    f"({report.policy.ref}) asks of a required claim. Not assessed "
+                    "and unknown are not passed. " + shown
+                    + (f" (+{len(below) - 4} more)" if len(below) > 4 else "")),
+            remedy="supply evidence bound to the candidate for each claim, or the "
+                   "check its status says is missing",
+            refs=tuple(r.claim_id for r in below[:12]),
+            observed={"below_admission": len(below),
+                      "statuses": {r.claim_id: r.status.value for r in below[:12]},
+                      "policy": report.policy.ref}))
+
+    # Only where independence is what held the claim back: several checks that
+    # could establish it, and the policy could not count them apart. Correlated
+    # declarations move nothing, so reporting them would be noise.
+    held = [r for r in report.resolutions if r.held_by_independence]
+    correlated = [r for r in held
+                  if r.establishing_independence.status.value == "CORRELATED"]
+    if correlated:
+        findings.append(Finding(
+            rule_id="RG-INDEP-005", domain=AnalysisDomain.INDEPENDENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{len(correlated)} claim(s) have several checks that are one "
+                     "correlated source"),
+            detail=("; ".join(f"{r.claim_id}: {r.establishing_independence.sources} "
+                              f"check(s), {r.establishing_independence.independent_groups}"
+                              f" group — {r.establishing_independence.basis}"
+                              for r in correlated[:4])
+                    + ". Five artifacts from one model session are one opinion, "
+                    "however they are labelled."),
+            remedy="add a check from a source that shares none of these: another "
+                   "model family, a person, a formal verifier, a different dataset",
+            refs=tuple(r.claim_id for r in correlated[:12]),
+            observed={"claims": len(correlated)}))
+    unknown = [r for r in held
+               if r.establishing_independence.status.value == "INDEPENDENCE_UNKNOWN"]
+    if unknown:
+        findings.append(Finding(
+            rule_id="RG-INDEP-006", domain=AnalysisDomain.INDEPENDENCE,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{len(unknown)} claim(s) rest on checks whose independence "
+                     "cannot be determined"),
+            detail=("Some checks state nothing about what produced them — no model "
+                    "family, reviewer, toolchain, session, agent or lineage — so they "
+                    "were not counted as independent, and the claim stays short of "
+                    "established. "
+                    + "; ".join(f"{r.claim_id}: {r.establishing_independence.basis}"
+                                for r in unknown[:4])),
+            remedy="record `provenance` on the evidence: provider, model_family, "
+                   "session, agent, reviewer, toolchain",
+            refs=tuple(r.claim_id for r in unknown[:12]),
+            observed={"claims": len(unknown)}))
+    return findings
+
+
 # ── coverage (RG-COV-*) ──────────────────────────────────────────────────────
 
 def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
@@ -1926,6 +2011,16 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_drift(case, artifact_graph, records))
     state_binding = claim_graph.state_binding if claim_graph is not None else None
     findings.extend(_analyse_state_binding(state_binding))
+
+    from release_gate.assurance.resolution import policy_for_case, resolve_claims
+    resolution = resolve_claims(
+        claim_graph, records=[r for kind in ("evidence", "verification",
+                                             "contradictions", "counterexamples")
+                              for r in case.records(kind)
+                              if isinstance(r, EvidenceRecord)],
+        counterexamples=counterexamples, criticality=criticality,
+        policy=policy_for_case(case))
+    findings.extend(_analyse_resolution(resolution))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
         capabilities = getattr(normalisation, "capabilities", None)
@@ -1945,4 +2040,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           assumptions=assumption_graph,
                           counterexamples=counterexamples,
                           failed_branches=failed_branches,
-                          state_binding=state_binding)
+                          state_binding=state_binding,
+                          resolution=resolution)

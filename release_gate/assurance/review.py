@@ -52,6 +52,7 @@ from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 __all__ = [
     "REVIEW_SCHEMA_VERSION",
     "AttentionLine",
+    "ClaimLine",
     "CaseReview",
     "CoverageLine",
     "Figure",
@@ -219,6 +220,36 @@ class StateLine:
 
 
 @dataclass(frozen=True)
+class ClaimLine:
+    """One claim a reviewer must see: a required claim, or a contradicted one.
+
+    The status, the rule that reached it and the reason are the resolver's own
+    (resolution.py), carried verbatim. The renderer adds no word to them.
+    """
+
+    claim_id: str
+    status: str
+    rule: str
+    statement: str = ""
+    basis: str = ""
+    required: Optional[bool] = None
+    #: How the checks that could establish it group, when there are several:
+    #: the correlation status word, or empty.
+    independence: str = ""
+
+    @property
+    def shown(self) -> str:
+        mark = "  (required)" if self.required else ""
+        return f"[{self.status}] {self.claim_id}  {self.rule}{mark}"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"record_type": "review_claim_line", "record_id": self.claim_id,
+                "claim_id": self.claim_id, "status": self.status, "rule": self.rule,
+                "statement": self.statement, "basis": self.basis,
+                "required": self.required, "independence": self.independence}
+
+
+@dataclass(frozen=True)
 class CaseReview:
     """The whole screen, typed. Nothing in `render_review` is not in here."""
 
@@ -255,6 +286,11 @@ class CaseReview:
     state_lines: Tuple[StateLine, ...] = ()
     #: How many such records were not listed, as a figure, so the cut is stated.
     state_not_listed: Optional[Figure] = None
+    #: The resolution policy the claims were resolved under, as `id@version`.
+    claim_policy: str = ""
+    claim_figures: Tuple[Figure, ...] = ()
+    claim_lines: Tuple[ClaimLine, ...] = ()
+    claims_not_listed: Optional[Figure] = None
 
     # ── what a one-screen summary must not be read as ────────────────────────
     @property
@@ -290,8 +326,11 @@ class CaseReview:
         state = list(self.state_figures)
         if self.state_not_listed is not None:
             state.append(self.state_not_listed)
-        return (tuple(self.execution) + tuple(self.critical_path) + tuple(state)
-                + tuple(tail))
+        claims = list(self.claim_figures)
+        if self.claims_not_listed is not None:
+            claims.append(self.claims_not_listed)
+        return (tuple(self.execution) + tuple(self.critical_path) + tuple(claims)
+                + tuple(state) + tuple(tail))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -318,6 +357,11 @@ class CaseReview:
             "state_lines": [line.to_dict() for line in self.state_lines],
             "state_not_listed": (self.state_not_listed.to_dict()
                                  if self.state_not_listed is not None else None),
+            "claim_policy": self.claim_policy,
+            "claims": [f.to_dict() for f in self.claim_figures],
+            "claim_lines": [line.to_dict() for line in self.claim_lines],
+            "claims_not_listed": (self.claims_not_listed.to_dict()
+                                  if self.claims_not_listed is not None else None),
             "is_a_safety_assessment": self.is_a_safety_assessment,
             "establishes_that_the_subject_is_correct":
                 self.establishes_that_the_subject_is_correct,
@@ -633,6 +677,55 @@ def _state_parts(outcome: Any, limit: int) -> Dict[str, Any]:
     }
 
 
+#: The order claim lines are listed in: what stops a release first, then what
+#: nobody looked at, then the rest. A listing order, not a severity scale.
+_CLAIM_ORDER: Mapping[str, int] = {
+    "CONTRADICTED": 0, "NOT_ASSESSED": 1, "UNKNOWN": 2, "UNSUPPORTED": 3,
+    "PARTIALLY_SUPPORTED": 4, "SUPPORTED": 5, "ESTABLISHED": 6}
+
+_CLAIM_LABELS: Mapping[str, str] = {
+    "ESTABLISHED": "Established", "SUPPORTED": "Supported",
+    "PARTIALLY_SUPPORTED": "Partially supported", "CONTRADICTED": "Contradicted",
+    "UNSUPPORTED": "Unsupported", "UNKNOWN": "Unknown", "NOT_ASSESSED": "Not assessed"}
+
+
+def _claim_parts(outcome: Any, limit: int) -> Dict[str, Any]:
+    """Each claim's resolution, counted by status, and the claims to look at."""
+    analysis = getattr(outcome, "analysis", None)
+    report = getattr(analysis, "resolution", None) if analysis is not None else None
+    if report is None or not report.resolutions:
+        return {}
+    summary = report.summary()
+    figures = tuple(_figure(_CLAIM_LABELS.get(status, status), count)
+                    for status, count in summary["by_status"].items())
+    figures += (
+        _figure("Required claims",
+                summary["required"] if summary["criticality_determinable"] else None,
+                "" if summary["criticality_determinable"] else
+                "which claims the decision rests on could not be determined"),
+        _figure("Required below admission level",
+                summary["required_below_admission"]
+                if summary["criticality_determinable"] else None,
+                f"short of {report.policy.admission_level.value}, not contradicted"))
+    shown = sorted((r for r in report.resolutions
+                    if r.required or r.status.value == "CONTRADICTED"),
+                   key=lambda r: (_CLAIM_ORDER.get(r.status.value, 9), r.claim_id))
+    lines = tuple(ClaimLine(
+        claim_id=r.claim_id, status=r.status.value, rule=r.rule,
+        statement=r.statement, basis=r.basis, required=r.required,
+        independence=(r.establishing_independence.status.value
+                      if r.establishing_independence is not None
+                      and r.establishing_independence.sources > 1 else ""))
+        for r in shown[:limit])
+    return {
+        "claim_policy": report.policy.ref,
+        "claim_figures": figures,
+        "claim_lines": lines,
+        "claims_not_listed": (_figure("Claims not listed", len(shown) - len(lines))
+                              if len(shown) > len(lines) else None),
+    }
+
+
 def build_review(outcome: Any, *, attention_limit: int = 8) -> CaseReview:
     """Read one assurance outcome into the shape a person reads.
 
@@ -695,6 +788,7 @@ def build_review(outcome: Any, *, attention_limit: int = 8) -> CaseReview:
             "no machine closes these: a rule asks for human review, or "
             "release-gate can see the gap and cannot name a closer"),
         **_state_parts(outcome, attention_limit),
+        **_claim_parts(outcome, attention_limit),
         limits=(
             "Release-gate has not evaluated whether the subject is correct. It "
             "reports what the evidence establishes and what it does not.",
@@ -758,6 +852,19 @@ def render_review(review: CaseReview) -> str:
         if not coverage_rows:
             lines += ["", _rule(), "", "COVERAGE", ""]
         lines += ["", "NOT ASSESSED"] + [f"  {d}" for d in review.not_assessed]
+
+    if review.claim_figures:
+        lines += ["", _rule(), "", "CLAIMS", "", f"Resolved under {review.claim_policy}", ""]
+        lines += [_row(f.label, f.shown) for f in review.claim_figures]
+        for line in review.claim_lines:
+            lines += ["", line.shown]
+            if line.statement:
+                lines.append(line.statement)
+            if line.basis:
+                lines.append(line.basis)
+        if review.claims_not_listed is not None:
+            lines += ["", _row(review.claims_not_listed.label,
+                               review.claims_not_listed.shown)]
 
     if review.candidate:
         lines += ["", _rule(), "", "STATE BINDING", "", "Candidate", review.candidate, ""]

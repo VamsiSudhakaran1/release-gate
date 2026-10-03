@@ -488,6 +488,28 @@ function render(d) {
       + (sb.records_not_listed ? `<p class="note">${Number(sb.records_not_listed) || 0} more not listed.</p>` : '')
     : '';
 
+  // Every claim's resolution, required and contradicted ones first. The status,
+  // the rule that reached it and the reason are the resolver's own words; how the
+  // checks group by provenance is shown so five outputs of one model read as one.
+  const cl = d.claims;
+  const claimBand = s => s === 'CONTRADICTED' ? 'blocks'
+    : (['NOT_ASSESSED', 'UNKNOWN', 'UNSUPPORTED', 'PARTIALLY_SUPPORTED'].includes(s) ? 'holds' : '');
+  const claims = cl && (cl.claims || []).length
+    ? `<h3>Claims — ${Number(cl.claims_total) || 0} resolved under ${esc(cl.policy)}</h3>
+       <p class="note">${Object.entries(cl.by_status || {}).filter(([, n]) => n)
+           .map(([s, n]) => `${Number(n) || 0} ${esc(s.toLowerCase().replace(/_/g, ' '))}`).join(', ')}
+         ${cl.criticality_determinable
+           ? ` · ${Number(cl.required) || 0} required, ${Number(cl.required_below_admission) || 0} below ${esc(cl.admission_level)}`
+           : ' · which claims are required could not be determined'}</p>`
+      + (cl.claims || []).map(c => `<div class="item ${claimBand(c.status)}">
+          <span class="band">${esc(c.status)}</span><span class="focus">${esc(c.claim_id)} · ${esc(c.rule)}${c.required ? ' · required' : ''}</span>
+          ${c.statement ? `<p class="why">${esc(c.statement)}</p>` : ''}
+          <p class="why">${esc(c.basis)}</p>
+          ${c.independence && c.independence.sources > 1
+            ? `<p class="resolve"><strong>Independence:</strong> ${esc(c.independence.status)} — ${esc(c.independence.basis)}</p>` : ''}</div>`).join('')
+      + (cl.claims_not_listed ? `<p class="note">${Number(cl.claims_not_listed) || 0} more not listed.</p>` : '')
+    : '';
+
   return `
   <div class="actions no-print">
     <button id="dl-json" class="ghost">Download JSON</button>
@@ -509,6 +531,8 @@ function render(d) {
 
   <h3>What a person has to look at — ${(d.attention||[]).length} item(s)</h3>
   ${items}
+
+  ${claims}
 
   ${bindings}
 
