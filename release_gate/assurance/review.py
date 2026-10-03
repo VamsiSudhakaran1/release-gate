@@ -166,6 +166,11 @@ class CoverageLine:
 
     @property
     def shown(self) -> str:
+        if self.expected == 0:
+            # A ratio over nothing. The ledger calls 0 of 0 complete, which is
+            # true and useless: printed as "100.0%" it read as full coverage of
+            # a file in which nothing was mapped at all.
+            return f"{self.observed or 0} of 0"
         if self.ratio is None:
             return self.state
         return f"{self.ratio * 100:.1f}%"
@@ -406,6 +411,14 @@ _BANDS: Mapping[str, str] = {
     "NONE": "ADVISORY",
 }
 
+#: An item's own effect, in the same words. Pressure says a *methodology*
+#: requirement turns on the item; with no methodology there is none, and the
+#: band read ADVISORY on the very items holding the case. The stronger of the
+#: two is shown, in the attention module's order.
+_EFFECT_PRESSURE: Mapping[str, str] = {"BLOCK": "BLOCKS", "HOLD": "HOLDS"}
+_PRESSURE_ORDER: Mapping[str, int] = {"BLOCKS": 0, "HOLDS": 1, "UNASSESSED": 2,
+                                      "NONE": 3}
+
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
@@ -636,6 +649,8 @@ def _attention_lines(outcome: Any, limit: int) -> Tuple[AttentionLine, ...]:
         payload = item.to_dict()
         ranking = payload.get("ranking") or {}
         pressure = _text(ranking.get("requirement_pressure")) or "NONE"
+        own = _EFFECT_PRESSURE.get(_text(payload.get("effect")).upper(), "NONE")
+        pressure = min(pressure, own, key=lambda p: _PRESSURE_ORDER.get(p, 9))
         resolves = payload.get("what_evidence_would_resolve_it") or ()
         lines.append(AttentionLine(
             band=_BANDS.get(pressure, pressure),

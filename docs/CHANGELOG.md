@@ -64,6 +64,24 @@ It was found by running a real Phoenix export (Arize's published gpt-4o agent
 traces) through `assure`. An export holding several runs now rebuilds the first
 and says how many it did not.
 
+### 🧭 Three lines of the one-screen review no longer mislead
+
+Found by reading the review of a real agent trace on the live demo:
+
+- **An item holding the case was banded ADVISORY.** The band showed only
+  methodology requirement pressure, which is NONE when no methodology is given.
+  So METHODOLOGY_REQUIRED and RG-VERIF-001 read ADVISORY beside a HOLD verdict
+  that fired on them. The band is now never weaker than the item's own effect.
+- **"100.0%" coverage of nothing.** A dimension expecting 0 and receiving 0 was
+  printed as a full percentage, so a file in which nothing was mapped showed
+  `record_mapping 100.0%`. It now prints `0 of 0`. The ledger's value, and any
+  methodology reading it, is unchanged.
+- **A trace's spans read as unclassified.** For every trace input (OTLP,
+  Langfuse, Arize / Phoenix, orchestrator), "Execution records" read *not
+  assessed*. Every span was instead listed under "Records no kind accounts for
+  — could not be classified", beside a mapping of N of N. They are now counted
+  as execution records.
+
 ### 🔒 Promptfoo text no longer reaches a persisted case
 
 The promptfoo producer had kept each result row whole, prompt and completion text

@@ -412,3 +412,44 @@ class TestTheTallyReconciles:
                 records_seen_by_kind = {"claim": 3}
         assert _tally(Bare(), "execution") is None
         assert _tally(Bare(), "claim") == 3
+
+
+# ── what the live demo showed for a real Phoenix export ─────────────────────
+
+class TestTheReviewDoesNotUnderstateOrOverstate:
+    """Three lines of the one-screen review, each found misleading on a real
+    agent trace (Arize's published Phoenix export of a LangGraph run)."""
+
+    def _trace_review(self):
+        import pathlib
+
+        from release_gate.assurance.zero_config import assure
+        root = pathlib.Path(__file__).resolve().parent.parent
+        return build_review(assure(str(root / "examples" / "agents"
+                                       / "01-coding-agent-otel.json")))
+
+    def test_an_item_holding_the_case_is_never_banded_advisory(self):
+        """With no methodology there is no requirement pressure, and the band
+        read ADVISORY on the items the verdict fired on. The item's own effect
+        is the floor."""
+        review = self._trace_review()
+        assert review.decision == "HOLD"
+        bands = {line.focus: line.band for line in review.attention}
+        assert bands["METHODOLOGY_REQUIRED"] == "HOLDS"
+        assert bands["RG-VERIF-001"] == "HOLDS"
+        assert "ADVISORY" not in bands.values()
+
+    def test_a_ratio_over_nothing_is_not_printed_as_a_percentage(self):
+        from release_gate.assurance.review import CoverageLine
+        empty = CoverageLine("record_mapping", "OBSERVED", ratio=1.0,
+                             expected=0, observed=0)
+        assert empty.shown == "0 of 0"
+        full = CoverageLine("record_mapping", "OBSERVED", ratio=1.0,
+                            expected=12, observed=12)
+        assert full.shown == "100.0%"
+
+    def test_a_traces_spans_are_execution_records_not_unclassified_ones(self):
+        review = self._trace_review()
+        figures = {f.label: f.value for f in review.execution}
+        assert figures["Execution records"] == 9
+        assert "Records no kind accounts for" not in figures

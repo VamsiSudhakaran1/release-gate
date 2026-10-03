@@ -1591,6 +1591,10 @@ def normalise(doc: Any, detection: Detection, *, source: str,
     elif execution is not None:
         seen = len(execution.nodes)
         mapped = seen
+        # Every record counted here is an execution node release-gate rebuilt.
+        # Left untallied, a trace's spans all read as "records no kind accounts
+        # for — could not be classified" beside a mapping of N of N.
+        seen_by_kind = {"execution": seen}
         # The spans are the producer's account of what happened. release-gate read
         # the file; it did not witness the run, so this is DECLARED (Invariant 1).
         evidence.append(EvidenceRecord.from_producer(
