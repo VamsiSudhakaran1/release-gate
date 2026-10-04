@@ -88,10 +88,20 @@ def decision(word: str) -> dict:
         "reviewer_queue": "payments"}}
 
 
+def _example(name: str) -> dict:
+    return json.loads((ROOT / "examples" / "evidence" / name).read_text(encoding="utf-8"))
+
+
 SAMPLES = {
     "promptfoo": promptfoo_run(),
     "sarif": SARIF,
     "external_decision": decision("review"),
+    # The four generic contracts (reference_adapters.py), read from the shipped
+    # examples so the documented fixtures are the ones held to the contract.
+    "eval": _example("eval.json"),
+    "red_team": _example("red-team.json"),
+    "sast": _example("sast.json"),
+    "human_review": _example("review.json"),
 }
 
 

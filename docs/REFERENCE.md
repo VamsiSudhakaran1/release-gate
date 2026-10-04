@@ -152,10 +152,10 @@ nothing.
 | `ARIZE_EXPORT` | Arize / Phoenix |
 | `PROMPTFOO_EVAL` | `promptfoo eval -o results.json` |
 | `ORCHESTRATOR_EXPORT` | LangGraph, OpenAI Agents, CrewAI, AutoGen, Temporal |
-| `ASSURANCE_ENVELOPE` | release-gate's record format (JSONL or a JSON array) |
+| `ASSURANCE_ENVELOPE` | release-gate's record format (JSONL or a JSON array). A `producer_export` row carries any other row's tool document whole, so one envelope composes many producers' evidence about one set of claims ([external evidence](#external-evidence--read-never-re-run)) |
 | `AUDIT_REPORT` | release-gate's own audit output |
 | `VERIFIER_REPORT` | a prover, checker or lab report |
-| `PRODUCER_EXPORT` | anything a registered evidence producer reads: SARIF 2.1.0 from any static analyser, an external decision (a review bot, a policy engine), or an organisation's own adapter. `Detection.adapter` names which producer |
+| `PRODUCER_EXPORT` | anything a registered evidence producer reads: SARIF 2.1.0 from any static analyser, an external decision (a review bot, a policy engine), the generic `release-gate.eval/1`, `red-team/1`, `sast/1` and `review/1` contracts, or an organisation's own adapter. `Detection.adapter` names which producer |
 
 #### Flags
 
@@ -259,10 +259,37 @@ The default policy, `rg-resolution@1`:
  "semantic_support": "RECORD_ONLY", "semantic_contradiction": "HOLD",
  "critical_contradiction": "HOLD",
  "surface_coverage": 1.0, "surface_shortfall": "HOLD", "require_surface": false,
+ "counterexample_effect": "BLOCK", "counterexample_exceptions": false,
+ "author_independence": null,
  "independence": {"policy_id": "rg-independence", "version": "1", "min_independent_groups": 2}}
 ```
 
-`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION` or `UNCLASSIFIED`. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `surface_coverage` is within (0, 1]. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION`, `OBSERVATION` or `UNCLASSIFIED`: a hundred clean traces show what happened, never that anything else cannot. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `author_independence` is the one that may be `null`, which means [authorship](#authorship--who-checked-the-work) is reported and required of nothing. `surface_coverage` is within (0, 1]. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+
+#### Counterexamples — one outweighs any amount of support
+
+A found counterexample to a claim contradicts it (CR-01), whatever stands beside it. One reproducible unauthorized transfer against 99 passing authorization tests and 1,000 clean traces is a contradicted claim and a BLOCK, never a 99% score. Each counterexample has a **standing** against the release being admitted, derived from its status, the state it was found against and the candidate:
+
+| Standing | When | Effect |
+|---|---|---|
+| `VALID` | found, open, against this candidate or no stated state | critical claim: **RG-CEX-001**, `counterexample_effect` (default BLOCK); otherwise RG-CEX-002, HOLD |
+| `STALE` | found against another state of the release, or a different subject | **RG-CEX-004**, HOLD: re-run it against the candidate. It is kept, never dropped |
+| `ACCEPTED` | a documented exception the policy permits, made for this state | **RG-CEX-005**, advisory; the verdict names who accepted it and where |
+| `INVALIDATED`, `RESOLVED`, `SUPERSEDED` | answered, with the reason recorded | none |
+| `NOT_FOUND` | a search that found nothing | not support (RG-CEX-003) |
+
+A counterexample row names the state it was found against:
+
+```json
+{"record_type": "counterexample", "target_claim": "c-authz", "result": "FOUND",
+ "producer_id": "red-team", "method": "SIMULATION", "evidence": ["e-repro"],
+ "state": {"commit": "9f2c1a7e"},
+ "detail": "an unauthorized transfer of 50,000 succeeded; reproducible"}
+```
+
+A documented exception is `"status": "ACCEPTED_RISK"` with who accepted it (`accepted_by`), why (`resolution`), where it is written down (`reference`) and the state it was accepted for (`accepted_for`). It stops blocking only under `counterexample_exceptions: true`, and only while the candidate is that state. The claim stays `CONTRADICTED`: accepting a risk does not make the claim true. Without the policy, or for another state, the counterexample is VALID and the reason says why.
+
+A failed check stays on the record after a later pass, as a failed branch and as CR-02. A counterexample's id covers what it says and the state, not when it was recorded, so the same input gives the same ids on every run.
 
 #### Contradictions — which disagreements are contradictions
 
@@ -378,6 +405,40 @@ Two sources fall into one group when they share a model family, session, agent, 
 | `NO_SOURCES` | nothing to group |
 
 Provenance is the producer's declaration and is read as stated. A model id is not parsed into a family, and nothing is inferred from a name. Independence is never assumed, and there is no score. It changes a claim only through CR-09: corroboration needs `min_independent_groups` groups among the checks the policy lets establish. Where several such checks fall short because they are correlated or cannot be placed, RG-INDEP-005 or RG-INDEP-006 (advisory) say so. The verification section's *independent confirmations* count uses the same grouping, so five passes from one model session read as one.
+
+#### Authorship — who checked the work
+
+This is about **independence, not distrust of AI-written code**. Nothing fires because an agent or a model wrote something. What is asked is whether the work was checked by anyone but whoever did it. One agent session writing the implementation, the tests, the security review and the fix is four artifacts and one source. One person writing a change, its tests and its approval is the same, and is reported the same way.
+
+Authorship is stated, never inferred. An `authorship` row names a role, the provenance of whoever filled it, and where the statement came from:
+
+```json
+{"record_type": "authorship", "role": "implementation",
+ "provenance": {"agent": "codex", "session": "codex-session-A", "provider": "openai"},
+ "basis": "ci_metadata", "subject": "src/payments/",
+ "claims": ["c-pay"], "reference": "https://github.com/acme/pay/actions/runs/42"}
+```
+
+- **Roles:** `implementation`, `fix`, `specification`, `tests`, `code_review`, `security_review`, `behavioral_verification`, `formal_verification`, `static_analysis`, `approval`, `other`.
+- **Basis:** `ci_metadata`, `commit_metadata`, `tool_metadata`, `declared`.
+- **Provenance** uses the vocabulary above, with `person` for a person.
+- **Scope:** `claims` limits a statement to those claims; without it, it applies to the whole case. `evidence` names the records a source authored (for example, the test results of the tests it wrote).
+
+Nothing is read from a coding style, a commit message's wording, a branch name or a model id. An author nobody stated is `AUTHOR_UNKNOWN`. A check that states nothing about what produced it is neither independent nor shared: it is unknown. Whoever *reported* an authorship (the CI system, or the person who declared it) is not its author.
+
+For each claim, the stated authors of what it is about (`implementation`, `fix`) are compared with the support the claim resolution counted, plus any verification-role statement on the claim. A source shares the author when it carries one of the author's keys: model family, session, agent, person, toolchain, prompt lineage, generated input, or provider if the policy correlates on it.
+
+| Status | Meaning |
+|---|---|
+| `AUTHOR_UNKNOWN` | nobody stated who did the work |
+| `NO_VERIFICATION` | nothing counted supports it |
+| `LOW` | every source shares the author: **verification independence low** (RG-INDEP-007) |
+| `UNDETERMINED` | none is shown independent; some state too little (RG-INDEP-008) |
+| `INDEPENDENT` | at least one shares nothing with the author |
+
+Both rules are advisory, and a case that states no authorship raises neither. Under `"author_independence": "HOLD"` or `"BLOCK"` in the resolution policy, a required claim checked only by its author takes that effect. A required claim whose independence cannot be established, including one whose author nobody stated, holds. The outcome's `analysis.authorship` carries every statement and every claim's row. The text report has a WHO CHECKED THE WORK section when somebody stated authorship.
+
+[`release-gate authorship`](#authorship--state-who-did-the-work) emits a row from a CI job.
 
 #### Semantic verifier — a model reads what structure cannot
 
@@ -502,6 +563,58 @@ Built in: promptfoo, SARIF 2.1.0 (any static analyser; the tool is named by the 
 
 There are two ways to add a producer, and neither edits the engine. From Python, subclass `EvidenceAdapter`, register it on a `ProducerRegistry`, and pass `producers=registry` to `assure()`. From a file, put a `producer` record (a declaration) in an envelope ahead of that producer's evidence. `check_adapter_contract(adapter, sample)` runs any adapter against the contract.
 
+#### External evidence — read, never re-run
+
+Release-gate does not compete with the tools that produce evidence. For each class of evidence there is one generic contract, so a tool reaches a case through a short shim rather than a vendor parser. Each is detected only by its `schema` field. Working examples are in [`examples/evidence/`](../examples/evidence/).
+
+| Schema | Class | What it becomes |
+|---|---|---|
+| `release-gate.eval/1` | evaluation (or promptfoo directly) | each case a declared TEST_SUITE check of the claim it names, or of "eval case X passes"; a stated `summary` stays the harness's own count |
+| `release-gate.red-team/1` | behavioural and security testing | a **succeeded** attack is a COUNTEREXAMPLE to its target claim. Its own word is kept, its claim outcome is "failed", and it blocks a critical claim however many attacks were blocked. A **blocked** attack is an observation that supports and never establishes. `partial`, `error` and `timeout` are inconclusive; any other word is UNKNOWN. An attack with no target is its own claim |
+| `release-gate.sast/1` | static analysis without SARIF (SARIF stays the first choice) | the tool's rule at its own severity; suppressed findings stay as suppressed; the declared scan scope is stated |
+| `release-gate.review/1` | human review | reviewer `id`, `reference` and `role`; `decision`; `scope`; `state` or `state_hash`; `reviewed_at`, `expires_at`; `rationale`; `reference`. With a claim it is a HUMAN_REVIEW check: approve passes it, reject or changes requested fails it, and comment is inconclusive. Without one it is the reviewer's decision, recorded and adopted as nothing. An `expires_at` is checked against the document's `evaluated_at`, and with none stated the review is inconclusive: release-gate does not read a clock |
+| `release-gate.formal/1` | formal verification | per row: `claim_id`, `claim`, `artifact` (`name`, `digest`), `method`, `result`, `assumptions`, `state`, `proof_artifact` (`locator`, `digest`), under a `verifier` with its version and family. The artifact binds as the candidate's `artifact:<name>`, so a proof of another version of the spec does not establish. Assumptions are listed under what the result does not cover |
+
+```json
+{"schema": "release-gate.red-team/1",
+ "producer": {"id": "acme-red-team", "version": "0.9.4"},
+ "state": {"commit": "9f2c1a7e", "environment": "staging"},
+ "provenance": {"provider": "acme", "model_family": "attacker-v2", "session": "rt-2026-10-02"},
+ "target_claim_id": "cl_no_unauthorised_transfer",
+ "attacks": [{"id": "atk-017", "class": "indirect_injection", "outcome": "succeeded",
+              "severity": "critical", "reproduction": {"steps": ["…"]}}]}
+```
+
+Observability exports from Langfuse, OpenTelemetry and Arize/Phoenix arrive through their trace adapters as DECLARED traces. A tool whose export format is not published as stable is read through a shim to one of these contracts: ProofAgent's attacks through `red-team/1`, its verdict through `external_decision`.
+
+To compose a release from several tools, put each tool's document in an envelope as a `producer_export` row:
+
+```json
+{"record_type": "producer_export", "source": "red-team.json", "document": {"schema": "release-gate.red-team/1", "…": "…"}}
+```
+
+- **Same reading as a file.** Each export is read by the same detector and adapters as the file on its own.
+- **Claims merge by id.** The export's claims join the claims the envelope declares by id. The declared claim keeps its statement and criticality and gains the export's evidence and checks.
+- **Duplicates and misfits.** A repeated export is absorbed. A document that is not one producer's (an envelope, a trace) is refused with a reason.
+
+`examples/evidence/release.jsonl` composes a red team, a model checker, two reviewers, a SAST tool and an eval harness. It blocks on the red team's counterexample, while the proof establishes the overdraft claim.
+
+**Evidence origin.** Every report says whose evidence it holds and what release-gate did with it:
+
+- `READ`: a producer's own account, which release-gate did not run, re-run or re-grade. This includes a person's review, and a document attributed to release-gate itself.
+- `OBTAINED_HERE`: produced in this run at release-gate's request, such as a model the semantic verifier asked.
+- `COMPUTED_HERE`: release-gate's own work.
+
+It appears as `evidence_origin` in `--json`, as EVIDENCE ORIGIN in the text report and in `--review`. No rule reads it.
+
+```
+  EVIDENCE ORIGIN — release-gate read 6 producer(s)' evidence and ran none of them
+    [         READ]  tlc@2.19: 1 record(s) (1 FORMAL_PROOF)
+                     tlc@2.19's own account, read from what was submitted; release-gate did not run tlc@2.19, re-run its checks or re-grade its results
+    [         READ]  sam@example.com via human_review: 1 record(s) (1 HUMAN_REVIEW)
+                     sam@example.com's review as recorded, read from what was submitted; release-gate did not perform, repeat or check the review
+```
+
 #### `--config` — an organisation's own standards
 
 Layered on top of the methodology, and able only to **tighten**. An unknown key
@@ -577,6 +690,23 @@ and a research swarm. `python examples/agents/run_all.py` prints what each one
 decides. [What each demonstrates](../examples/agents/README.md).
 
 ---
+
+### `authorship` — state who did the work
+
+```
+release-gate authorship --role ROLE [--from-ci]
+                        [--agent ID] [--session ID] [--person ID]
+                        [--provider NAME] [--model-family NAME] [--toolchain NAME]
+                        [--subject TEXT] [--claims ID,ID] [--evidence ID,ID]
+                        [--reference URL] [--output FILE]
+```
+
+Prints one `authorship` envelope row ([authorship](#authorship--who-checked-the-work)), or appends it to `--output FILE` as a JSON line. `--from-ci` reads GitHub Actions or GitLab CI variables into the row's `ci` block and `reference`. A GitHub App account (GitHub marks it `[bot]`) is recorded as the `agent`. Any other account is kept in `ci` and not placed, because CI does not say whether it is a person or a machine user; the job states that with `--person`, `--agent`, `--session` and the other flags, from what the agent platform or the pipeline knows. Nothing is inferred, and a role with no author stays UNKNOWN.
+
+```yaml
+- run: release-gate authorship --role implementation --from-ci
+         --agent "$AGENT_NAME" --session "$AGENT_SESSION_ID" --output release.jsonl
+```
 
 ### Flags for `audit` (team adoption)
 

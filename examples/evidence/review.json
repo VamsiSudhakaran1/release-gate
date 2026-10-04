@@ -1,0 +1,60 @@
+{
+  "schema": "release-gate.review/1",
+  "evaluated_at": "2026-10-03T12:00:00Z",
+  "reviews": [
+    {
+      "id": "rev-88",
+      "reviewer": {
+        "id": "dana@example.com",
+        "reference": "github:dana",
+        "role": "payments-owner"
+      },
+      "decision": "approve",
+      "claim_id": "cl_no_overdraft",
+      "claim": "A transfer never overdraws the source account",
+      "scope": {
+        "static_path": [
+          "src/ledger/"
+        ]
+      },
+      "state": {
+        "commit": "9f2c1a7e"
+      },
+      "reviewed_at": "2026-10-02T16:40:00Z",
+      "expires_at": "2026-11-02T00:00:00Z",
+      "rationale": "walked every debit path against the TLA+ model",
+      "reference": "https://review.example/rev-88"
+    },
+    {
+      "id": "rev-91",
+      "reviewer": {
+        "id": "sam@example.com",
+        "reference": "github:sam",
+        "role": "security"
+      },
+      "decision": "changes_requested",
+      "claim_id": "cl_no_unauthorised_transfer",
+      "claim": "No transfer executes without the account holder's authorization",
+      "state": {
+        "commit": "9f2c1a7e"
+      },
+      "reviewed_at": "2026-10-02T17:05:00Z",
+      "rationale": "atk-017 reproduces: memo text reaches the planner unescaped",
+      "reference": "https://review.example/rev-91"
+    },
+    {
+      "id": "rev-77",
+      "reviewer": {
+        "id": "dana@example.com",
+        "role": "payments-owner"
+      },
+      "decision": "approve",
+      "scope": "the 2026.09 release ticket",
+      "state": {
+        "commit": "4b1d0c9e"
+      },
+      "reviewed_at": "2026-09-20T10:00:00Z",
+      "rationale": "approved the previous release"
+    }
+  ]
+}

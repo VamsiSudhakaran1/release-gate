@@ -1,0 +1,45 @@
+{
+  "schema": "release-gate.sast/1",
+  "tool": {
+    "name": "acme-sast",
+    "version": "4.2.0",
+    "origin": "Acme AppSec"
+  },
+  "run_id": "sast-8812",
+  "state": {
+    "repository": "github.com/acme/payments-agent",
+    "commit": "9f2c1a7e"
+  },
+  "scanned": {
+    "paths": [
+      "src/"
+    ],
+    "rulesets": [
+      "owasp-top10"
+    ]
+  },
+  "findings": [
+    {
+      "rule": "PY-SQLI-001",
+      "severity": "HIGH",
+      "cwe": "CWE-89",
+      "file": "src/ledger/query.py",
+      "line": 42,
+      "status": "open",
+      "confidence": "medium",
+      "message": "query built from request input"
+    },
+    {
+      "rule": "PY-LOG-007",
+      "severity": "LOW",
+      "file": "src/api/handlers.py",
+      "line": 118,
+      "status": "suppressed",
+      "message": "account number written to a debug log",
+      "suppression": {
+        "by": "j.ortiz",
+        "reason": "debug logging is compiled out of production builds"
+      }
+    }
+  ]
+}

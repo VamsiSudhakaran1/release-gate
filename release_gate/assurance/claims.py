@@ -494,6 +494,14 @@ class ClaimGraph:
         assessment = self._assessments.get(claim_id)
         return assessment.effective_status if assessment else ClaimStatus.UNKNOWN
 
+    def unresolved_against(self, claim_id: str) -> Tuple[str, ...]:
+        """Evidence linked against a claim that nothing records as resolved."""
+        claim = self._claims.get(claim_id)
+        if claim is None:
+            return ()
+        return tuple(e for e in claim.contradicting_evidence
+                     if e in self._evidence and e not in self._resolved)
+
     def __len__(self) -> int:
         return len(self._claims)
 

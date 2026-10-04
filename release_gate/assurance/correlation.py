@@ -64,6 +64,7 @@ __all__ = [
     "attempt_keys",
     "attempt_provenance",
     "attempt_relied_on",
+    "provenance_from",
     "record_provenance",
 ]
 
@@ -287,6 +288,19 @@ def _from_mapping(block: Mapping[str, Any]) -> Dict[str, Any]:
                                    or block.get("shared_artifacts")),
         "relied_on": _strings(block.get("relied_on")),
     }
+
+
+def provenance_from(block: Mapping[str, Any], *, source_id: str,
+                    source_kind: str) -> SourceProvenance:
+    """A source's provenance from a stated block alone — nothing from who reported it.
+
+    For a statement *about* a source (an authorship record names who did the
+    work, and its own producer is only the one who said so), where folding in
+    the reporting record's producer would make the reporter an author.
+    """
+    stated = _from_mapping(block if isinstance(block, Mapping) else {})
+    stated.pop("relied_on")
+    return SourceProvenance(source_id=source_id, source_kind=source_kind, **stated)
 
 
 def record_provenance(record: Any) -> Tuple[SourceProvenance, Tuple[str, ...]]:

@@ -1,0 +1,37 @@
+{
+  "schema": "release-gate.formal/1",
+  "verifier": {
+    "name": "tlc",
+    "version": "2.19",
+    "family": "MODEL_CHECKER"
+  },
+  "results": [
+    {
+      "claim_id": "cl_no_overdraft",
+      "claim": "A transfer never overdraws the source account",
+      "artifact": {
+        "name": "spec/Ledger.tla",
+        "digest": "sha256:aa5ba2105b7d4c1d11a40227aeec8713cf4547c448a97c816d5f1509472faa14"
+      },
+      "method": "FORMAL_PROOF",
+      "result": "verified",
+      "assumptions": [
+        "the bank adapter debits at most once per request",
+        "account balances fit in 64 bits"
+      ],
+      "state": {
+        "commit": "9f2c1a7e"
+      },
+      "proof_artifact": {
+        "locator": "s3://acme-proofs/ledger-9f2c1a7e/tlc-output.tar",
+        "digest": "sha256:637ea694ef8146ec1022f164a7ba0a9f9dc56f02d35f18f1cf191ff7c1c8ba38"
+      },
+      "covers": [
+        "the Ledger spec over 3 accounts and 4 concurrent transfers"
+      ],
+      "does_not_cover": [
+        "schedules with more than 4 concurrent transfers"
+      ]
+    }
+  ]
+}

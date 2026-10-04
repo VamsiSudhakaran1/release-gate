@@ -490,5 +490,11 @@ class ExternalDecisionAdapter(EvidenceAdapter):
 
 
 def builtin_adapters() -> Tuple[EvidenceAdapter, ...]:
-    """Fresh instances, so a caller's registry never shares adapter state."""
-    return (PromptfooAdapter(), SarifAdapter(), ExternalDecisionAdapter())
+    """Fresh instances, so a caller's registry never shares adapter state.
+
+    The three format adapters here, and the four generic contracts in
+    `reference_adapters` — eval, red team, SAST and human review.
+    """
+    from release_gate.assurance.reference_adapters import reference_adapters
+    return (PromptfooAdapter(), SarifAdapter(), ExternalDecisionAdapter(),
+            *reference_adapters())

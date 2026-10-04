@@ -9422,6 +9422,221 @@ again.
 Each is the conservative reading of its own question: one keeps a disagreement
 visible, the other keeps unassessed from becoming passed.
 
+### 10bi. Counterexample precedence — one counterexample outweighs any amount of support (`assess_standing`)
+
+> **Implemented.** `release_gate/assurance/counterexample.py` —
+> `CounterexampleStanding`, `StandingAssessment`, `assess_standing()`;
+> `CounterexampleStatus.ACCEPTED_RISK`; `CounterexampleAttempt.state`,
+> `accepted_by`, `reference`, `accepted_for`; `ResolutionPolicy.counterexample_effect`
+> and `counterexample_exceptions`; `AnalysisResult.counterexample_standings`.
+> RG-CEX-001 (effect from the policy), RG-CEX-004 (stale), RG-CEX-005 (accepted).
+> Tests: `tests/test_counterexample_precedence.py`.
+
+**What existed.** A found counterexample already contradicted its claim (CR-01)
+and outranked support, and an open one against a critical claim blocked. What it
+did not have was any notion of *which release* the counterexample was found
+against, or a documented way to proceed past one.
+
+**Seven standings, derived and never declared.** For each counterexample in the
+ledger, `assess_standing` reads its status, the state it was found against and
+the candidate:
+
+| Standing | When | Effect |
+|---|---|---|
+| `VALID` | found, open, and bound to this candidate (or to no stated state) | critical claim: RG-CEX-001, `counterexample_effect` (default BLOCK); otherwise RG-CEX-002, HOLD |
+| `STALE` | found against another state of the release | RG-CEX-004, HOLD: re-run it. Kept on the record, lifted as a STALE-classified contradiction, and never dropped |
+| `ACCEPTED` | an `ACCEPTED_RISK` exception the policy permits, made for this state | RG-CEX-005, advisory; named in the verdict |
+| `INVALIDATED`, `RESOLVED`, `SUPERSEDED` | answered with a stated reason | none |
+| `NOT_FOUND` | the search found nothing | an empty search bounds the search, not the claim (RG-CEX-003) |
+
+A counterexample found against a *different subject* (another repository or
+environment) is STALE with that said: it holds, and it is not this release's.
+
+**A documented exception is an input, not a judgement.** `ACCEPTED_RISK` requires
+who accepted it (`accepted_by`), why (`resolution`), where it is written down
+(`reference`), and is honoured only when the policy says exceptions are allowed
+(`counterexample_exceptions: true`) and the exception names the state it was made
+for (`accepted_for`) and that state is the candidate. Otherwise the
+counterexample is VALID and the reason says which condition failed. Accepting a
+risk never makes the claim true: the claim stays CONTRADICTED under CR-01, and
+the verdict names who accepted what.
+
+**Observations never establish.** `ResolutionPolicy.establishing` refuses
+`OBSERVATION`. A hundred clean traces show what happened, never that anything else
+cannot.
+
+**Failures stay.** A failed check followed by a passing one is still CR-02 and
+still a failed branch; the later pass does not erase the attempt.
+
+**Determinism.** A counterexample's id covers what it says, not when it was
+recorded: `attempted_at` is outside the identity, and both ledgers digest without
+clocks. The same input gives the same ids and the same case.
+
+### 10bj. External evidence — read, never re-run, never re-competed with (`reference_adapters`, `evidence_origin`)
+
+> **Implemented.** `release_gate/assurance/reference_adapters.py` —
+> `GenericEvalAdapter`, `RedTeamAdapter`, `GenericSastAdapter`,
+> `HumanReviewAdapter`, `REFERENCE_SCHEMAS`; `verifiers.GenericVerifierAdapter`
+> reads `release-gate.formal/1`; `NativeResult.claim_outcome`, `covers`,
+> `provenance`; the envelope record `producer_export`;
+> `release_gate/assurance/origin.py` — `evidence_origin()`, `EvidenceOriginReport`,
+> `OriginKind`. Schemas `reference_evidence`, `evidence_origin`. Examples:
+> `examples/evidence/`. Tests: `tests/test_external_evidence.py`.
+
+**What existed.** The producer contract (§10ag, `producer_contract.py`) already made
+every external producer a registrant: a declaration of what it is and cannot
+establish, an adapter that reports the producer's own words, and one normaliser
+that writes every record as DECLARED. Promptfoo, SARIF and external decisions were
+registered; verifiers had a tool-neutral envelope.
+
+**One generic contract per class of evidence, not one parser per vendor.**
+
+| Contract | Class | What a result becomes |
+|---|---|---|
+| `release-gate.eval/1` | evaluation | each case a declared check (TEST_SUITE) of the claim it names, or of "eval case X passes"; the harness's own totals a count |
+| `release-gate.red-team/1` | behavioural and security testing | a **succeeded** attack is a FINDING typed COUNTEREXAMPLE contradicting its target claim (its own word kept, the claim outcome "failed"), lifted into the counterexample ledger; a **blocked** attack is an OBSERVATION that supports and is never a check; partial, error and timeout are inconclusive; an unlisted word is UNKNOWN; an attack with no target is its own claim ("attack X does not succeed") |
+| `release-gate.sast/1` | static analysis without SARIF | the tool's rule at the tool's severity; a suppressed finding stays recorded as suppressed; the declared scan scope is said, and its absence too |
+| `release-gate.review/1` | human review | reviewer id and reference, role, decision, scope, state or state hash, reviewed and expiry times, rationale, reference. With a claim: a HUMAN_REVIEW check (approve passes; reject or changes requested fails; comment is inconclusive). Without one: the reviewer's decision, recorded and adopted as nothing |
+| `release-gate.formal/1` | formal verification | per row: claim, artifact (name and digest), verifier and version, method, result, assumptions, exact state, proof artifact (locator and digest). A row that states its claim makes it a DECLARED claim the attempt checks |
+
+Each is detected only by its `schema` field, never by resemblance. SARIF stays
+the first choice for static analysis. Observability exports — Langfuse,
+OpenTelemetry, Arize/Phoenix — already arrive through their trace adapters as
+DECLARED traces. A tool whose export is not published as stable is read through a
+short shim to one of these: ProofAgent's attacks through the red-team contract,
+its verdict through `external_decision`. No vendor parser guesses at a format it
+cannot test.
+
+**Semantics the contracts fix.**
+
+- *Claim outcome.* `NativeResult.claim_outcome` states the outcome for the claim
+  when the producer's word is about something else. It goes through the one
+  result-word table, so nothing outside the table passes.
+- *Only checks become attempts.* A CHECK or an ATTESTATION in a lane with a method
+  becomes a verification attempt. A FINDING bears on its claim through its
+  evidence; an OBSERVATION is never a check.
+- *Not run cites nothing.* A check that did not run is recorded with no evidence
+  and no verifier, as an envelope's own is. This was a crash before.
+- *Several results, one claim.* Results about one claim id are one claim. A
+  second wording is kept on its evidence and noted.
+- *An expiry nobody can check is not a pass.* A review's `expires_at` is compared
+  with the document's `evaluated_at`. With none stated it is inconclusive:
+  release-gate decides without a clock.
+- *A proof binds to what it proved.* A named artifact binds as the candidate's
+  `artifact:<name>` component, so a proof of another version of the spec does
+  not establish. Assumptions are also listed under what the result does not
+  cover. A method nobody classified is OTHER, which establishes nothing.
+
+**One envelope, many producers.** `{"record_type": "producer_export",
+"source": "…", "document": {…}}` carries one tool's own document inside an
+envelope. It is read by the same detector, registry and verifier adapters as the
+same document on disk, so an export means what its file means. Its claims join
+the claims the envelope declares by id: the declared claim keeps its statement,
+parents and criticality, and gains the export's evidence and checks. A verifier
+check whose target the envelope declares joins that claim. A repeated export is
+absorbed, not counted twice. A document that is not one producer's (an envelope,
+a trace) is refused with a reason, as is a named producer nobody registered.
+`examples/evidence/release.jsonl` composes a red team, a model checker, two
+reviewers, a SAST tool and an eval harness about three claims.
+
+**Every report says whose evidence it is.** `evidence_origin` groups the case's
+evidence by producer and says how each producer's evidence arrived:
+
+- `READ` — the producer's own account, read from what was submitted.
+  Release-gate did not run it, re-run its checks or re-grade its results. A
+  person's review is said as a review read. A document attributed to release-gate
+  itself is READ too: this run did not produce it.
+- `OBTAINED_HERE` — produced in this run by another system at release-gate's
+  request (a model the semantic verifier asked).
+- `COMPUTED_HERE` — release-gate's own work in this run.
+
+It is `evidence_origin` in the outcome JSON, an EVIDENCE ORIGIN section in the
+text report ("release-gate read 6 producer(s)' evidence and ran none of them") and
+in the one-screen review. No rule reads it: it states a fact about the case, and
+cannot soften or harden anything.
+
+### 10bk. Authorship and verification correlation — who checked the work (`assess_authorship`)
+
+> **Implemented.** `release_gate/assurance/authorship.py` — `AuthorshipStatement`,
+> `AuthorshipRole`, `AuthorshipBasis`, `AuthorIndependence`, `AuthorRelation`,
+> `ClaimAuthorship`, `AuthorshipAssessment`, `assess_authorship()`,
+> `authorship_from_ci()`; `correlation.provenance_from()`; the envelope record
+> `authorship`; `release-gate authorship`; `ResolutionPolicy.author_independence`;
+> `AnalysisResult.authorship`. RG-INDEP-007, RG-INDEP-008. Schema `authorship`
+> (protocol count 79). Tests: `tests/test_authorship.py`.
+
+**This is not distrust of AI-written code.** Code an agent wrote is not less
+trustworthy for that, and no finding fires because an agent, a model or a
+vendor wrote anything. The question is the one review has always asked: was the
+work checked by anyone other than whoever did it? One agent session writing the
+implementation, the tests, the security review and the fix is four artifacts and
+one source. One person writing a change, its tests and its approval is the same,
+and is reported identically.
+
+**Authorship is a statement, read and never inferred.** An `authorship` record
+names a role (`implementation`, `fix`, `specification`, `tests`, `code_review`,
+`security_review`, `behavioral_verification`, `formal_verification`,
+`static_analysis`, `approval`, `other`). It carries provenance in correlation's
+vocabulary (`provider`, `model_family`, `session`, `agent`, `person`, `toolchain`,
+`prompt_lineage`, `generated_from`) and a basis (`ci_metadata`,
+`commit_metadata`, `tool_metadata`, `declared`). It may also be scoped to claims,
+or name the evidence it authored. It becomes a DECLARED ATTESTATION record.
+
+Nothing is read from a coding style, a commit message's wording, a branch name
+or a model id. An author nobody stated is `AUTHOR_UNKNOWN`. A check that states
+nothing about what produced it is `UNKNOWN`: neither independent nor shared.
+Whoever *reported* an authorship (the CI system, the person who declared it) is
+not taken as its author.
+
+`authorship_from_ci` (and `release-gate authorship --from-ci`) reads GitHub
+Actions and GitLab CI variables into the record's `ci` block and reference. One
+CI fact becomes provenance on its own: a GitHub App account, which GitHub marks
+`[bot]`, is the `agent`. Any other account may be a person or a machine user, and
+CI does not say which, so the job states that with `--person`, `--agent`,
+`--session` and the other flags.
+
+**What is compared.** For each claim:
+
+- *The authors.* `implementation` and `fix` statements scoped to the claim, or to
+  the whole case.
+- *The checks.* The support the claim resolution counted, so stale, withheld or
+  inadmissible support is not verification of this release. Also any
+  verification-role statement bearing on the claim. A statement that names the
+  evidence it authored lends that evidence its author; one that names none is a
+  source in its own right.
+
+A source *shares the author* when it carries any of the author's keys in an
+authoring dimension: provider (only if the independence policy correlates on
+it), model family, session, agent, person, toolchain, prompt lineage, generated
+input or declared lineage. Producer, verifier and ancestry keys say who reported
+or relayed a record, not who did the work, so they are not compared.
+
+| Status | Meaning |
+|---|---|
+| `AUTHOR_UNKNOWN` | nobody stated who did the work |
+| `NO_VERIFICATION` | nothing counted supports the claim |
+| `LOW` | every counted source shares the author: *verification independence low* |
+| `UNDETERMINED` | none is shown independent, and some state too little to place |
+| `INDEPENDENT` | at least one shares nothing with the author; the independent sources' correlation groups are counted |
+
+**Rules.**
+
+- **RG-INDEP-007** (verification independence low) is advisory.
+- **RG-INDEP-008** (independence from the author cannot be established) is
+  advisory, and fires only when somebody stated authorship.
+- A case that states no authorship raises neither.
+
+`ResolutionPolicy.author_independence` (default none) makes independence from the
+author a requirement for required claims. A required LOW claim then takes the
+declared effect (HOLD or BLOCK). A required UNDETERMINED or AUTHOR_UNKNOWN claim
+holds under RG-INDEP-008, because unknown is not a pass. Claims that are not
+required stay advisory.
+
+**Reported, and kept out of the score.** `analysis.authorship` in the outcome
+carries every statement and every claim's row, with
+`is_a_judgement_of_ai_written_code: false`. The text report has a WHO CHECKED THE
+WORK section when somebody stated authorship. There is no independence score.
+
 ---
 
 ## 11. Methodology behaviour
@@ -9630,6 +9845,17 @@ fixed, rather than the expectations being lowered.
 | contradiction classification (§10bg) | every contradiction carries `classification`, `comparability`, `classification_basis`, `is_contradiction`, `cross_source`; sides carry `kinds`; RG-CONTRA-006 / -007; the outcome's `conflict_graph` | ids unchanged (the class is outside the identity); the stored contradictions and the ledger digest change, so case digests change. A critical disagreement that is not genuine now raises RG-CONTRA-006 or -007 in place of RG-CONTRA-005, with the same HOLD. No shipped example's verdict moved |
 | `ResolutionPolicy` | new fields `critical_contradiction`, `surface_coverage`, `surface_shortfall`, `require_surface`; `SemanticChallenge` is now an alias of `AdmissionEffect` | the policy digest, and every case digest, changes; the defaults hold exactly as before |
 | claim coverage (§10bh) | claim `surface`, record and attempt `covers` / `inaccessible`, attempt `state`; RG-COV-006 to -008; a `claim_coverage` coverage row on every case | additive for cases that declare none: the row reads `NOT_ASSESSED` and no finding is raised |
+| counterexample standings (§10bi) | `analysis.counterexample_standings`; RG-CEX-004 (stale, HOLD) and RG-CEX-005 (accepted, advisory); RG-CEX-001's effect read from `counterexample_effect` (default BLOCK) | a counterexample found against another state of the release now holds as STALE where it blocked; one against this state blocks exactly as before |
+| counterexample identity | `attempted_at` is outside a counterexample's and an adversarial finding's identity; `state` is inside it; both ledgers digest without clocks | counterexample and case ids change once; the same input now gives the same ids on every run (before, two runs a second apart differed) |
+| counterexample record | `state`, `accepted_by`, `reference`, `accepted_for`; status `ACCEPTED_RISK` | additive. `ACCEPTED_RISK` is refused without who, why and where, and honoured only under `counterexample_exceptions: true` for the candidate's own state |
+| stale counterexample evidence | COUNTEREXAMPLE evidence bound to another state is excused from RG-CONTRA-002/-003 | it holds once (RG-CEX-004), not twice |
+| `ResolutionPolicy.establishing` | refuses `OBSERVATION` | a policy that listed it is now an error; the default never did |
+| reference contracts (§10bj) | `release-gate.eval/1`, `red-team/1`, `sast/1`, `review/1`, `formal/1`; four new built-in producer adapters | additive: a document naming none of these schemas is read exactly as before |
+| producer contract | `NativeResult.claim_outcome`, `covers`, `provenance`; only CHECK and ATTESTATION results become attempts; a NOT_RUN result cites no evidence; results about one claim id are one claim; an attempt's state leaves out `applies_to` | no shipped adapter emitted an OBSERVATION or FINDING with a claim, or repeated a claim id, so existing records are unchanged; a skipped check no longer crashes the normaliser |
+| generic verifier | per-row `claim_id`, `claim`, `artifact`, `method`, `assumptions`, `state`, `proof_artifact`, `covers`, `provenance` | additive; a row stating a claim adds a DECLARED claim; assumptions are added to what the report does not cover |
+| envelope record types | `producer_export`, `authorship` | additive |
+| evidence origin (§10bj) | `evidence_origin` in the outcome; EVIDENCE ORIGIN in the text report and the one-screen review | additive; no rule reads it |
+| authorship (§10bk) | `analysis.authorship`; RG-INDEP-007 / -008; `ResolutionPolicy.author_independence`; `release-gate authorship` | a case that states no authorship raises nothing new. The policy gains a field, so its digest — and every case digest — changes |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

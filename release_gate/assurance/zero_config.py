@@ -54,6 +54,7 @@ from release_gate.assurance.case import (
     AssuranceCase, AssuranceCaseBuilder, CaseVerdict, Decision, MethodologyRef,
     default_case_type,
 )
+from release_gate.assurance.origin import EvidenceOriginReport, evidence_origin
 from release_gate.assurance.ingest import (
     Detection, InputKind, Normalisation, ingest_path, subject_type_for,
 )
@@ -186,6 +187,16 @@ class AssuranceOutcome:
         """What the system reached for. Evidence on the case, not a verdict input."""
         return self.normalisation.capabilities
 
+    @property
+    def evidence_origin(self) -> EvidenceOriginReport:
+        """Whose account each record is, and whether release-gate ran, asked or read.
+
+        Read from the sealed case, so it covers everything the verdict did —
+        submitted, computed here, and any model reading obtained in this run.
+        """
+        return evidence_origin(r for kind in ("evidence", "verification")
+                               for r in self.case.records(kind))
+
     def packet(self, *, previous: Any = None) -> "ApprovalPacket":
         """The eleven questions, answered against this run's sealed case.
 
@@ -212,6 +223,7 @@ class AssuranceOutcome:
             "capabilities": (self.capabilities.to_dict() if self.capabilities
                              else None),
             "consequence": self.consequence.to_dict(),
+            "evidence_origin": self.evidence_origin.to_dict(),
             "verification": (self.verification.to_dict() if self.verification
                              else None),
             "independence": (self.independence.to_dict() if self.independence
@@ -888,6 +900,7 @@ def _case_prefix(subject: AssuranceSubject, normalisation: Normalisation, *,
     # tool produced, and the VerificationGraph reads them from here.
     report = normalisation.verifier_report
     verifications = list(report.attempts) if report else []
+    verifications += list(normalisation.verification)
     verifications += [r for r in normalisation.evidence if r.is_verification]
     builder.declare_present(
         "verification",
@@ -1160,6 +1173,16 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
             # Promoting over an open disagreement on a load-bearing claim is a
             # decision a person may take; taking it silently is not available.
             decision = Decision.HOLD
+
+    # A counterexample accepted as documented risk does not block, and is never
+    # silent either: each is named, with who accepted it and where it is written.
+    from release_gate.assurance.counterexample import CounterexampleStanding
+    for standing in analysis.counterexample_standings:
+        if standing.standing is CounterexampleStanding.ACCEPTED:
+            fired.append(standing.counterexample_id)
+            reasons.append(f"{standing.counterexample_id}: a counterexample to "
+                           f"{standing.target_claim} stands, accepted as a documented "
+                           f"risk — {standing.reason}")
 
     if holding and decision is Decision.HOLD and RULE_STRUCTURAL_HOLD not in fired:
         fired.append(RULE_STRUCTURAL_HOLD)
@@ -1499,6 +1522,22 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         mark = "assessed" if data.get("status") == "ASSESSED" else "NOT_ASSESSED"
         add(f"    [{mark:>12}]  {data.get('dimension')}: {data.get('note')}")
 
+    # Whose evidence this is. Release-gate decides from accounts it mostly did
+    # not produce, and a report that leaves that unsaid reads as if it ran the
+    # tools it names (origin.py).
+    origin = outcome.evidence_origin
+    if origin.entries:
+        add("")
+        read = origin.read_only
+        add("  EVIDENCE ORIGIN" + (f" — release-gate read {len(read)} producer(s)' "
+                                   "evidence and ran none of them" if read else ""))
+        shown = origin.entries if full else origin.entries[:8]
+        for line in EvidenceOriginReport(entries=shown).render().splitlines():
+            add(f"    {line}")
+        if len(shown) < len(origin.entries):
+            add(f"    … {len(origin.entries) - len(shown)} more producer(s); "
+                "--full lists every one")
+
     profile = outcome.consequence
     add("")
     add("  WHAT IS AT STAKE")
@@ -1569,6 +1608,16 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         if lineage.concentration is LineageConcentration.HIGH:
             add("    Reported, not penalised: relying on one authoritative source is")
             add("    often exactly right. Only a methodology can make this a verdict.")
+
+    # Who checked the work, relative to who did it. Only where somebody stated
+    # authorship: with none, every author is UNKNOWN and there is nothing to show.
+    authorship = outcome.analysis.authorship
+    if authorship is not None and authorship.present:
+        add("")
+        add(f"  WHO CHECKED THE WORK ({len(authorship.statements)} authorship "
+            "statement(s))")
+        for line in authorship.render().splitlines()[1:]:
+            add(f"    {line}")
 
     graph = outcome.verification
     if graph is not None and graph.attempts:

@@ -193,6 +193,18 @@ class ResolutionPolicy:
     surface_shortfall: AdmissionEffect = AdmissionEffect.HOLD
     #: Whether a required claim must declare a surface at all (RG-COV-007).
     require_surface: bool = False
+    #: A valid counterexample against a critical claim (RG-CEX-001).
+    counterexample_effect: AdmissionEffect = AdmissionEffect.BLOCK
+    #: Whether a counterexample accepted as a documented risk — who, why, where,
+    #: and for which state — stops blocking. Off: an exception is something a
+    #: policy has to say it allows (counterexample.assess_standing).
+    counterexample_exceptions: bool = False
+    #: Whether a required claim must be checked by someone other than the author
+    #: of what it is about (authorship.py). None reports and requires nothing:
+    #: RG-INDEP-007/008 stay advisory. Set, a required claim every check of which
+    #: shares its author takes this effect, and one whose independence from its
+    #: author cannot be established holds — unknown is not a pass.
+    author_independence: Optional[AdmissionEffect] = None
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -214,6 +226,13 @@ class ResolutionPolicy:
         object.__setattr__(self, "surface_coverage", share)
         if not isinstance(self.require_surface, bool):
             raise ResolutionError("require_surface is true or false")
+        object.__setattr__(self, "counterexample_effect",
+                           AdmissionEffect(self.counterexample_effect))
+        if not isinstance(self.counterexample_exceptions, bool):
+            raise ResolutionError("counterexample_exceptions is true or false")
+        if self.author_independence is not None:
+            object.__setattr__(self, "author_independence",
+                               AdmissionEffect(self.author_independence))
         object.__setattr__(self, "establishing",
                            tuple(sorted({Strength(s) for s in self.establishing},
                                         key=lambda s: s.value)))
@@ -233,6 +252,10 @@ class ResolutionPolicy:
         if Strength.UNCLASSIFIED in self.establishing:
             raise ResolutionError("an unclassified method cannot establish a claim — "
                                   "what nobody has said a check is cannot count as one")
+        if Strength.OBSERVATION in self.establishing:
+            raise ResolutionError(
+                "an observation cannot establish a claim — a hundred clean traces show "
+                "what happened, never that anything else cannot")
 
     @property
     def ref(self) -> str:
@@ -251,6 +274,10 @@ class ResolutionPolicy:
                 "surface_coverage": self.surface_coverage,
                 "surface_shortfall": self.surface_shortfall.value,
                 "require_surface": self.require_surface,
+                "counterexample_effect": self.counterexample_effect.value,
+                "counterexample_exceptions": self.counterexample_exceptions,
+                "author_independence": (self.author_independence.value
+                                        if self.author_independence else None),
                 "note": self.note, "schema_version": RESOLUTION_SCHEMA_VERSION}
 
     def digest(self) -> str:
@@ -295,6 +322,13 @@ class ResolutionPolicy:
                 surface_shortfall=AdmissionEffect(str(
                     data.get("surface_shortfall") or default.surface_shortfall.value)),
                 require_surface=data.get("require_surface", default.require_surface),
+                counterexample_effect=AdmissionEffect(str(
+                    data.get("counterexample_effect")
+                    or default.counterexample_effect.value)),
+                counterexample_exceptions=data.get("counterexample_exceptions",
+                                                   default.counterexample_exceptions),
+                author_independence=(AdmissionEffect(str(data["author_independence"]))
+                                     if data.get("author_independence") else None),
                 note=str(data.get("note") or ""))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, ResolutionError):
@@ -675,9 +709,17 @@ class _Resolver:
                 if found.target_claim != cid:
                     continue
                 ident = f"cex:{found.producer or 'unnamed'}:{found.detail[:40]}"
-                if found.is_open:
-                    items.append(ResolvedItem(ident, "counterexample", ItemRole.COUNTEREXAMPLE,
-                                              method=found.method.value, reason=found.detail))
+                if found.stands:
+                    # An accepted risk still stands: the claim as stated is false,
+                    # and accepting that is a decision about admission, not an
+                    # answer to the counterexample (counterexample.assess_standing).
+                    accepted = found.status.value == "ACCEPTED_RISK"
+                    items.append(ResolvedItem(
+                        ident, "counterexample", ItemRole.COUNTEREXAMPLE,
+                        method=found.method.value,
+                        reason=(f"accepted as a documented risk by {found.accepted_by} "
+                                f"({found.reference}); the claim is still false"
+                                if accepted else found.detail)))
                 elif found.found:
                     items.append(ResolvedItem(ident, "counterexample", ItemRole.RESOLVED,
                                               method=found.method.value,

@@ -1,0 +1,58 @@
+{
+  "schema": "release-gate.eval/1",
+  "producer": {
+    "id": "acme-evals",
+    "version": "2.3.0",
+    "origin": "Acme's internal eval harness"
+  },
+  "run_id": "eval-2026-10-02-01",
+  "ran_at": "2026-10-02T09:00:00Z",
+  "state": {
+    "commit": "9f2c1a7e",
+    "model": "acme-support-v4"
+  },
+  "provenance": {
+    "dataset": "refunds-2026q3",
+    "toolchain": [
+      "acme-evals"
+    ]
+  },
+  "summary": {
+    "passed": 2,
+    "failed": 1,
+    "total": 3
+  },
+  "cases": [
+    {
+      "id": "refund-01",
+      "outcome": "passed",
+      "score": 0.94,
+      "claim_id": "cl_refund_policy",
+      "claim": "Refund answers follow the published refund policy",
+      "covers": {
+        "tool": "refund"
+      }
+    },
+    {
+      "id": "refund-02",
+      "outcome": "passed",
+      "score": 0.88,
+      "claim_id": "cl_refund_policy",
+      "claim": "Refund answers follow the published refund policy",
+      "covers": {
+        "tool": "refund"
+      }
+    },
+    {
+      "id": "refund-03",
+      "outcome": "failed",
+      "score": 0.31,
+      "claim_id": "cl_refund_policy",
+      "claim": "Refund answers follow the published refund policy",
+      "covers": {
+        "tool": "refund"
+      },
+      "message": "quoted a 60-day window; the policy is 30 days"
+    }
+  ]
+}

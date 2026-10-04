@@ -278,13 +278,16 @@ class AdversarialFinding:
                            short_id("adv", digest_object(self.identity())))
 
     def identity(self) -> Dict[str, Any]:
-        """What makes this a distinct attack — never how it was later handled."""
+        """What makes this a distinct attack — never how it was later handled, and
+        never when it was recorded: `attempted_at` is a clock, stamped on arrival
+        when the envelope does not state it, and an id that moved with it gave
+        the same input a different case every second."""
         return {"schema_version": ADVERSARIAL_SCHEMA_VERSION,
                 "target_claim": self.target_claim, "role": self.role.value,
                 "adversary": self.adversary, "method": self.method.value,
                 "outcome": self.outcome.value, "evidence": list(self.evidence),
                 "lineage": list(self.independence_lineage),
-                "attacked": self.attacked, "attempted_at": self.attempted_at}
+                "attacked": self.attacked}
 
     # ── standing ────────────────────────────────────────────────────────────
 
@@ -559,7 +562,9 @@ class AdversarialReview:
         return tuple(out)
 
     def digest(self) -> str:
-        return digest_object({"findings": [f.to_dict() for f in self.findings],
+        """Clock-free: `attempted_at` is stamped on arrival when undeclared."""
+        from release_gate.assurance.records import strip_clocks
+        return digest_object({"findings": [strip_clocks(f.to_dict()) for f in self.findings],
                               "stances": {k: v.value for k, v in self.stances.items()},
                               "schema_version": ADVERSARIAL_SCHEMA_VERSION})
 

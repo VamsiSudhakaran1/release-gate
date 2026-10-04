@@ -401,6 +401,26 @@ class GenericVerifierAdapter(VerifierAdapter):
     This is the path a Lean, Coq or Isabelle integration takes: their own tooling
     emits JSON, a short shim reshapes it to this, and nothing here has to guess at
     a format it cannot test against.
+
+    **As formal-verification evidence** (`"schema": "release-gate.formal/1"`), a
+    row also says what was proved about what, against which state, under which
+    assumptions, and where the proof is kept:
+
+    ```json
+    {"claim_id": "cl_no_overdraft", "claim": "a transfer never overdraws",
+     "artifact": {"name": "ledger.tla", "digest": "sha256:…"},
+     "method": "FORMAL_PROOF", "result": "proved",
+     "assumptions": ["the bank adapter is modelled faithfully"],
+     "state": {"commit": "9f2c1a7"},
+     "proof_artifact": {"locator": "s3://proofs/ledger-9f2c.tar", "digest": "sha256:…"}}
+    ```
+
+    Every one of those is the tool's account, carried on the attempt: release-gate
+    does not re-check the proof, fetch the artifact or weigh the assumptions. The
+    state is what binds the attempt to the candidate — a proof of another commit
+    is a proof of another commit — and a row that names a claim makes that claim
+    a DECLARED one the attempt checks. A method word nobody classified is kept as
+    OTHER, which establishes nothing, rather than guessed.
     """
 
     name = "generic"
@@ -433,32 +453,48 @@ class GenericVerifierAdapter(VerifierAdapter):
         covers: List[str] = []
         does_not: List[str] = []
 
+        notes: List[str] = []
         for row in rows:
             if not isinstance(row, Mapping):
                 skipped["result is not an object"] = \
                     skipped.get("result is not an object", 0) + 1
                 continue
-            name = str(row.get("target") or (target.target_id if target else "")).strip()
+            name = str(row.get("target") or row.get("claim_id")
+                       or (target.target_id if target else "")).strip()
             if not name:
                 skipped["result names no target"] = \
                     skipped.get("result names no target", 0) + 1
                 continue
             status = self.status_for(row.get("result") or row.get("status"))
+            method, method_note = self._method_of(row, tool)
+            if method_note:
+                notes.append(method_note)
+            detail, extent = self._formal_detail(row)
+            artifact = detail.get("artifact") or {}
+            # A named artifact binds as that component of the candidate (see
+            # `_formal_detail`); only an unnamed digest is the bare target.
+            artifact_digest = artifact.get("digest") if not artifact.get("name") else None
             attempts.append(VerificationAttempt(
-                method=_FAMILY_METHOD[tool.family],
+                method=method,
                 target=(target if target and target.target_id == name
                         else VerificationTarget(kind=TargetKind.CLAIM, target_id=name)),
                 verifier=tool.reference,
-                target_digest=row.get("target_digest") or target_digest,
+                target_digest=(row.get("target_digest") or artifact_digest
+                               or target_digest),
                 input_state=row.get("input_state"),
-                result=dict(row.get("result_detail") or {}),
+                result=detail,
                 evidence=tuple(str(e) for e in (row.get("evidence") or ())),
                 independence_lineage=tuple(
                     str(x) for x in (row.get("independence_lineage") or ())),
                 trust_status=tool.trust_status,
                 status=status, detail=str(row.get("detail") or "")))
-            covers.extend(str(c) for c in (row.get("covers") or ()))
+            covers.extend(str(c) for c in (row.get("covers") or ())
+                          if not isinstance(row.get("covers"), Mapping))
             does_not.extend(str(c) for c in (row.get("does_not_cover") or ()))
+            # A proof holds under its assumptions and nowhere else, so each one is
+            # also something the result does not cover.
+            does_not.extend(f"anything that depends on the assumption: {a}"
+                            for a in extent)
 
         family_covers, family_does_not = _FAMILY_COVERAGE[tool.family]
         coverage = VerifierCoverage(
@@ -470,7 +506,73 @@ class GenericVerifierAdapter(VerifierAdapter):
                               if isinstance(doc.get("targets_declared"), int) else None))
         return VerifierReport(tool=tool, attempts=tuple(attempts), coverage=coverage,
                               adapter=self.name, records_seen=len(rows),
-                              records_mapped=len(attempts), skipped=skipped)
+                              records_mapped=len(attempts), skipped=skipped,
+                              notes=tuple(dict.fromkeys(notes)))
+
+    @staticmethod
+    def _method_of(row: Mapping[str, Any], tool: ToolIdentity
+                   ) -> Tuple[VerificationMethod, str]:
+        """The row's own method where it states one; the family's otherwise."""
+        stated = str(row.get("method") or "").strip()
+        if not stated:
+            return _FAMILY_METHOD[tool.family], ""
+        try:
+            return VerificationMethod(stated.upper()), ""
+        except ValueError:
+            return (VerificationMethod.OTHER,
+                    f"method {stated!r} is not one release-gate classifies; it is kept "
+                    "as OTHER, which establishes nothing until a methodology names it")
+
+    @staticmethod
+    def _formal_detail(row: Mapping[str, Any]) -> Tuple[Dict[str, Any], Tuple[str, ...]]:
+        """What the row states about the proof, carried as the tool's account.
+
+        `result_detail` as given, plus the formal-evidence fields where present:
+        the claim's statement, the artifact checked, the assumptions, the exact
+        state (read by the candidate binding), the proof artifact and any
+        `covers` given by dimension (read by claim coverage).
+        """
+        detail: Dict[str, Any] = dict(row.get("result_detail") or {})
+
+        def reference(value: Any, *names: str) -> Optional[Dict[str, str]]:
+            if isinstance(value, Mapping):
+                kept = {n: str(value[n]).strip() for n in names
+                        if isinstance(value.get(n), (str, int)) and str(value[n]).strip()}
+                return kept or None
+            if isinstance(value, str) and value.strip():
+                return {names[0]: value.strip()}
+            return None
+
+        claim = row.get("claim")
+        if isinstance(claim, str) and claim.strip():
+            detail["claim"] = claim.strip()
+        artifact = reference(row.get("artifact"), "name", "digest")
+        if artifact:
+            detail["artifact"] = artifact
+        proof = reference(row.get("proof_artifact"), "locator", "digest")
+        if proof:
+            detail["proof_artifact"] = proof
+        assumptions = tuple(str(a).strip() for a in (row.get("assumptions") or ())
+                            if isinstance(a, (str, int)) and str(a).strip())
+        if assumptions:
+            detail["assumptions"] = list(assumptions)
+        state = row.get("state")
+        bound: Dict[str, str] = ({str(k): str(v) for k, v in state.items()
+                                  if v not in (None, "")}
+                                 if isinstance(state, Mapping) else {})
+        if artifact and artifact.get("name") and artifact.get("digest"):
+            # What was checked, at which content: the candidate's
+            # `artifact:<name>` component. A candidate that lists the artifact at
+            # another digest makes this a proof of another version; one that does
+            # not list it leaves the comparison open rather than failing it.
+            bound.setdefault(f"artifact:{artifact['name']}", artifact["digest"])
+        if bound:
+            detail["state"] = bound
+        if isinstance(row.get("covers"), Mapping):
+            detail["covers"] = dict(row["covers"])
+        if isinstance(row.get("provenance"), Mapping):
+            detail["provenance"] = dict(row["provenance"])
+        return detail, assumptions
 
 
 # ── built-in: SMT-LIB ────────────────────────────────────────────────────────

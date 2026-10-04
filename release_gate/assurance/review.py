@@ -296,6 +296,9 @@ class CaseReview:
     claim_figures: Tuple[Figure, ...] = ()
     claim_lines: Tuple[ClaimLine, ...] = ()
     claims_not_listed: Optional[Figure] = None
+    #: Whose evidence this is, one figure per producer: read and not run here,
+    #: obtained in this run, or computed by release-gate (origin.py).
+    origin: Tuple[Figure, ...] = ()
 
     # ── what a one-screen summary must not be read as ────────────────────────
     @property
@@ -334,8 +337,8 @@ class CaseReview:
         claims = list(self.claim_figures)
         if self.claims_not_listed is not None:
             claims.append(self.claims_not_listed)
-        return (tuple(self.execution) + tuple(self.critical_path) + tuple(claims)
-                + tuple(state) + tuple(tail))
+        return (tuple(self.execution) + tuple(self.origin) + tuple(self.critical_path)
+                + tuple(claims) + tuple(state) + tuple(tail))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -345,6 +348,7 @@ class CaseReview:
             "requested_decision": self.requested_decision,
             "methodology": self.methodology, "subject": self.subject.to_dict(),
             "execution": [f.to_dict() for f in self.execution],
+            "evidence_origin": [f.to_dict() for f in self.origin],
             "critical_path": [f.to_dict() for f in self.critical_path],
             "coverage": [c.to_dict() for c in self.coverage],
             "not_assessed": list(self.not_assessed),
@@ -479,6 +483,23 @@ def _execution_figures(outcome: Any) -> Tuple[Figure, ...]:
             "Records no kind accounts for", unaccounted,
             "arrived and could not be classified; each is counted in the "
             "ingest's skip reasons"))
+    return tuple(figures)
+
+
+_ORIGIN_SHORT = {"READ": "read; not run here", "OBTAINED_HERE": "obtained in this run",
+                 "COMPUTED_HERE": "computed by release-gate"}
+
+
+def _origin_figures(outcome: Any) -> Tuple[Figure, ...]:
+    """One figure per producer, in the origin report's own order and words."""
+    report = getattr(outcome, "evidence_origin", None)
+    figures = []
+    for entry in getattr(report, "entries", ()) or ():
+        kind = _enum(getattr(entry, "origin", None))
+        said = ("a person's review, read" if kind == "READ" and getattr(entry, "person", False)
+                else _ORIGIN_SHORT.get(kind, kind))
+        figures.append(_figure(f"{_text(entry.who)} ({said})", entry.records,
+                               entry.statement))
     return tuple(figures)
 
 
@@ -785,6 +806,7 @@ def build_review(outcome: Any, *, attention_limit: int = 8) -> CaseReview:
             status=_enum(getattr(subject, "digest_status", None)),
             basis=_text(getattr(subject, "digest_basis", ""))),
         execution=_execution_figures(outcome),
+        origin=_origin_figures(outcome),
         critical_path=_critical_figures(outcome),
         coverage=coverage,
         not_assessed=absent,
@@ -858,6 +880,8 @@ def render_review(review: CaseReview) -> str:
 
     lines += _section("EXECUTION", tuple(
         _row(f.label, f.shown) for f in review.execution))
+    lines += _section("EVIDENCE ORIGIN", tuple(
+        _row(f.label, f.shown) for f in review.origin))
     lines += _section("CRITICAL PATH", tuple(
         _row(f.label, f.shown) for f in review.critical_path))
 

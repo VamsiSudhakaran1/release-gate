@@ -68,7 +68,8 @@ _FOCUS_KIND = {
     "RG-CONTRA-007": "contradiction",
     "RG-ASSUME-001": "assumption", "RG-ASSUME-002": "assumption",
     "RG-CEX-001": "counterexample", "RG-CEX-002": "counterexample",
-    "RG-CEX-003": "counterexample",
+    "RG-CEX-003": "counterexample", "RG-CEX-004": "counterexample",
+    "RG-CEX-005": "counterexample",
     "RG-BRANCH-001": "failure_point", "RG-BRANCH-002": "case",
     "RG-BRANCH-003": "case",
     "RG-DRIFT-001": "subject", "RG-DRIFT-002": "subject",
@@ -79,6 +80,7 @@ _FOCUS_KIND = {
     "RG-DRIFT-009": "case",
     # Claim resolution (resolution.py): the claim is what a reviewer opens.
     "RG-CRIT-006": "claim", "RG-INDEP-005": "claim", "RG-INDEP-006": "claim",
+    "RG-INDEP-007": "claim", "RG-INDEP-008": "claim",
     "RG-SEM-001": "claim", "RG-SEM-002": "claim", "RG-SEM-003": "claim",
     "RG-SEM-004": "claim",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
@@ -189,10 +191,18 @@ _RULE_REASON = {
     # the authorizer to confirm what is being accepted on their behalf, the second
     # asks whether the answer came from a party entitled to give it.
     "RG-ADV-003": AttentionReason.ACCEPTED_RISK,
+    # A counterexample accepted as documented risk: the authorizer confirms what
+    # is being accepted on their behalf.
+    "RG-CEX-005": AttentionReason.ACCEPTED_RISK,
+    "RG-CEX-004": AttentionReason.STALE_VERIFICATION,
     "RG-ADV-004": AttentionReason.SELF_CLEARED,
     "RG-CRIT-001": AttentionReason.CRITICALITY_UNDETERMINED,
     "RG-CRIT-002": AttentionReason.CRITICALITY_UNDETERMINED,
     "RG-CRIT-005": AttentionReason.NOT_CORROBORATED,
+    # Checked only by its author: nobody else corroborated the work. And a check
+    # or an author nobody can place is a provenance question, not a failure.
+    "RG-INDEP-007": AttentionReason.NOT_CORROBORATED,
+    "RG-INDEP-008": AttentionReason.UNKNOWN_PROVENANCE,
     # A required claim the evidence does not carry to the admission level.
     "RG-CRIT-006": AttentionReason.NOT_VERIFIED,
     "RG-SEM-001": AttentionReason.CONTRADICTION,
@@ -933,6 +943,8 @@ _NON_MONOTONE_RULES = frozenset({
     # A claim's resolution moves both ways as evidence arrives: a found
     # counterexample or an expected check can take a supported claim down.
     "RG-CRIT-006", "RG-INDEP-005", "RG-INDEP-006",
+    # An independent check, or a statement of who did the work, arrives later.
+    "RG-INDEP-007", "RG-INDEP-008",
     "RG-SEM-001", "RG-SEM-002", "RG-SEM-003", "RG-SEM-004",
     # More evidence can reveal a capability that was exercised and undeclared, so
     # a clean capability comparison is never settled by arrival.
@@ -947,6 +959,8 @@ _NON_MONOTONE_RULES = frozenset({
     "RG-COV-006", "RG-COV-007", "RG-COV-008",
     # A resolved counterexample can be reopened by a search that has not run yet.
     "RG-CEX-001", "RG-CEX-002",
+    # A candidate that moves makes a counterexample stale, and lapses an exception.
+    "RG-CEX-004", "RG-CEX-005",
     # An agreeing set of paths can be split by a replication that has not run.
     "RG-REPL-001", "RG-REPL-002",
     # And an adversarial finding that was answered can be reopened by an attack

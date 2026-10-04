@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from release_gate.assurance.artifacts import ArtifactGraph, CurrencyStatus
 from release_gate.assurance.assumptions import AssumptionGraph
@@ -151,6 +151,12 @@ class AnalysisResult:
     #: Each claim's declared surface and what was assessed of it
     #: (claim_coverage.py). Claims with no surface are listed as undeclared.
     claim_coverage: Optional[Any] = None
+    #: What each counterexample does to this admission: VALID, STALE, ACCEPTED…
+    #: (counterexample.assess_standing), in ledger order.
+    counterexample_standings: Tuple[Any, ...] = ()
+    #: Each claim's support against the stated authors of what it is about
+    #: (authorship.py). AUTHOR_UNKNOWN throughout when nobody stated authorship.
+    authorship: Optional[Any] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -175,7 +181,11 @@ class AnalysisResult:
                 "state_binding": (self.state_binding.to_dict()
                                   if self.state_binding is not None else None),
                 "claim_coverage": (self.claim_coverage.to_dict()
-                                   if self.claim_coverage is not None else None)}
+                                   if self.claim_coverage is not None else None),
+                "counterexample_standings": [s.to_dict()
+                                             for s in self.counterexample_standings],
+                "authorship": (self.authorship.to_dict()
+                               if self.authorship is not None else None)}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -1100,36 +1110,57 @@ def _analyse_assumptions(graph: Optional[AssumptionGraph]) -> List[Finding]:
 # ── counterexamples (RG-CEX-*) ───────────────────────────────────────────────
 
 def _analyse_counterexamples(ledger: Optional[CounterexampleLedger],
-                             critical: Set[str]) -> List[Finding]:
+                             critical: Set[str], standings: Sequence[Any] = (),
+                             policy: Optional[Any] = None) -> List[Finding]:
     """Attempts to break a claim, and the asymmetry between the two outcomes.
 
-    A live refutation against a critical claim BLOCKs — the claim as stated is
-    false and nothing has answered it. A search that came back empty is reported
-    and credited with nothing, because it bounds the search rather than the claim.
+    A counterexample VALID against the candidate on a critical claim blocks — the
+    claim as stated is false and nothing has answered it, however much support
+    sits beside it. One found against another state of the release holds until
+    it is re-run on this one. One accepted as a documented risk, under a policy
+    that permits exceptions, is reported and named and no longer blocks. A
+    search that came back empty is reported and credited with nothing, because
+    it bounds the search rather than the claim.
     """
     findings: List[Finding] = []
     if ledger is None or not len(ledger):
         return findings
+    from release_gate.assurance.counterexample import CounterexampleStanding as Standing
+    by_id = {a.counterexample_id: a for a in ledger.attempts}
+    standing_of = {s.counterexample_id: s for s in standings}
+    if not standing_of:   # called without standings: every open one is valid
+        from release_gate.assurance.counterexample import assess_standing
+        standing_of = {a.counterexample_id: assess_standing(a) for a in ledger.attempts}
 
-    live = ledger.open()
+    def of(kind: Any) -> List[Any]:
+        return [by_id[i] for i, s in standing_of.items() if s.standing is kind]
+
+    live = of(Standing.VALID)
     against_critical = [a for a in live if a.target_claim in critical]
+    effect = (RequirementEffect.HOLD
+              if policy is not None and policy.counterexample_effect.value == "HOLD"
+              else RequirementEffect.BLOCK)
     if against_critical:
         findings.append(Finding(
             rule_id="RG-CEX-001", domain=AnalysisDomain.COUNTEREXAMPLE,
-            effect=RequirementEffect.BLOCK,
+            effect=effect,
             summary=f"{len(against_critical)} unresolved counterexample(s) stand "
                     "against a critical claim",
             detail="; ".join(
                 f"{a.counterexample_id}: {a.method.value} by "
                 f"{a.producer or 'an unnamed producer'} broke {a.target_claim}"
+                + (f" — {standing_of[a.counterexample_id].reason}"
+                   if a.status.value == "ACCEPTED_RISK" else "")
                 for a in against_critical[:4])[:700]
-                   + ". The claim as stated is false unless something answers this.",
+                   + ". The claim as stated is false unless something answers this; "
+                     "no amount of support beside it changes that.",
             remedy="answer the counterexample and record what answers it, restate the "
                    "claim so it survives, or withdraw the claim",
             refs=tuple(a.counterexample_id for a in against_critical[:12]),
             observed={"open_against_critical": len(against_critical),
                       "critical_claims": sorted({a.target_claim
-                                                 for a in against_critical})[:12]}))
+                                                 for a in against_critical})[:12],
+                      "policy_effect": effect.value}))
 
     other = [a for a in live if a.target_claim not in critical]
     if other:
@@ -1144,6 +1175,43 @@ def _analyse_counterexamples(ledger: Optional[CounterexampleLedger],
                    "decision",
             refs=tuple(a.counterexample_id for a in other[:12]),
             observed={"open": len(other)}))
+
+    stale = of(Standing.STALE)
+    if stale:
+        findings.append(Finding(
+            rule_id="RG-CEX-004", domain=AnalysisDomain.COUNTEREXAMPLE,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(stale)} counterexample(s) were found against another state "
+                     "of the release and have not been re-run on this one"),
+            detail="; ".join(f"{a.counterexample_id} on {a.target_claim}: "
+                             f"{standing_of[a.counterexample_id].reason}"
+                             for a in stale[:4])[:700]
+                   + ". The candidate moved, so this no longer shows the claim false "
+                     "for it; nothing shows the defect gone either.",
+            remedy="re-run the counterexample against the candidate and record what "
+                   "came back",
+            refs=tuple(a.counterexample_id for a in stale[:12]),
+            observed={"stale": len(stale),
+                      "claims": sorted({a.target_claim for a in stale})[:12]}))
+
+    accepted = of(Standing.ACCEPTED)
+    if accepted:
+        findings.append(Finding(
+            rule_id="RG-CEX-005", domain=AnalysisDomain.COUNTEREXAMPLE,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{len(accepted)} counterexample(s) stand and were accepted as "
+                     "documented risk under a policy that permits exceptions"),
+            detail="; ".join(f"{a.counterexample_id} on {a.target_claim}: "
+                             f"{standing_of[a.counterexample_id].reason}"
+                             for a in accepted[:4])[:700]
+                   + ". Each claim is still false as stated; the exception is a "
+                     "decision about this admission, on the record.",
+            remedy="none required for this admission; the exception lapses when the "
+                   "candidate moves past the state it was made for",
+            refs=tuple(a.counterexample_id for a in accepted[:12]),
+            observed={"accepted": len(accepted),
+                      "accepted_by": sorted({a.accepted_by for a in accepted})[:12],
+                      "references": sorted({a.reference for a in accepted})[:12]}))
 
     empty = ledger.searched_without_finding()
     if empty:
@@ -1233,7 +1301,8 @@ def _analyse_failed_branches(ledger: Optional[FailedBranchLedger]) -> List[Findi
 def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
                            records: Sequence[EvidenceRecord],
                            ledger: Optional[ContradictionLedger] = None,
-                           policy: Optional[Any] = None) -> List[Finding]:
+                           policy: Optional[Any] = None,
+                           excused: Optional[Set[str]] = None) -> List[Finding]:
     from release_gate.assurance.contradiction import MISMATCHES, ConflictClass
     findings: List[Finding] = []
     ledger = ledger if ledger is not None else ContradictionLedger()
@@ -1321,8 +1390,16 @@ def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
 
     refuted: List[str] = []
     disputed: List[str] = []
+    excused = excused or set()
     for claim in sorted(claim_graph.claims, key=lambda c: c.claim_id):
         status = claim_graph.status(claim.claim_id)
+        # Refuted only by counterexample evidence found against another state:
+        # RG-CEX-004 holds on that, as what it is, and the candidate having moved
+        # is exactly what keeps it from blocking (counterexample.assess_standing).
+        against = claim_graph.unresolved_against(claim.claim_id)
+        if excused and against and set(against) <= excused and not any(
+                a.status.value == "FAILED" for a in claim.verification_attempts):
+            continue
         if status is ClaimStatus.REFUTED:
             refuted.append(claim.claim_id)
         elif status is ClaimStatus.DISPUTED:
@@ -1610,6 +1687,75 @@ def _analyse_semantic(report: Optional[Any]) -> List[Finding]:
             remedy="ask the question again against the release being admitted",
             refs=tuple(dict.fromkeys(c for c, _ in stale))[:12],
             observed={"readings": len(stale)}))
+    return findings
+
+
+def _analyse_authorship(assessment: Optional[Any], policy: Any) -> List[Finding]:
+    """RG-INDEP-007/008: whether anyone but the author checked the work.
+
+    Correlation, never a judgement of who or what wrote the code: a person who
+    writes a change, its tests and its approval is reported exactly as one agent
+    session doing the same is, and an agent's work checked by others is not
+    reported at all. Advisory unless the policy requires independence from the
+    author for required claims (`ResolutionPolicy.author_independence`); then a
+    required claim checked only by its author takes the declared effect, and one
+    whose independence cannot be established — including one whose author
+    nobody stated — holds. Without that requirement, nothing fires on a case
+    that states no authorship: an unknown author is reported, not flagged.
+    """
+    if assessment is None:
+        return []
+    from release_gate.assurance.authorship import AuthorIndependence as A
+    required = getattr(policy, "author_independence", None)
+    findings: List[Finding] = []
+
+    low = assessment.of(A.LOW)
+    if low:
+        binding = [c for c in low if c.required]
+        effect = (RequirementEffect(required.value) if required is not None and binding
+                  else RequirementEffect.ADVISORY)
+        findings.append(Finding(
+            rule_id="RG-INDEP-007", domain=AnalysisDomain.INDEPENDENCE, effect=effect,
+            summary=(f"verification independence low: {len(low)} claim(s) were checked "
+                     "only by the author of what they are about"),
+            detail=("; ".join(f"{c.claim_id}: {c.basis}" for c in low[:4])
+                    + (f" (+{len(low) - 4} more)" if len(low) > 4 else "")
+                    + ". This is a statement about correlation — the work was checked "
+                      "by the source that did it — and not about whether code written "
+                      "by an agent, a model or a person is safe."),
+            remedy=("add a check from a source that shares none of the author's "
+                    "provenance: a person who did not write it, a static analyser, a "
+                    "model of another provider or family, a formal verifier"),
+            refs=tuple(c.claim_id for c in low[:12]),
+            observed={"claims": len(low), "required": len(binding),
+                      "policy_requires_independence": required is not None,
+                      "shared": sorted({k for c in low for v in c.verifiers
+                                        for k in v.shared})[:12]}))
+
+    undetermined = list(assessment.of(A.UNDETERMINED))
+    if required is not None:
+        undetermined += [c for c in assessment.of(A.AUTHOR_UNKNOWN) if c.required]
+    if undetermined and (assessment.present or required is not None):
+        binding = [c for c in undetermined if c.required]
+        effect = (RequirementEffect.HOLD if required is not None and binding
+                  else RequirementEffect.ADVISORY)
+        findings.append(Finding(
+            rule_id="RG-INDEP-008", domain=AnalysisDomain.INDEPENDENCE, effect=effect,
+            summary=(f"{len(undetermined)} claim(s) cannot be shown to have been "
+                     "checked by anyone but their author"),
+            detail=("; ".join(f"{c.claim_id}: {c.basis}" for c in undetermined[:4])
+                    + (f" (+{len(undetermined) - 4} more)" if len(undetermined) > 4
+                       else "")
+                    + ". A source that states nothing about what produced it, or an "
+                      "author nobody named, is UNKNOWN — never counted as independent."),
+            remedy=("state authorship (`authorship` records, from CI or declared) and "
+                    "provenance on the checks: provider, model_family, session, agent, "
+                    "person, toolchain"),
+            refs=tuple(c.claim_id for c in undetermined[:12]),
+            observed={"claims": len(undetermined), "required": len(binding),
+                      "author_unknown": sum(1 for c in undetermined
+                                            if c.status is A.AUTHOR_UNKNOWN),
+                      "policy_requires_independence": required is not None}))
     return findings
 
 
@@ -2219,13 +2365,23 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     counterexamples = CounterexampleLedger(
         declared_attempts + counterexamples_from_evidence(records)
         + adversarial.to_counterexamples())
+    # Where each one stands against the release being admitted, under the policy:
+    # what answered it, the state it was found against, a permitted exception.
+    from release_gate.assurance.counterexample import CounterexampleStanding, assess_standing
+    binding_report = claim_graph.state_binding if claim_graph is not None else None
+    standings = tuple(assess_standing(
+        a, candidate=binding_report.candidate if binding_report is not None else None,
+        permit_exceptions=policy.counterexample_exceptions)
+        for a in counterexamples.attempts)
+    stale_cex = [s for s in standings if s.standing is CounterexampleStanding.STALE]
     # A live refutation becomes a contradiction so `render_verdict` cannot omit it.
     # Claims that already produced a claim/evidence conflict are skipped, or the
     # same disagreement would be filed twice under two ids.
     already = {c for contradiction in detected
                if contradiction.kind is ContradictionKind.CLAIM_EVIDENCE_CONFLICT
                for c in contradiction.target_claims}
-    lifted = tuple(c for c in counterexamples.to_contradictions(critical_claims=critical)
+    lifted = tuple(c for c in counterexamples.to_contradictions(
+        critical_claims=critical, stale=[s.counterexample_id for s in stale_cex])
                    if not set(c.target_claims) & already)
     # Paths that disagree become a disagreement the verdict cannot omit. Filed
     # under VERIFICATION_CONFLICT like any other check that contradicts another,
@@ -2248,9 +2404,11 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_adversarial(adversarial, critical))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
-    findings.extend(_analyse_contradiction(claim_graph, records, ledger, policy))
+    findings.extend(_analyse_contradiction(
+        claim_graph, records, ledger, policy,
+        excused={e for s in stale_cex for e in s.evidence}))
     findings.extend(_analyse_assumptions(assumption_graph))
-    findings.extend(_analyse_counterexamples(counterexamples, critical))
+    findings.extend(_analyse_counterexamples(counterexamples, critical, standings, policy))
     findings.extend(_analyse_failed_branches(failed_branches))
     findings.extend(_analyse_drift(case, artifact_graph, records))
     state_binding = claim_graph.state_binding if claim_graph is not None else None
@@ -2268,6 +2426,12 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     claim_coverage = assess_claim_coverage(claim_graph, resolution, records)
     findings.extend(_analyse_claim_coverage(claim_coverage, policy))
     findings.extend(_analyse_semantic(resolution))
+    from release_gate.assurance.authorship import assess_authorship
+    authorship = assess_authorship(
+        claim_graph, resolution,
+        records + [r for r in case.records("verification") if isinstance(r, EvidenceRecord)],
+        policy=policy.independence)
+    findings.extend(_analyse_authorship(authorship, policy))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
         capabilities = getattr(normalisation, "capabilities", None)
@@ -2289,4 +2453,6 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           failed_branches=failed_branches,
                           state_binding=state_binding,
                           resolution=resolution,
-                          claim_coverage=claim_coverage)
+                          claim_coverage=claim_coverage,
+                          counterexample_standings=standings,
+                          authorship=authorship)

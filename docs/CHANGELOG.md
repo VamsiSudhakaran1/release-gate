@@ -4,6 +4,99 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🗡️ One counterexample outweighs any amount of support
+
+A found counterexample already contradicted its claim. Now each one has a
+**standing** against the exact release being admitted, and the policy says what
+it does.
+
+- **One against a thousand.** One reproducible unauthorized transfer against 99
+  passing authorization tests and 1,000 clean traces is a contradicted claim
+  and a BLOCK on a critical claim, never a 99% score.
+- **Observations are not proof.** `ResolutionPolicy.establishing` refuses
+  `OBSERVATION`. A hundred clean traces show what happened, never that anything
+  else cannot.
+- **Until the candidate moves.** A counterexample found against another state
+  of the release is STALE: it holds (RG-CEX-004) until re-run, and it is kept,
+  not dropped. Found against this state, it blocks under
+  `counterexample_effect` (default BLOCK).
+- **Until it is invalidated, resolved or superseded**, with the reason recorded.
+- **Or accepted as a documented risk.** `ACCEPTED_RISK` names who accepted it,
+  why, where it is written down and the state it was accepted for. It stops
+  blocking only under `counterexample_exceptions: true` and only for that state
+  (RG-CEX-005, advisory, named in the verdict). The claim stays contradicted.
+- **Failures stay.** A failed check followed by a pass is still a failed check
+  and a failed branch.
+- **The same input gives the same ids.** `attempted_at` is no longer part of a
+  counterexample's or an adversarial finding's identity, and both ledgers digest
+  without clocks. Two runs a second apart used to give different counterexample
+  ids and case digests.
+
+### 🔌 External evidence, read and never re-run
+
+Release-gate does not compete with the tools that produce evidence. There is now
+one generic contract per class of evidence, all read through the producer
+contract and documented with working examples in `examples/evidence/`.
+
+- **`release-gate.eval/1`**: eval cases as declared checks of the claims they
+  name.
+- **`release-gate.red-team/1`**: a succeeded attack is a counterexample to its
+  target claim and blocks a critical one however many attacks were blocked. A
+  blocked attack supports and never establishes.
+- **`release-gate.sast/1`**: static findings for a tool without SARIF, at the
+  tool's own severity, with the declared scan scope.
+- **`release-gate.review/1`**: reviewer, role, decision, scope, state, expiry,
+  rationale and reference. An expiry nobody can check against a stated
+  evaluation time is not a pass.
+- **`release-gate.formal/1`**: the generic verifier envelope now reads claim,
+  artifact, method, assumptions, exact state and proof artifact. A proof of
+  another version of the spec does not establish.
+- **One envelope, many producers.** A `producer_export` row carries a tool's own
+  document whole. It is read exactly as the file is, and its claims join the
+  ones the envelope declares.
+- **Every report says whose evidence it is.** `evidence_origin` in `--json`, and
+  EVIDENCE ORIGIN in the text report and `--review`: "release-gate read 6
+  producer(s)' evidence and ran none of them".
+- **Fixed:** a producer result reporting a skipped check crashed the
+  normaliser. It is now a NOT_RUN check that cites nothing.
+
+### 🤝 Who checked the work — authorship and verification correlation
+
+This is about independence, not distrust of AI-written code. Nothing fires
+because an agent wrote something. The question is whether the work was checked
+by anyone but whoever did it.
+
+- **Authorship is stated, never inferred.** An `authorship` envelope row names a
+  role (implementation, fix, tests, security review, approval, …), who filled it
+  (agent, session, model family, provider, person, toolchain), and the basis (CI
+  metadata, commit metadata, tool metadata, declared). Nothing is read from
+  style, a commit message's wording or a branch name. An author nobody stated is
+  UNKNOWN, and so is a check that states nothing about what produced it.
+- **Verification independence low.** When every check a claim's resolution
+  counted shares its author's session, agent, person or other authoring
+  provenance, RG-INDEP-007 says so. One person writing a change, its tests and
+  its approval is reported the same way as one agent session doing it.
+  RG-INDEP-008 reports checks that cannot be placed. Both are advisory.
+- **A policy can require it.** `ResolutionPolicy.author_independence: HOLD |
+  BLOCK` makes a required claim checked only by its author take that effect. A
+  required claim whose independence cannot be established holds.
+- **`release-gate authorship`** emits a row from a CI job. `--from-ci` reads
+  GitHub Actions or GitLab CI variables, and the job states the rest.
+
+#### Migration notes
+
+- Counterexample ids and case digests change once, because the identity no
+  longer includes a clock and now includes the state. Re-approve cases bound to
+  an old digest.
+- A counterexample found against another state of the release now holds
+  (RG-CEX-004) where it used to block.
+- A resolution policy that lists `OBSERVATION` in `establishing` is now refused.
+- The resolution policy gains `counterexample_effect`,
+  `counterexample_exceptions` and `author_independence`, so its digest and
+  every case digest change. The defaults decide exactly as before.
+- Four new built-in producer adapters only read documents that name their
+  schema. Nothing that was read before is read differently.
+
 ### ⚔️ A disagreement is a contradiction only when it is one
 
 Evidence pointing both ways at a claim used to be "a contradiction" whatever it

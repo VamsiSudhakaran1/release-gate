@@ -1175,6 +1175,7 @@ def print_help():
     print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("  release-gate assure <file>              # Zero-config structural assurance from one file")
+    print("  release-gate authorship --role ROLE     # Emit an authorship record (from CI with --from-ci)")
     print("      No config, no YAML. Auto-detects OTLP / Langfuse / Arize / promptfoo /")
     print("      audit reports / assurance envelopes; hashes the input; reconstructs execution,")
     print("      claims and artifacts; reports contradictions, failed verification, drift and gaps.")
@@ -1776,6 +1777,9 @@ def main():
     elif command == 'assure':
         _run_assure_command()
 
+    elif command == 'authorship':
+        _run_authorship_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
@@ -1805,6 +1809,80 @@ def _write_static_evidence(report: Dict[str, Any], path: str) -> int:
     print(f"Evidence written to: {path} ({len(emission.evidence)} evidence "
           f"record(s), bound to {emission.binding.value})", file=sys.stderr)
     return len(rows)
+
+
+def _run_authorship_command():
+    """release-gate authorship — state who did one piece of the work, as a record.
+
+    Usage:
+      release-gate authorship --role ROLE [--from-ci]
+                              [--agent ID] [--session ID] [--person ID]
+                              [--provider NAME] [--model-family NAME]
+                              [--toolchain NAME] [--subject TEXT]
+                              [--claims ID,ID] [--evidence ID,ID]
+                              [--reference URL] [--output FILE]
+
+    Prints one `authorship` envelope row, or appends it to FILE as a JSON line.
+    `--from-ci` reads the CI system's own variables (GitHub Actions, GitLab CI)
+    into the record's `ci` block and reference; everything about who did the
+    work beyond that is what the flags state. Nothing is inferred — not from a
+    commit message, a branch name or a coding style — and an author nobody
+    states stays UNKNOWN. This is about whether the work was checked by anyone
+    but its author, not about who or what wrote it.
+    """
+    import os as _os
+
+    from release_gate.assurance.authorship import (
+        AuthorshipError, AuthorshipStatement, authorship_from_ci)
+
+    argv = sys.argv
+    role = _flag(argv, '--role')
+    if not role:
+        print("Usage: release-gate authorship --role ROLE [--from-ci] [--agent ID] "
+              "[--session ID] [--person ID] [--provider NAME] [--model-family NAME] "
+              "[--toolchain NAME] [--subject TEXT] [--claims ID,ID] [--evidence ID,ID] "
+              "[--reference URL] [--output FILE]")
+        sys.exit(1)
+
+    def listed(name):
+        value = _flag(argv, name)
+        return tuple(x.strip() for x in value.split(',') if x.strip()) if value else ()
+
+    provenance = {key: _flag(argv, flag) for key, flag in (
+        ('agent', '--agent'), ('session', '--session'), ('person', '--person'),
+        ('provider', '--provider'), ('model_family', '--model-family'))
+        if _flag(argv, flag)}
+    if listed('--toolchain'):
+        provenance['toolchain'] = list(listed('--toolchain'))
+    try:
+        if '--from-ci' in argv:
+            statement = authorship_from_ci(
+                _os.environ, role=role, provenance=provenance,
+                subject=_flag(argv, '--subject') or '', claims=listed('--claims'),
+                evidence=listed('--evidence'))
+        else:
+            statement = AuthorshipStatement(
+                role=role, provenance=provenance, subject=_flag(argv, '--subject') or '',
+                claims=listed('--claims'), evidence=listed('--evidence'),
+                reference=_flag(argv, '--reference') or '')
+    except AuthorshipError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    if _flag(argv, '--reference') and '--from-ci' in argv:
+        statement = AuthorshipStatement.from_dict(
+            {**statement.to_dict(), 'reference': _flag(argv, '--reference')})
+    row = {'record_type': 'authorship', **statement.to_dict()}
+    line = json.dumps(row, sort_keys=True)
+    output = _flag(argv, '--output')
+    if output:
+        with open(output, 'a', encoding='utf-8') as handle:
+            handle.write(line + '\n')
+        print(f"Authorship record appended to {output}", file=sys.stderr)
+    else:
+        print(line)
+    if not statement.states_an_author:
+        print("Note: this record names a role and no author; the author stays UNKNOWN.",
+              file=sys.stderr)
 
 
 def _run_assure_command():

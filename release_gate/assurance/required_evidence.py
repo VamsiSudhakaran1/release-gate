@@ -161,6 +161,10 @@ _RULE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "RG-CEX-001": _K.COUNTEREXAMPLE_SEARCH,
     "RG-CEX-002": _K.COUNTEREXAMPLE_SEARCH,
     "RG-CEX-003": _K.COUNTEREXAMPLE_SEARCH,
+    # Re-run the counterexample against the candidate.
+    "RG-CEX-004": _K.RE_VERIFICATION,
+    # An accepted risk is closed by nobody's evidence; a person confirms it.
+    "RG-CEX-005": _K.HUMAN_REVIEW,
     "RG-BRANCH-001": _K.HUMAN_REVIEW,
     "RG-BRANCH-002": _K.MISSING_EVIDENCE,
     "RG-BRANCH-003": _K.MISSING_EVIDENCE,
@@ -192,6 +196,8 @@ _RULE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "RG-SEM-004": _K.RE_VERIFICATION,
     "RG-INDEP-005": _K.INDEPENDENT_VERIFICATION,
     "RG-INDEP-006": _K.INDEPENDENT_VERIFICATION,
+    "RG-INDEP-007": _K.INDEPENDENT_VERIFICATION,
+    "RG-INDEP-008": _K.PROVENANCE_ATTESTATION,
     "RG-COV-001": _K.MISSING_EVIDENCE,
     "RG-COV-002": _K.MISSING_EVIDENCE,
     "RG-COV-003": _K.FORMAL_VERIFICATION,

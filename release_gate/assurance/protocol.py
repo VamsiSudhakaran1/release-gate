@@ -316,6 +316,19 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("correlation", "correlation", "CORRELATION_SCHEMA_VERSION", 1,
              note="the provenance of each source and the correlation groups it "
                   "falls into; independence that cannot be read is said so"),
+        _ref("reference_evidence", "reference_adapters",
+             "REFERENCE_EVIDENCE_SCHEMA_VERSION", 1,
+             note="the generic contracts for external evidence — "
+                  "release-gate.eval/1, red-team/1, sast/1, review/1 and formal/1 — "
+                  "each read through the producer contract and never re-run"),
+        _ref("authorship", "authorship", "AUTHORSHIP_SCHEMA_VERSION", 1,
+             note="who did each piece of the work, as CI, a commit or a person "
+                  "states it, and whether each claim was checked by anyone but its "
+                  "author — correlation, never a judgement of AI-written code"),
+        _ref("evidence_origin", "origin", "ORIGIN_SCHEMA_VERSION", 1,
+             note="whose account each record is, and whether release-gate computed "
+                  "it, obtained it in this run, or read it without running its "
+                  "producer"),
         _ref("static_evidence", "static_producer", "STATIC_EVIDENCE_SCHEMA_VERSION", 1,
              note="the scanner emitting Universal Evidence: per-rule scoped "
                   "observations, what each finding does not establish, and the "

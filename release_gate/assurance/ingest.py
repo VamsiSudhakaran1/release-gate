@@ -59,7 +59,7 @@ from release_gate.assurance.producer_contract import (
     normalise_output,
 )
 from release_gate.assurance.verification import (
-    VerificationAttempt, VerificationError, VerificationStatus,
+    TargetKind, VerificationAttempt, VerificationError, VerificationStatus,
 )
 from release_gate.assurance.evidence import (
     EpistemicStatus, EvidenceRecord, EvidenceType, Producer, ProducerKind,
@@ -99,7 +99,16 @@ ENVELOPE_RECORD_TYPES = frozenset(
      "candidate",
      # A `SemanticAssertion` (semantic_verifier.py), persisted by an earlier run
      # and replayed: DECLARED, because the file is the only witness to it.
-     "semantic_assertion"})
+     "semantic_assertion",
+     # Another tool's own document — a SARIF log, an eval run, a red team's
+     # attacks, a proof result — carried whole and read by the adapter that
+     # reads it as a file. One submission composes many producers' evidence
+     # about one set of claims; release-gate ran none of them.
+     "producer_export",
+     # An `AuthorshipStatement` (authorship.py): who did one piece of the work —
+     # the implementation, the tests, a review — as CI, a commit or a person
+     # states it. Read, never inferred; kept as DECLARED attestation evidence.
+     "authorship"})
 
 
 class IngestError(ValueError):
@@ -197,6 +206,9 @@ class Normalisation:
     expectations: Tuple[EvidenceExpectation, ...] = ()
     failed_branches: Tuple[FailedBranch, ...] = ()
     verifier_report: Optional[VerifierReport] = None
+    #: Verification attempts read from verifier documents carried inside an
+    #: envelope (`producer_export`), kept whole beside `verifier_report`'s.
+    verification: Tuple[VerificationAttempt, ...] = ()
     records_seen: int = 0
     records_mapped: int = 0
     #: How many records of each `record_type` passed through, counted at the ingest
@@ -704,7 +716,9 @@ def _consequence_from(doc: Any,
 
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                       execution: Any = None,
-                      declared_consequence: Sequence[Any] = ()
+                      declared_consequence: Sequence[Any] = (),
+                      producers: Optional[Any] = None,
+                      attempts_out: Optional[List[VerificationAttempt]] = None
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  List[CounterexampleAttempt], List[FailedBranch],
                                  List[AdversarialFinding],
@@ -740,6 +754,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     # happens after the pass, so a declaration's position in the file does not
     # matter.
     declarations: Dict[str, ProducerDeclaration] = {}
+    export_rows: List[Mapping[str, Any]] = []
 
     for row in doc:
         if not isinstance(row, Mapping):
@@ -831,6 +846,16 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             elif record_type == "failed_branch":
                 branches.append(_failed_branch_from(row, producer))
                 mapped += 1
+            elif record_type == "authorship":
+                from release_gate.assurance.authorship import AuthorshipStatement
+                built = AuthorshipStatement.from_dict(row).to_record(
+                    producer=producer, source=source)
+                evidence.append(built)
+                mapped += 1
+            elif record_type == "producer_export":
+                # Folded after the envelope's own claims are built, so the
+                # export's results join the claims the submission declares.
+                export_rows.append(row)
             elif record_type == "adversarial":
                 adversarial.append(_adversarial_from(row, producer))
                 mapped += 1
@@ -932,8 +957,179 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             f"{repeated_claims} claim row(s) repeated a claim_id already seen and "
             "were absorbed into the first record under that id")
 
+    for index, row in enumerate(export_rows):
+        if _fold_export(row, index, source=source, producers=producers,
+                        evidence=evidence, claims=claims,
+                        attempts=attempts_out if attempts_out is not None else [],
+                        skipped=skipped, notes=notes):
+            mapped += 1
+
     return (evidence, claims, artifacts, counterexamples, branches, adversarial,
             expectations, mapped, skipped, notes, seen_by_kind)
+
+
+def _producer_type_of(detection: "Detection") -> Optional[str]:
+    """Which registered producer reads a document the detector routed to the registry."""
+    return ("promptfoo" if detection.kind is InputKind.PROMPTFOO_EVAL
+            else detection.adapter)
+
+
+def _verifier_record(report: VerifierReport, *, source: str,
+                     applies_to: Optional[str]) -> EvidenceRecord:
+    """A verifier's own account of its run, as one DECLARED record.
+
+    Release-gate read the output; it did not watch the prover run, and it does
+    not re-check the result.
+    """
+    return EvidenceRecord.from_producer(
+        {"verifier": report.tool.to_dict(), "coverage": report.coverage.to_dict()},
+        evidence_type=EvidenceType.FORMAL_PROOF, source=source,
+        producer=Producer(producer_id=report.tool.reference, kind=ProducerKind.TOOL,
+                          identity_basis=("pinned-digest" if report.tool.pinned
+                                          else "unauthenticated"),
+                          version=report.tool.version or None),
+        status=EpistemicStatus.DECLARED, applies_to_digest=applies_to,
+        coverage_note="; ".join(report.coverage.does_not_cover)[:400]
+                      or "the verifier stated no coverage limits")
+
+
+def _verifier_claims(report: VerifierReport, record: EvidenceRecord) -> List[Claim]:
+    """Each claim a verifier's rows state, checked by the attempts that state it.
+
+    A row naming only a target id leaves the claim to whoever declares it; a row
+    that states the claim (`release-gate.formal/1`) makes it a DECLARED claim,
+    as a producer's check does through the contract.
+    """
+    built: Dict[str, Claim] = {}
+    for attempt in report.attempts:
+        statement = str((attempt.result or {}).get("claim") or "").strip()
+        target = attempt.target
+        if not statement or target is None or target.kind is not TargetKind.CLAIM:
+            continue
+        held = built.get(target.target_id)
+        if held is None:
+            built[target.target_id] = Claim(
+                claim_id=target.target_id, statement=statement,
+                claim_type=ClaimType.ASSERTION, producer=record.producer,
+                provenance=ClaimProvenance.DECLARED, verification_attempts=(attempt,),
+                metadata={"verifier": report.tool.reference})
+        else:
+            built[target.target_id] = dataclasses.replace(
+                held, verification_attempts=held.verification_attempts + (attempt,))
+    return [built[k] for k in sorted(built)]
+
+
+def _merge_into(claims: List[Claim], more: Sequence[Claim]) -> None:
+    """Join claims an export produced with the ones already held, by id.
+
+    The claim the submission declares stands — its statement, its parents, its
+    criticality — and gains the export's evidence and checks. An export's
+    wording of the claim stays on its own evidence.
+    """
+    at = {c.claim_id: i for i, c in enumerate(claims)}
+    for claim in more:
+        if claim.claim_id not in at:
+            at[claim.claim_id] = len(claims)
+            claims.append(claim)
+            continue
+        held = claims[at[claim.claim_id]]
+        known = {a.verification_id for a in held.verification_attempts}
+        claims[at[claim.claim_id]] = dataclasses.replace(
+            held,
+            supporting_evidence=held.supporting_evidence + claim.supporting_evidence,
+            contradicting_evidence=(held.contradicting_evidence
+                                    + claim.contradicting_evidence),
+            verification_attempts=held.verification_attempts + tuple(
+                a for a in claim.verification_attempts if a.verification_id not in known))
+
+
+def _fold_export(row: Mapping[str, Any], index: int, *, source: str,
+                 producers: Optional[Any], evidence: List[EvidenceRecord],
+                 claims: List[Claim], attempts: List[VerificationAttempt],
+                 skipped: Dict[str, int], notes: List[str]) -> bool:
+    """Read one tool's document carried in an envelope, exactly as its file is read.
+
+    The same detector, the same registry and the same verifier adapters as
+    `release-gate assure <file>`: an export inside an envelope means what the
+    same document means on disk. Its records are the producer's, DECLARED, with
+    the export named as their source.
+    """
+    name = str(row.get("source") or f"export-{index}").strip() or f"export-{index}"
+    where = f"{source}#{name}"
+    document = row.get("document")
+
+    def refuse(reason: str, detail: str) -> bool:
+        skipped[reason] = skipped.get(reason, 0) + 1
+        notes.append(f"producer_export {name!r} was not read: {detail}")
+        return False
+
+    if not isinstance(document, (Mapping, list)):
+        return refuse("producer_export carries no document",
+                      "it carries no `document` object")
+    detection = detect_document(document, filename=name, producers=producers)
+    stated = str(row.get("producer_type") or "").strip()
+    registry = producers if producers is not None else default_producer_registry()
+    try:
+        if stated or detection.kind in (InputKind.PROMPTFOO_EVAL,
+                                        InputKind.PRODUCER_EXPORT):
+            produced = registry.normalise(document, source=where,
+                                          producer_type=stated or
+                                          _producer_type_of(detection))
+            found, more = list(produced.evidence), list(produced.claims)
+            for reason, count in produced.skipped.items():
+                key = f"{name}: {reason}"
+                skipped[key] = skipped.get(key, 0) + count
+            notes.extend(f"{name}: {n}" for n in produced.notes)
+            checks: List[VerificationAttempt] = []
+        elif detection.kind is InputKind.VERIFIER_REPORT:
+            report = default_verifier_registry().convert(document)
+            # Bound to nothing: the document is part of the envelope, which is the
+            # input's own artifact, and binding the record to a digest of the
+            # embedded document would name content the case does not hold.
+            record = _verifier_record(report, source=where, applies_to=None)
+            found, more = [record], _verifier_claims(report, record)
+            checks = list(report.attempts)
+            for reason, count in report.skipped.items():
+                key = f"{name}: {reason}"
+                skipped[key] = skipped.get(key, 0) + count
+            notes.extend(f"{name}: {n}" for n in report.notes)
+        else:
+            return refuse("producer_export is not a producer's document",
+                          f"it reads as {detection.kind.value} ({detection.basis}); an "
+                          "export carries one producer's document, and nothing else is "
+                          "read from inside an envelope")
+    except (ProducerContractError, VerifierError) as exc:
+        return refuse("producer_export could not be read",
+                      f"its producer recognised it but could not read it: {exc}")
+
+    held = {e.evidence_id for e in evidence}
+    absorbed = 0
+    for record in found:
+        if record.evidence_id in held:
+            absorbed += 1
+            continue
+        held.add(record.evidence_id)
+        evidence.append(record)
+    if absorbed:
+        notes.append(f"{name}: {absorbed} record(s) repeated evidence already held and "
+                     "were absorbed rather than counted twice")
+    _merge_into(claims, more)
+    # A check whose target the case declares joins that claim; every check is
+    # also kept whole, as a verifier file's are.
+    position = {c.claim_id: i for i, c in enumerate(claims)}
+    for attempt in checks:
+        target = attempt.target
+        at = (position.get(target.target_id)
+              if target is not None and target.kind is TargetKind.CLAIM else None)
+        if at is not None:
+            holder = claims[at]
+            if attempt.verification_id not in {a.verification_id
+                                               for a in holder.verification_attempts}:
+                claims[at] = dataclasses.replace(
+                    holder, verification_attempts=holder.verification_attempts
+                    + (attempt,))
+        attempts.append(attempt)
+    return True
 
 
 def _build_evidence(payload: Mapping[str, Any], *, source: str, producer: Producer,
@@ -1383,7 +1579,16 @@ def _counterexample_from(row: Mapping[str, Any],
         resolution=str(row.get("resolution") or ""),
         resolution_evidence=tuple(_as_ids(row.get("resolution_evidence"))),
         status=status, searched=str(row.get("searched") or ""),
-        detail=str(row.get("detail") or ""))
+        detail=str(row.get("detail") or ""),
+        # The state it was found against, and a documented exception's who, where
+        # and for which state: read by `counterexample.assess_standing`.
+        state=dict(row["state"]) if isinstance(row.get("state"), Mapping) else {},
+        accepted_by=str(row.get("accepted_by") or ""),
+        reference=str(row.get("reference") or ""),
+        accepted_for=(dict(row["accepted_for"])
+                      if isinstance(row.get("accepted_for"), Mapping) else {}),
+        **({"attempted_at": str(row["attempted_at"])} if row.get("attempted_at")
+           else {}))
 
 
 def _expectation_from(row: Mapping[str, Any],
@@ -1573,11 +1778,13 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         except VerifierError as exc:
             notes.append(f"verifier output was recognised but not convertible: {exc}")
 
+    export_attempts: List[VerificationAttempt] = []
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
         ev, cl, art, cex, fbr, adv, exp, mapped, skipped, env_notes, seen_by_kind = \
             _envelope_records(doc, source, producer, execution=execution,
-                              declared_consequence=declared_consequence)
+                              declared_consequence=declared_consequence,
+                              producers=producers, attempts_out=export_attempts)
         expectations.extend(exp)
         failed_branches.extend(fbr)
         evidence.extend(ev)
@@ -1592,8 +1799,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         # that happens to have its own input kind, and every other registered
         # producer arrives as PRODUCER_EXPORT. Neither has a code path here.
         registry = producers if producers is not None else default_producer_registry()
-        producer_type = ("promptfoo" if detection.kind is InputKind.PROMPTFOO_EVAL
-                         else detection.adapter)
+        producer_type = _producer_type_of(detection)
         try:
             produced = registry.normalise(doc, source=source,
                                           producer_type=producer_type)
@@ -1631,19 +1837,10 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         notes.extend(verifier_report.notes)
         # The tool's own account, recorded as DECLARED: release-gate read the file,
         # it did not watch the prover run, and it does not re-check the result.
-        evidence.append(EvidenceRecord.from_producer(
-            {"verifier": verifier_report.tool.to_dict(),
-             "coverage": verifier_report.coverage.to_dict()},
-            evidence_type=EvidenceType.FORMAL_PROOF, source=source,
-            producer=Producer(producer_id=verifier_report.tool.reference,
-                              kind=ProducerKind.TOOL,
-                              identity_basis=("pinned-digest"
-                                              if verifier_report.tool.pinned
-                                              else "unauthenticated"),
-                              version=verifier_report.tool.version or None),
-            status=EpistemicStatus.DECLARED, applies_to_digest=file_digest,
-            coverage_note="; ".join(verifier_report.coverage.does_not_cover)[:400]
-                          or "the verifier stated no coverage limits"))
+        record = _verifier_record(verifier_report, source=source,
+                                  applies_to=file_digest)
+        evidence.append(record)
+        claims.extend(_verifier_claims(verifier_report, record))
 
     elif detection.kind is InputKind.AUDIT_REPORT and isinstance(doc, Mapping):
         seen, mapped, extra = _audit_records(doc, source, evidence, file_digest,
@@ -1670,6 +1867,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         counterexamples=tuple(counterexamples), adversarial=tuple(adversarial),
         expectations=tuple(expectations),
         failed_branches=tuple(failed_branches), verifier_report=verifier_report,
+        verification=tuple(export_attempts),
         records_seen=seen, records_mapped=mapped,
         records_seen_by_kind=dict(seen_by_kind), skipped=dict(skipped),
         notes=tuple(notes), refused_consequence=tuple(refused_consequence))

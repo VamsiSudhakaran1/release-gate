@@ -64,7 +64,7 @@ not, can be run through it, and the shipped suite runs every built-in through it
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -402,6 +402,18 @@ class NativeResult:
     #: Fields an adapter mapped for compatibility with an earlier record shape.
     #: Carried as given, beside — never instead of — the native fields.
     compatibility: Mapping[str, Any] = field(default_factory=dict)
+    #: The outcome for the claim, where the producer's own word is about
+    #: something else: an attack that "succeeded" is a claim that "failed". Read
+    #: through the same result-word table as `native_outcome`, which stays as
+    #: the producer wrote it. Empty means the native word is the claim's.
+    claim_outcome: str = ""
+    #: What the result says it bears on, by dimension (`claim_coverage.py`):
+    #: `{"tool": "refund", "environment": "staging"}`. Nothing is inferred.
+    covers: Mapping[str, Any] = field(default_factory=dict)
+    #: What the document states produced this result: the keys `correlation.py`
+    #: reads (`provider`, `model_family`, `session`, `agent`, `reviewer`,
+    #: `toolchain`, `dataset`, …). Read, never guessed; absent stays absent.
+    provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", ResultKind(self.kind))
@@ -415,6 +427,10 @@ class NativeResult:
             raise ProducerContractError(
                 "a DECISION is an external artifact and cannot propose a claim: "
                 "recording another system's decision is not adopting it")
+        if str(self.claim_outcome or "").strip() and not self.claim_statement:
+            raise ProducerContractError(
+                "a claim outcome is the outcome for a claim; a result that proposes "
+                "no claim has none to state")
 
 
 @dataclass(frozen=True)
@@ -549,11 +565,43 @@ def _observation(result: NativeResult, producer_id: str) -> str:
     if result.kind is ResultKind.FINDING:
         sev = (f" at its own severity {result.native_severity!r}"
                if result.native_severity else "")
-        return f"{producer_id} reported {result.native_id}{sev}{about}"
-    if result.kind is ResultKind.CHECK:
+        # Only where the outcome is not the claim's: an attack that succeeded is
+        # said as such, so the sentence cannot read as the claim having passed.
+        said = (f", outcome {result.native_outcome!r}"
+                if result.claim_outcome and result.native_outcome else "")
+        return f"{producer_id} reported {result.native_id}{sev}{said}{about}"
+    if result.kind is ResultKind.CHECK or (result.kind is ResultKind.OBSERVATION
+                                           and result.claim_outcome):
         outcome = result.native_outcome or "an unstated outcome"
         return f"{producer_id} reported {result.native_id!r} as {outcome}"
+    if result.kind is ResultKind.ATTESTATION and result.native_outcome:
+        return (f"{producer_id} recorded {result.native_outcome!r} in "
+                f"{result.native_id}{about}")
     return f"{producer_id} reported {result.native_id}{about}"
+
+
+#: Result kinds that are checks of the claim they name, and so become a
+#: verification attempt in a lane that has a method. A finding bears on a claim
+#: through its evidence; an observation is not a check — a hundred attacks that
+#: did not get through show those hundred failed, never that none can succeed.
+_CHECK_KINDS = frozenset({ResultKind.CHECK, ResultKind.ATTESTATION})
+
+
+def _merge_claim(held: Claim, more: Claim, notes: List[str]) -> Claim:
+    """One producer's several results about one claim are one claim."""
+    if more.statement != held.statement:
+        notes.append(
+            f"claim {held.claim_id!r} was stated twice in different words; the first "
+            f"statement stands ({held.statement!r}) and the second is kept on its "
+            "evidence")
+    return replace(
+        held,
+        supporting_evidence=held.supporting_evidence + more.supporting_evidence,
+        contradicting_evidence=held.contradicting_evidence + more.contradicting_evidence,
+        verification_attempts=held.verification_attempts + tuple(
+            a for a in more.verification_attempts
+            if a.verification_id not in {h.verification_id
+                                         for h in held.verification_attempts}))
 
 
 def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
@@ -577,6 +625,7 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
 
+    claim_at: Dict[str, int] = {}
     for index, result in enumerate(output.results):
         identity = result.identity or output.identity
         producer = identity.producer()
@@ -619,6 +668,12 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
             content["measurement"] = result.measurement.to_dict()
         if result.state:
             content["state"] = {str(k): str(v) for k, v in dict(result.state).items()}
+        if result.claim_outcome:
+            content["claim_outcome"] = str(result.claim_outcome)
+        if result.covers:
+            content["covers"] = _bounded(dict(result.covers))
+        if result.provenance:
+            content["provenance"] = _bounded(dict(result.provenance))
         if result.kind is ResultKind.DECISION:
             content["external_decision"] = {
                 "decision": result.native_outcome or None,
@@ -637,7 +692,8 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
         if result.claim_statement and result.kind is not ResultKind.DECISION:
             # The one shared result-word table: `unknown`, `timeout` and their kin
             # are INCONCLUSIVE everywhere, never a pass.
-            status = VerifierAdapter.status_for(result.native_outcome)
+            status = VerifierAdapter.status_for(result.claim_outcome
+                                                or result.native_outcome)
             claim_id = result.claim_id or (
                 f"cl_{declaration.producer_type}_"
                 f"{digest_object([identity.producer_id, result.native_id, index])[7:19]}")
@@ -663,25 +719,44 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
 
         if claim_id:
             attempts = ()
-            if method is not None and status is not None:
+            if method is not None and status is not None and result.kind in _CHECK_KINDS:
+                # The check ran against what its result names, so the attempt
+                # binds to the candidate exactly as its evidence does. Without
+                # this a stale check still counted through its PASSED attempt.
+                # `applies_to` is the digest the attempt carries as its target;
+                # left in the state it would be an unrecognised key that made
+                # the binding read nothing at all.
+                bound = {k: v for k, v in dict(content.get("state") or {}).items()
+                         if k != "applies_to"}
+                checked: Dict[str, Any] = {}
+                if bound:
+                    checked["state"] = bound
+                for key in ("covers", "provenance"):
+                    if content.get(key):
+                        checked[key] = content[key]
+                # A check that did not run cites nothing and was performed by
+                # nobody, as an envelope's own NOT_RUN attempt is read.
+                ran = status is not VerificationStatus.NOT_RUN
                 attempts = (VerificationAttempt(
-                    method=method, verifier=identity.producer_id, status=status,
-                    evidence=(record.evidence_id,),
+                    method=method, verifier=identity.producer_id if ran else "",
+                    status=status, evidence=(record.evidence_id,) if ran else (),
                     target_digest=record.applies_to_digest,
-                    # The check ran against what its result names, so the attempt
-                    # binds to the candidate exactly as its evidence does. Without
-                    # this a stale check still counted through its PASSED attempt.
-                    result=({"state": dict(content["state"])}
-                            if content.get("state") else {}),
+                    result=checked,
                     detail=f"reported by {identity.producer_id}"),)
-            claims.append(Claim(
+            built = Claim(
                 claim_id=claim_id, statement=result.claim_statement,
                 claim_type=ClaimType.ASSERTION, producer=producer,
                 provenance=ClaimProvenance.DECLARED,
                 supporting_evidence=(record.evidence_id,) if supports else (),
                 contradicting_evidence=(record.evidence_id,) if contradicts else (),
                 verification_attempts=attempts,
-                metadata={"producer_type": declaration.producer_type}))
+                metadata={"producer_type": declaration.producer_type})
+            if claim_id in claim_at:
+                claims[claim_at[claim_id]] = _merge_claim(
+                    claims[claim_at[claim_id]], built, notes)
+            else:
+                claim_at[claim_id] = len(claims)
+                claims.append(built)
 
     mapped = len(evidence)
     return ProducerNormalisation(
