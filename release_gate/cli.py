@@ -1815,7 +1815,8 @@ def _run_assure_command():
                                  [--methodology REF|FILE]
                                  [--config FILE] [--case-output FILE]
                                  [--semantic [--semantic-out FILE]
-                                  [--semantic-policy FILE]]
+                                  [--semantic-policy FILE]
+                                  [--escalation-policy FILE]]
                                  [--semantic-assertions FILE]
       release-gate assure --list-methodologies
       release-gate assure --diagnostics
@@ -1953,14 +1954,16 @@ def _run_assure_command():
             sys.exit(1)
 
     # The semantic verifier (assurance/semantic_verifier.py): ask a model the
-    # questions the deterministic rules left open, or replay answers an earlier
-    # run persisted. Either way the answers are assertions the resolution policy
+    # questions the escalation policy (assurance/escalation.py) selects from those
+    # the deterministic rules left open, or replay answers an earlier run
+    # persisted. Either way the answers are assertions the resolution policy
     # reads; neither path lets a model choose the verdict.
     semantic_assertions, semantic_submitted = _semantic_assertions_from_argv(
         target, ask='--semantic' in argv,
         replay=_flag(argv, '--semantic-assertions'),
         out=_flag(argv, '--semantic-out'),
         policy_ref=_flag(argv, '--semantic-policy'),
+        escalation_ref=_flag(argv, '--escalation-policy'),
         methodology=methodology, candidate=candidate,
         resolution_policy=resolution_policy)
 
@@ -1998,21 +2001,27 @@ def _run_assure_command():
 
 
 def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
-                                   **assure_kwargs):
+                                   escalation_ref=None, **assure_kwargs):
     """`--semantic` asks; `--semantic-assertions FILE` replays. Not both.
 
-    Returns the assertions and whether they were read from a file (DECLARED) or
-    produced in this process (DERIVED). Misconfiguration is an error; a provider
-    that fails once configured is not — that is an UNKNOWN assertion per question.
+    Asking is planned first: the escalation policy decides which questions go
+    to the model, deterministically, before any is asked, and the plan is
+    persisted with the answers. Returns the assertions and whether they were
+    read from a file (DECLARED) or produced in this process (DERIVED).
+    Misconfiguration is an error; a provider that fails once configured is not —
+    that is an UNKNOWN assertion per question.
     """
     import json as _json
     from pathlib import Path as _Path
 
     from release_gate.assurance.semantic_verifier import (
         DEFAULT_SEMANTIC_VERIFIER_POLICY, SemanticAssertion, SemanticVerifier,
-        SemanticVerifierError, SemanticVerifierPolicy, build_evidence_packet,
-        state_hash_for, unresolved_questions)
+        SemanticVerifierError, SemanticVerifierPolicy, state_hash_for)
 
+    if escalation_ref and not ask:
+        print("Error: --escalation-policy decides which questions --semantic asks; "
+              "without --semantic it would decide nothing")
+        sys.exit(1)
     if not (replay or ask):
         return (), False
     if replay and ask:
@@ -2041,6 +2050,16 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
         except (OSError, ValueError, SemanticVerifierError) as exc:
             print(f"Error: {policy_ref} is not a readable semantic verifier policy: {exc}")
             sys.exit(1)
+    from release_gate.assurance.escalation import (
+        DEFAULT_ESCALATION_POLICY, EscalationError, EscalationPolicy, plan_escalation)
+    escalation = DEFAULT_ESCALATION_POLICY
+    if escalation_ref:
+        try:
+            escalation = EscalationPolicy.from_dict(
+                _json.loads(_Path(escalation_ref).read_text(encoding='utf-8')))
+        except (OSError, ValueError, EscalationError) as exc:
+            print(f"Error: {escalation_ref} is not a readable escalation policy: {exc}")
+            sys.exit(1)
     from release_gate.semantic_providers import (SemanticProviderConfigError,
                                                  provider_from_env)
     try:
@@ -2057,22 +2076,28 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
         print(f"Error: {exc}")
         sys.exit(1)
     analysis = first.analysis
-    records = {r.evidence_id: r for r in first.case.records("evidence")
-               if hasattr(r, "evidence_id")}
+    records = [r for r in first.case.records("evidence") if hasattr(r, "evidence_id")]
     graph = analysis.verification_graph
     attempts = {a.verification_id: a for a in (graph.attempts if graph else ())}
-    state_hash = state_hash_for(analysis)
-    packets = [build_evidence_packet(q, records=records, attempts=attempts,
-                                     state_hash=state_hash, policy=policy)
-               for q in unresolved_questions(analysis.resolution)]
-    assertions = SemanticVerifier(provider, policy=policy).verify_all(packets)
+    verifier = SemanticVerifier(provider, policy=policy)
+    plan = plan_escalation(analysis.resolution, records, attempts=attempts,
+                           policy=escalation, verifier_policy=policy,
+                           capabilities=verifier.capabilities,
+                           state_hash=state_hash_for(analysis))
+    packets = list(plan.packets)
+    assertions = verifier.verify_all(packets)
 
     answered = sum(1 for a in assertions if a.answered)
-    print(f"  semantic: {len(packets)} question(s) asked of "
-          f"{provider.identity().model}; {answered} answered, "
-          f"{len(assertions) - answered} unknown", file=sys.stderr)
+    held_back = ", ".join(f"{n} {reason.lower().replace('_', ' ')}"
+                          for reason, n in plan.counts().items()
+                          if reason not in ("OPEN_CLAIM", "MECHANISM_SUPPLIED"))
+    print(f"  semantic: {len(packets)} of {len(plan.decisions)} subject(s) escalated "
+          f"to {provider.identity().model} under {escalation.ref}"
+          + (f" (not asked: {held_back})" if held_back else "")
+          + f"; {answered} answered, {len(assertions) - answered} unknown",
+          file=sys.stderr)
     if out:
-        lines = []
+        lines = [_json.dumps(plan.to_dict(), sort_keys=True)]
         for packet, assertion in zip(packets, assertions):
             lines.append(_json.dumps(packet.to_dict(), sort_keys=True))
             lines.append(_json.dumps(assertion.to_dict(), sort_keys=True))

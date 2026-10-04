@@ -127,7 +127,8 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 release-gate assure <file> [--json] [--full] [--review]
                            [--methodology REF] [--config FILE] [--case-output FILE]
                            [--candidate FILE] [--resolution-policy FILE]
-                           [--semantic [--semantic-out FILE] [--semantic-policy FILE]]
+                           [--semantic [--semantic-out FILE] [--semantic-policy FILE]
+                                       [--escalation-policy FILE]]
                            [--semantic-assertions FILE]
 release-gate assure --list-methodologies
 ```
@@ -168,9 +169,10 @@ nothing.
 | `--case-output FILE` | Write the sealed case on its own, for an evidence pack or an approval packet. |
 | `--candidate FILE` | The exact release being admitted, as a JSON object of components (see [candidate state](#candidate-state--what-the-evidence-must-be-about)). Evidence bound to a different state of it stops supporting the claims it names, and the report says which records and why. Wins over a candidate the submission states about itself. |
 | `--resolution-policy FILE` | What it takes to establish a claim, and what a required claim must reach, as JSON (see [claim resolution](#claim-resolution--where-each-claim-stands)). It is recorded on the case and digested with it. A policy that would let a declaration or an unclassified method establish, or that drops a correlation dimension, is refused. |
-| `--semantic` | Ask a model the questions the deterministic rules left open (see [semantic verifier](#semantic-verifier--a-model-reads-what-structure-cannot)). Needs `RG_SEMANTIC_BASE_URL` and `RG_SEMANTIC_MODEL`. Each answer is a bounded assertion, and the resolution policy decides what it does. A provider failure makes an UNKNOWN assertion, never a pass. |
-| `--semantic-out FILE` | With `--semantic`: write each evidence packet and its assertion as JSONL. The file records what was sent, to which model, and what came back. |
-| `--semantic-policy FILE` | With `--semantic`: the verifier policy as JSON (`min_confidence`, `low_confidence`, packet and excerpt limits, `timeout_seconds`). |
+| `--semantic` | Ask a model the questions the deterministic rules left open and the [escalation policy](#which-questions-are-asked--semantic-escalation) selects (see [semantic verifier](#semantic-verifier--a-model-reads-what-structure-cannot)). Needs `RG_SEMANTIC_BASE_URL` and `RG_SEMANTIC_MODEL`. Each answer is a bounded assertion, and the resolution policy decides what it does. A provider failure makes an UNKNOWN assertion, never a pass. |
+| `--semantic-out FILE` | With `--semantic`: write the escalation plan, then each evidence packet and its assertion, as JSONL. The file records what was considered and why, what was sent, to which model, and what came back. |
+| `--escalation-policy FILE` | With `--semantic`: the escalation policy as JSON (`scope`, `always`, `never`, `hybrid`, `max_questions`, `max_cost`, `modes`). It decides which questions are asked, never what an answer does. An error without `--semantic`. |
+| `--semantic-policy FILE` | With `--semantic`: the verifier policy as JSON (`min_confidence`, `low_confidence`, packet and excerpt limits, `timeout_seconds`, and for decision models `probability_tolerance` and `unscored`). |
 | `--semantic-assertions FILE` | Replay assertions an earlier `--semantic-out` kept, without calling any model. The same file gives the same case. Cannot be combined with `--semantic`. |
 | `--list-methodologies` | The built-ins, with each one's requirement count and digest. |
 | `--diagnostics` | Which optional backends are unavailable and why. A broken native dependency is reported here rather than taking the CLI down; assurance runs regardless. |
@@ -286,11 +288,11 @@ Provenance is the producer's declaration and is read as stated. A model id is no
 
 #### Semantic verifier — a model reads what structure cannot
 
-Some questions are reading problems. Three records say they support a claim; whether what they *contain* bears on it is not something a digest comparison can settle. The deterministic rules know where they stop: a claim carried only by declarations, observations or judgements, or by checks that reached no conclusion, is left open. `--semantic` asks a model exactly those questions, one per claim:
+Some questions are reading problems. Three records say they support a claim; whether what they *contain* bears on it is not something a digest comparison can settle. The deterministic rules know where they stop: a claim carried only by declarations, observations or judgements, or by checks that reached no conclusion, is left open. `--semantic` asks a model about those claims, one question per claim, as many as the [escalation policy](#which-questions-are-asked--semantic-escalation) selects:
 
 ```
-deterministic analysis → unresolved question → evidence packet → semantic verifier
-  → bounded assertion → assurance case → the same deterministic policy
+deterministic analysis → unresolved question → escalation plan → evidence packet
+  → semantic verifier → bounded assertion → assurance case → the same deterministic policy
 ```
 
 **It never returns a verdict.** An assertion is `supported`, `contradicted` or `insufficient_evidence`, or UNKNOWN with a reason. A model that replies `PROMOTE` has replied malformed. What an assertion does is the resolution policy's:
@@ -306,7 +308,9 @@ deterministic analysis → unresolved question → evidence packet → semantic 
 
 **Every failure is UNKNOWN:** no provider, provider unavailable, timeout, a reply that is not one JSON object, a verdict outside the three, a confidence outside 0..1, a citation of a record not in the packet, an answer to a different question, or confidence below `min_confidence` (default 0.75). Confidence only ever withholds; a high confidence promotes nothing.
 
-**Only the packet leaves.** A packet holds the claim, the question and the records the analysis named as bearing on it — never a repository and never the rest of the case. Each record is reduced to its type, coverage, producer and content. Secrets and identifiers are replaced by digests, each excerpt is bounded, and a packet over the size limit is not sent. `packet_hash` commits to exactly what was sent.
+**Only the packet leaves.** A packet holds the claim, the question and the records the analysis named as bearing on it — never a repository and never the rest of the case. Each record is reduced to its type, coverage, producer and what its producer said: ids, links, custody fields and `sha256:` digests are dropped, and identifying fields (rule, title, severity, summary, observation, location) lead, so a bounded excerpt cuts detail rather than identity. Secrets and identifiers are replaced by digests, each excerpt is bounded, and a packet over the size limit is not sent. Why the rules left the claim open is kept beside the packet for you and is not sent, so no earlier reading can anchor the next. `packet_hash` commits to exactly what was sent.
+
+**A reading is not more evidence.** The structural analysers do not count readings: five models reading one producer's evidence are not five more producers, and cannot clear RG-PROV-002 ("all evidence traces to a single producer"). Only the resolution policy reads them.
 
 **Persisted.** Each assertion records the provider, the model, the model version the provider reported, the prompt hash, the packet hash, the stated candidate it was made against, the raw response (bounded) and its digest, the time and the verifier policy. `--semantic-out` keeps them; `--semantic-assertions` replays them with no model, and the case is the same. A `semantic_assertion` row in an envelope replays the same way. Replayed assertions are `DECLARED`; ones made in the same run are `DERIVED`.
 
@@ -317,11 +321,73 @@ deterministic analysis → unresolved question → evidence packet → semantic 
 | `RG_SEMANTIC_BASE_URL` | required. There is no default endpoint: a question goes where you point it or nowhere |
 | `RG_SEMANTIC_MODEL` | required |
 | `RG_SEMANTIC_API_KEY` | required for a non-local endpoint |
-| `RG_SEMANTIC_PROVIDER` | `openai_compatible` (default) or `ollama` |
+| `RG_SEMANTIC_PROVIDER` | `openai_compatible` (default), `ollama`, `decision_http`, `laya`, `jev`, or the name of a provider an installed package offers |
 | `RG_SEMANTIC_DIALECT` | name the wire format explicitly (`openai_chat`, `ollama_native`, `openai_responses`, `anthropic_messages`, `google_generate_content`) |
 | `RG_SEMANTIC_MODEL_FAMILY` | your statement of the model family, so the independence analysis can group this model's readings with its other output |
+| `RG_SEMANTIC_COST_PER_CALL` | what one call costs, in the unit your `max_cost` budget is written in. Laid over anything the provider declares |
+| `RG_SEMANTIC_MAX_INPUT_CHARS` | hold the provider to this context; a larger request is not sent |
 
-OpenAI-compatible covers hosted APIs and local servers alike: vLLM, llama.cpp's server, LM Studio, Ollama's `/v1`. A provider this build does not ship (a future Jev, Laya, or a release-gate specialist model) is a class with `identity()` and `complete()`, registered on a `ProviderRegistry`; nothing in the verifier or the policy names a vendor. `release-gate audit --verify` uses the same transport, and stays an advisory annotation on findings.
+OpenAI-compatible covers hosted APIs and local servers alike: vLLM, llama.cpp's server, LM Studio, Ollama's `/v1`. A provider this build does not ship is a class registered on a `ProviderRegistry`, or a factory an installed package offers under the `release_gate.semantic_providers` entry point. Nothing in the verifier or the policy names a vendor. `release-gate audit --verify` uses the same transport, and stays an advisory annotation on findings.
+
+**Decision models.** A model built to pick among options (a System-One model such as Laya or Jev) is asked differently from a chat model:
+
+```
+STATE:     the packet's records, one line each
+QUESTION:  Does the evidence establish: <the claim>?
+CHOICES:   established | violated | insufficient_evidence
+```
+
+It may return a choice, a score per choice, a probability per choice, and reasoning. Nothing is invented from what it returns:
+
+- **Probabilities** must be over the offered choices, within 0..1, and sum to 1 within `probability_tolerance` (default 0.01). They are kept exactly as returned and never rescaled. A choice it did not score stays absent rather than becoming 0.
+- **Scores** are kept and never turned into probabilities.
+- **A choice with no probability** has no confidence. By default it is UNKNOWN (`NO_PROBABILITY`); a verifier policy with `"unscored": "ACCEPT"` takes it, with a null confidence.
+- **Contradictions are malformed.** A tie is UNKNOWN (`NO_DECISION`). A choice that disagrees with its own distribution, a label nobody offered, and an output the provider declared it does not give are all MALFORMED.
+
+The assertion records the choices, what was chosen, the probabilities and scores as returned, the input-state hash, latency, provider metadata, and the provider's declared capabilities.
+
+`decision_http` speaks a written-down protocol, `release-gate-decision/1`:
+
+| Endpoint | Request | Response |
+|---|---|---|
+| `GET {base}/capabilities` (optional) | — | `{"interface": "DECISION", "outputs": ["PROBABILITY", …], "confidence", "max_input_chars", "max_choices", "locality", "determinism", "probabilities_calibrated", "cost_per_call"}` |
+| `POST {base}/decide` | `{"protocol": "release-gate-decision/1", "model", "state", "question", "choices", "state_hash"}` | any of `{"probabilities", "scores", "choice", "reasoning", "model_version", "metadata"}` |
+
+An endpoint with no usable `/capabilities` gets a conservative default, labelled as one. `laya` and `jev` are the same provider under their own names, so an answer is recorded as theirs. Neither is imported unless you name it, and neither encodes an API release-gate cannot test against: a deployment with its own interface is reached through a small adapter that serves these two endpoints.
+
+#### Which questions are asked — semantic escalation
+
+A model existing is never a reason to ask it anything. Before any question is sent, `--semantic` builds an **escalation plan**, deterministically, from the analysis, the case's records, the escalation policy and what the provider declared. The plan lists every claim and every static finding with its adjudication mode and why it was or was not asked. It is the first row of `--semantic-out`.
+
+| Mode | | Asked? |
+|---|---|---|
+| `DETERMINISTIC` | the rules decide. Every structural rule, and every scanner rule except RG-GATE-001 (model output reaching `os.system` is a fact, not an opinion) | never |
+| `HYBRID` | static analysis establishes a fact; a reading weighs a mechanism you supplied against it. RG-GATE-001: an irreversible action with no code-level approval gate, and a record you supply that says `"addresses": ["RG-GATE-001"]` and supports a claim (say, that the orchestrator approves every refund) | about the mechanism's claim, never the finding |
+| `SEMANTIC` | only a reading can settle it: whether evidence supports a claim | when the claim is open |
+| `EXTERNAL_ONLY` | another producer's result (an evaluator's score, another scanner's finding) | never; it is ingested as reported, not re-graded |
+
+**A HIGH finding cannot be erased.** A static finding contradicts `sw:code-safety`, and a contradicted claim is never asked about, under any policy. Readings saying the claim is supported, from any number of models, under a policy that counts readings, leave it CONTRADICTED and the decision BLOCK. So does `audit --verify` marking the finding refuted, and so does a HYBRID reading saying your mechanism controls the path: that reading lands on the mechanism's claim, and the finding stays.
+
+**What is weighed, in order:**
+
+1. whether the rules settled the claim, already checked it, or left nothing to read;
+2. its mode;
+3. the policy's `never`, `always` and `hybrid`;
+4. criticality: required claims, and claims whose criticality could not be determined (`scope`);
+5. prior readings: an answer on record for the same question over the same packet is not asked again, because re-asking until a model agrees is shopping. A timeout may be retried;
+6. availability: a provider, a packet within limits, a request within the provider's context;
+7. budget: `max_questions` (default 10), and `max_cost` at the declared `cost_per_call`. Under a cost budget, a provider with no declared cost is not asked.
+
+The remaining questions are asked in a fixed order, so a budget cuts the same ones every time. Policy-named claims come first, then required claims, then HYBRID questions.
+
+```json
+{"policy_id": "frugal", "version": "1", "scope": "REQUIRED_OR_UNDETERMINED",
+ "always": [], "never": ["c-cafeteria"], "hybrid": true,
+ "max_questions": 5, "max_cost": 0.50,
+ "modes": {"RG-GATE-001": "DETERMINISTIC"}}
+```
+
+A policy can withdraw a rule from reading (`DETERMINISTIC`). It cannot open a deterministic rule to a model; that policy is refused.
 
 #### Evidence producers — adding a source without changing the engine
 

@@ -13,6 +13,8 @@ then reads.
     deterministic analysis
           ↓  unresolved_questions()       — claims the rules could not settle
     SemanticQuestion
+          ↓  plan_escalation()            — which are worth asking (escalation.py)
+    SemanticQuestion
           ↓  build_evidence_packet()      — only the records that bear on it,
     EvidencePacket                           minimised, bounded, hashed
           ↓  SemanticVerifier.verify()    — any provider, behind one interface
@@ -64,6 +66,23 @@ specialist model — is a class implementing the protocol, registered by name.
 Nothing in the verifier, the packet or the policy names a vendor, and the
 provider-free guard in the test suite reads this file to keep it that way.
 
+**Not every model is a chat model.** A decision model takes a STATE, a QUESTION
+and a set of CHOICES and returns a choice, a score per choice, or a distribution
+over them. `DecisionProvider` is that interface: the packet is rendered as the
+state, the claim is asked as one question, and the choices offered are
+`established | violated | insufficient_evidence` — one-to-one with the three
+verdicts. What comes back is checked, never repaired. Probabilities must be
+finite, within 0..1, over choices that were offered, and sum to 1 within the
+policy's tolerance; they are then kept exactly as returned, never rescaled.
+Scores are kept and never converted into probabilities. A bare choice carries no
+confidence at all, and by default an answer nobody attached a probability to is
+UNKNOWN (`NO_PROBABILITY`) — a provider must not clear a confidence bar by
+saying less. A tie is no decision. An output the provider declared it does not
+give is not read. What a provider can do — the outputs it returns, how its
+confidence reads, its context and choice limits, local or remote, deterministic
+or not, what a call costs — is discovered from the provider and persisted with
+the answer, or is a conservative default that says it is one.
+
 **Persisted for reproducibility, not for trust.** Every assertion records the
 provider, model, the model version the provider reported, the prompt hash, the
 packet hash, the candidate state hash, the raw response (bounded) and its digest,
@@ -75,7 +94,9 @@ is deterministic and reads only what was stored.
 from __future__ import annotations
 
 import json
+import math
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol,
@@ -84,16 +105,27 @@ from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional, Prot
 from release_gate.assurance.canonical import canonical_json, digest_bytes, digest_object, short_id
 from release_gate.assurance.privacy import (DataClass, Disposition, RedactionPolicy,
                                             minimise)
+from release_gate.assurance.producer_contract import ConfidenceSemantics, Determinism
 
 __all__ = [
+    "DECISION_CHOICES",
+    "DEFAULT_CAPABILITIES_DECLARER",
+    "DEFAULT_SEMANTIC_VERIFIER_POLICY",
     "SEMANTIC_PROMPT_VERSION",
     "SEMANTIC_VERIFIER_SCHEMA_VERSION",
     "AssertionStatus",
-    "DEFAULT_SEMANTIC_VERIFIER_POLICY",
+    "DecisionProvider",
+    "DecisionReply",
+    "DecisionRequest",
     "EvidencePacket",
+    "Locality",
     "LowConfidenceAction",
+    "NoQuestion",
+    "OutputKind",
     "PacketItem",
+    "ProviderCapabilities",
     "ProviderIdentity",
+    "ProviderInterface",
     "ProviderRegistry",
     "ProviderReply",
     "ProviderRequest",
@@ -108,9 +140,15 @@ __all__ = [
     "SemanticVerifierError",
     "SemanticVerifierPolicy",
     "UnknownReason",
+    "UnscoredAction",
     "assertions_from_records",
     "assertions_to_records",
     "build_evidence_packet",
+    "default_capabilities",
+    "discover_capabilities",
+    "is_semantic_reading",
+    "question_for",
+    "render_state",
     "state_hash_for",
     "unresolved_questions",
 ]
@@ -159,6 +197,13 @@ class UnknownReason(str, Enum):
     LOW_CONFIDENCE = "LOW_CONFIDENCE"
     EMPTY_PACKET = "EMPTY_PACKET"
     PACKET_TOO_LARGE = "PACKET_TOO_LARGE"
+    #: A decision provider supplied a choice or scores and no probability, and
+    #: the policy does not accept an answer whose confidence nobody stated.
+    NO_PROBABILITY = "NO_PROBABILITY"
+    #: The top choices tied: the provider did not choose.
+    NO_DECISION = "NO_DECISION"
+    #: The provider's declared capabilities cannot take this request.
+    UNSUPPORTED_BY_PROVIDER = "UNSUPPORTED_BY_PROVIDER"
 
 
 class LowConfidenceAction(str, Enum):
@@ -168,9 +213,24 @@ class LowConfidenceAction(str, Enum):
     REQUIRE_VERIFICATION = "REQUIRE_VERIFICATION"
 
 
+class UnscoredAction(str, Enum):
+    """What a decision answer with no probability becomes.
+
+    A choice-only or score-only provider states no confidence. Treating that as
+    passing a confidence threshold would let a provider clear the bar by saying
+    less, so the default is UNKNOWN; a policy that accepts such answers says so.
+    """
+
+    UNKNOWN = "UNKNOWN"
+    ACCEPT = "ACCEPT"
+
+
 class QuestionKind(str, Enum):
     #: Does what these records contain bear on, and support, this claim?
     EVIDENCE_SUPPORTS_CLAIM = "EVIDENCE_SUPPORTS_CLAIM"
+    #: HYBRID: static analysis established an action; does the mechanism the
+    #: submission supplied actually control that path? (escalation.py)
+    MECHANISM_CONTROLS_PATH = "MECHANISM_CONTROLS_PATH"
 
 
 # ── policy ───────────────────────────────────────────────────────────────────
@@ -201,9 +261,20 @@ class SemanticVerifierPolicy:
     timeout_seconds: float = 60.0
     max_reason_chars: int = 400
     max_response_chars: int = 4000
+    #: How far a decision provider's probabilities may sum from 1. Outside it the
+    #: reply is malformed; inside it the numbers are kept exactly as returned.
+    probability_tolerance: float = 0.01
+    unscored: UnscoredAction = UnscoredAction.UNKNOWN
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "low_confidence", LowConfidenceAction(self.low_confidence))
+        object.__setattr__(self, "unscored", UnscoredAction(self.unscored))
+        tolerance = float(self.probability_tolerance)
+        if not 0.0 <= tolerance <= 0.1:
+            raise SemanticVerifierError(
+                "probability_tolerance is within 0..0.1: probabilities that sum to "
+                "anything further from 1 are not a distribution")
+        object.__setattr__(self, "probability_tolerance", tolerance)
         object.__setattr__(self, "withhold", tuple(sorted(
             {DataClass(c) for c in self.withhold}, key=lambda c: c.value)))
         try:
@@ -240,6 +311,8 @@ class SemanticVerifierPolicy:
                 "max_tokens": self.max_tokens, "timeout_seconds": self.timeout_seconds,
                 "max_reason_chars": self.max_reason_chars,
                 "max_response_chars": self.max_response_chars,
+                "probability_tolerance": self.probability_tolerance,
+                "unscored": self.unscored.value,
                 "prompt_version": SEMANTIC_PROMPT_VERSION,
                 "schema_version": SEMANTIC_VERIFIER_SCHEMA_VERSION}
 
@@ -255,7 +328,8 @@ class SemanticVerifierPolicy:
             return cls(**{f: data.get(f, getattr(default, f)) for f in (
                 "policy_id", "version", "min_confidence", "low_confidence", "max_items",
                 "max_excerpt_chars", "max_packet_chars", "withhold", "max_tokens",
-                "timeout_seconds", "max_reason_chars", "max_response_chars")})
+                "timeout_seconds", "max_reason_chars", "max_response_chars",
+                "probability_tolerance", "unscored")})
         except (TypeError, ValueError) as exc:
             if isinstance(exc, SemanticVerifierError):
                 raise
@@ -290,14 +364,34 @@ class SemanticQuestion:
 
     @property
     def text(self) -> str:
+        if self.kind is QuestionKind.MECHANISM_CONTROLS_PATH:
+            return ("Static analysis established the action in the first record. Does "
+                    "the mechanism in the other records actually control that path?")
         return ("Do the records in this packet, read as they are, support the claim, "
                 "contradict it, or leave it unsettled?")
 
-    def to_dict(self) -> Dict[str, Any]:
+    @property
+    def decision_question(self) -> str:
+        """The question as a decision model takes it: one line, about the claim."""
+        if self.kind is QuestionKind.MECHANISM_CONTROLS_PATH:
+            return ("Does the supplied mechanism control the path the static finding "
+                    f"flags, for: {self.statement}?")
+        return f"Does the evidence establish: {self.statement}?"
+
+    def asked(self) -> Dict[str, Any]:
+        """The question as a model receives it.
+
+        Without `unresolved_because`: why the rules left a claim open is the
+        reviewer's to read, not the model's. Once a reading is on record that
+        reason says what the reading was, and sending it would tell the next
+        model what the last one answered.
+        """
         return {"question_id": self.question_id, "kind": self.kind.value,
                 "claim_id": self.claim_id, "statement": self.statement,
-                "question": self.text, "evidence_refs": list(self.evidence_refs),
-                "unresolved_because": self.unresolved_because}
+                "question": self.text, "evidence_refs": list(self.evidence_refs)}
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {**self.asked(), "unresolved_because": self.unresolved_because}
 
 
 #: Statuses the deterministic rules leave open to a reading. ESTABLISHED and
@@ -305,12 +399,25 @@ class SemanticQuestion:
 #: nothing that counts, and re-reading what was set aside (another state of the
 #: release, an inadmissible method) would be asking a model to overrule a rule.
 _OPEN_TO_READING = frozenset({"SUPPORTED", "PARTIALLY_SUPPORTED", "UNKNOWN"})
+_SETTLED = frozenset({"ESTABLISHED", "CONTRADICTED"})
 _READABLE_ROLES = frozenset({"SUPPORTS", "INCONCLUSIVE"})
+_ESTABLISHING_KINDS = ("PROOF", "MECHANICAL", "EMPIRICAL")
 
 
-def unresolved_questions(report: Any, *, establishing: Iterable[str] = ("PROOF",
-                         "MECHANICAL", "EMPIRICAL")) -> List[SemanticQuestion]:
-    """The claims the deterministic resolution left to a reading, one question each.
+class NoQuestion(str, Enum):
+    """Why the deterministic resolution leaves a claim nothing to read."""
+
+    #: ESTABLISHED or CONTRADICTED. The rules decided; a reading cannot move it.
+    SETTLED = "SETTLED"
+    #: NOT_ASSESSED, UNSUPPORTED, or open with nothing readable bearing on it.
+    NOTHING_TO_READ = "NOTHING_TO_READ"
+    #: Everything readable is already a check of an establishing kind.
+    CHECKED = "CHECKED"
+
+
+def question_for(resolution: Any, *, establishing: Iterable[str] = _ESTABLISHING_KINDS
+                 ) -> Tuple[Optional[SemanticQuestion], Optional[NoQuestion]]:
+    """The reading question one claim's resolution leaves open — or why there is none.
 
     A claim qualifies when it is open (`_OPEN_TO_READING`) and something that
     bears on it is readable but unchecked: support that is a declaration, an
@@ -319,24 +426,36 @@ def unresolved_questions(report: Any, *, establishing: Iterable[str] = ("PROOF",
     checks of the `establishing` kinds is left alone — there is nothing for a
     reading to add.
     """
+    status = resolution.status.value
+    if status in _SETTLED:
+        return None, NoQuestion.SETTLED
+    if status not in _OPEN_TO_READING:
+        return None, NoQuestion.NOTHING_TO_READ
+    checked = {str(s).upper() for s in establishing}
+    items = [i for i in resolution.items if i.role.value in _READABLE_ROLES]
+    if not items:
+        return None, NoQuestion.NOTHING_TO_READ
+    unchecked = [i for i in items if i.role.value == "INCONCLUSIVE"
+                 or (i.strength is not None and i.strength.value not in checked)]
+    if not unchecked:
+        return None, NoQuestion.CHECKED
+    return SemanticQuestion(
+        claim_id=resolution.claim_id, statement=resolution.statement,
+        evidence_refs=tuple(i.item_id for i in items),
+        unresolved_because=f"{status} ({resolution.rule}): {resolution.basis}"), None
+
+
+def unresolved_questions(report: Any, *, establishing: Iterable[str] = _ESTABLISHING_KINDS
+                         ) -> List[SemanticQuestion]:
+    """The claims the deterministic resolution left to a reading, one question each.
+
+    Every claim that `question_for` finds open. Which of them are worth asking
+    is not decided here: that is the escalation policy's (escalation.py).
+    """
     if report is None:
         return []
-    checked = {str(s).upper() for s in establishing}
-    questions: List[SemanticQuestion] = []
-    for resolution in report.resolutions:
-        if resolution.status.value not in _OPEN_TO_READING:
-            continue
-        items = [i for i in resolution.items if i.role.value in _READABLE_ROLES]
-        unchecked = [i for i in items if i.role.value == "INCONCLUSIVE"
-                     or (i.strength is not None and i.strength.value not in checked)]
-        if not unchecked:
-            continue
-        questions.append(SemanticQuestion(
-            claim_id=resolution.claim_id, statement=resolution.statement,
-            evidence_refs=tuple(i.item_id for i in items),
-            unresolved_because=f"{resolution.status.value} ({resolution.rule}): "
-                               f"{resolution.basis}"))
-    return questions
+    found = (question_for(r, establishing=establishing)[0] for r in report.resolutions)
+    return [q for q in found if q is not None]
 
 
 def state_hash_for(analysis: Any) -> str:
@@ -403,7 +522,7 @@ class EvidencePacket:
 
     def payload(self) -> Dict[str, Any]:
         """The part a model reads. The packet hash is over this, and only this."""
-        return {"question": self.question.to_dict(),
+        return {"question": self.question.asked(),
                 "items": [i.to_dict() for i in self.items],
                 "state_hash": self.state_hash}
 
@@ -413,9 +532,65 @@ class EvidencePacket:
     def to_dict(self) -> Dict[str, Any]:
         return {"record_type": "evidence_packet", "packet_hash": self.packet_hash,
                 **self.payload(), "policy": self.policy_ref,
+                "unresolved_because": self.question.unresolved_because,
                 "omitted": [{"ref": r, "why": w} for r, w in self.omitted],
                 "redactions": [dict(r) for r in self.redactions],
                 "over_budget": self.over_budget, "size": self.size()}
+
+
+#: What a serialised evidence record carries about itself rather than about the
+#: world: ids, links, digests, trust and custody. The packet's `fields` already
+#: say what kind of record it is; a reader needs what the producer said.
+_RECORD_MACHINERY = frozenset({
+    "applies_to_digest", "content_reference", "contradicts_claims", "coverage_note",
+    "coverage_status", "digest", "epistemic_status", "evidence_id", "evidence_type",
+    "independence_basis", "independence_group", "metadata", "parent_evidence",
+    "producer", "provenance_status", "record_id", "record_type", "schema_version",
+    "source", "source_identity", "stamped_on_arrival", "supports_claims", "timestamp",
+    "trust", "trust_status", "verification_method"})
+
+#: Read first, so a bounded excerpt keeps what identifies a record and cuts detail.
+_LEAD_KEYS = ("rule_id", "title", "severity", "summary", "statement", "observation",
+              "not_identified", "message", "outcome", "verdict", "file", "line")
+
+_DIGEST = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
+
+
+def _readable(value: Any) -> Any:
+    """Without digests and empty values: a hash says nothing to a reader."""
+    if isinstance(value, Mapping):
+        kept = {str(k): _readable(v) for k, v in value.items()}
+        return {k: v for k, v in kept.items() if v not in (None, "", [], {})}
+    if isinstance(value, (list, tuple)):
+        kept = [_readable(v) for v in value]
+        return [v for v in kept if v not in (None, "", [], {})]
+    if isinstance(value, str) and _DIGEST.match(value):
+        return None
+    return value
+
+
+def _what_it_says(body: Mapping[str, Any]) -> Dict[str, Any]:
+    """A record's content as its producer stated it, unwrapped and in reading order.
+
+    A record written out and read back as an envelope row carries its own
+    serialisation around the content; that wrapper is machinery and is dropped.
+    """
+    said = {k: v for k, v in body.items()
+            if k not in _RECORD_MACHINERY and not str(k).startswith("producer_claimed_")}
+    inner = said.pop("content", None)
+    if isinstance(inner, Mapping):
+        said = {**said, **inner}
+    said = _readable(said)
+    lead = {k: said[k] for k in _LEAD_KEYS if k in said}
+    return {**lead, **{k: said[k] for k in sorted(said) if k not in lead}}
+
+
+def _excerpt_text(body: Mapping[str, Any]) -> str:
+    """Lead keys first, the rest sorted; nested values canonical. Deterministic."""
+    if not body:
+        return ""
+    return "{" + ",".join(f"{json.dumps(k, ensure_ascii=False)}:{canonical_json(v)}"
+                          for k, v in body.items()) + "}"
 
 
 def _minimisation_policy(policy: SemanticVerifierPolicy) -> RedactionPolicy:
@@ -468,6 +643,8 @@ def build_evidence_packet(question: SemanticQuestion, *, records: Mapping[str, A
         else:
             omitted.append((ref, "not held by this case"))
             continue
+        if isinstance(body, Mapping):
+            body = _what_it_says(body)
         sent, record_of = minimise({"fields": fields, "content": body}, redaction)
         for redacted in record_of.redactions:
             slot = found.setdefault(redacted.data_class.value,
@@ -475,7 +652,8 @@ def build_evidence_packet(question: SemanticQuestion, *, records: Mapping[str, A
                                      "occurrences": 0, "digests": []})
             slot["occurrences"] += redacted.occurrences
             slot["digests"].append(redacted.content_digest)
-        text = canonical_json(sent["content"]) if sent["content"] else ""
+        text = (_excerpt_text(sent["content"]) if isinstance(sent["content"], Mapping)
+                else canonical_json(sent["content"]) if sent["content"] else "")
         excerpt, truncated = _bounded(text, policy.max_excerpt_chars)
         items.append(PacketItem(
             ref=ref, kind=kind, fields=sent["fields"], excerpt=excerpt,
@@ -531,6 +709,227 @@ class ProviderReply:
     model_version: str = ""
 
 
+class ProviderInterface(str, Enum):
+    """How a provider is asked. Not every model is a chat model."""
+
+    CHAT = "CHAT"          # instruction + payload in, text out (parsed as JSON)
+    DECISION = "DECISION"  # state + question + choices in, a choice/scores/probabilities out
+
+
+class OutputKind(str, Enum):
+    """What a provider can return. Declared, so a reader knows what was possible."""
+
+    CHOICE = "CHOICE"                            # one of the offered choices
+    SCORE = "SCORE"                              # a number per choice, on its own scale
+    PROBABILITY = "PROBABILITY"                  # a distribution over the choices
+    FREE_FORM_REASONING = "FREE_FORM_REASONING"  # prose; recorded, never parsed for a verdict
+
+
+class Locality(str, Enum):
+    LOCAL = "LOCAL"
+    REMOTE = "REMOTE"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    """What a provider says it can do. As declared; release-gate checks the replies.
+
+    `declared_by` says who stated these: the provider itself, the operator's
+    configuration, or release-gate's conservative default for a provider that
+    stated nothing. A default is never dressed up as a declaration.
+    """
+
+    interface: ProviderInterface
+    outputs: Tuple[OutputKind, ...] = ()
+    confidence: ConfidenceSemantics = ConfidenceSemantics.NONE
+    max_input_chars: Optional[int] = None
+    max_choices: Optional[int] = None
+    locality: Locality = Locality.UNKNOWN
+    determinism: Determinism = Determinism.UNKNOWN
+    #: Only meaningful with PROBABILITY. None is "not stated", not "no".
+    probabilities_calibrated: Optional[bool] = None
+    #: In whatever unit the operator budgets in; None is "not stated".
+    cost_per_call: Optional[float] = None
+    declared_by: str = "provider"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "interface", ProviderInterface(self.interface))
+        object.__setattr__(self, "outputs", tuple(dict.fromkeys(
+            OutputKind(o) for o in self.outputs)))
+        object.__setattr__(self, "confidence", ConfidenceSemantics(self.confidence))
+        object.__setattr__(self, "locality", Locality(self.locality))
+        object.__setattr__(self, "determinism", Determinism(self.determinism))
+        for name in ("max_input_chars", "max_choices"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)
+                                      or value < 1):
+                raise SemanticVerifierError(f"{name} is a positive integer or unstated")
+        if self.cost_per_call is not None and float(self.cost_per_call) < 0:
+            raise SemanticVerifierError("cost_per_call cannot be negative")
+
+    def supports(self, kind: OutputKind) -> bool:
+        return OutputKind(kind) in self.outputs
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"interface": self.interface.value,
+                "outputs": [o.value for o in self.outputs],
+                "confidence": self.confidence.value,
+                "max_input_chars": self.max_input_chars, "max_choices": self.max_choices,
+                "locality": self.locality.value, "determinism": self.determinism.value,
+                "probabilities_calibrated": self.probabilities_calibrated,
+                "cost_per_call": self.cost_per_call, "declared_by": self.declared_by}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any], *,
+                  declared_by: str = "provider") -> "ProviderCapabilities":
+        if not isinstance(data, Mapping):
+            raise SemanticVerifierError("capabilities are a JSON object")
+        try:
+            return cls(interface=ProviderInterface(str(data.get("interface") or "")),
+                       outputs=tuple(OutputKind(str(o)) for o in (data.get("outputs") or ())),
+                       confidence=ConfidenceSemantics(str(data.get("confidence") or "NONE")),
+                       max_input_chars=data.get("max_input_chars"),
+                       max_choices=data.get("max_choices"),
+                       locality=Locality(str(data.get("locality") or "UNKNOWN")),
+                       determinism=Determinism(str(data.get("determinism") or "UNKNOWN")),
+                       probabilities_calibrated=data.get("probabilities_calibrated"),
+                       cost_per_call=data.get("cost_per_call"),
+                       declared_by=str(data.get("declared_by") or declared_by))
+        except (TypeError, ValueError) as exc:
+            if isinstance(exc, SemanticVerifierError):
+                raise
+            raise SemanticVerifierError(f"unreadable capabilities: {exc}") from exc
+
+
+#: The choices a decision model is offered, and the verdict each one is. The
+#: words are the decision model's; the verdicts are the verifier's own three.
+DECISION_CHOICES: Mapping[str, "SemanticVerdict"] = {
+    "established": SemanticVerdict.SUPPORTED,
+    "violated": SemanticVerdict.CONTRADICTED,
+    "insufficient_evidence": SemanticVerdict.INSUFFICIENT_EVIDENCE,
+}
+
+
+@dataclass(frozen=True)
+class DecisionRequest:
+    """STATE, QUESTION, CHOICES — the whole of what a decision model is given."""
+
+    state: str
+    question: str
+    choices: Tuple[str, ...]
+    timeout_seconds: float
+    state_hash: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "choices", tuple(self.choices))
+        object.__setattr__(self, "state_hash",
+                           digest_bytes((self.state or "").encode("utf-8")))
+
+    def as_text(self) -> str:
+        """The request as one block, for a provider that takes a single input."""
+        return ("STATE:\n" + self.state + "\n\nQUESTION:\n" + self.question
+                + "\n\nCHOICES:\n" + "\n".join(f"- {c}" for c in self.choices))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"state": self.state, "question": self.question,
+                "choices": list(self.choices), "state_hash": self.state_hash}
+
+
+@dataclass(frozen=True)
+class DecisionReply:
+    """What a decision provider returned, before anything is concluded from it.
+
+    Any of the three may be absent. Absent stays absent: a provider that returns
+    a choice has not returned probabilities, and none is filled in for it.
+    """
+
+    probabilities: Optional[Mapping[str, Any]] = None
+    scores: Optional[Mapping[str, Any]] = None
+    choice: Optional[str] = None
+    reasoning: str = ""
+    model_version: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    #: The body exactly as the transport received it, when there was one. It is
+    #: what gets stored and digested, so the record shows what came back rather
+    #: than release-gate's reading of it.
+    raw: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """As returned. A field of the wrong shape stays that shape, for the record."""
+        def plain(value: Any) -> Any:
+            return dict(value) if isinstance(value, Mapping) else value
+        return {"probabilities": plain(self.probabilities), "scores": plain(self.scores),
+                "choice": self.choice, "reasoning": self.reasoning,
+                "model_version": self.model_version, "metadata": plain(self.metadata)}
+
+
+@runtime_checkable
+class DecisionProvider(Protocol):
+    """A model that picks among choices. Three methods; no chat in sight."""
+
+    def identity(self) -> "ProviderIdentity": ...
+
+    def capabilities(self) -> ProviderCapabilities: ...
+
+    def decide(self, request: DecisionRequest) -> DecisionReply: ...
+
+
+#: Who declared a default. Spelled once, so a default is always recognisable.
+DEFAULT_CAPABILITIES_DECLARER = "release-gate default: the provider declared no capabilities"
+
+
+def default_capabilities(interface: ProviderInterface, *,
+                         local: Optional[bool] = None) -> ProviderCapabilities:
+    """The least a provider of this interface can be assumed to do, saying so.
+
+    A chat provider is assumed to return its verdict word and prose, because
+    that is the contract it is asked under, with a self-reported confidence. A
+    decision provider is assumed to return nothing in particular: the verifier
+    reads whatever arrives and holds it to no declaration.
+    """
+    interface = ProviderInterface(interface)
+    chat = interface is ProviderInterface.CHAT
+    return ProviderCapabilities(
+        interface=interface,
+        outputs=(OutputKind.CHOICE, OutputKind.FREE_FORM_REASONING) if chat else (),
+        confidence=ConfidenceSemantics.PRODUCER_SCORE if chat else ConfidenceSemantics.NONE,
+        locality=(Locality.UNKNOWN if local is None
+                  else Locality.LOCAL if local else Locality.REMOTE),
+        declared_by=DEFAULT_CAPABILITIES_DECLARER)
+
+
+def discover_capabilities(provider: Any) -> ProviderCapabilities:
+    """What a provider declares it can do, or the conservative default that says so."""
+    declared = getattr(provider, "capabilities", None)
+    if callable(declared):
+        try:
+            found = declared()
+        except Exception:  # an endpoint that cannot describe itself is not fatal
+            found = None
+        if isinstance(found, ProviderCapabilities):
+            return found
+    interface = (ProviderInterface.DECISION if callable(getattr(provider, "decide", None))
+                 else ProviderInterface.CHAT)
+    try:
+        local = bool(provider.identity().local)
+    except Exception:
+        local = None
+    return default_capabilities(interface, local=local)
+
+
+def render_state(packet: "EvidencePacket") -> str:
+    """The packet's records as compact STATE lines. Deterministic, and only these."""
+    lines: List[str] = []
+    for item in packet.items:
+        fields = ", ".join(f"{k}={v}" for k, v in sorted(item.fields.items())
+                           if v not in (None, ""))
+        lines.append(f"[{item.ref}] {item.kind}: {fields}")
+        if item.excerpt:
+            lines.append(f"  {item.excerpt}")
+    return "\n".join(lines)
+
+
 @runtime_checkable
 class SemanticProvider(Protocol):
     """Anything that can answer one request. Two methods; no vendor in sight."""
@@ -565,9 +964,11 @@ class ProviderRegistry:
             raise SemanticVerifierError(
                 f"no provider named {key!r}; registered: {', '.join(self.names()) or 'none'}")
         provider = self._factories[key](**config)
-        if not isinstance(provider, SemanticProvider):
+        if not isinstance(provider, (SemanticProvider, DecisionProvider)):
             raise SemanticVerifierError(
-                f"{key!r} built something without identity() and complete()")
+                f"{key!r} built something that is neither a chat provider "
+                "(identity, complete) nor a decision provider (identity, "
+                "capabilities, decide)")
         return provider
 
 
@@ -601,6 +1002,22 @@ class SemanticAssertion:
     response_digest: str = ""
     timestamp: str = ""
     detail: str = ""
+    #: What was asked: the question's kind, how, and what exactly came back.
+    question_kind: str = QuestionKind.EVIDENCE_SUPPORTS_CLAIM.value
+    interface: str = "CHAT"
+    question_text: str = ""
+    choices: Tuple[str, ...] = ()
+    chosen: str = ""
+    #: As the provider returned them. None means it returned none — never zeros.
+    probabilities: Optional[Mapping[str, float]] = None
+    scores: Optional[Mapping[str, float]] = None
+    input_state_hash: str = ""
+    provider_metadata: Mapping[str, Any] = field(default_factory=dict)
+    #: What the provider declared it can do when it answered (or the default it
+    #: was given, which says so) — what a reader needs to weigh the numbers.
+    capabilities: Mapping[str, Any] = field(default_factory=dict)
+    #: Wall time of the call. A fact about the run, so outside the identity.
+    latency_ms: Optional[float] = None
     schema_version: int = SEMANTIC_VERIFIER_SCHEMA_VERSION
     assertion_id: str = field(default="", init=False)
 
@@ -611,6 +1028,13 @@ class SemanticAssertion:
         if self.unknown_reason is not None:
             object.__setattr__(self, "unknown_reason", UnknownReason(self.unknown_reason))
         object.__setattr__(self, "evidence_refs", tuple(str(r) for r in self.evidence_refs))
+        object.__setattr__(self, "choices", tuple(str(c) for c in self.choices))
+        object.__setattr__(self, "provider_metadata", dict(self.provider_metadata or {}))
+        object.__setattr__(self, "capabilities", dict(self.capabilities or {}))
+        for name in ("probabilities", "scores"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, {str(k): float(v) for k, v in value.items()})
         if self.status is AssertionStatus.ANSWERED and (
                 self.verdict is None or self.unknown_reason is not None):
             raise SemanticVerifierError("an ANSWERED assertion carries a verdict and no "
@@ -647,8 +1071,9 @@ class SemanticAssertion:
         return self.status is AssertionStatus.ANSWERED
 
     def identity(self) -> Dict[str, Any]:
-        """Everything but the time it was made, which is a fact about the run."""
-        return {k: v for k, v in self._fields().items() if k != "timestamp"}
+        """Everything but when it was made and how long it took — facts about the run."""
+        return {k: v for k, v in self._fields().items()
+                if k not in ("timestamp", "latency_ms")}
 
     def _fields(self) -> Dict[str, Any]:
         return {"schema_version": self.schema_version, "question_id": self.question_id,
@@ -664,7 +1089,17 @@ class SemanticAssertion:
                 "prompt_hash": self.prompt_hash, "packet_hash": self.packet_hash,
                 "state_hash": self.state_hash, "policy": self.policy_ref,
                 "response": self.response, "response_digest": self.response_digest,
-                "timestamp": self.timestamp, "detail": self.detail}
+                "timestamp": self.timestamp, "detail": self.detail,
+                "question_kind": self.question_kind,
+                "interface": self.interface, "question_text": self.question_text,
+                "choices": list(self.choices), "chosen": self.chosen,
+                "probabilities": (dict(self.probabilities)
+                                  if self.probabilities is not None else None),
+                "scores": dict(self.scores) if self.scores is not None else None,
+                "input_state_hash": self.input_state_hash,
+                "provider_metadata": dict(self.provider_metadata),
+                "capabilities": dict(self.capabilities),
+                "latency_ms": self.latency_ms}
 
     def to_dict(self) -> Dict[str, Any]:
         return {"record_type": "semantic_assertion", "assertion_id": self.assertion_id,
@@ -702,7 +1137,24 @@ class SemanticAssertion:
                 response=str(data.get("response") or ""),
                 response_digest=str(data.get("response_digest") or ""),
                 timestamp=str(data.get("timestamp") or ""),
-                detail=str(data.get("detail") or ""))
+                detail=str(data.get("detail") or ""),
+                question_kind=QuestionKind(str(data.get("question_kind")
+                                               or QuestionKind.EVIDENCE_SUPPORTS_CLAIM.value)
+                                           ).value,
+                interface=str(data.get("interface") or "CHAT"),
+                question_text=str(data.get("question_text") or ""),
+                choices=tuple(str(c) for c in (data.get("choices") or ())),
+                chosen=str(data.get("chosen") or ""),
+                probabilities=_number_map(data.get("probabilities")),
+                scores=_number_map(data.get("scores")),
+                input_state_hash=str(data.get("input_state_hash") or ""),
+                provider_metadata=(dict(data["provider_metadata"])
+                                   if isinstance(data.get("provider_metadata"), Mapping)
+                                   else {}),
+                capabilities=(dict(data["capabilities"])
+                              if isinstance(data.get("capabilities"), Mapping) else {}),
+                latency_ms=(None if data.get("latency_ms") is None
+                            else _number(data["latency_ms"])))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, SemanticVerifierError):
                 raise
@@ -712,7 +1164,17 @@ class SemanticAssertion:
 def _number(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SemanticVerifierError(f"{value!r} is not a number")
+    if not math.isfinite(float(value)):
+        raise SemanticVerifierError(f"{value!r} is not a finite number")
     return float(value)
+
+
+def _number_map(value: Any) -> Optional[Dict[str, float]]:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise SemanticVerifierError("expected an object of numbers")
+    return {str(k): _number(v) for k, v in value.items()}
 
 
 # ── the verifier ─────────────────────────────────────────────────────────────
@@ -762,12 +1224,30 @@ def _utc_now() -> str:
 class SemanticVerifier:
     """Ask one provider one question per packet. Every failure is UNKNOWN."""
 
-    def __init__(self, provider: Optional[SemanticProvider], *,
+    def __init__(self, provider: Optional[Any], *,
                  policy: SemanticVerifierPolicy = DEFAULT_SEMANTIC_VERIFIER_POLICY,
-                 clock: Callable[[], str] = _utc_now) -> None:
+                 clock: Callable[[], str] = _utc_now,
+                 timer: Callable[[], float] = time.monotonic) -> None:
         self.provider = provider
         self.policy = policy
         self.clock = clock
+        self.timer = timer
+        self._capabilities: Optional[ProviderCapabilities] = None
+
+    @property
+    def capabilities(self) -> Optional[ProviderCapabilities]:
+        """What the provider declared, discovered once. None without a provider."""
+        if self.provider is None:
+            return None
+        if self._capabilities is None:
+            self._capabilities = discover_capabilities(self.provider)
+        return self._capabilities
+
+    def decision_request_for(self, packet: EvidencePacket) -> DecisionRequest:
+        return DecisionRequest(state=render_state(packet),
+                               question=packet.question.decision_question,
+                               choices=tuple(DECISION_CHOICES),
+                               timeout_seconds=float(self.policy.timeout_seconds))
 
     def request_for(self, packet: EvidencePacket) -> ProviderRequest:
         return ProviderRequest(
@@ -785,7 +1265,7 @@ class SemanticVerifier:
         question = packet.question
         base: Dict[str, Any] = {
             "question_id": question.question_id, "claim_id": question.claim_id,
-            "packet_hash": packet.packet_hash, "state_hash": packet.state_hash,
+            "question_kind": question.kind.value, "packet_hash": packet.packet_hash, "state_hash": packet.state_hash,
             "policy_ref": self.policy.ref, "timestamp": self.clock()}
 
         def unknown(why: UnknownReason, explained: str, **extra: Any) -> SemanticAssertion:
@@ -808,18 +1288,48 @@ class SemanticVerifier:
         except Exception as exc:  # a provider that cannot say who it is is unavailable
             return unknown(UnknownReason.PROVIDER_UNAVAILABLE,
                            f"the provider could not identify itself: {type(exc).__name__}")
+        capabilities = self.capabilities
+        declared = {"provider": identity.provider, "model": identity.model,
+                    "model_family": identity.model_family,
+                    "interface": capabilities.interface.value,
+                    "capabilities": capabilities.to_dict()}
+        # The declared interface picks the path, and the provider must have the
+        # method that path calls. One without the other is a provider that has
+        # described itself wrongly, which is not an answer either way.
+        needed = ("decide" if capabilities.interface is ProviderInterface.DECISION
+                  else "complete")
+        if not callable(getattr(self.provider, needed, None)):
+            return unknown(UnknownReason.UNSUPPORTED_BY_PROVIDER,
+                           f"the provider declares the {capabilities.interface.value} "
+                           f"interface and has no {needed}(); nothing was asked",
+                           **declared)
+        if capabilities.interface is ProviderInterface.DECISION:
+            return self._decide(packet, identity, capabilities, base, unknown)
+
         request = self.request_for(packet)
-        who = {"provider": identity.provider, "model": identity.model,
-               "model_family": identity.model_family,
-               "prompt_hash": self.prompt_hash(request, identity.model)}
+        who = {**declared,
+               "prompt_hash": self.prompt_hash(request, identity.model),
+               "question_text": packet.question.text,
+               "choices": tuple(v.value for v in SemanticVerdict),
+               "input_state_hash": digest_bytes(request.user.encode("utf-8"))}
+        if (capabilities.max_input_chars is not None
+                and len(request.system) + len(request.user) > capabilities.max_input_chars):
+            return unknown(UnknownReason.PACKET_TOO_LARGE,
+                           f"the request is over the provider's declared "
+                           f"{capabilities.max_input_chars}-character limit; not sent",
+                           **who)
+        started = self.timer()
         try:
             reply = self.provider.complete(request)
         except ProviderTimeout as exc:
             return unknown(UnknownReason.TIMEOUT,
-                           f"no answer within {self.policy.timeout_seconds}s: {exc}", **who)
+                           f"no answer within {self.policy.timeout_seconds}s: {exc}",
+                           **who, latency_ms=self._elapsed(started))
         except Exception as exc:  # unreachable, refused, crashed — all the same here
             return unknown(UnknownReason.PROVIDER_UNAVAILABLE,
-                           f"{type(exc).__name__}: {exc}", **who)
+                           f"{type(exc).__name__}: {exc}", **who,
+                           latency_ms=self._elapsed(started))
+        who["latency_ms"] = self._elapsed(started)
 
         text = reply.text if isinstance(reply, ProviderReply) else ""
         stored, _ = _bounded_text(text, self.policy.max_response_chars)
@@ -877,10 +1387,215 @@ class SemanticVerifier:
                                        is LowConfidenceAction.REQUIRE_VERIFICATION))
         return SemanticAssertion(status=AssertionStatus.ANSWERED, verdict=verdict,
                                  confidence=confidence, evidence_refs=tuple(refs),
-                                 reason=reason, **base, **who)
+                                 reason=reason, chosen=verdict.value, **base, **who)
 
     def verify_all(self, packets: Sequence[EvidencePacket]) -> List[SemanticAssertion]:
         return [self.verify(p) for p in packets]
+
+    def _elapsed(self, started: float) -> float:
+        return round(max(0.0, (self.timer() - started) * 1000.0), 3)
+
+    def _decide(self, packet: EvidencePacket, identity: "ProviderIdentity",
+                capabilities: ProviderCapabilities, base: Dict[str, Any],
+                unknown: Callable[..., SemanticAssertion]) -> SemanticAssertion:
+        """The decision path: STATE / QUESTION / CHOICES in, a distribution or a choice out."""
+        request = self.decision_request_for(packet)
+        who: Dict[str, Any] = {
+            "provider": identity.provider, "model": identity.model,
+            "model_family": identity.model_family,
+            "interface": ProviderInterface.DECISION.value,
+            "capabilities": capabilities.to_dict(),
+            "question_text": request.question, "choices": request.choices,
+            "input_state_hash": request.state_hash,
+            "prompt_hash": digest_object({"request": request.to_dict(),
+                                          "model": identity.model,
+                                          "prompt_version": SEMANTIC_PROMPT_VERSION})}
+        if (capabilities.max_input_chars is not None
+                and len(request.as_text()) > capabilities.max_input_chars):
+            return unknown(UnknownReason.PACKET_TOO_LARGE,
+                           f"the state is over the provider's declared "
+                           f"{capabilities.max_input_chars}-character limit; not sent",
+                           **who)
+        if capabilities.max_choices is not None and len(request.choices) > capabilities.max_choices:
+            return unknown(UnknownReason.UNSUPPORTED_BY_PROVIDER,
+                           f"the provider takes at most {capabilities.max_choices} "
+                           f"choices and this question offers {len(request.choices)}",
+                           **who)
+        started = self.timer()
+        try:
+            reply = self.provider.decide(request)
+        except ProviderTimeout as exc:
+            return unknown(UnknownReason.TIMEOUT,
+                           f"no answer within {self.policy.timeout_seconds}s: {exc}",
+                           **who, latency_ms=self._elapsed(started))
+        except Exception as exc:  # unreachable, refused, crashed — all the same here
+            return unknown(UnknownReason.PROVIDER_UNAVAILABLE,
+                           f"{type(exc).__name__}: {exc}", **who,
+                           latency_ms=self._elapsed(started))
+        who["latency_ms"] = self._elapsed(started)
+        if not isinstance(reply, DecisionReply):
+            return unknown(UnknownReason.MALFORMED_RESPONSE,
+                           "the provider returned something that is not a decision", **who)
+        raw = reply.raw if isinstance(reply.raw, str) and reply.raw else _as_json(
+            reply.to_dict())
+        stored, _ = _bounded_text(raw, self.policy.max_response_chars)
+        reasoning, _ = _bounded_text(str(reply.reasoning or ""), self.policy.max_reason_chars)
+        who.update(model_version=str(reply.model_version or "")[:200], response=stored,
+                   response_digest=digest_bytes(raw.encode("utf-8")), reason=reasoning,
+                   provider_metadata=_plain_metadata(reply.metadata))
+        undeclared = _undeclared_outputs(reply, capabilities)
+        if undeclared:
+            return unknown(UnknownReason.MALFORMED_RESPONSE,
+                           f"the provider returned {' and '.join(undeclared)} and declared "
+                           f"only {', '.join(o.value for o in capabilities.outputs)}; an "
+                           "output nobody said would exist is not read", **who)
+        outcome = _normalise_decision(reply, request.choices,
+                                      self.policy.probability_tolerance)
+        if isinstance(outcome[0], UnknownReason):
+            why, explained = outcome
+            return unknown(why, explained, **who)
+        chosen, confidence, probabilities, scores = outcome
+        who.update(chosen=chosen, returned_verdict=chosen, probabilities=probabilities,
+                   scores=scores, confidence=confidence)
+        verdict = DECISION_CHOICES[chosen]
+        # A decision model reads the whole state it was given; it cites no refs,
+        # so its answer rests on every record in the packet.
+        refs = packet.refs
+        if confidence is None and self.policy.unscored is UnscoredAction.UNKNOWN:
+            return unknown(UnknownReason.NO_PROBABILITY,
+                           f"the provider chose {chosen!r} and supplied no probability; "
+                           "the policy does not accept an answer whose confidence "
+                           "nobody stated", **who, evidence_refs=refs)
+        if confidence is not None and confidence < self.policy.min_confidence:
+            return unknown(
+                UnknownReason.LOW_CONFIDENCE,
+                f"the provider gave {chosen!r} probability {confidence} and the policy "
+                f"needs {self.policy.min_confidence}", **who, evidence_refs=refs,
+                requires_verification=(self.policy.low_confidence
+                                       is LowConfidenceAction.REQUIRE_VERIFICATION))
+        return SemanticAssertion(status=AssertionStatus.ANSWERED, verdict=verdict,
+                                 evidence_refs=refs, **base, **who)
+
+
+def _as_json(value: Any) -> str:
+    """Canonical JSON when the value has one; a lossless-enough rendering when not.
+
+    A reply can hold what canonical JSON refuses (NaN, an object) — and that reply
+    still has to be recorded so the refusal that follows can be checked.
+    """
+    try:
+        return canonical_json(value)
+    except (TypeError, ValueError):
+        return json.dumps(value, sort_keys=True, default=repr, allow_nan=True)
+
+
+_METADATA_CHARS = 2000
+
+
+def _plain_metadata(metadata: Any) -> Dict[str, Any]:
+    """Provider metadata as plain, bounded JSON, or a note saying why it is not."""
+    if not isinstance(metadata, Mapping):
+        return {} if metadata in (None, "") else {"unreadable": type(metadata).__name__}
+    try:
+        text = canonical_json(dict(metadata))
+    except (TypeError, ValueError):
+        return {"unreadable": _bounded_text(_as_json(dict(metadata)), _METADATA_CHARS)[0]}
+    if len(text) > _METADATA_CHARS:
+        return {"truncated": _bounded_text(text, _METADATA_CHARS)[0]}
+    return json.loads(text)
+
+
+def _undeclared_outputs(reply: DecisionReply, capabilities: ProviderCapabilities
+                        ) -> List[str]:
+    """Kinds of answer the reply carries that the provider declared it does not give.
+
+    Checked only against a declaration: a provider that declared nothing was
+    given a default that lists nothing, and is not held to it. Reasoning is
+    recorded and never read, so it is not checked.
+    """
+    if not capabilities.outputs:
+        return []
+    carried = {OutputKind.PROBABILITY: reply.probabilities is not None,
+               OutputKind.SCORE: reply.scores is not None,
+               OutputKind.CHOICE: reply.choice is not None}
+    return [kind.value.lower() for kind, present in carried.items()
+            if present and not capabilities.supports(kind)]
+
+
+def _normalise_decision(reply: DecisionReply, choices: Tuple[str, ...], tolerance: float):
+    """(chosen, confidence, probabilities, scores), or (UnknownReason, why).
+
+    Probabilities are checked and kept exactly as returned — never rescaled, and
+    a choice the provider did not score stays absent rather than becoming 0.
+    Scores are kept and never turned into probabilities. A bare choice has no
+    confidence at all.
+    """
+    offered = set(choices)
+
+    def numbers(name: str, values: Any) -> Any:
+        if not isinstance(values, Mapping) or not values:
+            return (UnknownReason.MALFORMED_RESPONSE, f"{name} is not an object of numbers")
+        unknown_labels = sorted(str(k) for k in values if str(k) not in offered)
+        if unknown_labels:
+            return (UnknownReason.MALFORMED_RESPONSE,
+                    f"{name} name choice(s) that were not offered: "
+                    + ", ".join(unknown_labels[:3]))
+        try:
+            return {str(k): _number(v) for k, v in values.items()}
+        except SemanticVerifierError as exc:
+            return (UnknownReason.MALFORMED_RESPONSE, f"{name}: {exc}")
+
+    def top(values: Mapping[str, float]) -> Any:
+        best = max(values.values())
+        leaders = sorted(k for k, v in values.items() if v == best)
+        if len(leaders) > 1:
+            return (UnknownReason.NO_DECISION,
+                    f"{' and '.join(leaders)} tie at {best}; the provider did not choose")
+        return leaders[0]
+
+    probabilities = scores = None
+    choice = None if reply.choice is None else str(reply.choice)
+    if reply.probabilities is not None:
+        found = numbers("probabilities", reply.probabilities)
+        if isinstance(found, tuple):
+            return found
+        if any(not 0.0 <= v <= 1.0 for v in found.values()):
+            return (UnknownReason.MALFORMED_RESPONSE, "a probability is outside 0..1")
+        total = sum(found.values())
+        if abs(total - 1.0) > tolerance:
+            return (UnknownReason.MALFORMED_RESPONSE,
+                    f"the probabilities sum to {round(total, 6)}, not 1; they were "
+                    "kept as returned and not rescaled")
+        probabilities = found
+    if reply.scores is not None:
+        found = numbers("scores", reply.scores)
+        if isinstance(found, tuple):
+            return found
+        scores = found
+    if choice is not None and choice not in offered:
+        return (UnknownReason.MALFORMED_RESPONSE, f"choice {choice[:60]!r} was not offered")
+
+    if probabilities is not None:
+        chosen = top(probabilities)
+        if isinstance(chosen, tuple):
+            return chosen
+        if choice is not None and choice != chosen:
+            return (UnknownReason.MALFORMED_RESPONSE,
+                    f"the provider chose {choice!r} and gave {chosen!r} the "
+                    "highest probability")
+        return chosen, probabilities[chosen], probabilities, scores
+    if scores is not None:
+        chosen = top(scores)
+        if isinstance(chosen, tuple):
+            return chosen
+        if choice is not None and choice != chosen:
+            return (UnknownReason.MALFORMED_RESPONSE,
+                    f"the provider chose {choice!r} and scored {chosen!r} highest")
+        return chosen, None, None, scores
+    if choice is not None:
+        return choice, None, None, None
+    return (UnknownReason.MALFORMED_RESPONSE,
+            "the provider returned no choice, scores or probabilities")
 
 
 def _bounded_text(text: str, limit: int) -> Tuple[str, bool]:
@@ -935,6 +1650,19 @@ def assertions_to_records(assertions: Iterable[SemanticAssertion], *,
                 source=f"semantic:{assertion.question_id}", parent_evidence=refs,
                 content=content, coverage_note=note))
     return out
+
+
+def is_semantic_reading(record: Any) -> bool:
+    """Whether a record is a model's reading of other records (`assertions_to_records`).
+
+    A reading is about evidence already in the case; it is not more evidence
+    about the release. So the structural analysers do not count it — a reading
+    is not a second producer, a new lineage or another contributor — and only
+    the resolver and the RG-SEM rules read it, under the declared policy.
+    """
+    content = getattr(record, "content", None)
+    return isinstance(content, Mapping) and isinstance(
+        content.get("semantic_assertion"), Mapping)
 
 
 def assertions_from_records(records: Iterable[Any]) -> List[Tuple[str, SemanticAssertion]]:

@@ -4,6 +4,103 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🧭 Semantic escalation: which questions go to a model, decided first
+
+`--semantic` no longer asks about every open claim. Before anything is sent it
+builds an **escalation plan** (`release_gate/assurance/escalation.py`). The plan
+lists every claim and static finding, its adjudication mode, and why it was or
+was not asked. It is the first row of `--semantic-out`.
+
+- **Every rule declares a mode.**
+  - `DETERMINISTIC`: every structural rule, and every scanner rule except one.
+    Model output reaching `os.system` is a fact, not an opinion.
+  - `HYBRID`: RG-GATE-001. Static analysis establishes the irreversible action;
+    a reading weighs an approval mechanism you supply (a record with
+    `"addresses": ["RG-GATE-001"]`).
+  - `SEMANTIC`: whether evidence supports a claim.
+  - `EXTERNAL_ONLY`: another producer's result, which is ingested and never
+    re-graded.
+
+  A policy can withdraw a rule from reading. It cannot open a deterministic one
+  to a model.
+- **A HIGH finding cannot be erased.** The claim a static finding contradicts is
+  never asked about. Supported readings from any number of models, a policy that
+  counts readings, a replayed file, `audit --verify` marking the finding refuted,
+  and a HYBRID reading saying your mechanism holds all leave it CONTRADICTED and
+  the decision BLOCK. Tests hold each.
+- **A model existing is never a reason.** The subjects asked with a provider are
+  exactly the ones that would be asked without one.
+- **Weighed in order:**
+  1. deterministic completeness;
+  2. mode;
+  3. the policy's `always`, `never` and `hybrid`;
+  4. criticality: required claims, and claims whose criticality is undetermined;
+  5. prior readings: an answer already on record is not shopped for again; a
+     timeout may be retried;
+  6. availability: provider, packet size, declared context;
+  7. budget: `max_questions` (default 10), and `max_cost` at the declared
+     `cost_per_call`. An undeclared cost under a cost budget asks nothing.
+- `--escalation-policy FILE` sets the policy. The `RG-SEM` rule family is now
+  registered.
+
+### 🎯 Decision-model providers: STATE, QUESTION, CHOICES
+
+A model built to pick among options rather than chat (a System-One model such as
+Laya or Jev) can now answer the semantic verifier. It gets the packet as a STATE,
+the claim as one QUESTION, and the CHOICES `established | violated |
+insufficient_evidence`.
+
+- **Nothing invented.**
+  - Probabilities are checked: over the offered choices, within 0..1, summing
+    to 1 within tolerance. They are then kept exactly as returned, never
+    rescaled or zero-filled.
+  - Scores are never turned into probabilities.
+  - A bare choice has no confidence, and by default is UNKNOWN.
+  - A tie, a choice that disagrees with its own distribution, and an output the
+    provider declared it does not give are each UNKNOWN.
+- **Exposed on every answer:** provider, model, model version, input-state hash,
+  question, choices, chosen, probabilities, scores, latency, provider metadata,
+  and the capabilities the provider declared. A provider that declares nothing
+  gets a conservative default that says it is one.
+- **Optional and offline-tested.**
+  - `RG_SEMANTIC_PROVIDER=decision_http | laya | jev` speaks the documented
+    `release-gate-decision/1` protocol (`/decide`, `/capabilities`).
+  - Laya and Jev are optional modules, imported only when named. Neither
+    encodes an API release-gate cannot test against.
+  - Installed packages can offer providers under the
+    `release_gate.semantic_providers` entry point. A broken one is reported,
+    not fatal.
+  - Every test talks to a local server.
+
+#### Fixes to the semantic verifier (unreleased)
+
+- **A reading is no longer counted as evidence by the structural analysers.**
+  Five supported readings were five more producers. That removed RG-PROV-002
+  ("all evidence traces to a single producer", a HOLD) and RG-INDEP-003 from
+  seven of the eight shipped examples. A case held only by RG-PROV-002 would have
+  been promoted because a model was asked about it. Readings now reach a case
+  only through the resolution policy, and a test holds that they never remove a
+  finding or soften a decision.
+- **No earlier reading can anchor the next.** Why the rules left a claim open is
+  no longer sent to the model. Once a reading was on record, that reason named
+  it.
+- **Packets send what a record says.** Digests and record machinery are dropped,
+  and identifying fields lead. A static finding's excerpt used to be cut off
+  before its rule and observation.
+- **External results are not re-graded.** A claim carried only by a promptfoo
+  eval is no longer sent to be read.
+
+#### Migration notes (escalation and decision models)
+
+- `--semantic` asks fewer questions by default: none about non-required claims,
+  none carried only by external results, and at most 10. Use
+  `--escalation-policy` with `"scope": "ALL"` and a larger `max_questions` to
+  ask more.
+- `--semantic-out` now starts with an `escalation_plan` row. `--semantic-assertions`
+  skips it.
+- Packet and prompt hashes change. An assertion persisted earlier still replays
+  to the same case.
+
 ### 🔎 A semantic verifier for the questions structure cannot settle
 
 Some questions an admission decision turns on are reading problems. Three

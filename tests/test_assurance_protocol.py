@@ -97,8 +97,9 @@ class TestNoDrift:
         # 69 since STATIC_EVIDENCE_SCHEMA_VERSION: the scanner emitting evidence.
         # 71 since PRODUCER_CONTRACT_SCHEMA_VERSION and CANDIDATE_SCHEMA_VERSION;
         # 73 since RESOLUTION_SCHEMA_VERSION and CORRELATION_SCHEMA_VERSION;
-        # 74 since SEMANTIC_VERIFIER_SCHEMA_VERSION.
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 74
+        # 74 since SEMANTIC_VERIFIER_SCHEMA_VERSION;
+        # 75 since ESCALATION_SCHEMA_VERSION.
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 75
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────

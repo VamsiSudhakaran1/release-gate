@@ -8889,11 +8889,12 @@ verdict effect would count it twice.
 ### 10bd. The semantic verifier — a model reads; the policy decides (`SemanticVerifier`)
 
 > **Implemented.** `release_gate/assurance/semantic_verifier.py` —
-> `SemanticQuestion`, `unresolved_questions()`, `EvidencePacket`,
+> `SemanticQuestion`, `question_for()`, `unresolved_questions()`, `EvidencePacket`,
 > `build_evidence_packet()`, `SemanticProvider`, `ProviderRegistry`,
 > `SemanticVerifier`, `SemanticAssertion`, `SemanticVerifierPolicy`,
-> `assertions_to_records()`. Network transports in
-> `release_gate/semantic_providers.py` (outside the core). Read by the resolver
+> `assertions_to_records()`, `is_semantic_reading()`. Network transports in
+> `release_gate/semantic_providers.py` (outside the core). Decision models:
+> §10be. Which questions are asked: §10bf. Read by the resolver
 > (`ResolutionPolicy.semantic_support`, `semantic_contradiction`) and RG-SEM-001
 > to -004. `assure --semantic`, `--semantic-out`, `--semantic-policy`,
 > `--semantic-assertions`; the envelope `semantic_assertion` record. Tests:
@@ -8914,7 +8915,10 @@ resolution (§10bb). It asks about a claim only when the claim is open
 unchecked: a declaration, an observation, a judgement, or an inconclusive check.
 ESTABLISHED and CONTRADICTED claims are settled, NOT_ASSESSED has nothing to
 read, and UNSUPPORTED has nothing that counts. Re-reading set-aside evidence
-would be asking a model to overrule a rule.
+would be asking a model to overrule a rule. `question_for` gives the same answer
+for one claim, and says which of those three reasons applies when there is no
+question. Which open questions are actually asked is the escalation policy's
+(§10bf).
 
 **Bounded answers, never verdicts.** An assertion is `supported`, `contradicted` or
 `insufficient_evidence`, or UNKNOWN with a reason. A model replying `PROMOTE` has
@@ -8950,6 +8954,35 @@ identifiers are replaced by digests through `privacy.minimise`, and a policy tha
 does not withhold SECRET is refused. Excerpts are bounded and marked when cut,
 over-count records are named in `omitted`, and an over-budget packet is never
 sent. `packet_hash` covers exactly the payload the model reads.
+
+Two things are deliberately left out of what a model reads:
+
+- **Why the rules left the claim open.** `unresolved_because` is kept beside the
+  packet for the reviewer and is not sent. Once a reading is on record, that
+  reason names it ("a semantic verifier read its evidence as contradicting
+  it"), and sending it would tell the next model what the last one answered.
+  It also kept the packet hash moving with the claim's status, so a question
+  could never be recognised as already asked (§10bf).
+- **Record machinery.** Each record is sent as what its producer said. A record
+  written out and read back as an envelope row is unwrapped. Ids, links, trust,
+  custody fields and `sha256:` digests are dropped, because a hash says nothing
+  to a reader. Identifying fields (rule, title, severity, summary, observation,
+  location) lead, so a bounded excerpt cuts detail rather than identity. Before
+  this, a static finding's excerpt was cut before its rule id and observation:
+  a reader saw code digests and not what was found.
+
+**A reading is not more evidence.** A reading is a statement about records
+already in the case. The structural analysers read the case's evidence without
+readings (`analysis._evidence_records`), and only the resolver and the RG-SEM
+rules read them. Building §10bf found the gap this closes. Five supported
+readings from five model families were five more producers, so RG-PROV-002
+("all evidence traces to a single producer", a HOLD) disappeared. RG-INDEP-003
+disappeared too, because readings cite parents. Across the shipped examples,
+under both resolution policies, in process and replayed, readings removed one
+or both rules from seven of eight inputs. No decision softened there, because
+other holds remained. A case held only by RG-PROV-002 would have gone from HOLD
+to PROMOTE because a model was asked about it. A test now holds, for every
+shipped example, that readings never remove a finding or soften a decision.
 
 **What the policy does with an answer.** These are deterministic and digested
 with the resolution policy:
@@ -8989,7 +9022,251 @@ stdlib `urllib`. That covers hosted OpenAI-compatible APIs, vLLM, llama.cpp,
 LM Studio and Ollama (both `/v1` and the native `/api/chat`). There is no default
 endpoint, and an identity never carries a credential. A test registers a
 specialist provider the build does not ship and uses it end to end without
-touching the core. The provider-free guard reads the core module.
+touching the core. The provider-free guard reads the core module. A model that
+picks among choices rather than chatting is a second interface (§10be).
+
+### 10be. Decision-model providers — STATE, QUESTION, CHOICES (`DecisionProvider`)
+
+> **Implemented.** `release_gate/assurance/semantic_verifier.py` —
+> `DecisionProvider`, `DecisionRequest`, `DecisionReply`, `DECISION_CHOICES`,
+> `ProviderCapabilities`, `discover_capabilities()`, `default_capabilities()`,
+> `render_state()`, `UnscoredAction`. Transport: `release_gate/decision_providers/`
+> (`DecisionHTTPProvider`, protocol `release-gate-decision/1`) with optional
+> modules `laya.py` and `jev.py`. Plumbing: `semantic_providers.py` —
+> `exchange_json()`, `operator_capabilities()`, `discover_providers()`,
+> `OpenAICompatibleProvider.capabilities()`. Tests:
+> `tests/test_decision_providers.py`.
+
+**Not every model is a chat model.** A decision model (a System-One model built to
+pick among options, such as Laya or Jev) takes three things and returns some of
+four. It takes a STATE, one QUESTION and a set of CHOICES. It returns a choice, a
+score per choice, a probability per choice, or reasoning. `DecisionProvider` has
+three methods: `identity()`, `capabilities()` and `decide()`. The verifier builds
+the request from the same packet a chat model gets:
+
+- the STATE is `render_state(packet)`, one line per record, nothing else;
+- the QUESTION is `Does the evidence establish: <claim>?`;
+- the CHOICES are `established | violated | insufficient_evidence`.
+
+Each choice maps one-to-one to the three verdicts. `DecisionRequest.state_hash`
+is the digest of the state.
+
+**Normalised, never repaired.** What comes back becomes the assertion's
+`probabilities`, `scores` and `chosen`. The checks:
+
+- **Probabilities** must be finite, within 0..1, over choices that were offered,
+  and sum to 1 within the policy's `probability_tolerance` (at most 0.1). They
+  are then kept exactly as returned: never rescaled, and a choice the provider
+  did not score stays absent rather than becoming 0. A bad sum is MALFORMED, and
+  the rejected numbers stay in the stored response.
+- **Scores** are kept and never converted into probabilities.
+- **A bare choice has no confidence.** By default (`unscored: UNKNOWN`) an answer
+  with no probability is UNKNOWN (`NO_PROBABILITY`). Treating it as passing
+  `min_confidence` would let a provider clear the bar by saying less. A policy
+  that accepts such answers says `unscored: ACCEPT`, and the assertion's
+  confidence stays null.
+- **A tie is no decision** (`NO_DECISION`). An explicit choice that disagrees with
+  the provider's own distribution or scores is MALFORMED. So is a choice outside
+  the three.
+- **Reasoning is recorded and never parsed** for a verdict.
+- **Output the provider declared it does not give is not read.** A provider that
+  declared only `CHOICE` and returns probabilities has said something nobody said
+  would exist.
+
+**Capabilities are discovered, or a default that says so.** `ProviderCapabilities`
+records:
+
+- the interface (CHAT or DECISION);
+- outputs (CHOICE, SCORE, PROBABILITY, FREE_FORM_REASONING);
+- how its confidence reads (the producer contract's `ConfidenceSemantics`);
+- `max_input_chars` and `max_choices`;
+- LOCAL, REMOTE or UNKNOWN;
+- determinism (the producer contract's `Determinism`);
+- whether probabilities are calibrated;
+- `cost_per_call`;
+- `declared_by`.
+
+A provider that cannot describe itself gets `default_capabilities`. It is labelled
+`release-gate default: the provider declared no capabilities` and holds the
+provider to nothing. The chat transport states its own contract: a verdict word
+and prose, a self-reported confidence (`PRODUCER_SCORE`), and determinism
+UNKNOWN, because temperature 0 is a request, not a guarantee. The operator's own
+figures (`RG_SEMANTIC_COST_PER_CALL`, `RG_SEMANTIC_MAX_INPUT_CHARS`) are laid over
+any declaration, and `declared_by` says so. A request over the declared context
+is not sent (`PACKET_TOO_LARGE`), nor is one offering more choices than the
+provider takes (`UNSUPPORTED_BY_PROVIDER`). A provider whose declared interface
+needs a method it does not have is `UNSUPPORTED_BY_PROVIDER` without being
+called.
+
+**What is exposed.** Every assertion now records:
+
+- `interface`, `question_kind` and `question_text`;
+- `choices` and `chosen`;
+- `probabilities` and `scores`, null when not returned, never zeros;
+- `input_state_hash`;
+- `provider_metadata`, plain JSON and bounded;
+- the `capabilities` declared when it answered;
+- `latency_ms`, from an injectable timer.
+
+Latency is a fact about the run, so it is outside the assertion id, like the
+timestamp.
+
+**One protocol, written down, and no guessed vendor API.** `DecisionHTTPProvider`
+speaks `release-gate-decision/1`:
+
+- `GET /capabilities` (optional) returns a capabilities object;
+- `POST /decide` takes `{protocol, model, state, question, choices, state_hash}`
+  and returns `{probabilities?, scores?, choice?, reasoning?, model_version?,
+  metadata?}`.
+
+The raw body is what is stored and digested. `laya.py` and `jev.py` are that
+provider under their own names, so an answer is recorded as Laya's or Jev's.
+They are imported only when asked for by name; a test runs a fresh interpreter
+through the CLI, the providers module and the registry and finds neither loaded.
+Neither module encodes an API release-gate cannot test against. A deployment that
+serves a different interface is reached through a small adapter that serves the
+two endpoints.
+
+**One HTTP client.** The chat transport, `llm_verify` and the decision transport
+all send through `exchange_json`, so a timeout is `ProviderTimeout` everywhere,
+and anything else that stops an answer arriving is `ProviderUnavailable`.
+
+**Providers this build does not ship are found, not imported.** An installed
+package can offer a provider under the `release_gate.semantic_providers` entry
+point. `discover_providers` runs only when a provider is asked for by a name the
+build does not ship. A plugin that fails to load is a row in the report, not a
+crash, and a plugin can never replace a shipped transport or an earlier plugin by
+being found later.
+
+Every network exchange in the tests is with a server on 127.0.0.1 that the test
+starts. Fifteen tamper probes each remove one guard; every one is caught. The
+probes cover:
+
+- rescaling bad sums;
+- giving a bare choice confidence 1;
+- softmaxing scores;
+- zero-filling absent probabilities;
+- breaking ties alphabetically;
+- ignoring a choice that disagrees with its distribution;
+- accepting unscored answers by default;
+- reading undeclared outputs;
+- accepting unknown labels;
+- ignoring the declared context;
+- ignoring low probability;
+- importing Laya eagerly;
+- letting a plugin shadow a transport;
+- making a broken plugin fatal;
+- presenting the default as the provider's own declaration.
+
+### 10bf. Semantic escalation — decided before a model is asked (`plan_escalation`)
+
+> **Implemented.** `release_gate/assurance/escalation.py` — `AdjudicationMode`,
+> `SCANNER_RULE_MODES`, `QUESTION_MODES`, `adjudication_mode()`, `EscalationPolicy`,
+> `EscalationScope`, `EscalationReason`, `EscalationDecision`, `EscalationPlan`,
+> `plan_escalation()`, `is_external_result()`. `assure --semantic` plans first;
+> `--escalation-policy FILE`. The plan is the first row of `--semantic-out`.
+> Schema `escalation_plan` (protocol count 75). Rule family `RG-SEM` registered.
+> Tests: `tests/test_semantic_escalation.py`.
+
+**Every rule declares how it is adjudicated.**
+
+| Mode | Meaning | Where |
+|---|---|---|
+| `DETERMINISTIC` | the rules decide; a reading cannot bear on the result | every structural rule; every scanner rule but one; any rule id nobody registered |
+| `HYBRID` | the rules establish a fact; a reading weighs a mechanism the submission supplied against it | RG-GATE-001; `MECHANISM_CONTROLS_PATH` questions |
+| `SEMANTIC` | only a reading can settle it | `EVIDENCE_SUPPORTS_CLAIM` questions |
+| `EXTERNAL_ONLY` | an external producer's result, ingested as reported and never re-graded | producer-contract results (`result_kind` + `producer_type`) |
+
+Model output reaching `os.system` (RG-EXEC-001) is established by the
+source-to-sink path; a model that disagrees has an opinion about a fact.
+RG-GATE-001 is the one scanner rule whose evidence profile names what static
+analysis cannot see: an out-of-band control on the path. A submission can supply
+one. The prompt's SEMANTIC examples are claims whose support is declared rather
+than checked:
+
+- a fallback preserves the objective;
+- external evidence supports a claim;
+- two policy statements are consistent.
+
+The question for each is the verifier's own: does what these records say bear
+on, and support, this statement? A test holds `SCANNER_RULE_MODES` equal to the
+static producer's rule profiles, so a new scanner rule has to state its mode. A
+policy can withdraw a rule from reading (`modes: {"RG-GATE-001":
+"DETERMINISTIC"}`). It cannot open a DETERMINISTIC rule to a model, and
+`EscalationPolicy` refuses one that tries.
+
+**HYBRID binds to the mechanism, never to the finding.** A record that declares
+`"addresses": ["RG-GATE-001"]` (or a finding's evidence id) and supports a claim
+makes one `MECHANISM_CONTROLS_PATH` question about that claim. The packet holds
+the finding first, then the mechanism records. The question reads: *does the
+supplied mechanism control the path the static finding flags?* The answer is read
+by the resolver like any other reading, on the mechanism's claim. The finding
+stays, and the claim it contradicts stays CONTRADICTED. These cases are recorded
+and ask nothing:
+
+- a finding with no mechanism (`NO_MECHANISM`);
+- a mechanism that supports no claim (`MECHANISM_UNBOUND`);
+- a mechanism the rules set aside (`NOTHING_TO_READ`);
+- a mechanism addressing a DETERMINISTIC rule (`DETERMINISTIC_RULE`).
+
+**A deterministic HIGH finding cannot be erased.** It is never asked about. A
+static finding contradicts `sw:code-safety`, CR-03 makes that claim CONTRADICTED,
+and a CONTRADICTED claim is SETTLED for every policy, including scope ALL with the
+claim named in `always`. Tests then try to erase one anyway, and each leaves the
+claim CONTRADICTED, the decision BLOCK and the finding in place:
+
+- five supported readings from five model families on `sw:code-safety`, citing
+  the finding, under RECORD_ONLY and under COUNTS with contradictions blocking;
+- the same readings in process (DERIVED) and from a file (DECLARED);
+- the same readings enveloped inside the static evidence file;
+- `audit --verify` marking the finding `refuted`;
+- a HYBRID reading saying the supplied mechanism controls the path.
+
+**A model existing is never a reason.** A test plans four cases with and without
+a provider. The subjects asked with one are exactly the subjects marked `NO_MODEL`
+without one. A case whose claims are settled, checked or empty asks nothing.
+
+**What is weighed, in order.**
+
+1. **Deterministic completeness.** SETTLED, CHECKED or NOTHING_TO_READ, from
+   `question_for`.
+2. **Mode.** DETERMINISTIC findings and EXTERNAL_ONLY results are listed and
+   never asked. A claim whose only unchecked support is external results is
+   `EXTERNAL_ONLY`. Before this, `--semantic` would have sent a promptfoo-backed
+   claim to be re-graded.
+3. **Policy.** `never` excludes a claim; `always` names one worth asking whenever
+   it is open; `hybrid: false` turns HYBRID questions off.
+4. **Criticality.** The default scope is required claims plus claims whose
+   criticality could not be determined, because unknown is never read as
+   unimportant. `REQUIRED` narrows it; `ALL` widens it. A HYBRID question is in
+   scope when its claim or the claim the finding contradicts is.
+5. **Prior readings.** An answer on record for the same question over the same
+   packet is `ALREADY_READ`. That includes a low-confidence answer, a tie or a
+   malformed reply, because re-asking until a model agrees is shopping. A
+   question whose earlier attempt failed in transport (timeout, unreachable) may
+   be asked again.
+6. **Availability.** No provider (`NO_MODEL`); a provider that takes fewer
+   choices than a question offers; a packet over the verifier policy
+   (`PACKET_TOO_LARGE`); a request over the provider's declared context
+   (`EXCEEDS_CONTEXT`). The size is computed by the verifier itself, for the
+   interface the provider declared.
+7. **Budget.** At most `max_questions`, and within `max_cost` at the declared
+   `cost_per_call`. Under a cost budget, a provider that declared no cost asks
+   nothing (`UNKNOWN_COST`), because an unknown cost cannot be shown to fit.
+
+What is left is asked in a fixed order:
+
+1. policy-named claims;
+2. then required, then undetermined, then other claims;
+3. HYBRID before SEMANTIC;
+4. the most open claim first;
+5. then by id.
+
+A budget therefore cuts the same questions every time. The plan lists every claim
+and every static finding with its mode, reason and detail. It is persisted as the
+first row of `--semantic-out`, digested (`plan_digest`), and independent of record
+order. The plan decides only whether a question is asked; what an answer does is
+the resolution policy's, unchanged.
 
 ---
 
@@ -9190,6 +9467,12 @@ fixed, rather than the expectations being lowered.
 | `assure --resolution-policy FILE` | new | — |
 | semantic verifier (§10bd) | `--semantic`, `--semantic-out`, `--semantic-policy`, `--semantic-assertions`; envelope `semantic_assertion`; RG-SEM-001..004; `ResolutionPolicy.semantic_support` / `semantic_contradiction` | additive; no model is ever called unless `--semantic` is given. The resolution policy gains two fields, so its digest — and every case digest — changes |
 | `audit --verify` | shares the semantic verifier's transport | request bytes unchanged (a test pins them) |
+| decision-model providers (§10be) | `RG_SEMANTIC_PROVIDER=decision_http \| laya \| jev`, `RG_SEMANTIC_COST_PER_CALL`, `RG_SEMANTIC_MAX_INPUT_CHARS`; the `release_gate.semantic_providers` entry point; package `release_gate.decision_providers` | additive; nothing is imported or contacted unless named |
+| semantic assertion | new fields: `question_kind`, `interface`, `question_text`, `choices`, `chosen`, `probabilities`, `scores`, `input_state_hash`, `provider_metadata`, `capabilities`, `latency_ms` | additive; an assertion persisted without them reads them as defaults. Its id now covers them, so a re-made assertion has a new id; a persisted one still replays to the same case |
+| evidence packet | `unresolved_because` is no longer in the payload sent or hashed; excerpts drop digests and record machinery and lead with identifying fields | packet and prompt hashes change; what a model reads is smaller |
+| structural analysis | model readings are no longer counted as evidence by the structural analysers | stricter only: RG-PROV-002 and RG-INDEP-003 can no longer be removed by readings; no shipped example's decision moved |
+| `assure --semantic` | asks what the escalation plan selects: by default required or undetermined claims, at most 10, never a claim carried only by external results; the plan is the first row of `--semantic-out` | fewer questions than before for cases with non-required or external-only claims; `--escalation-policy FILE` restores any scope |
+| `assure --escalation-policy FILE` | new | an error without `--semantic` |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

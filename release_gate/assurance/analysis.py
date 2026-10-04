@@ -176,7 +176,18 @@ class AnalysisResult:
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _evidence_records(case: AssuranceCase) -> List[EvidenceRecord]:
-    return [r for r in case.records("evidence") if isinstance(r, EvidenceRecord)]
+    """The evidence the structural analysers read: everything but model readings.
+
+    A semantic verifier's reading (semantic_verifier.py) is a statement about
+    records already here. Counted as evidence, five readings were five more
+    producers, and RG-PROV-002 — all evidence traces to a single producer, a
+    HOLD — disappeared because a model was asked about the one producer there
+    was. Readings reach the case through the resolver alone, which reads them
+    under the declared policy, and the RG-SEM rules report what it did.
+    """
+    from release_gate.assurance.semantic_verifier import is_semantic_reading
+    return [r for r in case.records("evidence")
+            if isinstance(r, EvidenceRecord) and not is_semantic_reading(r)]
 
 
 def _sorted_ids(values: Iterable[str], limit: int = 12) -> Tuple[str, ...]:

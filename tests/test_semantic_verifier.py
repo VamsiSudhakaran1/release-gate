@@ -789,8 +789,11 @@ class TestTheCommandLine:
                                "RG_SEMANTIC_MODEL": "local-model"})
         assert "semantic reading: contradicted" in asked.stdout, asked.stderr
         assert "RG-SEM-001" in asked.stdout
-        kept = [json.loads(line) for line in out.read_text().splitlines()]
-        # One packet, then its assertion, per question asked.
+        plan, *kept = [json.loads(line) for line in out.read_text().splitlines()]
+        # The escalation plan first, then one packet and its assertion per
+        # question it asked.
+        assert plan["record_type"] == "escalation_plan"
+        assert plan["asked"] == len(kept) // 2 >= 1
         assert [r["record_type"] for r in kept] == [
             "evidence_packet", "semantic_assertion"] * (len(kept) // 2)
         for packet_row, assertion_row in zip(kept[::2], kept[1::2]):

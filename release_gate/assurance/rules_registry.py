@@ -187,6 +187,11 @@ _FAMILY_LIST: Tuple[RuleFamily, ...] = (
                      "question; scale is not its own concern (Invariant 6)"),
     RuleFamily("RG-INDEP", "independence of evidence sources",
                Origin.STRUCTURAL),
+    RuleFamily("RG-SEM", "semantic readings: what a model said about a claim and "
+                         "what the declared policy did with it", Origin.STRUCTURAL,
+               notes="a reading never establishes a claim and never decides; these "
+                     "rules report a reading the policy weighed, one that could not "
+                     "be used, or one made against another state"),
     RuleFamily("RG-ADV", "adversarial review and challenge", Origin.STRUCTURAL),
     RuleFamily("RG-CAP", "capability surface — what the system could reach",
                Origin.STRUCTURAL),

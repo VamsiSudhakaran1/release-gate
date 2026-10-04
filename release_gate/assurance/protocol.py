@@ -305,6 +305,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "supported, contradicted, insufficient evidence, or UNKNOWN — "
                   "with the provider, prompt, packet and state it was made against; "
                   "never a verdict"),
+        _ref("escalation_plan", "escalation", "ESCALATION_SCHEMA_VERSION", 1,
+             note="which questions go to a model and why, decided before any is "
+                  "asked: each claim and finding with its adjudication mode, and "
+                  "the policy, availability or budget that settled it"),
         _ref("correlation", "correlation", "CORRELATION_SCHEMA_VERSION", 1,
              note="the provenance of each source and the correlation groups it "
                   "falls into; independence that cannot be read is said so"),

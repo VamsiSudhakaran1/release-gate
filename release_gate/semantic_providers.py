@@ -17,6 +17,18 @@ Laya provider, or a release-gate specialist model, implements `identity()` and
 verifier, the packet or the resolution policy names a vendor, so nothing there
 moves when one is added.
 
+**Decision models are a second interface, not a second client.** A model that
+takes STATE / QUESTION / CHOICES and returns a choice, scores or probabilities
+is a `DecisionProvider`; `release_gate/decision_providers/` holds the transport
+for the `release-gate-decision/1` protocol and the optional named modules.
+They send through `exchange_json` here, so there is one HTTP client in this
+build, with one set of failure semantics.
+
+**Providers not in this build are found, not imported.** An installed package
+can offer a provider under the `release_gate.semantic_providers` entry-point
+group. Nothing is loaded until a provider is asked for by a name the build does
+not ship, and a plugin that fails to load is recorded, not fatal.
+
 **Requests go only where they are pointed.** There is no default endpoint: a
 semantic question is sent to the base URL the caller configured or to nothing.
 An API key travels only in the request it authenticates and never into an
@@ -24,7 +36,8 @@ identity, an error message or a persisted assertion.
 
 Config, for `provider_from_env`:
 
-    RG_SEMANTIC_PROVIDER      openai_compatible (default) | ollama | a registered name
+    RG_SEMANTIC_PROVIDER      openai_compatible (default) | ollama | decision_http |
+                              laya | jev | an installed provider's name
     RG_SEMANTIC_BASE_URL      required, e.g. http://localhost:11434/v1
     RG_SEMANTIC_MODEL         required
     RG_SEMANTIC_API_KEY       required for a non-local endpoint
@@ -32,6 +45,9 @@ Config, for `provider_from_env`:
     RG_SEMANTIC_MODEL_FAMILY  optional: the model family, as you state it — it is
                               what lets the independence analysis group this
                               model's readings with its other output
+    RG_SEMANTIC_MAX_INPUT_CHARS  optional: the context limit, as you declare it
+    RG_SEMANTIC_COST_PER_CALL    optional: what one call costs, in the unit your
+                                 escalation budget is written in
 """
 
 from __future__ import annotations
@@ -42,22 +58,34 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Mapping, Optional
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from release_gate.assurance.model_neutral import (DialectError, ModelDialect,
                                                   build_request, extract_text,
                                                   resolve_dialect)
-from release_gate.assurance.semantic_verifier import (ProviderIdentity, ProviderRegistry,
+from release_gate.assurance.producer_contract import ConfidenceSemantics, Determinism
+from release_gate.assurance.semantic_verifier import (Locality, OutputKind,
+                                                      ProviderCapabilities, ProviderIdentity,
+                                                      ProviderInterface, ProviderRegistry,
                                                       ProviderReply, ProviderRequest,
                                                       ProviderTimeout, ProviderUnavailable,
                                                       SemanticVerifierError)
 
 __all__ = [
+    "ENTRY_POINT_GROUP",
+    "DiscoveryReport",
     "OpenAICompatibleProvider",
     "SemanticProviderConfigError",
     "default_provider_registry",
+    "discover_providers",
+    "exchange_json",
+    "operator_capabilities",
     "provider_from_env",
 ]
+
+#: Where an installed package offers a provider: `name = "module:factory"`.
+ENTRY_POINT_GROUP = "release_gate.semantic_providers"
 
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]")
 
@@ -79,12 +107,73 @@ def _is_local(base_url: str) -> bool:
     return host in _LOCAL_HOSTS
 
 
+def exchange_json(url: str, *, endpoint: str, timeout: float, user_agent: str,
+                  body: Optional[Any] = None,
+                  headers: Optional[Mapping[str, str]] = None) -> Tuple[Any, str]:
+    """One HTTP exchange: POST `body` as JSON, or GET without one. Stdlib only.
+
+    Returns the parsed JSON and the body as text. Every transport in this build
+    sends through here, so a timeout is a `ProviderTimeout` and anything else that
+    stops an answer arriving is `ProviderUnavailable` — the verifier turns both
+    into UNKNOWN. `endpoint` is the credential-free name used in every message.
+    """
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=data, method="GET" if body is None else "POST",
+        headers={**({"Content-Type": "application/json"} if body is not None else {}),
+                 **dict(headers or {}), "User-Agent": user_agent})
+    try:
+        # Looked up at call time, so a test that replaces it reaches this call.
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            raw = resp.read()
+    except (socket.timeout, TimeoutError) as exc:
+        raise ProviderTimeout(f"{endpoint} did not answer in time") from exc
+    except urllib.error.HTTPError as exc:
+        raise ProviderUnavailable(f"{endpoint} answered HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+            raise ProviderTimeout(f"{endpoint} did not answer in time") from exc
+        raise ProviderUnavailable(
+            f"{endpoint} could not be reached ({type(exc.reason).__name__})") from exc
+    except OSError as exc:
+        raise ProviderUnavailable(
+            f"{endpoint} could not be reached ({type(exc).__name__})") from exc
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    try:
+        return json.loads(text), text
+    except ValueError as exc:
+        raise ProviderUnavailable(f"{endpoint} answered with something that is "
+                                  "not JSON") from exc
+
+
+def operator_capabilities(found: ProviderCapabilities, *,
+                          max_input_chars: Optional[int] = None,
+                          cost_per_call: Optional[float] = None) -> ProviderCapabilities:
+    """What a provider declared, with the operator's own figures laid over it.
+
+    The operator knows what a call costs them and may hold a model to a tighter
+    context than it accepts; either replaces the provider's figure, and
+    `declared_by` says that it did.
+    """
+    changes: Dict[str, Any] = {}
+    if max_input_chars is not None:
+        changes["max_input_chars"] = max_input_chars
+    if cost_per_call is not None:
+        changes["cost_per_call"] = cost_per_call
+    if not changes:
+        return found
+    return replace(found, **changes, declared_by=(
+        f"{found.declared_by}; {', '.join(sorted(changes))} by the operator"))
+
+
 class OpenAICompatibleProvider:
     """Any endpoint whose wire format `model_neutral` describes. Stdlib only."""
 
     def __init__(self, *, base_url: str, model: str, api_key: str = "",
                  dialect: Any = "", model_family: str = "", provider_name: str = "",
-                 user_agent: str = "release-gate-semantic") -> None:
+                 user_agent: str = "release-gate-semantic",
+                 max_input_chars: Optional[int] = None,
+                 cost_per_call: Optional[float] = None) -> None:
         if not str(base_url or "").strip():
             raise SemanticProviderConfigError(
                 "a provider needs a base URL; release-gate has no default endpoint "
@@ -100,6 +189,8 @@ class OpenAICompatibleProvider:
         self._api_key = api_key
         self.model_family = model_family
         self.user_agent = user_agent
+        self.max_input_chars = max_input_chars
+        self.cost_per_call = cost_per_call
         if isinstance(dialect, ModelDialect):
             self.dialect, recognised = dialect, True
         else:
@@ -116,36 +207,31 @@ class OpenAICompatibleProvider:
             endpoint=_public_endpoint(self.base_url), local=_is_local(self.base_url),
             dialect=self.dialect.dialect_id, dialect_recognised=self._recognised)
 
+    def capabilities(self) -> ProviderCapabilities:
+        """The chat contract, stated by release-gate rather than by the endpoint.
+
+        A chat endpoint is asked for a verdict word, a self-reported confidence
+        and a reason, and that is all it is held to. Its determinism is not
+        known: temperature 0 is a request, not a guarantee.
+        """
+        return operator_capabilities(ProviderCapabilities(
+            interface=ProviderInterface.CHAT,
+            outputs=(OutputKind.CHOICE, OutputKind.FREE_FORM_REASONING),
+            confidence=ConfidenceSemantics.PRODUCER_SCORE,
+            locality=Locality.LOCAL if _is_local(self.base_url) else Locality.REMOTE,
+            determinism=Determinism.UNKNOWN,
+            declared_by="release-gate: the chat contract this transport asks under"),
+            max_input_chars=self.max_input_chars, cost_per_call=self.cost_per_call)
+
     def complete(self, request: ProviderRequest) -> ProviderReply:
         plan = build_request(self.dialect, base_url=self.base_url, model=self.model,
                              user=request.user, system=request.system,
                              api_key=self._api_key, temperature=request.temperature,
                              max_tokens=request.max_tokens)
-        http = urllib.request.Request(
-            plan.url, data=json.dumps(plan.body).encode("utf-8"),
-            headers={**plan.headers, "User-Agent": self.user_agent})
-        endpoint = _public_endpoint(self.base_url)
-        try:
-            # Looked up at call time, so a test that replaces it reaches this call.
-            with urllib.request.urlopen(http, timeout=request.timeout_seconds) as resp:
-                raw = resp.read()
-        except (socket.timeout, TimeoutError) as exc:
-            raise ProviderTimeout(f"{endpoint} did not answer in time") from exc
-        except urllib.error.HTTPError as exc:
-            raise ProviderUnavailable(f"{endpoint} answered HTTP {exc.code}") from exc
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, (socket.timeout, TimeoutError)):
-                raise ProviderTimeout(f"{endpoint} did not answer in time") from exc
-            raise ProviderUnavailable(
-                f"{endpoint} could not be reached ({type(exc.reason).__name__})") from exc
-        except OSError as exc:
-            raise ProviderUnavailable(
-                f"{endpoint} could not be reached ({type(exc).__name__})") from exc
-        try:
-            data = json.loads(raw)
-        except ValueError as exc:
-            raise ProviderUnavailable(f"{endpoint} answered with something that is "
-                                      "not JSON") from exc
+        data, _ = exchange_json(plan.url, body=plan.body, headers=plan.headers,
+                                timeout=request.timeout_seconds,
+                                endpoint=_public_endpoint(self.base_url),
+                                user_agent=self.user_agent)
         reported = data.get("model") if isinstance(data, Mapping) else None
         try:
             text = extract_text(self.dialect, data)
@@ -164,19 +250,105 @@ def _ollama(*, base_url: str = "http://localhost:11434", model: str, **kw: Any
                                     dialect=kw.pop("dialect", "ollama_native"), **kw)
 
 
+def _imported_when_asked(module: str, attribute: str) -> Callable[..., Any]:
+    """A factory that imports its module only when a provider is built from it.
+
+    The optional decision modules are named here and loaded nowhere else, so a
+    build that never asks for one never imports it.
+    """
+    def build(**config: Any) -> Any:
+        import importlib
+        return getattr(importlib.import_module(module), attribute)(**config)
+    build.__name__ = f"{module}.{attribute}"
+    return build
+
+
 def default_provider_registry() -> ProviderRegistry:
     """The transports this build ships. Register more on the returned registry."""
     registry = ProviderRegistry()
     registry.register("openai_compatible", OpenAICompatibleProvider)
     registry.register("ollama", _ollama)
+    registry.register("decision_http", _imported_when_asked(
+        "release_gate.decision_providers", "DecisionHTTPProvider"))
+    registry.register("laya", _imported_when_asked(
+        "release_gate.decision_providers.laya", "LayaProvider"))
+    registry.register("jev", _imported_when_asked(
+        "release_gate.decision_providers.jev", "JevProvider"))
     return registry
 
 
+@dataclass(frozen=True)
+class DiscoveryReport:
+    """What entry-point discovery found. A failure is a row here, never a crash."""
+
+    registered: Tuple[str, ...] = ()
+    #: Already registered under that name; the earlier registration stands.
+    shadowed: Tuple[str, ...] = ()
+    #: name → why it could not be loaded.
+    failed: Mapping[str, str] = field(default_factory=dict)
+
+
+def _entry_points_in(group: str) -> Tuple[Any, ...]:
+    from importlib import metadata
+    try:
+        return tuple(metadata.entry_points(group=group))
+    except TypeError:  # an importlib.metadata without selection
+        return tuple(metadata.entry_points().get(group, ()))
+
+
+def discover_providers(registry: ProviderRegistry, *,
+                       group: str = ENTRY_POINT_GROUP,
+                       entry_points: Optional[Callable[[str], Any]] = None
+                       ) -> DiscoveryReport:
+    """Register every provider installed packages offer under `group`.
+
+    A name already in the registry is left alone — a plugin cannot replace a
+    transport this build ships, or another plugin, by being found later. A
+    plugin that fails to import, or offers something that is not callable, is
+    reported with the reason and skipped.
+    """
+    found = (entry_points or _entry_points_in)(group)
+    registered, shadowed, failed = [], [], {}
+    for entry in sorted(found, key=lambda e: str(getattr(e, "name", ""))):
+        name = str(getattr(entry, "name", "") or "").strip().lower()
+        if not name:
+            continue
+        if name in registry.names():
+            shadowed.append(name)
+            continue
+        try:
+            factory = entry.load()
+        except Exception as exc:  # a broken plugin is a row in the report
+            failed[name] = f"{type(exc).__name__}: {str(exc)[:200]}"
+            continue
+        if not callable(factory):
+            failed[name] = f"{getattr(entry, 'value', name)} is not callable"
+            continue
+        registry.register(name, factory)
+        registered.append(name)
+    return DiscoveryReport(registered=tuple(registered), shadowed=tuple(shadowed),
+                           failed=failed)
+
+
+def _declared_number(env: Mapping[str, str], name: str, kind: type) -> Optional[Any]:
+    text = (env.get(name) or "").strip()
+    if not text:
+        return None
+    try:
+        value = kind(text)
+    except ValueError as exc:
+        raise SemanticProviderConfigError(f"{name} must be a {kind.__name__}") from exc
+    if value != value or value < 0 or (kind is int and value < 1):  # NaN, negative
+        raise SemanticProviderConfigError(f"{name} must be positive")
+    return value
+
+
 def provider_from_env(environ: Optional[Mapping[str, str]] = None, *,
-                      registry: Optional[ProviderRegistry] = None):
+                      registry: Optional[ProviderRegistry] = None,
+                      entry_points: Optional[Callable[[str], Any]] = None):
     """Build the configured provider, or raise saying what is missing."""
     env = os.environ if environ is None else environ
-    name = (env.get("RG_SEMANTIC_PROVIDER") or "openai_compatible").strip()
+    name = (env.get("RG_SEMANTIC_PROVIDER") or "openai_compatible").strip().lower()
     model = (env.get("RG_SEMANTIC_MODEL") or "").strip()
     base_url = (env.get("RG_SEMANTIC_BASE_URL") or "").strip()
     if not model:
@@ -191,4 +363,18 @@ def provider_from_env(environ: Optional[Mapping[str, str]] = None, *,
     dialect = (env.get("RG_SEMANTIC_DIALECT") or "").strip()
     if dialect:
         config["dialect"] = dialect
-    return (registry or default_provider_registry()).create(name, **config)
+    for key, var, kind in (("max_input_chars", "RG_SEMANTIC_MAX_INPUT_CHARS", int),
+                           ("cost_per_call", "RG_SEMANTIC_COST_PER_CALL", float)):
+        value = _declared_number(env, var, kind)
+        if value is not None:
+            config[key] = value
+    chosen = registry or default_provider_registry()
+    if name not in chosen.names():
+        report = discover_providers(chosen, entry_points=entry_points)
+        if name not in chosen.names():
+            broken = report.failed.get(name)
+            raise SemanticProviderConfigError(
+                f"no provider named {name!r}"
+                + (f": an installed plugin offers it and failed to load ({broken})"
+                   if broken else f"; available: {', '.join(chosen.names())}"))
+    return chosen.create(name, **config)
