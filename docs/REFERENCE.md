@@ -257,10 +257,103 @@ The default policy, `rg-resolution@1`:
  "non_establishing_methods": ["CROSS_MODEL_REVIEW"],
  "admission_level": "SUPPORTED",
  "semantic_support": "RECORD_ONLY", "semantic_contradiction": "HOLD",
+ "critical_contradiction": "HOLD",
+ "surface_coverage": 1.0, "surface_shortfall": "HOLD", "require_surface": false,
  "independence": {"policy_id": "rg-independence", "version": "1", "min_independent_groups": 2}}
 ```
 
-`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION` or `UNCLASSIFIED`. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION` or `UNCLASSIFIED`. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `surface_coverage` is within (0, 1]. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+
+#### Contradictions — which disagreements are contradictions
+
+Evidence pointing both ways at one claim, or checks of it that disagree, is a disagreement. It is a **contradiction** only if the two sides are about the same thing. Each disagreement is classified by comparing what its sides declare: the state of the release they ran against (`state`, and the candidate binding), the part of the system they cover (`covers`), the data they used and the environment they ran in.
+
+| Class | Meaning | Rule on a critical claim |
+|---|---|---|
+| `GENUINE` | comparable on everything both sides state, and opposite. One of them is wrong | **RG-CONTRA-005**: HOLD, or BLOCK under `critical_contradiction: BLOCK` |
+| `STALE` | produced against different states of the release, or one against a state other than the candidate's: a proof of tool_v2 for a tool_v3 candidate, an approval of build abc123 for def456 | **RG-CONTRA-006**: HOLD |
+| `SCOPE_MISMATCH` | they cover different parts: refund passed, email failed | RG-CONTRA-006: HOLD |
+| `POPULATION_MISMATCH` | different datasets | RG-CONTRA-006: HOLD |
+| `ENVIRONMENT_MISMATCH` | different environments | RG-CONTRA-006: HOLD |
+| `AMBIGUOUS` | both sides qualify what they cover, in terms that cannot be compared (a static path on one side, a tool name on the other) | **RG-CONTRA-007**: HOLD |
+
+What a side leaves unstated follows the candidate binding. A record that names no state is taken to be about the candidate. A side that does not qualify its scope speaks to the claim as stated, so "all authorization tests pass" and "a privilege escalation succeeded" are a genuine contradiction: the first claims what the second refutes. If any pairing of a record from each side is comparable, the disagreement is genuine.
+
+A mismatch is not called a contradiction, and it is not dropped either:
+
+- every unresolved disagreement on a critical claim still holds, and is still named in the verdict;
+- the failing side still stands against the claim, which stays `CONTRADICTED` (CR-03);
+- the class changes what you are told and what would resolve it: re-verify on the candidate, or cover the scope the passing side did not.
+
+The text report says which class each one is. The outcome's `conflict_graph` holds every disagreement as an edge between its sides, and every record bound to another state of the candidate as an edge to `candidate`, under the same ids.
+
+Evidence and checks declare what they cover in a `covers` object, and state in `state`:
+
+```json
+{"record_type": "evidence", "evidence_id": "e-trace", "kind": "TRACE",
+ "contradicts_claims": ["c-gate"],
+ "covers": {"tool": "refund"}, "state": {"commit": "def4567", "environment": "production"}}
+```
+
+On a verification attempt the same keys sit beside `method` and `outcome`.
+
+#### Claim coverage — what portion of the claim was assessed
+
+"Eight tools passed" answers a question nobody asked. A claim declares its **surface**, the elements it is about, and coverage reports, element by element, what was actually assessed:
+
+```json
+{"record_type": "claim", "claim_id": "c-approval", "is_root": true,
+ "proposition": "All irreversible tools require approval",
+ "surface": {"tool": ["refund", "delete", "transfer", "email"],
+             "environment": {"required": ["production"],
+                             "not_applicable": {"staging": "no money moves in staging"}}}}
+```
+
+```
+c-approval: All irreversible tools require approval
+    tool: 3 of 4 assessed · 1 not assessed · 1 assessed failure
+      delete      ASSESSED_SUPPORTED
+      email       ASSESSED_FAILED
+      refund      ASSESSED_SUPPORTED
+      transfer    NOT_ASSESSED
+    missing: tool transfer
+```
+
+The conclusion is not "75% safe". One element failed, one was never looked at, and the claim does not hold as stated. There is no percentage of safety and no score.
+
+Dimensions:
+
+- `static_path`, `runtime_path`;
+- `tool` (and actions);
+- `environment`, `dataset`;
+- `model_version`, `authorization_level`;
+- `failure_mode`, `adversarial_class`;
+- `obligation` (regulatory and control obligations).
+
+Plural and common spellings resolve to these (`tools`, `environments`, `population`, `controls` …). Any other identifier is accepted as a dimension of your own.
+
+Each element has one of six statuses:
+
+| Status | When |
+|---|---|
+| `ASSESSED_SUPPORTED` | evidence the claim resolution counts covers it, and passed |
+| `ASSESSED_FAILED` | evidence against the claim covers it. A pass on the same element does not cancel it, and neither does declaring the element not applicable |
+| `NOT_ASSESSED` | nothing the resolution counts covers it. Evidence about another state, or evidence the claim does not admit, is named and covers nothing |
+| `INACCESSIBLE` | a producer reports it tried and could not reach it (`"inaccessible": {"tool": ["transfer"]}`) |
+| `NOT_APPLICABLE` | the claim declares it out of scope, with a reason. A reason is required |
+| `UNKNOWN` | something covered it and settled nothing (an inconclusive check) |
+
+**Evidence covers only what it names.** A record that names no element of the surface fills none. Supporting evidence like that raises **RG-COV-008** (advisory), and its elements stay `NOT_ASSESSED`. Environment and dataset are also read from the `state` a record declares.
+
+Coverage is per dimension, not per combination. Refund checked in staging and transfer in production cover both tools and both environments; they do not cover refund in production.
+
+The policy decides what a shortfall does:
+
+- **RG-COV-006** — a required claim, or one whose criticality could not be determined, has a dimension where less than `surface_coverage` (default all of it) was assessed. HOLD, or BLOCK under `surface_shortfall: BLOCK`. Each dimension is held to the share on its own; nothing averages across dimensions. The finding lists the missing elements, so you see the surface nobody assessed. A surface that was declared and cannot be read is never met.
+- **RG-COV-007** — under `require_surface: true`, a required claim that declares no surface. HOLD.
+- An assessed failure is already a refutation the claim resolution blocks on; coverage names where it is and does not count it twice.
+
+The `claim_coverage` coverage row is `ASSESSED` only when every declared surface is fully assessed, and `NOT_ASSESSED` when no claim declares one. Nothing is assumed about a claim that never said what it covers.
 
 #### Independence — how many sources agreement rests on
 

@@ -71,6 +71,7 @@ __all__ = [
     "StateMatch",
     "bind_case",
     "candidate_for_case",
+    "values_equal",
 ]
 
 CANDIDATE_SCHEMA_VERSION = 1
@@ -376,6 +377,11 @@ def _equal(key: str, left: str, right: str) -> bool:
         return len(short) >= 7 and full.startswith(short) and all(
             ch in "0123456789abcdef" for ch in short)
     return False
+
+
+def values_equal(key: str, left: str, right: str) -> bool:
+    """Whether two canonical values of one component name the same thing."""
+    return _equal(key, left, right)
 
 
 def bind(candidate: CandidateState, *, state: Optional[Mapping[str, Any]] = None,

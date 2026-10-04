@@ -23,6 +23,38 @@ and a module that resolved disagreements by weight would be doing exactly the
 silent erasure it was built to stop. release-gate's job here is to make sure a
 human sees the disagreement, not to settle it.
 
+**Not every disagreement is a contradiction.** Two records pointing opposite ways
+at one claim contradict each other only if they are about the same thing. Each
+disagreement is classified by comparing what its sides declare — the state of
+the release they ran against, the part of the system they cover, the data they
+used, the environment they ran in:
+
+* `GENUINE` — comparable on everything both sides state, and opposite. One of
+  them is wrong, and a person has to find out which.
+* `STALE` — the sides were produced against different states of the release, or
+  one of them against a state other than the candidate's. A proof of tool_v2
+  says nothing about tool_v3; an approval of build abc123 cannot satisfy
+  def456.
+* `SCOPE_MISMATCH` — they cover different parts: refund passed, email failed.
+* `POPULATION_MISMATCH` — different datasets.
+* `ENVIRONMENT_MISMATCH` — different environments.
+* `AMBIGUOUS` — both sides qualify what they cover, in terms that cannot be
+  compared (a static path on one side, a tool name on the other). Whether they
+  disagree is unresolved, and unresolved is not settled.
+
+The rule for what a side did not state follows the candidate binding (§10ba): a
+record that names no state is taken to be about the candidate, and a side that
+does not qualify its scope speaks to the claim as stated — so an unqualified
+"all authorization tests pass" and a "privilege escalation succeeded" are a
+genuine contradiction, because the first claims what the second refutes.
+
+A mismatch is not called a contradiction, and it is not dropped either: the
+failing side still stands against the claim on its own terms, the claim
+resolution still reads it, and the disagreement stays open until something
+answers it. The classification changes what a reviewer is told and what would
+resolve it — re-verify on the candidate, cover the missing scope — never whether
+it is seen. It is derived from the sides, so it is outside the identity.
+
 `to_dict()` exposes `resolved`, so the existing `NoUnresolved` methodology
 predicate reads these objects unchanged.
 """
@@ -41,12 +73,18 @@ from release_gate.assurance.independence import analyse_independence
 
 __all__ = [
     "CONTRADICTION_SCHEMA_VERSION",
+    "ConflictClass",
     "Contradiction",
     "ContradictionError",
     "ContradictionKind",
     "ContradictionLedger",
     "ContradictionSide",
     "ContradictionStatus",
+    "ConflictEdge",
+    "ConflictGraph",
+    "DimensionComparison",
+    "classify_sides",
+    "conflict_graph",
     "detect_contradictions",
 ]
 
@@ -77,6 +115,79 @@ class ContradictionKind(str, Enum):
     CLAIM_CLAIM_CONFLICT = "CLAIM_CLAIM_CONFLICT"        # two claims that cannot both hold
 
 
+class ConflictClass(str, Enum):
+    """What a disagreement is, once its sides are compared. Derived, never declared."""
+
+    GENUINE = "GENUINE"                            # comparable, and opposite
+    STALE = "STALE"                                # different states of the release
+    SCOPE_MISMATCH = "SCOPE_MISMATCH"              # different parts of the system
+    POPULATION_MISMATCH = "POPULATION_MISMATCH"    # different datasets
+    ENVIRONMENT_MISMATCH = "ENVIRONMENT_MISMATCH"  # different environments
+    AMBIGUOUS = "AMBIGUOUS"                        # comparability cannot be determined
+
+
+#: The classes that are not contradictions: both sides can be true at once.
+MISMATCHES = frozenset({ConflictClass.STALE, ConflictClass.SCOPE_MISMATCH,
+                        ConflictClass.POPULATION_MISMATCH,
+                        ConflictClass.ENVIRONMENT_MISMATCH})
+
+_DESCRIBED = {
+    ConflictClass.GENUINE: "genuine contradiction: comparable, and opposite",
+    ConflictClass.STALE: "not a contradiction: the sides are about different states "
+                         "of the release",
+    ConflictClass.SCOPE_MISMATCH: "not a contradiction: the sides cover different "
+                                  "parts of the system",
+    ConflictClass.POPULATION_MISMATCH: "not a contradiction: the sides used different "
+                                       "datasets",
+    ConflictClass.ENVIRONMENT_MISMATCH: "not a contradiction: the sides ran in "
+                                        "different environments",
+    ConflictClass.AMBIGUOUS: "unresolved ambiguity: whether the sides are comparable "
+                             "cannot be determined",
+}
+
+
+class Comparison(str, Enum):
+    SAME = "SAME"
+    OVERLAP = "OVERLAP"
+    DIFFERENT = "DIFFERENT"
+    ONE_SIDED = "ONE_SIDED"            # stated by one side; the other speaks to all of it
+    NOT_COMPARABLE = "NOT_COMPARABLE"  # both qualified, in terms that do not meet
+
+
+@dataclass(frozen=True)
+class DimensionComparison:
+    """One dimension, as each side states it, and whether they meet."""
+
+    dimension: str
+    family: str          # STATE | SCOPE | POPULATION | ENVIRONMENT
+    comparison: Comparison
+    left: Tuple[str, ...] = ()
+    right: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "comparison", Comparison(self.comparison))
+        object.__setattr__(self, "left", tuple(self.left))
+        object.__setattr__(self, "right", tuple(self.right))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"dimension": self.dimension, "family": self.family,
+                "comparison": self.comparison.value, "left": list(self.left),
+                "right": list(self.right)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "DimensionComparison":
+        return cls(dimension=str(data.get("dimension") or ""),
+                   family=str(data.get("family") or ""),
+                   comparison=Comparison(str(data.get("comparison") or "SAME")),
+                   left=tuple(str(v) for v in data.get("left") or ()),
+                   right=tuple(str(v) for v in data.get("right") or ()))
+
+    def render(self) -> str:
+        left = ", ".join(self.left) or "unstated"
+        right = ", ".join(self.right) or "unstated"
+        return f"{self.dimension}: {left} vs {right} ({self.comparison.value.lower()})"
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -91,17 +202,21 @@ class ContradictionSide:
     independent_roots: int = 0
     roots: Tuple[str, ...] = ()
     note: str = ""
+    #: What sort of evidence stands here — evidence types, or check methods — so
+    #: a static finding against a runtime trace reads as exactly that.
+    kinds: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", tuple(sorted(set(self.evidence))))
         object.__setattr__(self, "participants", tuple(sorted(set(self.participants))))
         object.__setattr__(self, "roots", tuple(sorted(set(self.roots))))
+        object.__setattr__(self, "kinds", tuple(sorted(set(self.kinds))))
 
     def to_dict(self) -> Dict[str, Any]:
         return {"label": self.label, "evidence": list(self.evidence),
                 "participants": list(self.participants),
                 "independent_roots": self.independent_roots,
-                "roots": list(self.roots), "note": self.note}
+                "roots": list(self.roots), "note": self.note, "kinds": list(self.kinds)}
 
     @classmethod
     def from_evidence(cls, label: str, records: Sequence[EvidenceRecord],
@@ -115,7 +230,8 @@ class ContradictionSide:
                    evidence=tuple(r.evidence_id for r in records),
                    participants=tuple(r.producer.producer_id for r in records),
                    independent_roots=profile.independent_roots,
-                   roots=tuple(roots), note=note)
+                   roots=tuple(roots), note=note,
+                   kinds=tuple(r.evidence_type.value for r in records))
 
 
 @dataclass(frozen=True)
@@ -133,6 +249,11 @@ class Contradiction:
     detected_by: str = "release-gate/assurance/contradiction"
     detected_at: str = field(default_factory=_utc_now)
     detail: str = ""
+    #: What the disagreement is once its sides are compared, and on what. Derived
+    #: from the sides, so it is outside the identity.
+    classification: ConflictClass = ConflictClass.GENUINE
+    comparability: Tuple[DimensionComparison, ...] = ()
+    classification_basis: str = ""
     schema_version: int = CONTRADICTION_SCHEMA_VERSION
 
     contradiction_id: str = field(default="", init=False)
@@ -140,6 +261,8 @@ class Contradiction:
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", ContradictionKind(self.kind))
         object.__setattr__(self, "status", ContradictionStatus(self.status))
+        object.__setattr__(self, "classification", ConflictClass(self.classification))
+        object.__setattr__(self, "comparability", tuple(self.comparability))
         object.__setattr__(self, "target_claims", tuple(sorted(set(self.target_claims))))
         object.__setattr__(self, "sides", tuple(self.sides))
         object.__setattr__(self, "resolution_evidence",
@@ -187,6 +310,21 @@ class Contradiction:
     @property
     def is_open(self) -> bool:
         return self.status in _OPEN_STATUSES
+
+    @property
+    def is_contradiction(self) -> bool:
+        """Only a genuine one. A mismatch is a disagreement both sides can survive."""
+        return self.classification is ConflictClass.GENUINE
+
+    @property
+    def cross_source(self) -> bool:
+        """Do the sides come from different kinds of evidence?"""
+        kinds = {frozenset(side.kinds) for side in self.sides if side.kinds}
+        return len(kinds) > 1
+
+    @property
+    def described(self) -> str:
+        return _DESCRIBED[self.classification]
 
     @property
     def resolved(self) -> bool:
@@ -275,6 +413,11 @@ class Contradiction:
             "detected_by": self.detected_by,
             "detected_at": self.detected_at,
             "detail": self.detail,
+            "classification": self.classification.value,
+            "is_contradiction": self.is_contradiction,
+            "cross_source": self.cross_source,
+            "comparability": [c.to_dict() for c in self.comparability],
+            "classification_basis": self.classification_basis,
             "schema_version": self.schema_version,
         }
 
@@ -294,7 +437,12 @@ class Contradiction:
             critical_basis=data.get("critical_basis", ""),
             detected_by=data.get("detected_by", "unknown"),
             detected_at=data.get("detected_at") or _utc_now(),
-            detail=data.get("detail", ""))
+            detail=data.get("detail", ""),
+            classification=ConflictClass(data.get("classification",
+                                                  ConflictClass.GENUINE.value)),
+            comparability=tuple(DimensionComparison.from_dict(c)
+                                for c in data.get("comparability") or ()),
+            classification_basis=data.get("classification_basis", ""))
 
     def render(self) -> str:
         """The shape a reviewer reads."""
@@ -302,11 +450,15 @@ class Contradiction:
                  f"{', '.join(self.target_claims)}"]
         if self.affects_critical:
             lines.append(f"    CRITICAL: {self.critical_basis}")
+        lines.append(f"    {self.described}"
+                     + (f" — {self.classification_basis}" if self.classification_basis
+                        else ""))
         for side in self.sides:
             lines.append(
                 f"    {side.label}: {len(side.evidence)} record(s), "
                 f"{len(side.participants)} participant(s), "
-                f"{side.independent_roots} independent lineage(s)")
+                f"{side.independent_roots} independent lineage(s)"
+                + (f" [{', '.join(side.kinds)}]" if side.kinds else ""))
         if self.resolution:
             lines.append(f"    resolution: {self.resolution}")
             if self.resolution_evidence:
@@ -344,6 +496,10 @@ class ContradictionLedger:
         """The ones a final synthesis must not be allowed to omit."""
         return tuple(c for c in self._held if c.is_open and c.affects_critical)
 
+    def of_class(self, classification: ConflictClass) -> Tuple[Contradiction, ...]:
+        return tuple(c for c in self._held
+                     if c.classification is ConflictClass(classification))
+
     def by_claim(self, claim_id: str) -> Tuple[Contradiction, ...]:
         return tuple(c for c in self._held if claim_id in c.target_claims)
 
@@ -375,6 +531,9 @@ class ContradictionLedger:
                               for s in ContradictionStatus},
                 "by_kind": {k.value: sum(1 for c in self._held if c.kind is k)
                             for k in ContradictionKind},
+                "by_classification": {k.value: len(self.of_class(k))
+                                      for k in ConflictClass},
+                "cross_source": sum(1 for c in self._held if c.cross_source),
                 "digest": self.digest()}
 
     def to_dict(self) -> Dict[str, Any]:
@@ -385,6 +544,185 @@ class ContradictionLedger:
         if not self._held:
             return "No contradictions recorded."
         return "\n".join(c.render() for c in self._held)
+
+
+# ── classification ───────────────────────────────────────────────────────────
+
+_FAMILY_ORDER = ("STATE", "SCOPE", "POPULATION", "ENVIRONMENT")
+_CLASS_OF_FAMILY = {"STATE": ConflictClass.STALE, "SCOPE": ConflictClass.SCOPE_MISMATCH,
+                    "POPULATION": ConflictClass.POPULATION_MISMATCH,
+                    "ENVIRONMENT": ConflictClass.ENVIRONMENT_MISMATCH}
+#: State components that are a dimension of their own: where, and on what data.
+_STATE_AS_CONDITION = {"environment", "dataset"}
+
+
+@dataclass(frozen=True)
+class _Profile:
+    """What one member of a side declares it is about. Hashable, so equal
+    members are compared once."""
+
+    covers: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
+    state: Tuple[Tuple[str, str], ...] = ()
+    #: How the candidate binding set it aside: "" when it did not.
+    bound: str = ""
+    bound_family: str = "STATE"
+
+
+def _member_id(member: Any) -> str:
+    return str(getattr(member, "evidence_id", "") or getattr(member, "verification_id", ""))
+
+
+def _profile(member: Any, bindings: Mapping[str, Any]) -> _Profile:
+    from release_gate.assurance.candidate import (WITHHELD, CandidateError, canonical_key,
+                                                  canonical_value)
+    from release_gate.assurance.claim_coverage import conditions_of, declared_field
+    covers = conditions_of(member)
+    state: Dict[str, str] = {}
+    raw = declared_field(member, "state")
+    for key, value in (raw.items() if isinstance(raw, Mapping) else ()):
+        canonical = canonical_key(key)
+        if canonical is None or canonical in _STATE_AS_CONDITION:
+            continue
+        try:
+            state[canonical] = canonical_value(canonical, value)
+        except CandidateError:
+            continue
+    bound, family = "", "STATE"
+    binding = bindings.get(_member_id(member))
+    if binding is not None and binding.match in WITHHELD:
+        bound = binding.match.value
+        components = {c.component for c in binding.mismatches()}
+        family = ("ENVIRONMENT" if "environment" in components
+                  else "POPULATION" if "dataset" in components
+                  else "SCOPE" if "repository" in components else "STATE")
+    return _Profile(covers=tuple(sorted((d, tuple(sorted(v))) for d, v in covers.items())),
+                    state=tuple(sorted(state.items())), bound=bound, bound_family=family)
+
+
+def _compare_values(dimension: str, family: str, left: Tuple[str, ...],
+                    right: Tuple[str, ...]) -> DimensionComparison:
+    if not left or not right:
+        verdict = Comparison.ONE_SIDED
+    elif set(left) == set(right):
+        verdict = Comparison.SAME
+    elif set(left) & set(right):
+        verdict = Comparison.OVERLAP
+    else:
+        verdict = Comparison.DIFFERENT
+    return DimensionComparison(dimension, family, verdict, left, right)
+
+
+def _compare(a: _Profile, b: _Profile) -> Tuple[ConflictClass, Tuple[DimensionComparison, ...]]:
+    from release_gate.assurance.candidate import values_equal
+    from release_gate.assurance.claim_coverage import family_of_dimension
+    rows: List[DimensionComparison] = []
+    if a.bound or b.bound:
+        rows.append(DimensionComparison(
+            "candidate", a.bound_family if a.bound else b.bound_family,
+            Comparison.DIFFERENT, (a.bound or "the candidate",),
+            (b.bound or "the candidate",)))
+    left, right = dict(a.state), dict(b.state)
+    for key in sorted(set(left) | set(right)):
+        family = "SCOPE" if key == "repository" else "STATE"
+        if key in left and key in right:
+            same = values_equal(key, left[key], right[key])
+            rows.append(DimensionComparison(key, family,
+                                            Comparison.SAME if same else Comparison.DIFFERENT,
+                                            (left[key],), (right[key],)))
+        else:
+            rows.append(DimensionComparison(key, family, Comparison.ONE_SIDED,
+                                            (left[key],) if key in left else (),
+                                            (right[key],) if key in right else ()))
+    lc, rc = dict(a.covers), dict(b.covers)
+    scope_left = {d for d in lc if family_of_dimension(d).value == "SCOPE"}
+    scope_right = {d for d in rc if family_of_dimension(d).value == "SCOPE"}
+    if scope_left and scope_right and not scope_left & scope_right:
+        # Both qualified what they cover, along dimensions that never meet: a
+        # static path and a tool name. Whether they disagree is not decidable here.
+        rows.append(DimensionComparison("scope", "SCOPE", Comparison.NOT_COMPARABLE,
+                                        tuple(sorted(scope_left)),
+                                        tuple(sorted(scope_right))))
+    for dimension in sorted(set(lc) | set(rc)):
+        rows.append(_compare_values(dimension, family_of_dimension(dimension).value,
+                                    lc.get(dimension, ()), rc.get(dimension, ())))
+    for family in _FAMILY_ORDER:
+        if any(r.family == family and r.comparison is Comparison.DIFFERENT for r in rows):
+            return _CLASS_OF_FAMILY[family], tuple(rows)
+    if any(r.comparison is Comparison.NOT_COMPARABLE for r in rows):
+        return ConflictClass.AMBIGUOUS, tuple(rows)
+    return ConflictClass.GENUINE, tuple(rows)
+
+
+_RANK = {ConflictClass.GENUINE: 0, ConflictClass.AMBIGUOUS: 1, ConflictClass.STALE: 2,
+         ConflictClass.SCOPE_MISMATCH: 3, ConflictClass.POPULATION_MISMATCH: 4,
+         ConflictClass.ENVIRONMENT_MISMATCH: 5}
+
+
+def _basis(classification: ConflictClass, rows: Sequence[DimensionComparison]) -> str:
+    if classification is ConflictClass.GENUINE:
+        met = [r for r in rows if r.comparison in (Comparison.SAME, Comparison.OVERLAP)]
+        one = [r for r in rows if r.comparison is Comparison.ONE_SIDED]
+        if not met and not one:
+            return ("neither side qualifies the state or scope it is about, so both "
+                    "speak to the claim as stated")
+        parts = [f"both state {r.dimension} {', '.join(sorted(set(r.left) & set(r.right)))}"
+                 for r in met]
+        parts += [f"{r.dimension} is stated by one side only, and the other speaks to "
+                  "all of it" for r in one]
+        return "; ".join(parts)
+    if classification is ConflictClass.AMBIGUOUS:
+        row = next(r for r in rows if r.comparison is Comparison.NOT_COMPARABLE)
+        return (f"one side qualifies its scope by {', '.join(row.left)} and the other by "
+                f"{', '.join(row.right)}; nothing they state can be compared")
+    family = next(f for f, c in _CLASS_OF_FAMILY.items() if c is classification)
+    differ = [r for r in rows if r.family == family and r.comparison is Comparison.DIFFERENT]
+    parts = []
+    for row in differ:
+        if row.dimension == "candidate":
+            parts.append("one side is bound to a state other than the candidate's"
+                         if "the candidate" in row.left + row.right
+                         else "both sides are bound to states other than the candidate's")
+        else:
+            parts.append(row.render())
+    return "; ".join(parts)
+
+
+def classify_sides(left: Sequence[Any], right: Sequence[Any],
+                   bindings: Optional[Mapping[str, Any]] = None
+                   ) -> Tuple[ConflictClass, Tuple[DimensionComparison, ...], str]:
+    """What a disagreement between two sides is, and why.
+
+    Every pairing of a member from each side is compared; members that declare
+    the same things are compared once. If any pairing is comparable the
+    disagreement is GENUINE — somewhere, the two sides speak to the same thing
+    and disagree. Failing that, an undecidable pairing makes it AMBIGUOUS, and
+    only when every pairing differs is it a mismatch, named by the first family
+    that differs: state, scope, population, environment.
+    """
+    bindings = bindings or {}
+    lefts = sorted({_profile(m, bindings) for m in left}, key=repr)
+    rights = sorted({_profile(m, bindings) for m in right}, key=repr)
+    if not lefts or not rights:
+        return ConflictClass.GENUINE, (), ""
+    best: Optional[Tuple[ConflictClass, Tuple[DimensionComparison, ...]]] = None
+    for a in lefts:
+        for b in rights:
+            found = _compare(a, b)
+            if best is None or _RANK[found[0]] < _RANK[best[0]]:
+                best = found
+            if best[0] is ConflictClass.GENUINE:
+                break
+        if best is not None and best[0] is ConflictClass.GENUINE:
+            break
+    classification, rows = best
+    return classification, rows, _basis(classification, rows)
+
+
+def _classified(contradiction: Contradiction, left: Sequence[Any], right: Sequence[Any],
+                bindings: Mapping[str, Any]) -> Contradiction:
+    classification, rows, basis = classify_sides(left, right, bindings)
+    return dataclasses.replace(contradiction, classification=classification,
+                               comparability=rows, classification_basis=basis)
 
 
 # ── detection ────────────────────────────────────────────────────────────────
@@ -418,13 +756,18 @@ def _critical_basis(claim_id: str, claim_graph: Any) -> Optional[str]:
 
 def detect_contradictions(*, claim_graph: Any = None,
                           evidence: Sequence[EvidenceRecord] = (),
-                          verification_graph: Any = None) -> ContradictionLedger:
-    """Find the disagreements the case already contains.
+                          verification_graph: Any = None,
+                          bindings: Any = None) -> ContradictionLedger:
+    """Find the disagreements the case already contains, and classify each.
 
     Detection is structural throughout: evidence pointing both ways at one claim,
-    checks that disagree, a single record arguing with itself. Nothing here reads
-    meaning, and nothing decides who is right.
+    checks that disagree, a single record arguing with itself. Classification
+    compares what each side declares (`classify_sides`), using the candidate
+    binding when there is one (`bindings`, a `StateBindingReport`). Nothing here
+    reads meaning, and nothing decides who is right.
     """
+    bound: Dict[str, Any] = {b.record_id: b for b in
+                             (getattr(bindings, "bindings", None) or ())}
     by_id = {r.evidence_id: r for r in evidence}
     found: List[Contradiction] = []
 
@@ -462,6 +805,7 @@ def detect_contradictions(*, claim_graph: Any = None,
                 detail=(f"{len(supporting)} record(s) support {claim.claim_id} and "
                         f"{len(against)} contradict it, with nothing recorded that "
                         "settles which prevails"))
+            contradiction = _classified(contradiction, supporting, against, bound)
             basis = _critical_basis(claim.claim_id, claim_graph)
             found.append(contradiction.mark_critical(basis) if basis else contradiction)
 
@@ -482,14 +826,17 @@ def detect_contradictions(*, claim_graph: Any = None,
                         label="passed",
                         evidence=tuple(e for a in passed for e in a.evidence),
                         participants=tuple(a.verifier for a in passed if a.verifier),
-                        note=f"{len(passed)} passing attempt(s)"),
+                        note=f"{len(passed)} passing attempt(s)",
+                        kinds=tuple(a.method.value for a in passed)),
                     ContradictionSide(
                         label="failed",
                         evidence=tuple(e for a in failed for e in a.evidence),
                         participants=tuple(a.verifier for a in failed if a.verifier),
-                        note=f"{len(failed)} failing attempt(s)")),
+                        note=f"{len(failed)} failing attempt(s)",
+                        kinds=tuple(a.method.value for a in failed))),
                 detail=(f"{claim.claim_id} was checked more than once with different "
                         "outcomes, and nothing records which supersedes the other"))
+            contradiction = _classified(contradiction, passed, failed, bound)
             basis = _critical_basis(claim.claim_id, claim_graph)
             found.append(contradiction.mark_critical(basis) if basis else contradiction)
 
@@ -512,3 +859,91 @@ def detect_contradictions(*, claim_graph: Any = None,
                  for c in found]
 
     return ContradictionLedger(found)
+
+
+# ── the graph ────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ConflictEdge:
+    """One relationship that puts evidence at odds — with other evidence, or with
+    the release being admitted. An edge, with an id, never a footnote."""
+
+    edge_id: str
+    relation: str                 # DISAGREES | STATE_MISMATCH
+    classification: ConflictClass
+    source: Tuple[str, ...]       # evidence on one side, or the record that is off-state
+    target: Tuple[str, ...]       # evidence on the other side, or ("candidate",)
+    claims: Tuple[str, ...]
+    open: bool
+    critical: bool = False
+    detail: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"edge_id": self.edge_id, "relation": self.relation,
+                "classification": self.classification.value,
+                "source": list(self.source), "target": list(self.target),
+                "claims": list(self.claims), "open": self.open,
+                "critical": self.critical, "detail": self.detail}
+
+
+@dataclass(frozen=True)
+class ConflictGraph:
+    """Every disagreement and every state mismatch, as edges over the same ids."""
+
+    edges: Tuple[ConflictEdge, ...] = ()
+
+    def of(self, relation: str) -> Tuple[ConflictEdge, ...]:
+        return tuple(e for e in self.edges if e.relation == relation)
+
+    def to_dict(self) -> Dict[str, Any]:
+        nodes = sorted({i for e in self.edges for i in e.source + e.target + e.claims})
+        return {"schema_version": CONTRADICTION_SCHEMA_VERSION, "nodes": nodes,
+                "edges": [e.to_dict() for e in self.edges],
+                "by_classification": {k.value: sum(1 for e in self.edges
+                                                   if e.classification is k)
+                                      for k in ConflictClass},
+                "digest": digest_object([e.to_dict() for e in self.edges])}
+
+
+_BINDING_CLASS = {"environment": ConflictClass.ENVIRONMENT_MISMATCH,
+                  "dataset": ConflictClass.POPULATION_MISMATCH,
+                  "repository": ConflictClass.SCOPE_MISMATCH}
+
+
+def conflict_graph(ledger: Optional[ContradictionLedger],
+                   bindings: Any = None) -> ConflictGraph:
+    """The disagreements in a ledger and the state mismatches in a binding report.
+
+    A proof of tool_v2 offered for a tool_v3 candidate, and an approval of build
+    abc123 offered for def456, contradict no other record — they contradict the
+    release. They are edges here from the record to the candidate, classified
+    the same way, so the graph holds every relationship that keeps evidence from
+    counting, not only the ones between two records.
+    """
+    edges: List[ConflictEdge] = []
+    for c in (ledger.contradictions if ledger is not None else ()):
+        left, right = (c.sides + (ContradictionSide(label=""),) * 2)[:2]
+        edges.append(ConflictEdge(
+            edge_id=c.contradiction_id, relation="DISAGREES",
+            classification=c.classification, source=left.evidence, target=right.evidence,
+            claims=c.target_claims, open=c.is_open, critical=c.affects_critical,
+            detail=f"{c.described}" + (f" — {c.classification_basis}"
+                                       if c.classification_basis else "")))
+    from release_gate.assurance.candidate import WITHHELD
+    for binding in (getattr(bindings, "bindings", None) or ()):
+        if binding.match not in WITHHELD:
+            continue
+        components = {m.component for m in binding.mismatches()}
+        classification = next((_BINDING_CLASS[k] for k in ("environment", "dataset",
+                                                           "repository")
+                               if k in components), ConflictClass.STALE)
+        edges.append(ConflictEdge(
+            edge_id=short_id("state", digest_object({"record": binding.record_id,
+                                                     "match": binding.match.value})),
+            relation="STATE_MISMATCH", classification=classification,
+            source=(binding.record_id,), target=("candidate",),
+            claims=tuple(sorted(set(binding.bears_on))),
+            # Open while it keeps the record from counting; a refutation it
+            # carries still stands, which the binding's reason says.
+            open=True, detail=binding.reason))
+    return ConflictGraph(edges=tuple(sorted(edges, key=lambda e: (e.relation, e.edge_id))))

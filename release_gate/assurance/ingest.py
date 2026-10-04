@@ -1299,10 +1299,15 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
                 # What the check's producer says about what produced it — model,
                 # session, reviewer, toolchain (correlation.py) — kept with the
                 # result so the attempt can be placed in a correlation group.
+                # And what it ran against and covered (`state`, `covers`,
+                # `inaccessible`): read by the state binding, the contradiction
+                # classifier and claim coverage (claim_coverage.py).
                 result={**(dict(raw["result"]) if isinstance(raw.get("result"), Mapping)
                            else {}),
                         **({"provenance": dict(raw["provenance"])}
-                           if isinstance(raw.get("provenance"), Mapping) else {})},
+                           if isinstance(raw.get("provenance"), Mapping) else {}),
+                        **{k: dict(raw[k]) for k in ("state", "covers", "inaccessible")
+                           if isinstance(raw.get(k), Mapping)}},
                 evidence=() if status is VerificationStatus.NOT_RUN else evidence_ids,
                 independence_lineage=tuple(_as_ids(raw.get("independence_lineage"))),
                 status=status, detail=str(raw.get("detail") or "")))
@@ -1341,9 +1346,14 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
         extracted_by_model=str(extracted_by) if extracted_by else None,
         # What the claim says it needs, and what may bear on it at all. Read by
         # the claim resolver (resolution.py); absent unless the submission says.
-        metadata={k: [str(x) for x in (row[k] if isinstance(row[k], (list, tuple))
-                                       else [row[k]])]
-                  for k in ("requires", "admissible_evidence") if row.get(k)})
+        # `surface` is what the claim is about, element by element, and is read
+        # by claim coverage (claim_coverage.py) — kept as submitted, so an
+        # unreadable one is reported there rather than dropped here.
+        metadata={**{k: [str(x) for x in (row[k] if isinstance(row[k], (list, tuple))
+                                          else [row[k]])]
+                     for k in ("requires", "admissible_evidence") if row.get(k)},
+                  **({"surface": row["surface"]} if row.get("surface") is not None
+                     else {})})
 
 
 def _counterexample_from(row: Mapping[str, Any],

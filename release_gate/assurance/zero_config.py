@@ -62,7 +62,8 @@ from release_gate.assurance.methodology import (
     assess,
 )
 from release_gate.assurance.assumptions import AssumptionGraph
-from release_gate.assurance.contradiction import Contradiction, ContradictionLedger
+from release_gate.assurance.contradiction import (Contradiction, ContradictionLedger,
+                                                  conflict_graph)
 from release_gate.assurance.counterexample import CounterexampleLedger
 from release_gate.assurance.failed_branches import FailedBranchLedger
 from release_gate.assurance.independence import IndependenceProfile, LineageConcentration
@@ -222,6 +223,10 @@ class AssuranceOutcome:
             "criticality": (self.criticality.to_dict()
                             if self.criticality is not None else None),
             "contradictions": self.contradictions.to_dict(),
+            "claim_coverage": (self.analysis.claim_coverage.to_dict()
+                               if self.analysis.claim_coverage is not None else None),
+            "conflict_graph": conflict_graph(self.contradictions,
+                                             self.analysis.state_binding).to_dict(),
             "assumptions": self.assumptions.to_dict(),
             "counterexamples": self.counterexamples.to_dict(),
             "failed_branches": self.failed_branches.to_dict(),
@@ -722,6 +727,7 @@ def _analysis_records(analysis: AnalysisResult
             findings=len(found)))
     rows.append(_state_binding_coverage(analysis.state_binding))
     rows.append(_claim_resolution_coverage(analysis.resolution))
+    rows.append(_claim_surface_coverage(analysis.claim_coverage))
     return contradictions, rows
 
 
@@ -744,6 +750,34 @@ def _claim_resolution_coverage(report: Optional[Any]) -> SimpleRecord:
         f"{summary['claims']} claim(s) resolved under {summary['policy']}: {tally}; "
         f"{required}",
         **{k: v for k, v in summary.items() if k != "by_status"}, **summary["by_status"])
+
+
+def _claim_surface_coverage(report: Optional[Any]) -> SimpleRecord:
+    """What portion of each declared claim surface was assessed (claim_coverage.py).
+
+    ASSESSED only when at least one claim declares a surface and every declared
+    surface is fully assessed. A case whose claims declare none is NOT_ASSESSED:
+    what portion of a claim was looked at cannot be measured without knowing what
+    the claim is about, and it is not assumed.
+    """
+    stated = report.stated if report is not None else ()
+    if not stated:
+        return _coverage_row(
+            "claim_coverage", False,
+            "no claim declares a surface, so what portion of any claim was assessed "
+            "cannot be measured")
+    summary = report.summary()
+    unreadable = [c.claim_id for c in stated if c.surface.problem]
+    complete = sum(1 for c in stated if c.complete)
+    return _coverage_row(
+        "claim_coverage", not unreadable and complete == len(stated),
+        (f"{len(stated)} claim(s) declare a surface: {complete} fully assessed; "
+         f"{summary['elements_missing']} element(s) not assessed, "
+         f"{summary['elements_failed']} assessed and failed"
+         + (f"; unreadable surface on {', '.join(unreadable)}" if unreadable else "")),
+        claims=len(stated), complete=complete,
+        elements_missing=summary["elements_missing"],
+        elements_failed=summary["elements_failed"], digest=summary["digest"])
 
 
 def _state_binding_coverage(report: Optional[Any]) -> SimpleRecord:
@@ -1119,7 +1153,8 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
             f"{contradiction.contradiction_id}: unresolved disagreement on "
             f"{', '.join(contradiction.target_claims)} ({contradiction.critical_basis}) — "
             + " vs ".join(f"{side.label} {len(side.evidence)} record(s)"
-                          for side in contradiction.sides))
+                          for side in contradiction.sides)
+            + f" [{contradiction.described}]")
         if decision is Decision.PROMOTE:
             # Reachable only with a methodology whose requirements are all met.
             # Promoting over an open disagreement on a load-bearing claim is a
@@ -1515,6 +1550,15 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
         add(f"  CONTRADICTIONS ({len(ledger)})")
         for line in ledger.render().splitlines():
             add(f"    {line}")
+
+    surfaces = outcome.analysis.claim_coverage
+    if surfaces is not None and surfaces.stated:
+        add("")
+        add(f"  CLAIM COVERAGE ({len(surfaces.stated)} declared surface(s))")
+        for line in surfaces.render().splitlines():
+            add(f"    {line}")
+        add("    Assessed means something looked and reached a result. An element")
+        add("    nobody assessed is listed as missing, never counted as passed.")
 
     lineage = outcome.independence
     if lineage is not None and lineage.contributors:

@@ -9268,6 +9268,160 @@ first row of `--semantic-out`, digested (`plan_digest`), and independent of reco
 order. The plan decides only whether a question is asked; what an answer does is
 the resolution policy's, unchanged.
 
+### 10bg. Cross-source contradictions — a disagreement is a contradiction only when it is one (`classify_sides`)
+
+> **Implemented.** `release_gate/assurance/contradiction.py` — `ConflictClass`,
+> `DimensionComparison`, `classify_sides()`, `ConflictGraph`, `ConflictEdge`,
+> `conflict_graph()`; `Contradiction.classification`, `comparability`,
+> `classification_basis`, `is_contradiction`, `cross_source`; `ContradictionSide.kinds`.
+> RG-CONTRA-005 (genuine; HOLD or BLOCK by `ResolutionPolicy.critical_contradiction`),
+> RG-CONTRA-006 (mismatches), RG-CONTRA-007 (ambiguous). Tests:
+> `tests/test_cross_source_contradictions.py`.
+
+**What existed.** `detect_contradictions` already found evidence both ways on one
+claim, checks that disagree and records that argue with themselves. Each became a
+first-class `Contradiction` with both sides, stored on the case, never collapsed
+into a majority, and named in the verdict whenever it was open on a critical
+claim. What it did not ask was whether the two sides were about the same thing.
+A static finding about refund and a trace about email were "a contradiction" on
+a claim about all tools, though both are true.
+
+**Six classes, from what the sides declare.** Each record or check can declare the
+state it ran against (`state`, also bound to the candidate by §10ba) and the
+elements it covers (`covers`, in the dimension vocabulary of §10bh). Each pairing
+of a member from each side is compared, dimension by dimension, and dimensions
+fall into four families:
+
+- **state**: commit, model, prompt, tool manifest and the other components, plus
+  whether the candidate binding set the record aside;
+- **scope**: tool, path, authorization level, failure mode, adversarial class,
+  obligation, repository;
+- **population**: dataset;
+- **environment**.
+
+| Class | When |
+|---|---|
+| `GENUINE` | some pairing differs in nothing both state |
+| `AMBIGUOUS` | no pairing is comparable, and one is undecidable: both sides qualify scope along dimensions that never meet |
+| `STALE` | otherwise, the first family that differs is state |
+| `SCOPE_MISMATCH`, `POPULATION_MISMATCH`, `ENVIRONMENT_MISMATCH` | otherwise, by the first family that differs |
+
+What a side leaves unstated follows §10ba's presumption. No state means the
+candidate. A side that does not qualify its scope speaks to the claim as stated,
+so it is comparable with a side that does. That is why Example B, "all
+authorization tests pass" against "a privilege-escalation scenario succeeded",
+is GENUINE: the suite names a dataset and no privilege class, so it claims what
+the escalation refutes. Two qualified sides that share no scope dimension (a
+static path, a tool name) are AMBIGUOUS. Whether they meet cannot be determined,
+and unresolved ambiguity is a class of its own rather than a contradiction or a
+pass. Values compare without case, except paths.
+
+**The four examples.**
+
+| Example | Result |
+|---|---|
+| A | static "approval gate exists" against a trace of the action without approval, both on the refund tool: GENUINE, cross-source (STATIC_FINDING against TRACE) |
+| B | promptfoo against ProofAgent: GENUINE, as above |
+| C | a proof for tool_v2 offered for a tool_v3 candidate. On its own it contradicts no record: it contradicts the release. The binding withholds it, and the conflict graph holds a STATE_MISMATCH edge from the proof to the candidate, classified STALE. Beside a current failure, the disagreement is STALE, not a contradiction, and the claim is refuted on the candidate (BLOCK) |
+| D | an approval of build abc123 for def456: the same STATE_MISMATCH edge, and the approval cannot satisfy the current state |
+
+**Nothing disappears.** A mismatch is not called a contradiction. It is not
+dropped either:
+
+- `unresolved_critical()` is unchanged, so every open disagreement on a critical
+  claim is still named in the verdict, now with its class;
+- the claim resolution still reads the failing side (CR-03);
+- every class holds.
+
+The class moves only what a reviewer is told and what would resolve it. Only a
+genuine contradiction can be made to block, through the declared policy, and no
+policy can make any disagreement weaker than a hold (`AdmissionEffect` has no
+weaker member). The class is derived from the sides, so it is outside the
+contradiction's identity, and ids, resolutions and `NoUnresolved` are unaffected.
+
+**First-class, and one graph.** Contradictions are stored on the case with their
+class and the dimension-by-dimension comparison. `conflict_graph` joins them
+with the candidate binding's off-state records: every DISAGREES edge between two
+sides, and every STATE_MISMATCH edge from a record to the candidate, over the
+same ids, with a clock-free digest. It is in the outcome as `conflict_graph`.
+
+**What this does not do.** Detection is still structural. Two claims that
+contradict in meaning, with no evidence linking them, are not found here, and the
+classification reads declarations rather than the content of the records. Over
+the shipped examples, with every built-in methodology, no verdict moved (117 runs):
+none of their records declares `covers`, so their disagreements classify as they
+were treated before, genuine.
+
+### 10bh. Claim coverage — what portion of the claim surface was assessed (`assess_claim_coverage`)
+
+> **Implemented.** `release_gate/assurance/claim_coverage.py` — `ClaimSurface`,
+> `SurfaceStatus`, `ElementCoverage`, `DimensionCoverage`, `ClaimCoverage`,
+> `ClaimCoverageReport`, `assess_claim_coverage()`, `conditions_of()`,
+> `inaccessible_of()`, `canonical_dimension()`; `ResolutionPolicy.surface_coverage`,
+> `surface_shortfall`, `require_surface`. RG-COV-006 to -008; the `claim_coverage`
+> coverage row; `claim_coverage` in the outcome and a CLAIM COVERAGE section in the
+> report. Schema `claim_coverage` (protocol count 76). Tests:
+> `tests/test_claim_coverage.py`.
+
+**What existed.** Coverage was case-level. Expectations said how many records of a
+kind should arrive (§10m), rows said which dimensions of the case were assessed,
+and the review counted verified, corroborated and formally verified claims.
+Nothing asked how much of what a single claim is about had been looked at. A
+claim about four tools carried by three passing checks on one of them read as
+supported.
+
+**A claim declares its surface; evidence declares what it covers.**
+
+- `surface` on a claim names elements in dimensions: static and runtime paths,
+  tools and actions, environments, datasets, model versions, authorization
+  levels, failure modes, adversarial classes, regulatory and control
+  obligations, or any identifier of a domain's own. An element can be declared
+  not applicable, with a required reason.
+- `covers` on a record or check names the elements it bears on. Environment and
+  dataset are also read from its declared `state`.
+- `inaccessible` names what a producer tried and could not reach.
+
+Nothing is inferred. A record that names no element of a claim's surface covers
+none of it. That is the line between coverage and a tool count: a passing suite
+that does not say which tools it exercised has not shown that any one was.
+RG-COV-008 (advisory) reports such support.
+
+**Six statuses, kept apart.**
+
+- `ASSESSED_SUPPORTED` and `ASSESSED_FAILED` come only from what the claim
+  resolution counts or holds against the claim, so stale or inadmissible
+  evidence covers nothing and its element says why.
+- `NOT_ASSESSED`, `INACCESSIBLE`, `NOT_APPLICABLE` and `UNKNOWN` cover the rest.
+- Failed outranks supported: a pass on the same element does not cancel a
+  failure.
+- A failure on an element declared not applicable still reads failed, with the
+  declaration noted.
+- Only the two assessed statuses count as covered. An inconclusive check looked
+  and could not say.
+
+**No percentage of safety.** The report says "3 of 4 assessed · 1 not assessed · 1
+assessed failure" and lists the missing surface. Coverage is per dimension, not
+per combination, and the report does not imply the product was walked.
+
+**Policy.** A required claim, or one whose criticality could not be determined,
+is held to `surface_coverage` (default 1.0, within (0, 1]). Each dimension is
+held to it on its own, and none averages with another. A shortfall is
+RG-COV-006: HOLD, or BLOCK under `surface_shortfall: BLOCK`. A surface that was
+declared and cannot be read is never met. `require_surface: true` makes a
+required claim with no surface RG-COV-007. An assessed failure is a refutation
+the resolution already blocks on, so RG-COV-006 names it and does not count it
+again.
+
+**Two readings of an unqualified side, on purpose.**
+
+- *Contradiction classification (§10bg).* A side that does not qualify its scope
+  speaks to the whole claim, because that is what it asserts.
+- *Coverage.* The same side covers no element, because nothing shows which
+  elements were assessed.
+
+Each is the conservative reading of its own question: one keeps a disagreement
+visible, the other keeps unassessed from becoming passed.
+
 ---
 
 ## 11. Methodology behaviour
@@ -9473,6 +9627,9 @@ fixed, rather than the expectations being lowered.
 | structural analysis | model readings are no longer counted as evidence by the structural analysers | stricter only: RG-PROV-002 and RG-INDEP-003 can no longer be removed by readings; no shipped example's decision moved |
 | `assure --semantic` | asks what the escalation plan selects: by default required or undetermined claims, at most 10, never a claim carried only by external results; the plan is the first row of `--semantic-out` | fewer questions than before for cases with non-required or external-only claims; `--escalation-policy FILE` restores any scope |
 | `assure --escalation-policy FILE` | new | an error without `--semantic` |
+| contradiction classification (§10bg) | every contradiction carries `classification`, `comparability`, `classification_basis`, `is_contradiction`, `cross_source`; sides carry `kinds`; RG-CONTRA-006 / -007; the outcome's `conflict_graph` | ids unchanged (the class is outside the identity); the stored contradictions and the ledger digest change, so case digests change. A critical disagreement that is not genuine now raises RG-CONTRA-006 or -007 in place of RG-CONTRA-005, with the same HOLD. No shipped example's verdict moved |
+| `ResolutionPolicy` | new fields `critical_contradiction`, `surface_coverage`, `surface_shortfall`, `require_surface`; `SemanticChallenge` is now an alias of `AdmissionEffect` | the policy digest, and every case digest, changes; the defaults hold exactly as before |
+| claim coverage (§10bh) | claim `surface`, record and attempt `covers` / `inaccessible`, attempt `state`; RG-COV-006 to -008; a `claim_coverage` coverage row on every case | additive for cases that declare none: the row reads `NOT_ASSESSED` and no finding is raised |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

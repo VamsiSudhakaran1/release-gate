@@ -64,7 +64,8 @@ _FOCUS_KIND = {
     "RG-VERIF-001": "case", "RG-VERIF-002": "claim", "RG-VERIF-003": "claim",
     "RG-CONTRA-001": "evidence", "RG-CONTRA-002": "claim",
     "RG-CONTRA-003": "claim", "RG-CONTRA-004": "claim",
-    "RG-CONTRA-005": "contradiction",
+    "RG-CONTRA-005": "contradiction", "RG-CONTRA-006": "contradiction",
+    "RG-CONTRA-007": "contradiction",
     "RG-ASSUME-001": "assumption", "RG-ASSUME-002": "assumption",
     "RG-CEX-001": "counterexample", "RG-CEX-002": "counterexample",
     "RG-CEX-003": "counterexample",
@@ -82,6 +83,7 @@ _FOCUS_KIND = {
     "RG-SEM-004": "claim",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
     "RG-COV-004": "execution", "RG-COV-005": "case",
+    "RG-COV-006": "claim", "RG-COV-007": "claim", "RG-COV-008": "claim",
     "RG-CAP-001": "manifest", "RG-CAP-002": "tools", "RG-CAP-003": "case",
     "RG-CAP-004": "case", "RG-CAP-005": "case", "RG-CAP-006": "capability",
     "RG-CAP-007": "capability",
@@ -173,6 +175,13 @@ _RULE_REASON = {
     "RG-CONS-002": AttentionReason.CONSEQUENCE_DISPUTED,
     "RG-CONS-003": AttentionReason.CONSEQUENCE_DISPUTED,
     "RG-CONTRA-005": AttentionReason.UNRESOLVED_DISAGREEMENT,
+    # Not contradictions, and still unresolved: a person sees them as what they are.
+    "RG-CONTRA-006": AttentionReason.UNRESOLVED_DISAGREEMENT,
+    "RG-CONTRA-007": AttentionReason.UNRESOLVED_DISAGREEMENT,
+    # Surface nobody assessed, named element by element.
+    "RG-COV-006": AttentionReason.COVERAGE_GAP,
+    "RG-COV-007": AttentionReason.COVERAGE_GAP,
+    "RG-COV-008": AttentionReason.COVERAGE_GAP,
     "RG-REPL-001": AttentionReason.UNRESOLVED_DISAGREEMENT,
     "RG-REPL-002": AttentionReason.UNRESOLVED_DISAGREEMENT,
     # An accepted risk and a self-cleared finding are distinct things to look at,
@@ -930,8 +939,12 @@ _NON_MONOTONE_RULES = frozenset({
     "RG-CAP-001", "RG-CAP-002",
     # A declared consequence can be contradicted by evidence that has not arrived.
     "RG-CONS-002", "RG-CONS-003",
-    # A resolved contradiction can be reopened by evidence that has not arrived.
-    "RG-CONTRA-005",
+    # A resolved contradiction can be reopened by evidence that has not arrived,
+    # and a disagreement's class moves when either side states more.
+    "RG-CONTRA-005", "RG-CONTRA-006", "RG-CONTRA-007",
+    # An assessed element goes unassessed when the candidate moves past the
+    # evidence that covered it.
+    "RG-COV-006", "RG-COV-007", "RG-COV-008",
     # A resolved counterexample can be reopened by a search that has not run yet.
     "RG-CEX-001", "RG-CEX-002",
     # An agreeing set of paths can be split by a replication that has not run.

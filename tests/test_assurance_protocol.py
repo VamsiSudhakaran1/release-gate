@@ -98,8 +98,9 @@ class TestNoDrift:
         # 71 since PRODUCER_CONTRACT_SCHEMA_VERSION and CANDIDATE_SCHEMA_VERSION;
         # 73 since RESOLUTION_SCHEMA_VERSION and CORRELATION_SCHEMA_VERSION;
         # 74 since SEMANTIC_VERIFIER_SCHEMA_VERSION;
-        # 75 since ESCALATION_SCHEMA_VERSION.
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 75
+        # 75 since ESCALATION_SCHEMA_VERSION;
+        # 76 since CLAIM_COVERAGE_SCHEMA_VERSION.
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 76
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────

@@ -148,6 +148,9 @@ class AnalysisResult:
     #: Every claim's resolution under the case's resolution policy
     #: (resolution.py): which claims the decision needs, and where each stands.
     resolution: Optional[Any] = None
+    #: Each claim's declared surface and what was assessed of it
+    #: (claim_coverage.py). Claims with no surface are listed as undeclared.
+    claim_coverage: Optional[Any] = None
 
     def by_effect(self, effect: RequirementEffect) -> Tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.effect is effect)
@@ -170,7 +173,9 @@ class AnalysisResult:
                 "claim_resolution": (self.resolution.to_dict()
                                      if self.resolution is not None else None),
                 "state_binding": (self.state_binding.to_dict()
-                                  if self.state_binding is not None else None)}
+                                  if self.state_binding is not None else None),
+                "claim_coverage": (self.claim_coverage.to_dict()
+                                   if self.claim_coverage is not None else None)}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -1227,7 +1232,9 @@ def _analyse_failed_branches(ledger: Optional[FailedBranchLedger]) -> List[Findi
 
 def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
                            records: Sequence[EvidenceRecord],
-                           ledger: Optional[ContradictionLedger] = None) -> List[Finding]:
+                           ledger: Optional[ContradictionLedger] = None,
+                           policy: Optional[Any] = None) -> List[Finding]:
+    from release_gate.assurance.contradiction import MISMATCHES, ConflictClass
     findings: List[Finding] = []
     ledger = ledger if ledger is not None else ContradictionLedger()
 
@@ -1239,12 +1246,20 @@ def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
     # survives as a contradiction instead of the record being dropped. A rule that
     # cannot fire is worse than no rule, because it implies a check is happening.
 
-    # The one the verdict is structurally forbidden from omitting.
-    critical = ledger.unresolved_critical()
+    # The ones the verdict is structurally forbidden from omitting, split by what
+    # they are. Every one of them holds; only a genuine contradiction can be made
+    # to block, and only by the declared resolution policy.
+    unresolved = ledger.unresolved_critical()
+    critical = [c for c in unresolved if c.classification is ConflictClass.GENUINE]
+    mismatched = [c for c in unresolved if c.classification in MISMATCHES]
+    ambiguous = [c for c in unresolved if c.classification is ConflictClass.AMBIGUOUS]
+    effect = (RequirementEffect.BLOCK
+              if policy is not None and policy.critical_contradiction.value == "BLOCK"
+              else RequirementEffect.HOLD)
     if critical:
         findings.append(Finding(
             rule_id="RG-CONTRA-005", domain=AnalysisDomain.CONTRADICTION,
-            effect=RequirementEffect.HOLD,
+            effect=effect,
             summary=f"{len(critical)} unresolved contradiction(s) affect a critical claim",
             detail="; ".join(
                 f"{c.contradiction_id} on {', '.join(c.target_claims)} "
@@ -1258,7 +1273,48 @@ def _analyse_contradiction(claim_graph: Optional[ClaimGraph],
             observed={"unresolved_critical": len(critical),
                       "critical_claims": sorted({c for x in critical
                                                  for c in x.target_claims})[:12],
-                      "contradiction_ids": [c.contradiction_id for c in critical[:12]]}))
+                      "contradiction_ids": [c.contradiction_id for c in critical[:12]],
+                      "cross_source": sum(1 for c in critical if c.cross_source),
+                      "policy_effect": effect.value}))
+
+    if mismatched:
+        by_class = sorted({c.classification.value for c in mismatched})
+        findings.append(Finding(
+            rule_id="RG-CONTRA-006", domain=AnalysisDomain.CONTRADICTION,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(mismatched)} unresolved disagreement(s) on a critical claim "
+                     f"are not contradictions ({', '.join(by_class).lower()})"),
+            detail="; ".join(
+                f"{c.contradiction_id} on {', '.join(c.target_claims)}: "
+                f"{c.classification.value} — {c.classification_basis}"
+                for c in mismatched[:4])[:700]
+                   + ". The sides are about different things, so both can be true; the "
+                     "failing side still stands against the claim on its own terms, "
+                     "and nothing here has assessed what the other side did not.",
+            remedy=("re-produce the evidence against the candidate (STALE); assess the "
+                    "claim on the scope, data or environment the passing side did not "
+                    "cover; or narrow the claim and say so"),
+            refs=tuple(c.contradiction_id for c in mismatched[:12]),
+            observed={"disagreements": len(mismatched),
+                      "by_classification": {k: sum(1 for c in mismatched
+                                                   if c.classification.value == k)
+                                            for k in by_class},
+                      "critical_claims": sorted({c for x in mismatched
+                                                 for c in x.target_claims})[:12]}))
+
+    if ambiguous:
+        findings.append(Finding(
+            rule_id="RG-CONTRA-007", domain=AnalysisDomain.CONTRADICTION,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(ambiguous)} unresolved disagreement(s) on a critical claim "
+                     "cannot be classified: whether the sides are comparable is unknown"),
+            detail="; ".join(f"{c.contradiction_id} on {', '.join(c.target_claims)}: "
+                             f"{c.classification_basis}" for c in ambiguous[:4])[:700]
+                   + ". Unresolved ambiguity is not settled in either direction.",
+            remedy=("state on both sides the element each covers in a shared dimension "
+                    "(the same tool, path, environment), so they can be compared"),
+            refs=tuple(c.contradiction_id for c in ambiguous[:12]),
+            observed={"disagreements": len(ambiguous)}))
 
     if claim_graph is None:
         return findings
@@ -1637,6 +1693,91 @@ def _analyse_resolution(report: Optional[Any]) -> List[Finding]:
 
 # ── coverage (RG-COV-*) ──────────────────────────────────────────────────────
 
+def _analyse_claim_coverage(report: Optional[Any], policy: Optional[Any]) -> List[Finding]:
+    """RG-COV-006 to -008: what portion of each required claim's surface was assessed.
+
+    A required claim — or one whose criticality could not be determined, which is
+    never read as unimportant — is held to the policy's share of every dimension
+    of its declared surface. An assessed failure is already a refutation the
+    claim's resolution blocks on, so it is named here and not counted again.
+    """
+    if report is None or policy is None or not report.claims:
+        return []
+    findings: List[Finding] = []
+    share = policy.surface_coverage
+    in_scope = [c for c in report.claims if c.required is not False]
+
+    short = [c for c in in_scope if c.surface.stated and not c.meets(share)]
+    if short:
+        def gap(c: Any) -> str:
+            if c.surface.problem:
+                return f"{c.claim_id}: surface unreadable ({c.surface.problem})"
+            missing = ", ".join(f"{e.dimension} {e.element} {e.status.value}"
+                                for e in c.missing[:6])
+            failed = ", ".join(f"{e.dimension} {e.element}" for e in c.failed[:4])
+            return (f"{c.claim_id}: " + "; ".join(f"{d.dimension} {d.summary()}"
+                                                  for d in c.dimensions)
+                    + (f" — missing {missing}" if missing else "")
+                    + (f" — failed {failed}" if failed else ""))
+        effect = (RequirementEffect.BLOCK if policy.surface_shortfall.value == "BLOCK"
+                  else RequirementEffect.HOLD)
+        findings.append(Finding(
+            rule_id="RG-COV-006", domain=AnalysisDomain.COVERAGE, effect=effect,
+            summary=(f"{len(short)} required claim(s) have unassessed surface: less than "
+                     f"{share:.0%} of a declared dimension was assessed"),
+            detail=("; ".join(gap(c) for c in short[:4])
+                    + (f" (+{len(short) - 4} more)" if len(short) > 4 else "")
+                    + ". Not assessed is not passed: the elements nobody looked at are "
+                      "the ones listed, and what was assessed elsewhere says nothing "
+                      "about them."),
+            remedy=("assess each missing element and say which element each record "
+                    "covers (`covers`), or narrow the claim and declare what is out of "
+                    "scope and why"),
+            refs=tuple(c.claim_id for c in short[:12]),
+            observed={"claims": len(short), "required_share": share,
+                      "missing": {c.claim_id: [f"{e.dimension}:{e.element}"
+                                               for e in c.missing[:12]]
+                                  for c in short[:12]},
+                      "failed": {c.claim_id: [f"{e.dimension}:{e.element}"
+                                              for e in c.failed[:12]]
+                                 for c in short[:12] if c.failed}}))
+
+    if policy.require_surface:
+        undeclared = [c for c in in_scope if not c.surface.stated]
+        if undeclared:
+            findings.append(Finding(
+                rule_id="RG-COV-007", domain=AnalysisDomain.COVERAGE,
+                effect=RequirementEffect.HOLD,
+                summary=(f"{len(undeclared)} required claim(s) declare no surface, and the "
+                         "resolution policy requires one"),
+                detail=("Without a surface, what portion of the claim was assessed "
+                        "cannot be measured, and it is not assumed: "
+                        + ", ".join(c.claim_id for c in undeclared[:8])),
+                remedy="declare each claim's surface: the tools, paths, environments, "
+                       "datasets or obligations it is about",
+                refs=tuple(c.claim_id for c in undeclared[:12]),
+                observed={"claims": len(undeclared)}))
+
+    counted = [c for c in report.claims
+               if c.declared and c.unattributed.get("SUPPORTS")]
+    if counted:
+        findings.append(Finding(
+            rule_id="RG-COV-008", domain=AnalysisDomain.COVERAGE,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{sum(len(c.unattributed['SUPPORTS']) for c in counted)} supporting "
+                     f"item(s) on {len(counted)} claim(s) with a declared surface do not "
+                     "say which part of it they cover"),
+            detail=("They count toward the claim's resolution and cover no element of "
+                    "its surface: a passing check that does not name what it exercised "
+                    "has not shown that any one element was. "
+                    + "; ".join(f"{c.claim_id}: {len(c.unattributed['SUPPORTS'])}"
+                                for c in counted[:6])),
+            remedy="record which elements each check covers (`covers`)",
+            refs=tuple(c.claim_id for c in counted[:12]),
+            observed={"claims": len(counted)}))
+    return findings
+
+
 def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
                       execution: Optional[ExecutionGraph],
                       normalisation: Optional[Any]) -> List[Finding]:
@@ -2007,9 +2148,12 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
         verification_graph = None
 
     findings: List[Finding] = []
+    from release_gate.assurance.resolution import policy_for_case, resolve_claims
+    policy = policy_for_case(case)
     independence = analyse_independence(records)
-    detected = detect_contradictions(claim_graph=claim_graph, evidence=records,
-                                     verification_graph=verification_graph)
+    detected = detect_contradictions(
+        claim_graph=claim_graph, evidence=records, verification_graph=verification_graph,
+        bindings=claim_graph.state_binding if claim_graph is not None else None)
     assumption_graph = AssumptionGraph.from_claim_graph(claim_graph)
 
     # Which claims a refutation would actually matter to. One derived definition,
@@ -2104,7 +2248,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_adversarial(adversarial, critical))
     findings.extend(_analyse_verification(case, records, claim_graph))
     findings.extend(_analyse_verification_graph(verification_graph))
-    findings.extend(_analyse_contradiction(claim_graph, records, ledger))
+    findings.extend(_analyse_contradiction(claim_graph, records, ledger, policy))
     findings.extend(_analyse_assumptions(assumption_graph))
     findings.extend(_analyse_counterexamples(counterexamples, critical))
     findings.extend(_analyse_failed_branches(failed_branches))
@@ -2112,15 +2256,17 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     state_binding = claim_graph.state_binding if claim_graph is not None else None
     findings.extend(_analyse_state_binding(state_binding))
 
-    from release_gate.assurance.resolution import policy_for_case, resolve_claims
     resolution = resolve_claims(
         claim_graph, records=[r for kind in ("evidence", "verification",
                                              "contradictions", "counterexamples")
                               for r in case.records(kind)
                               if isinstance(r, EvidenceRecord)],
         counterexamples=counterexamples, criticality=criticality,
-        policy=policy_for_case(case))
+        policy=policy)
     findings.extend(_analyse_resolution(resolution))
+    from release_gate.assurance.claim_coverage import assess_claim_coverage
+    claim_coverage = assess_claim_coverage(claim_graph, resolution, records)
+    findings.extend(_analyse_claim_coverage(claim_coverage, policy))
     findings.extend(_analyse_semantic(resolution))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
@@ -2142,4 +2288,5 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
                           counterexamples=counterexamples,
                           failed_branches=failed_branches,
                           state_binding=state_binding,
-                          resolution=resolution)
+                          resolution=resolution,
+                          claim_coverage=claim_coverage)

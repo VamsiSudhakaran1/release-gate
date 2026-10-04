@@ -69,6 +69,7 @@ from release_gate.assurance.evidence import EpistemicStatus, TrustStatus, Verifi
 from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 
 __all__ = [
+    "AdmissionEffect",
     "DEFAULT_RESOLUTION_POLICY",
     "RESOLUTION_SCHEMA_VERSION",
     "ClaimResolution",
@@ -137,11 +138,20 @@ class SemanticSupport(str, Enum):
     COUNTS = "COUNTS"             # counts as support; never establishes
 
 
-class SemanticChallenge(str, Enum):
-    """What a semantic verifier's "contradicted" does to the case (RG-SEM-001)."""
+class AdmissionEffect(str, Enum):
+    """What an unmet part of the resolution policy does to the case.
+
+    HOLD or BLOCK, and nothing weaker: the policy can make a gap stop the
+    release harder, never make it advisory.
+    """
 
     HOLD = "HOLD"     # a person settles it before anything is admitted
     BLOCK = "BLOCK"
+
+
+#: What a semantic verifier's "contradicted" does to the case (RG-SEM-001). The
+#: same two effects; kept under its own name, which callers already use.
+SemanticChallenge = AdmissionEffect
 
 
 @dataclass(frozen=True)
@@ -173,12 +183,37 @@ class ResolutionPolicy:
     #: A model reading the evidence as contradicting a claim holds the case by
     #: default: a reading raises the question, a person or a check settles it.
     semantic_contradiction: SemanticChallenge = SemanticChallenge.HOLD
+    #: A genuine, unresolved contradiction on a critical claim (RG-CONTRA-005).
+    #: Disagreements that are not contradictions — stale, mismatched, ambiguous —
+    #: hold regardless (RG-CONTRA-006, -007): they are open, and not settled.
+    critical_contradiction: AdmissionEffect = AdmissionEffect.HOLD
+    #: The share of each dimension of a required claim's declared surface that
+    #: must be assessed (claim_coverage.py, RG-COV-006). 1.0 is all of it.
+    surface_coverage: float = 1.0
+    surface_shortfall: AdmissionEffect = AdmissionEffect.HOLD
+    #: Whether a required claim must declare a surface at all (RG-COV-007).
+    require_surface: bool = False
     note: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "semantic_support", SemanticSupport(self.semantic_support))
         object.__setattr__(self, "semantic_contradiction",
                            SemanticChallenge(self.semantic_contradiction))
+        object.__setattr__(self, "critical_contradiction",
+                           AdmissionEffect(self.critical_contradiction))
+        object.__setattr__(self, "surface_shortfall",
+                           AdmissionEffect(self.surface_shortfall))
+        if isinstance(self.surface_coverage, bool) or not isinstance(
+                self.surface_coverage, (int, float)):
+            raise ResolutionError("surface_coverage is a number")
+        share = float(self.surface_coverage)
+        if not 0.0 < share <= 1.0:
+            raise ResolutionError(
+                "surface_coverage is within (0, 1]: a policy that needed none of a "
+                "required claim's surface assessed would read unassessed as passed")
+        object.__setattr__(self, "surface_coverage", share)
+        if not isinstance(self.require_surface, bool):
+            raise ResolutionError("require_surface is true or false")
         object.__setattr__(self, "establishing",
                            tuple(sorted({Strength(s) for s in self.establishing},
                                         key=lambda s: s.value)))
@@ -212,6 +247,10 @@ class ResolutionPolicy:
                 "admission_level": self.admission_level.value,
                 "semantic_support": self.semantic_support.value,
                 "semantic_contradiction": self.semantic_contradiction.value,
+                "critical_contradiction": self.critical_contradiction.value,
+                "surface_coverage": self.surface_coverage,
+                "surface_shortfall": self.surface_shortfall.value,
+                "require_surface": self.require_surface,
                 "note": self.note, "schema_version": RESOLUTION_SCHEMA_VERSION}
 
     def digest(self) -> str:
@@ -249,6 +288,13 @@ class ResolutionPolicy:
                 semantic_contradiction=SemanticChallenge(str(
                     data.get("semantic_contradiction")
                     or default.semantic_contradiction.value)),
+                critical_contradiction=AdmissionEffect(str(
+                    data.get("critical_contradiction")
+                    or default.critical_contradiction.value)),
+                surface_coverage=data.get("surface_coverage", default.surface_coverage),
+                surface_shortfall=AdmissionEffect(str(
+                    data.get("surface_shortfall") or default.surface_shortfall.value)),
+                require_surface=data.get("require_surface", default.require_surface),
                 note=str(data.get("note") or ""))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, ResolutionError):

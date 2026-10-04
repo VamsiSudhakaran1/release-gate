@@ -4,6 +4,82 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### ⚔️ A disagreement is a contradiction only when it is one
+
+Evidence pointing both ways at a claim used to be "a contradiction" whatever it
+was about. A static finding about refund and a trace about email are both true;
+a proof of tool_v2 says nothing about tool_v3. Every disagreement is now
+classified from what its sides declare: the state they ran against, what they
+`covers`, the data they used and where they ran.
+
+- **Six classes.**
+  - `GENUINE`: comparable, and opposite.
+  - `STALE`: different states of the release, or not the candidate's.
+  - `SCOPE_MISMATCH`, `POPULATION_MISMATCH`, `ENVIRONMENT_MISMATCH`.
+  - `AMBIGUOUS`: both sides qualify their scope in terms that cannot be
+    compared.
+
+  An unstated state means the candidate, and an unqualified side speaks to the
+  whole claim. So "all authorization tests pass" against "a privilege escalation
+  succeeded" is a genuine contradiction.
+- **Cross-source.** Each side records what kind of evidence stands there (a static
+  finding against a runtime trace, an eval against an adversarial result).
+- **Incomparable is not called a contradiction, and is never dropped.** Every
+  unresolved disagreement on a critical claim still holds and is still named in
+  the verdict, now with its class. The failing side still contradicts the claim.
+  RG-CONTRA-005 is now genuine contradictions only, and the declared policy can
+  make those block (`critical_contradiction: BLOCK`). RG-CONTRA-006 reports
+  disagreements that are not contradictions, and RG-CONTRA-007 ones that cannot
+  be classified. Both hold.
+- **One conflict graph.** Contradictions are stored on the case with their class
+  and the dimension-by-dimension comparison. The outcome's `conflict_graph`
+  holds them as edges, alongside every record bound to another state of the
+  candidate as an edge to the candidate: a proof of the wrong version, an
+  approval of the wrong build.
+
+### 📐 Coverage is claim-based, not tool-count-based
+
+"Eight tools passed" is not coverage. A claim now declares its **surface** (the
+tools, paths, environments, datasets, model versions, authorization levels,
+failure modes, adversarial classes and obligations it is about). Evidence
+declares which elements it `covers`, and coverage is reported element by element
+(`release_gate/assurance/claim_coverage.py`):
+
+```text
+tool: 3 of 4 assessed · 1 not assessed · 1 assessed failure
+missing: tool transfer
+```
+
+- **Six statuses.** Assessed and supported, assessed and failed, not assessed,
+  inaccessible, not applicable (with a required reason), unknown. A pass does
+  not cancel a failure on the same element, and declaring an element not
+  applicable does not hide a failure on it.
+- **Evidence covers only what it names.** A passing check that says nothing about
+  which tools it exercised covers none of them (RG-COV-008, advisory), and
+  evidence about another state of the release covers nothing.
+- **No percentage of safety.** The missing surface is listed.
+- **Policy.**
+  - By default, every dimension of a required claim's declared surface must be
+    fully assessed. A shortfall holds (RG-COV-006).
+  - `surface_coverage` lowers the share, but each dimension is held to it on its
+    own, with no averaging.
+  - `surface_shortfall: BLOCK` makes a shortfall block.
+  - `require_surface: true` requires every required claim to declare a surface
+    (RG-COV-007).
+
+  No policy can read unassessed as passed.
+
+#### Migration notes (contradictions and claim coverage)
+
+- **Case digests change.** Stored contradictions carry their class, every case
+  gains a `claim_coverage` coverage row, and the resolution policy gains four
+  fields. Contradiction ids do not change.
+- A critical disagreement that is not a genuine contradiction now raises
+  RG-CONTRA-006 or RG-CONTRA-007 instead of RG-CONTRA-005, with the same HOLD.
+- Cases that declare no `covers` and no `surface` keep their verdicts: over the
+  shipped examples with every built-in methodology, 117 runs, none moved.
+- `SemanticChallenge` is now an alias of `AdmissionEffect`, with the same members.
+
 ### 🧭 Semantic escalation: which questions go to a model, decided first
 
 `--semantic` no longer asks about every open claim. Before anything is sent it

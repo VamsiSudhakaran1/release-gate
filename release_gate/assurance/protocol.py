@@ -305,6 +305,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "supported, contradicted, insufficient evidence, or UNKNOWN — "
                   "with the provider, prompt, packet and state it was made against; "
                   "never a verdict"),
+        _ref("claim_coverage", "claim_coverage", "CLAIM_COVERAGE_SCHEMA_VERSION", 1,
+             note="each claim's declared surface, element by element: assessed and "
+                  "supported, assessed and failed, not assessed, inaccessible, not "
+                  "applicable or unknown — never a percentage of safety"),
         _ref("escalation_plan", "escalation", "ESCALATION_SCHEMA_VERSION", 1,
              note="which questions go to a model and why, decided before any is "
                   "asked: each claim and finding with its adjudication mode, and "
