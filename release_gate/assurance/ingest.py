@@ -96,7 +96,10 @@ ENVELOPE_RECORD_TYPES = frozenset(
      "producer",
      # A `CandidateState` (candidate.py): the release the submission says it is
      # evidence about. Labelled as the submission's own description.
-     "candidate"})
+     "candidate",
+     # A `SemanticAssertion` (semantic_verifier.py), persisted by an earlier run
+     # and replayed: DECLARED, because the file is the only witness to it.
+     "semantic_assertion"})
 
 
 class IngestError(ValueError):
@@ -818,6 +821,12 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                 mapped += 1
             elif record_type == "counterexample":
                 counterexamples.append(_counterexample_from(row, producer))
+                mapped += 1
+            elif record_type == "semantic_assertion":
+                from release_gate.assurance.semantic_verifier import (
+                    SemanticAssertion, assertions_to_records)
+                evidence.extend(assertions_to_records(
+                    [SemanticAssertion.from_dict(row)], submitted=True))
                 mapped += 1
             elif record_type == "failed_branch":
                 branches.append(_failed_branch_from(row, producer))

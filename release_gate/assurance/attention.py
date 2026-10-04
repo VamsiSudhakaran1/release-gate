@@ -78,6 +78,8 @@ _FOCUS_KIND = {
     "RG-DRIFT-009": "case",
     # Claim resolution (resolution.py): the claim is what a reviewer opens.
     "RG-CRIT-006": "claim", "RG-INDEP-005": "claim", "RG-INDEP-006": "claim",
+    "RG-SEM-001": "claim", "RG-SEM-002": "claim", "RG-SEM-003": "claim",
+    "RG-SEM-004": "claim",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
     "RG-COV-004": "execution", "RG-COV-005": "case",
     "RG-CAP-001": "manifest", "RG-CAP-002": "tools", "RG-CAP-003": "case",
@@ -184,6 +186,10 @@ _RULE_REASON = {
     "RG-CRIT-005": AttentionReason.NOT_CORROBORATED,
     # A required claim the evidence does not carry to the admission level.
     "RG-CRIT-006": AttentionReason.NOT_VERIFIED,
+    "RG-SEM-001": AttentionReason.CONTRADICTION,
+    "RG-SEM-002": AttentionReason.NOT_VERIFIED,
+    "RG-SEM-003": AttentionReason.NOT_VERIFIED,
+    "RG-SEM-004": AttentionReason.STALE_VERIFICATION,
     "RG-EXPECT-001": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-003": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-005": AttentionReason.SELECTIVE_EVIDENCE,
@@ -918,6 +924,7 @@ _NON_MONOTONE_RULES = frozenset({
     # A claim's resolution moves both ways as evidence arrives: a found
     # counterexample or an expected check can take a supported claim down.
     "RG-CRIT-006", "RG-INDEP-005", "RG-INDEP-006",
+    "RG-SEM-001", "RG-SEM-002", "RG-SEM-003", "RG-SEM-004",
     # More evidence can reveal a capability that was exercised and undeclared, so
     # a clean capability comparison is never settled by arrival.
     "RG-CAP-001", "RG-CAP-002",

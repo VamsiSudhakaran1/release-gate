@@ -1814,6 +1814,9 @@ def _run_assure_command():
       release-gate assure <file> [--json] [--full] [--review]
                                  [--methodology REF|FILE]
                                  [--config FILE] [--case-output FILE]
+                                 [--semantic [--semantic-out FILE]
+                                  [--semantic-policy FILE]]
+                                 [--semantic-assertions FILE]
       release-gate assure --list-methodologies
       release-gate assure --diagnostics
 
@@ -1949,9 +1952,23 @@ def _run_assure_command():
             print(f"Error: {policy_ref} is not a readable resolution policy: {exc}")
             sys.exit(1)
 
+    # The semantic verifier (assurance/semantic_verifier.py): ask a model the
+    # questions the deterministic rules left open, or replay answers an earlier
+    # run persisted. Either way the answers are assertions the resolution policy
+    # reads; neither path lets a model choose the verdict.
+    semantic_assertions, semantic_submitted = _semantic_assertions_from_argv(
+        target, ask='--semantic' in argv,
+        replay=_flag(argv, '--semantic-assertions'),
+        out=_flag(argv, '--semantic-out'),
+        policy_ref=_flag(argv, '--semantic-policy'),
+        methodology=methodology, candidate=candidate,
+        resolution_policy=resolution_policy)
+
     try:
         outcome = assure(target, methodology=methodology, candidate=candidate,
-                         resolution_policy=resolution_policy)
+                         resolution_policy=resolution_policy,
+                         semantic_assertions=semantic_assertions,
+                         semantic_submitted=semantic_submitted)
     except IngestError as exc:
         print(f"Error: {exc}")
         sys.exit(1)
@@ -1978,6 +1995,90 @@ def _run_assure_command():
             print(f"  Case written to {case_output}")
 
     sys.exit(outcome.exit_code)
+
+
+def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
+                                   **assure_kwargs):
+    """`--semantic` asks; `--semantic-assertions FILE` replays. Not both.
+
+    Returns the assertions and whether they were read from a file (DECLARED) or
+    produced in this process (DERIVED). Misconfiguration is an error; a provider
+    that fails once configured is not — that is an UNKNOWN assertion per question.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from release_gate.assurance.semantic_verifier import (
+        DEFAULT_SEMANTIC_VERIFIER_POLICY, SemanticAssertion, SemanticVerifier,
+        SemanticVerifierError, SemanticVerifierPolicy, build_evidence_packet,
+        state_hash_for, unresolved_questions)
+
+    if not (replay or ask):
+        return (), False
+    if replay and ask:
+        print("Error: --semantic asks a model and --semantic-assertions replays "
+              "answers an earlier run kept; use one")
+        sys.exit(1)
+
+    if replay:
+        try:
+            text = _Path(replay).read_text(encoding='utf-8')
+            rows = (_json.loads(text) if text.lstrip().startswith('[')
+                    else [_json.loads(line) for line in text.splitlines() if line.strip()])
+            found = [SemanticAssertion.from_dict(r) for r in rows
+                     if isinstance(r, dict) and r.get('record_type', 'semantic_assertion')
+                     == 'semantic_assertion']
+        except (OSError, ValueError, SemanticVerifierError) as exc:
+            print(f"Error: {replay} is not a readable assertions file: {exc}")
+            sys.exit(1)
+        return tuple(found), True
+
+    policy = DEFAULT_SEMANTIC_VERIFIER_POLICY
+    if policy_ref:
+        try:
+            policy = SemanticVerifierPolicy.from_dict(
+                _json.loads(_Path(policy_ref).read_text(encoding='utf-8')))
+        except (OSError, ValueError, SemanticVerifierError) as exc:
+            print(f"Error: {policy_ref} is not a readable semantic verifier policy: {exc}")
+            sys.exit(1)
+    from release_gate.semantic_providers import (SemanticProviderConfigError,
+                                                 provider_from_env)
+    try:
+        provider = provider_from_env()
+    except (SemanticProviderConfigError, SemanticVerifierError) as exc:
+        print(f"Error: --semantic needs a provider. {exc}")
+        sys.exit(1)
+
+    from release_gate.assurance.ingest import IngestError
+    from release_gate.assurance.zero_config import assure
+    try:
+        first = assure(target, **assure_kwargs)
+    except IngestError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    analysis = first.analysis
+    records = {r.evidence_id: r for r in first.case.records("evidence")
+               if hasattr(r, "evidence_id")}
+    graph = analysis.verification_graph
+    attempts = {a.verification_id: a for a in (graph.attempts if graph else ())}
+    state_hash = state_hash_for(analysis)
+    packets = [build_evidence_packet(q, records=records, attempts=attempts,
+                                     state_hash=state_hash, policy=policy)
+               for q in unresolved_questions(analysis.resolution)]
+    assertions = SemanticVerifier(provider, policy=policy).verify_all(packets)
+
+    answered = sum(1 for a in assertions if a.answered)
+    print(f"  semantic: {len(packets)} question(s) asked of "
+          f"{provider.identity().model}; {answered} answered, "
+          f"{len(assertions) - answered} unknown", file=sys.stderr)
+    if out:
+        lines = []
+        for packet, assertion in zip(packets, assertions):
+            lines.append(_json.dumps(packet.to_dict(), sort_keys=True))
+            lines.append(_json.dumps(assertion.to_dict(), sort_keys=True))
+        _Path(out).write_text("\n".join(lines) + ("\n" if lines else ""), encoding='utf-8')
+        print(f"  semantic: packets and assertions written to {out}", file=sys.stderr)
+    return tuple(assertions), False
 
 
 def _run_verify_command():

@@ -182,6 +182,10 @@ _RULE_KIND: Mapping[str, EvidenceRequirementKind] = {
     # A required claim short of the admission level needs evidence for it; a
     # correlated or unplaceable source needs an independent one.
     "RG-CRIT-006": _K.MISSING_EVIDENCE,
+    "RG-SEM-001": _K.HUMAN_REVIEW,
+    "RG-SEM-002": _K.INDEPENDENT_VERIFICATION,
+    "RG-SEM-003": _K.INDEPENDENT_VERIFICATION,
+    "RG-SEM-004": _K.RE_VERIFICATION,
     "RG-INDEP-005": _K.INDEPENDENT_VERIFICATION,
     "RG-INDEP-006": _K.INDEPENDENT_VERIFICATION,
     "RG-COV-001": _K.MISSING_EVIDENCE,

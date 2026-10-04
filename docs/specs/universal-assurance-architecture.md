@@ -8886,6 +8886,111 @@ verdict effect would count it twice.
 5. A formal verifier checking the same artifact as a model-written test is a
    second group. The same verifier run inside the model's session is not.
 
+### 10bd. The semantic verifier — a model reads; the policy decides (`SemanticVerifier`)
+
+> **Implemented.** `release_gate/assurance/semantic_verifier.py` —
+> `SemanticQuestion`, `unresolved_questions()`, `EvidencePacket`,
+> `build_evidence_packet()`, `SemanticProvider`, `ProviderRegistry`,
+> `SemanticVerifier`, `SemanticAssertion`, `SemanticVerifierPolicy`,
+> `assertions_to_records()`. Network transports in
+> `release_gate/semantic_providers.py` (outside the core). Read by the resolver
+> (`ResolutionPolicy.semantic_support`, `semantic_contradiction`) and RG-SEM-001
+> to -004. `assure --semantic`, `--semantic-out`, `--semantic-policy`,
+> `--semantic-assertions`; the envelope `semantic_assertion` record. Tests:
+> `tests/test_semantic_verifier.py`.
+
+**What existed.** `llm_verify.py` gave each audit finding an opt-in second opinion
+(`confirmed | refuted | uncertain`) from a bring-your-own model, sending only the
+finding and a code window. `model_neutral.py` made wire formats data.
+`semantic.py` made a model's output a proposal that the deterministic path
+disposes of, and recorded confidence without reading it. Methodologies carry
+`model_verification`, where UNSTATED means a model's review does not count. The
+verifier is built from these. `llm_verify` now shares its transport, and its
+behaviour is unchanged.
+
+**Only questions the rules cannot settle.** `unresolved_questions` reads the claim
+resolution (§10bb). It asks about a claim only when the claim is open
+(SUPPORTED, PARTIALLY_SUPPORTED or UNKNOWN) and rests on something readable and
+unchecked: a declaration, an observation, a judgement, or an inconclusive check.
+ESTABLISHED and CONTRADICTED claims are settled, NOT_ASSESSED has nothing to
+read, and UNSUPPORTED has nothing that counts. Re-reading set-aside evidence
+would be asking a model to overrule a rule.
+
+**Bounded answers, never verdicts.** An assertion is `supported`, `contradicted` or
+`insufficient_evidence`, or UNKNOWN with a reason. A model replying `PROMOTE` has
+replied malformed. A `decision` key beside a valid answer is never read.
+`makes_admission_decision` and `establishes` are unconditionally false.
+
+**Failure is UNKNOWN, and UNKNOWN is inert.** Each of these makes an UNKNOWN
+assertion:
+
+- no provider;
+- provider unavailable, or a provider that cannot say who it is;
+- timeout;
+- a reply that is not one JSON object;
+- a verdict outside the three;
+- a confidence that is not a number in 0..1;
+- a citation outside the packet;
+- a reply naming another question or claim;
+- an empty packet, or one over budget.
+
+The resolver treats an UNKNOWN as inert: it cannot move a claim, even from
+NOT_ASSESSED to UNSUPPORTED. A test runs every failure kind and checks the claim
+and the decision are exactly what they were without it.
+
+**Confidence withholds and never promotes.** Below `min_confidence` an answer is
+UNKNOWN (`LOW_CONFIDENCE`). Under `REQUIRE_VERIFICATION` it also asks for more
+verification (RG-SEM-003, HOLD). A test shows 0.99 and 0.80 leave the claim in
+the same place. This is the one reading of a model's confidence the engine
+makes, and it can only lower an answer's standing.
+
+**The packet is the data minimisation.** It holds only the records the question
+names, each reduced to its type, coverage, producer and content. Secrets and
+identifiers are replaced by digests through `privacy.minimise`, and a policy that
+does not withhold SECRET is refused. Excerpts are bounded and marked when cut,
+over-count records are named in `omitted`, and an over-budget packet is never
+sent. `packet_hash` covers exactly the payload the model reads.
+
+**What the policy does with an answer.** These are deterministic and digested
+with the resolution policy:
+
+- `supported` is recorded and counts toward nothing (`RECORD_ONLY`). Under
+  `COUNTS` it is support only if it cites a record or check the claim rests on
+  on its own account; a reading corroborates evidence and never replaces it. It
+  never establishes: five model families agreeing, in two independent groups by
+  what they read, still leave the claim SUPPORTED, and a test fails if a reading
+  ever enters the establishing set.
+- `contradicted` is a named gap, and RG-SEM-001 HOLDs (BLOCK only if declared).
+  A reading raises the question; a person or a check settles it.
+- `insufficient_evidence` is a named gap.
+- An assertion bound to a stated candidate other than the one being admitted is
+  set aside (RG-SEM-004).
+
+An implied candidate is never bound to, because it includes the input file and a
+replayed assertion changes that file.
+
+**Persisted and replayable.** Each assertion records:
+
+- provider, model and family;
+- the model version the provider reported;
+- prompt hash (instruction version, payload, model and parameters);
+- packet hash and state hash;
+- the bounded response and its digest;
+- timestamp and verifier policy.
+
+Its id excludes the timestamp. Replayed from `--semantic-out` or an envelope row
+(DECLARED), it gives the same resolution, findings and decision as when it was
+made (DERIVED). A test shows a replay needs no running model.
+
+**Provider-neutral.** `SemanticProvider` has two methods, `identity()` and
+`complete()`, and `ProviderRegistry` holds named factories that extend and never
+override. `OpenAICompatibleProvider` speaks every `model_neutral` dialect over
+stdlib `urllib`. That covers hosted OpenAI-compatible APIs, vLLM, llama.cpp,
+LM Studio and Ollama (both `/v1` and the native `/api/chat`). There is no default
+endpoint, and an identity never carries a credential. A test registers a
+specialist provider the build does not ship and uses it end to end without
+touching the core. The provider-free guard reads the core module.
+
 ---
 
 ## 11. Methodology behaviour
@@ -9083,6 +9188,8 @@ fixed, rather than the expectations being lowered.
 | RG-INDEP-005 / -006 | advisory | — |
 | independent confirmations (§10bc) | the verification graph's count groups by provenance and reliance as well as lineage tags | can only fall: five outputs of one session were 5, are 1 |
 | `assure --resolution-policy FILE` | new | — |
+| semantic verifier (§10bd) | `--semantic`, `--semantic-out`, `--semantic-policy`, `--semantic-assertions`; envelope `semantic_assertion`; RG-SEM-001..004; `ResolutionPolicy.semantic_support` / `semantic_contradiction` | additive; no model is ever called unless `--semantic` is given. The resolution policy gains two fields, so its digest — and every case digest — changes |
+| `audit --verify` | shares the semantic verifier's transport | request bytes unchanged (a test pins them) |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

@@ -127,6 +127,8 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 release-gate assure <file> [--json] [--full] [--review]
                            [--methodology REF] [--config FILE] [--case-output FILE]
                            [--candidate FILE] [--resolution-policy FILE]
+                           [--semantic [--semantic-out FILE] [--semantic-policy FILE]]
+                           [--semantic-assertions FILE]
 release-gate assure --list-methodologies
 ```
 
@@ -166,6 +168,10 @@ nothing.
 | `--case-output FILE` | Write the sealed case on its own, for an evidence pack or an approval packet. |
 | `--candidate FILE` | The exact release being admitted, as a JSON object of components (see [candidate state](#candidate-state--what-the-evidence-must-be-about)). Evidence bound to a different state of it stops supporting the claims it names, and the report says which records and why. Wins over a candidate the submission states about itself. |
 | `--resolution-policy FILE` | What it takes to establish a claim, and what a required claim must reach, as JSON (see [claim resolution](#claim-resolution--where-each-claim-stands)). It is recorded on the case and digested with it. A policy that would let a declaration or an unclassified method establish, or that drops a correlation dimension, is refused. |
+| `--semantic` | Ask a model the questions the deterministic rules left open (see [semantic verifier](#semantic-verifier--a-model-reads-what-structure-cannot)). Needs `RG_SEMANTIC_BASE_URL` and `RG_SEMANTIC_MODEL`. Each answer is a bounded assertion, and the resolution policy decides what it does. A provider failure makes an UNKNOWN assertion, never a pass. |
+| `--semantic-out FILE` | With `--semantic`: write each evidence packet and its assertion as JSONL. The file records what was sent, to which model, and what came back. |
+| `--semantic-policy FILE` | With `--semantic`: the verifier policy as JSON (`min_confidence`, `low_confidence`, packet and excerpt limits, `timeout_seconds`). |
+| `--semantic-assertions FILE` | Replay assertions an earlier `--semantic-out` kept, without calling any model. The same file gives the same case. Cannot be combined with `--semantic`. |
 | `--list-methodologies` | The built-ins, with each one's requirement count and digest. |
 | `--diagnostics` | Which optional backends are unavailable and why. A broken native dependency is reported here rather than taking the CLI down; assurance runs regardless. |
 
@@ -248,6 +254,7 @@ The default policy, `rg-resolution@1`:
  "establishing": ["EMPIRICAL", "JUDGEMENT", "MECHANICAL", "PROOF"],
  "non_establishing_methods": ["CROSS_MODEL_REVIEW"],
  "admission_level": "SUPPORTED",
+ "semantic_support": "RECORD_ONLY", "semantic_contradiction": "HOLD",
  "independence": {"policy_id": "rg-independence", "version": "1", "min_independent_groups": 2}}
 ```
 
@@ -276,6 +283,45 @@ Two sources fall into one group when they share a model family, session, agent, 
 | `NO_SOURCES` | nothing to group |
 
 Provenance is the producer's declaration and is read as stated. A model id is not parsed into a family, and nothing is inferred from a name. Independence is never assumed, and there is no score. It changes a claim only through CR-09: corroboration needs `min_independent_groups` groups among the checks the policy lets establish. Where several such checks fall short because they are correlated or cannot be placed, RG-INDEP-005 or RG-INDEP-006 (advisory) say so. The verification section's *independent confirmations* count uses the same grouping, so five passes from one model session read as one.
+
+#### Semantic verifier — a model reads what structure cannot
+
+Some questions are reading problems. Three records say they support a claim; whether what they *contain* bears on it is not something a digest comparison can settle. The deterministic rules know where they stop: a claim carried only by declarations, observations or judgements, or by checks that reached no conclusion, is left open. `--semantic` asks a model exactly those questions, one per claim:
+
+```
+deterministic analysis → unresolved question → evidence packet → semantic verifier
+  → bounded assertion → assurance case → the same deterministic policy
+```
+
+**It never returns a verdict.** An assertion is `supported`, `contradicted` or `insufficient_evidence`, or UNKNOWN with a reason. A model that replies `PROMOTE` has replied malformed. What an assertion does is the resolution policy's:
+
+| Assertion | Default effect | Policy can change it |
+|---|---|---|
+| `supported` | recorded beside the claim, counted toward nothing | `semantic_support: COUNTS`. It then counts as support, but only if it cites a record the claim rests on: a reading corroborates evidence and never replaces it. It still never establishes |
+| `contradicted` | the claim gets a named gap (CR-08); **RG-SEM-001 holds** the case for a person to settle | `semantic_contradiction: BLOCK` |
+| `insufficient_evidence` | the claim gets a named gap (CR-08) | — |
+| UNKNOWN | nothing moves. RG-SEM-002 (advisory) says the question went unanswered | — |
+| UNKNOWN, low confidence, verifier policy `REQUIRE_VERIFICATION` | a named gap; **RG-SEM-003 holds** | — |
+| made against another stated candidate | set aside; RG-SEM-004 (advisory) | — |
+
+**Every failure is UNKNOWN:** no provider, provider unavailable, timeout, a reply that is not one JSON object, a verdict outside the three, a confidence outside 0..1, a citation of a record not in the packet, an answer to a different question, or confidence below `min_confidence` (default 0.75). Confidence only ever withholds; a high confidence promotes nothing.
+
+**Only the packet leaves.** A packet holds the claim, the question and the records the analysis named as bearing on it — never a repository and never the rest of the case. Each record is reduced to its type, coverage, producer and content. Secrets and identifiers are replaced by digests, each excerpt is bounded, and a packet over the size limit is not sent. `packet_hash` commits to exactly what was sent.
+
+**Persisted.** Each assertion records the provider, the model, the model version the provider reported, the prompt hash, the packet hash, the stated candidate it was made against, the raw response (bounded) and its digest, the time and the verifier policy. `--semantic-out` keeps them; `--semantic-assertions` replays them with no model, and the case is the same. A `semantic_assertion` row in an envelope replays the same way. Replayed assertions are `DECLARED`; ones made in the same run are `DERIVED`.
+
+**Any provider.** Configure it with environment variables:
+
+| Variable | |
+|---|---|
+| `RG_SEMANTIC_BASE_URL` | required. There is no default endpoint: a question goes where you point it or nowhere |
+| `RG_SEMANTIC_MODEL` | required |
+| `RG_SEMANTIC_API_KEY` | required for a non-local endpoint |
+| `RG_SEMANTIC_PROVIDER` | `openai_compatible` (default) or `ollama` |
+| `RG_SEMANTIC_DIALECT` | name the wire format explicitly (`openai_chat`, `ollama_native`, `openai_responses`, `anthropic_messages`, `google_generate_content`) |
+| `RG_SEMANTIC_MODEL_FAMILY` | your statement of the model family, so the independence analysis can group this model's readings with its other output |
+
+OpenAI-compatible covers hosted APIs and local servers alike: vLLM, llama.cpp's server, LM Studio, Ollama's `/v1`. A provider this build does not ship (a future Jev, Laya, or a release-gate specialist model) is a class with `identity()` and `complete()`, registered on a `ProviderRegistry`; nothing in the verifier or the policy names a vendor. `release-gate audit --verify` uses the same transport, and stays an advisory annotation on findings.
 
 #### Evidence producers — adding a source without changing the engine
 

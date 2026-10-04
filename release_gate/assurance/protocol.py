@@ -299,6 +299,12 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("claim_resolution", "resolution", "RESOLUTION_SCHEMA_VERSION", 1,
              note="the seven claim resolutions and the ordered rules that reach "
                   "them; no score, no average, and a counterexample wins"),
+        _ref("semantic_assertion", "semantic_verifier",
+             "SEMANTIC_VERIFIER_SCHEMA_VERSION", 1,
+             note="a model's bounded answer to one question about one claim — "
+                  "supported, contradicted, insufficient evidence, or UNKNOWN — "
+                  "with the provider, prompt, packet and state it was made against; "
+                  "never a verdict"),
         _ref("correlation", "correlation", "CORRELATION_SCHEMA_VERSION", 1,
              note="the provenance of each source and the correlation groups it "
                   "falls into; independence that cannot be read is said so"),

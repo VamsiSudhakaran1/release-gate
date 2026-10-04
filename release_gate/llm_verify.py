@@ -45,8 +45,7 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
-import urllib.error
+import urllib.request  # noqa: F401 — the transport reads it at call time; tests patch it here
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -160,25 +159,26 @@ def _call_llm(config: Dict[str, str], messages: List[Dict[str, str]],
     Anthropic, Google, Ollama and anything OpenAI-compatible all work without a
     proxy, and a provider nobody has written down yet is a `ModelDialect` away.
     No vendor SDK is imported here or anywhere else.
-    """
-    from release_gate.assurance.model_neutral import build_request, extract_text
 
-    dialect = resolve_transport(config).dialect
+    The transport is the semantic verifier's (`release_gate.semantic_providers`),
+    so the two model paths cannot drift into two HTTP clients. A failure raises,
+    and `verify_findings` records it as an error rather than a verdict.
+    """
+    from release_gate.assurance.semantic_verifier import ProviderRequest
+    from release_gate.semantic_providers import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(
+        base_url=config["base_url"], model=config["model"],
+        api_key=config.get("api_key", ""), dialect=resolve_transport(config).dialect,
+        user_agent="release-gate-verify")
     system = "\n\n".join(m["content"] for m in messages
                           if m.get("role") == "system")
     user = "\n\n".join(m["content"] for m in messages
                         if m.get("role") != "system")
-    plan = build_request(dialect, base_url=config["base_url"],
-                         model=config["model"], user=user, system=system,
-                         api_key=config.get("api_key", ""),
-                         temperature=0,      # best-effort determinism
-                         max_tokens=300)
-    headers = {**plan.headers, "User-Agent": "release-gate-verify"}
-    req = urllib.request.Request(plan.url, data=json.dumps(plan.body).encode(),
-                                 headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return extract_text(dialect, data)
+    reply = provider.complete(ProviderRequest(
+        system=system, user=user, max_tokens=300, timeout_seconds=timeout,
+        temperature=0))     # best-effort determinism
+    return reply.text
 
 
 def _parse_verdict(text: str) -> Dict[str, str]:

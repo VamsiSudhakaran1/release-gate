@@ -4,6 +4,45 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🔎 A semantic verifier for the questions structure cannot settle
+
+Some questions an admission decision turns on are reading problems. Three
+records say they support a claim, but do they actually bear on it?
+`release-gate assure --semantic` asks a model exactly those questions, one per
+claim the deterministic rules left open, about only the records that bear on
+that claim (`release_gate/assurance/semantic_verifier.py`).
+
+- **It never returns a verdict.** An answer is `supported`, `contradicted` or
+  `insufficient_evidence`, or UNKNOWN. A model replying `PROMOTE` has replied
+  malformed. The resolution policy decides what an answer does. By default a
+  `supported` answer is recorded and counted toward nothing, and a
+  `contradicted` one holds the case for a person to settle (RG-SEM-001). Neither
+  can ever establish a claim.
+- **Every failure is UNKNOWN, and UNKNOWN moves nothing.** That covers no
+  provider, unreachable, timeout, malformed, out-of-packet citation, a mismatched
+  question, and confidence below the threshold. Confidence only withholds: a
+  high confidence promotes nothing.
+- **Only the packet leaves.** It holds the claim and the records the analysis
+  named, with secrets and identifiers replaced by digests and every excerpt
+  bounded. It is never a repository. `packet_hash` commits to exactly what was
+  sent.
+- **Persisted and replayable.** Each assertion records provider, model, the model
+  version the provider reported, prompt hash, packet hash, state hash, response
+  and time. `--semantic-out` keeps them; `--semantic-assertions` replays them
+  with no model and gives the same case.
+- **Any provider.** One OpenAI-compatible transport covers hosted APIs, vLLM,
+  llama.cpp, LM Studio and Ollama. A provider this build does not ship is a
+  class with `identity()` and `complete()`, registered by name. There is no
+  default endpoint. `audit --verify` now uses the same transport.
+
+#### Migration notes (semantic verifier)
+
+- **Case digests change again:** the recorded resolution policy gains
+  `semantic_support` and `semantic_contradiction`. Re-run `assure` and
+  re-approve anything bound to an earlier case digest.
+- Nothing calls a model unless `--semantic` is given. Without it, no verdict,
+  status or finding changes.
+
 ### ⚖️ Claims are at the centre of the admission decision
 
 Every claim in a case now gets one of seven statuses, the rule that reached it,

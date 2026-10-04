@@ -26,7 +26,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.analysis import (
     ANALYSIS_RULESET_VERSION, AnalysisDomain, AnalysisResult, Finding, analyse,
@@ -1184,7 +1184,9 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
            declared_consequence: Optional[Any] = None,
            producers: Optional[Any] = None,
            candidate: Optional[CandidateState] = None,
-           resolution_policy: Optional[ResolutionPolicy] = None) -> AssuranceOutcome:
+           resolution_policy: Optional[ResolutionPolicy] = None,
+           semantic_assertions: Sequence[Any] = (),
+           semantic_submitted: bool = False) -> AssuranceOutcome:
     """Ingest, analyse, assess and decide — with nothing configured.
 
     `producers` is a `ProducerRegistry` holding any evidence adapters beyond the
@@ -1194,6 +1196,12 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     `resolution_policy` states what it takes to establish a claim and what a
     required claim must reach (`ResolutionPolicy`); the built-in one otherwise.
     Either way the policy is recorded on the case.
+
+    `semantic_assertions` are a semantic verifier's answers
+    (`semantic_verifier.SemanticAssertion`). They enter the case as evidence —
+    DERIVED when produced in this process, DECLARED with `semantic_submitted`
+    when read back from a file — and the resolution policy decides what each one
+    does. None of them is a verdict.
 
     `candidate` is the exact release being admitted (`CandidateState`). Stated
     here, it wins over one the submission declares about itself or one derived
@@ -1217,7 +1225,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         requested_decision=requested_decision, requested_action=requested_action,
         consequence_registry=consequence_registry,
         declared_consequence=declared_consequence, candidate=candidate,
-        resolution_policy=resolution_policy)
+        resolution_policy=resolution_policy, semantic_assertions=semantic_assertions,
+        semantic_submitted=semantic_submitted)
 
 
 def assure_normalisation(normalisation: Normalisation, *, source_name: str,
@@ -1231,7 +1240,9 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
                          subject: Optional[AssuranceSubject] = None,
                          recorder: Optional[LatencyRecorder] = None,
                          candidate: Optional[CandidateState] = None,
-                         resolution_policy: Optional[ResolutionPolicy] = None
+                         resolution_policy: Optional[ResolutionPolicy] = None,
+                         semantic_assertions: Sequence[Any] = (),
+                         semantic_submitted: bool = False
                          ) -> AssuranceOutcome:
     """Everything `assure` does after reading the file.
 
@@ -1251,6 +1262,14 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
     timer = recorder if recorder is not None else LatencyRecorder.disabled()
     timer.begin()
     source = source_path if source_path is not None else Path(source_name)
+    if semantic_assertions:
+        import dataclasses as _dataclasses
+
+        from release_gate.assurance.semantic_verifier import assertions_to_records
+        normalisation = _dataclasses.replace(
+            normalisation,
+            evidence=tuple(normalisation.evidence) + tuple(assertions_to_records(
+                semantic_assertions, submitted=semantic_submitted)))
 
     objective = objective or f"Assurance of {source.name}"
     requested_decision = requested_decision or (
@@ -1541,10 +1560,24 @@ def render_text(outcome: AssuranceOutcome, *, full: bool = False) -> str:
                          if full or r.required or r.status.value == "CONTRADICTED"),
                         key=lambda r: (order[r.status.value], r.claim_id))
         shown = listed if full else listed[:6]
+        semantic_words = {
+            "SEMANTIC_SUPPORT": "supported — recorded, not counted",
+            "SUPPORTS": "supported — counted under the policy, never establishing",
+            "SEMANTIC_CHALLENGE": "contradicted — held for a person to settle",
+            "SEMANTIC_INSUFFICIENT": "insufficient evidence",
+            "SEMANTIC_NEEDS_VERIFICATION": "not confident enough — more verification "
+                                           "required",
+            "SEMANTIC_UNKNOWN": "no usable answer — moves nothing",
+            "WITHHELD_STATE": "made against another state of the release — set aside"}
         for r in shown:
             mark = "  (required)" if r.required else ""
             add(f"    [{r.status.value:>19}]  {r.claim_id}  {r.rule}{mark}")
             add(f"                           {r.basis}")
+            for item in r.items:
+                if item.item_kind == "semantic":
+                    add(f"                           semantic reading: "
+                        f"{semantic_words.get(item.role.value, item.role.value)}"
+                        + (f" ({item.reason})" if item.reason else ""))
         if len(listed) > len(shown):
             add(f"    ({len(listed) - len(shown)} more — pass --full)")
 

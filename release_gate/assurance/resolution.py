@@ -130,6 +130,20 @@ _VERIFICATION_GRADE = frozenset({Strength.PROOF, Strength.MECHANICAL,
                                  Strength.EMPIRICAL, Strength.JUDGEMENT})
 
 
+class SemanticSupport(str, Enum):
+    """What a semantic verifier's "supported" does to a claim (semantic_verifier.py)."""
+
+    RECORD_ONLY = "RECORD_ONLY"   # shown beside the claim, counted toward nothing
+    COUNTS = "COUNTS"             # counts as support; never establishes
+
+
+class SemanticChallenge(str, Enum):
+    """What a semantic verifier's "contradicted" does to the case (RG-SEM-001)."""
+
+    HOLD = "HOLD"     # a person settles it before anything is admitted
+    BLOCK = "BLOCK"
+
+
 @dataclass(frozen=True)
 class ResolutionPolicy:
     """What it takes to establish a claim, and what a required claim must reach.
@@ -153,9 +167,18 @@ class ResolutionPolicy:
         VerificationMethod.CROSS_MODEL_REVIEW,)
     #: What a required claim must reach for the case not to hold on it.
     admission_level: ResolutionStatus = ResolutionStatus.SUPPORTED
+    #: A model's reading is recorded and counted toward nothing unless the
+    #: policy says otherwise; even then it never establishes (CR-09).
+    semantic_support: SemanticSupport = SemanticSupport.RECORD_ONLY
+    #: A model reading the evidence as contradicting a claim holds the case by
+    #: default: a reading raises the question, a person or a check settles it.
+    semantic_contradiction: SemanticChallenge = SemanticChallenge.HOLD
     note: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "semantic_support", SemanticSupport(self.semantic_support))
+        object.__setattr__(self, "semantic_contradiction",
+                           SemanticChallenge(self.semantic_contradiction))
         object.__setattr__(self, "establishing",
                            tuple(sorted({Strength(s) for s in self.establishing},
                                         key=lambda s: s.value)))
@@ -186,8 +209,10 @@ class ResolutionPolicy:
                 "proof_establishes_alone": self.proof_establishes_alone,
                 "establishing": [s.value for s in self.establishing],
                 "non_establishing_methods": [m.value for m in self.non_establishing_methods],
-                "admission_level": self.admission_level.value, "note": self.note,
-                "schema_version": RESOLUTION_SCHEMA_VERSION}
+                "admission_level": self.admission_level.value,
+                "semantic_support": self.semantic_support.value,
+                "semantic_contradiction": self.semantic_contradiction.value,
+                "note": self.note, "schema_version": RESOLUTION_SCHEMA_VERSION}
 
     def digest(self) -> str:
         return digest_object(self.to_dict())
@@ -219,6 +244,11 @@ class ResolutionPolicy:
                     else [m.value for m in default.non_establishing_methods])),
                 admission_level=ResolutionStatus(str(
                     data.get("admission_level") or default.admission_level.value)),
+                semantic_support=SemanticSupport(str(
+                    data.get("semantic_support") or default.semantic_support.value)),
+                semantic_contradiction=SemanticChallenge(str(
+                    data.get("semantic_contradiction")
+                    or default.semantic_contradiction.value)),
                 note=str(data.get("note") or ""))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, ResolutionError):
@@ -246,11 +276,40 @@ class ItemRole(str, Enum):
     NOT_RELIED_UPON = "NOT_RELIED_UPON"          # a verifier or source ruled against
     INVALIDATED = "INVALIDATED"
     RESOLVED = "RESOLVED"                        # a contradiction or counterexample answered
+    # A semantic verifier's assertion (semantic_verifier.py), read under the policy.
+    SEMANTIC_SUPPORT = "SEMANTIC_SUPPORT"        # "supported", recorded and not counted
+    SEMANTIC_CHALLENGE = "SEMANTIC_CHALLENGE"    # "contradicted": a gap a person settles
+    SEMANTIC_INSUFFICIENT = "SEMANTIC_INSUFFICIENT"  # "insufficient_evidence": a gap
+    SEMANTIC_NEEDS_VERIFICATION = "SEMANTIC_NEEDS_VERIFICATION"  # low confidence, policy asks for more
+    SEMANTIC_UNKNOWN = "SEMANTIC_UNKNOWN"        # no answer; moves nothing
 
 
 #: Roles that are evidence *set aside*: they bear on the claim and do not count.
 _SET_ASIDE = frozenset({ItemRole.WITHHELD_STATE, ItemRole.NOT_ADMISSIBLE,
                         ItemRole.NOT_RELIED_UPON, ItemRole.INVALIDATED})
+
+#: A semantic reading that says nothing about the claim: an unanswered question,
+#: or a "supported" the policy records without counting. Neither may move a
+#: claim — not even from NOT_ASSESSED to UNSUPPORTED — so the rules look past them.
+_INERT = frozenset({ItemRole.SEMANTIC_UNKNOWN, ItemRole.SEMANTIC_SUPPORT})
+
+def _inert_reading(item: "ResolvedItem") -> bool:
+    """A semantic reading that may not move a claim: unanswered, recorded-only, or
+    made against another state of the release."""
+    return item.item_kind == "semantic" and (
+        item.role in _INERT or item.role is ItemRole.WITHHELD_STATE)
+
+
+#: Semantic readings the rules treat as a named gap (CR-08).
+_SEMANTIC_GAPS = {
+    ItemRole.SEMANTIC_CHALLENGE: "a semantic verifier read its evidence as "
+                                 "contradicting it, and a person has to settle that",
+    ItemRole.SEMANTIC_INSUFFICIENT: "a semantic verifier found its evidence does not "
+                                    "settle it",
+    ItemRole.SEMANTIC_NEEDS_VERIFICATION: "a semantic reading was not confident enough "
+                                          "and the verifier policy asks for more "
+                                          "verification",
+}
 
 
 @dataclass(frozen=True)
@@ -427,6 +486,17 @@ class _Resolver:
         self.resolved_ids = set(getattr(claim_graph, "_resolved", set()))
         self.done: Dict[str, ClaimResolution] = {}
         self.stack: Set[str] = set()
+        # Semantic assertions ride in evidence records and link to no claim; this
+        # is the one place they reach one, read under the declared policy.
+        from release_gate.assurance.semantic_verifier import assertions_from_records
+        self.semantic: Dict[str, List[Tuple[str, Any]]] = {}
+        for eid, assertion in assertions_from_records(self.evidence.values()):
+            self.semantic.setdefault(assertion.claim_id, []).append((eid, assertion))
+        # Only a stated candidate: an implied one includes the input file, which
+        # a replayed assertion changes (semantic_verifier.state_hash_for).
+        self.candidate_digest = (binding.candidate.digest()
+                                 if binding is not None and binding.candidate.explicit
+                                 else "")
 
     # Records named on either side, from both directions of the link.
     def _linked(self, claim: Any) -> Tuple[List[Any], List[Any]]:
@@ -573,6 +643,19 @@ class _Resolver:
                         reason=f"searched {found.search_bound}; a search that "
                                "found nothing does not prove absence"))
 
+        # What a reading may corroborate: the records and checks that bear on the
+        # claim on their own account. A reading citing none of them read nothing
+        # this claim rests on, and cannot stand in for evidence.
+        bearing = {i.item_id for i in items
+                   if i.role in (ItemRole.SUPPORTS, ItemRole.INCONCLUSIVE)}
+        for eid, assertion in self.semantic.get(cid, ()):
+            item, provenance = self._semantic_item(eid, assertion, bearing)
+            items.append(item)
+            if item.role is ItemRole.SUPPORTS and provenance is not None:
+                # Counted under the policy, and grouped like any source; never in
+                # `grade`, so a model's reading cannot establish a claim.
+                sources[eid] = provenance
+
         # Groups over every counted source, and over the verification-grade ones
         # that may establish. Items carry their group so the reader can see which
         # agreements are one source.
@@ -596,6 +679,47 @@ class _Resolver:
             dependencies=dependencies,
             claim_status=self.graph.status(cid).value if self.graph else "",
             establishing_independence=grade_independence)
+
+    def _semantic_item(self, eid: str, assertion: Any, bearing: Set[str]
+                       ) -> Tuple[ResolvedItem, Optional[SourceProvenance]]:
+        """One semantic assertion as an item, under the policy. Never a decision."""
+        method = "SEMANTIC_VERIFIER"
+        stated = assertion.state_hash
+        if stated and self.candidate_digest and stated != self.candidate_digest:
+            return ResolvedItem(eid, "semantic", ItemRole.WITHHELD_STATE,
+                                Strength.JUDGEMENT, method, "STALE",
+                                reason="the reading was made against another state of "
+                                       "the release"), None
+        binding = "EXACT" if stated and stated == self.candidate_digest else ""
+        if not assertion.answered:
+            role = (ItemRole.SEMANTIC_NEEDS_VERIFICATION if assertion.requires_verification
+                    else ItemRole.SEMANTIC_UNKNOWN)
+            return ResolvedItem(eid, "semantic", role, Strength.JUDGEMENT, method, binding,
+                                reason=f"{assertion.unknown_reason.value}: "
+                                       f"{assertion.detail}"[:240]), None
+        verdict = assertion.verdict.value
+        if verdict == "contradicted":
+            return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_CHALLENGE,
+                                Strength.JUDGEMENT, method, binding,
+                                reason=assertion.reason[:240]), None
+        if verdict == "insufficient_evidence":
+            return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_INSUFFICIENT,
+                                Strength.JUDGEMENT, method, binding,
+                                reason=assertion.reason[:240]), None
+        if self.policy.semantic_support is not SemanticSupport.COUNTS:
+            return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_SUPPORT,
+                                Strength.JUDGEMENT, method, binding,
+                                reason="recorded; the resolution policy does not count "
+                                       "a model's reading as support"), None
+        if not set(assertion.evidence_refs) & bearing:
+            return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_SUPPORT,
+                                Strength.JUDGEMENT, method, binding,
+                                reason="recorded; it cites nothing this claim rests on, "
+                                       "and a reading corroborates evidence — it does "
+                                       "not replace it"), None
+        return (ResolvedItem(eid, "semantic", ItemRole.SUPPORTS, Strength.JUDGEMENT,
+                             method, binding, reason=assertion.reason[:240]),
+                self.provenance.of(eid))
 
     # The order. First match decides; nothing is weighed against anything.
     def _rule(self, claim: Any, items: Sequence[ResolvedItem],
@@ -630,13 +754,16 @@ class _Resolver:
                     f"it rests on {', '.join(contradicted_dep)}, which is contradicted")
 
         if not counted:
-            own = [r for r in roles if r is not ItemRole.NOT_RUN]
+            own = [i.role for i in items if i.role is not ItemRole.NOT_RUN
+                   and not _inert_reading(i)]
             if own:
                 if any(r is ItemRole.INCONCLUSIVE for r in roles):
                     return (S.UNKNOWN, "CR-07",
                             "the only checks that bear on it reached no conclusion")
-                set_aside = [i for i in items if i.role in _SET_ASIDE]
-                why = (set_aside[0].reason if set_aside else
+                set_aside = [i for i in items if i.role in _SET_ASIDE
+                             and not _inert_reading(i)]
+                semantic = [_SEMANTIC_GAPS[r] for r in own if r in _SEMANTIC_GAPS]
+                why = (semantic[0] if semantic else set_aside[0].reason if set_aside else
                        "a search for a counterexample that found none is not support"
                        if ItemRole.SEARCHED_NOT_FOUND in roles
                        else "what bears on it was answered or set aside")
@@ -674,6 +801,9 @@ class _Resolver:
             gaps.append("a check reached no conclusion")
         if any(r is ItemRole.NOT_RUN for r in roles):
             gaps.append("an expected check never ran")
+        for role, why in _SEMANTIC_GAPS.items():
+            if role in roles:
+                gaps.append(why)
         requires = _required_methods(claim)
         if requires:
             have = {i.method.upper() for i in counted} | {

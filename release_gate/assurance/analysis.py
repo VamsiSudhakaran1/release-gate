@@ -1457,6 +1457,95 @@ def _analyse_state_binding(report: Optional[Any]) -> List[Finding]:
     return findings
 
 
+def _analyse_semantic(report: Optional[Any]) -> List[Finding]:
+    """RG-SEM-001..004: what the semantic verifier's assertions leave open.
+
+    The verifier answers questions; these rules, under the declared resolution
+    policy, decide what an answer does. A "contradicted" holds the case by
+    default (the policy may make it block): a model's reading raises the
+    question, and a person or a check settles it. A "supported" raises nothing.
+    An unanswered question is advisory and moves nothing — it is reported so its
+    absence is not read as an answer.
+    """
+    if report is None or not report.resolutions:
+        return []
+    by_role: Dict[str, List[Tuple[str, Any]]] = {}
+    for resolution in report.resolutions:
+        for item in resolution.items:
+            if item.item_kind == "semantic":
+                by_role.setdefault(item.role.value, []).append((resolution.claim_id, item))
+
+    def listed(pairs: List[Tuple[str, Any]]) -> str:
+        return "; ".join(f"{cid}: {item.reason}" for cid, item in pairs[:4]) + (
+            f" (+{len(pairs) - 4} more)" if len(pairs) > 4 else "")
+
+    findings: List[Finding] = []
+    challenged = by_role.get("SEMANTIC_CHALLENGE", [])
+    if challenged:
+        effect = (RequirementEffect.BLOCK
+                  if report.policy.semantic_contradiction.value == "BLOCK"
+                  else RequirementEffect.HOLD)
+        findings.append(Finding(
+            rule_id="RG-SEM-001", domain=AnalysisDomain.VERIFICATION, effect=effect,
+            summary=(f"a semantic verifier read the evidence as contradicting "
+                     f"{len({c for c, _ in challenged})} claim(s)"),
+            detail=("A model read the records that bear on these claims and found "
+                    "them contradicting what is claimed. That is a reading, not a "
+                    "refutation: it is held for a person, or a check, to settle "
+                    f"({report.policy.ref} sets this to {effect.value}). "
+                    + listed(challenged)),
+            remedy="review the cited records; record a check or a resolution that "
+                   "settles the claim either way",
+            refs=tuple(dict.fromkeys(c for c, _ in challenged))[:12],
+            observed={"claims": len({c for c, _ in challenged}),
+                      "policy": report.policy.ref}))
+    unknown = by_role.get("SEMANTIC_UNKNOWN", [])
+    if unknown:
+        reasons: Dict[str, int] = {}
+        for _, item in unknown:
+            key = item.reason.split(":", 1)[0]
+            reasons[key] = reasons.get(key, 0) + 1
+        findings.append(Finding(
+            rule_id="RG-SEM-002", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{len(unknown)} semantic question(s) got no usable answer"),
+            detail=("Unknown is not a pass: these questions were asked and not "
+                    "answered, so each claim stands where the deterministic rules "
+                    "left it. Reasons: "
+                    + ", ".join(f"{k} ({v})" for k, v in sorted(reasons.items()))
+                    + ". " + listed(unknown)),
+            remedy="ask again, ask another provider, or settle the claim with a "
+                   "check",
+            refs=tuple(dict.fromkeys(c for c, _ in unknown))[:12],
+            observed={"questions": len(unknown), "reasons": reasons}))
+    needs = by_role.get("SEMANTIC_NEEDS_VERIFICATION", [])
+    if needs:
+        findings.append(Finding(
+            rule_id="RG-SEM-003", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.HOLD,
+            summary=(f"{len(needs)} semantic reading(s) were not confident enough, and "
+                     "the verifier policy asks for more verification"),
+            detail=("A model answered below the policy's confidence threshold, and "
+                    "the policy says such an answer requires further verification "
+                    "rather than being set aside. " + listed(needs)),
+            remedy="supply a check of the claim — a test, a proof, a human review",
+            refs=tuple(dict.fromkeys(c for c, _ in needs))[:12],
+            observed={"readings": len(needs)}))
+    stale = [(c, i) for c, i in by_role.get("WITHHELD_STATE", [])]
+    if stale:
+        findings.append(Finding(
+            rule_id="RG-SEM-004", domain=AnalysisDomain.VERIFICATION,
+            effect=RequirementEffect.ADVISORY,
+            summary=(f"{len(stale)} semantic reading(s) were made against another "
+                     "state of the release and were set aside"),
+            detail=("Each assertion records the candidate state its packet was "
+                    "built from; these name a different one. " + listed(stale)),
+            remedy="ask the question again against the release being admitted",
+            refs=tuple(dict.fromkeys(c for c, _ in stale))[:12],
+            observed={"readings": len(stale)}))
+    return findings
+
+
 def _analyse_resolution(report: Optional[Any]) -> List[Finding]:
     """RG-CRIT-006 and RG-INDEP-005/006: what the claim resolution says the case lacks.
 
@@ -2021,6 +2110,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
         counterexamples=counterexamples, criticality=criticality,
         policy=policy_for_case(case))
     findings.extend(_analyse_resolution(resolution))
+    findings.extend(_analyse_semantic(resolution))
     findings.extend(_analyse_coverage(case, claim_graph, execution, normalisation))
     if capabilities is None and normalisation is not None:
         capabilities = getattr(normalisation, "capabilities", None)
