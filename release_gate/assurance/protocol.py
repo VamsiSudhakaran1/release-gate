@@ -340,6 +340,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "model, what came back, what the deterministic engine did — and the "
                   "labels people later supply; hash-only by default, never an input "
                   "to a decision"),
+        _ref("semantic_benchmark", "provider_benchmark", "BENCHMARK_SCHEMA_VERSION", 1,
+             note="labelled questions for semantic-verification providers and one row "
+                  "per reading of them; scored so that false certainty costs most, "
+                  "never an input to a decision"),
         _ref("evidence_origin", "origin", "ORIGIN_SCHEMA_VERSION", 1,
              note="whose account each record is, and whether release-gate computed "
                   "it, obtained it in this run, or read it without running its "

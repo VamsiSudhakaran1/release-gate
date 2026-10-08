@@ -1703,6 +1703,48 @@ def _analyse_semantic(report: Optional[Any]) -> List[Finding]:
     return findings
 
 
+def _analyse_injection(records: Sequence[Any]) -> List[Finding]:
+    """RG-SEM-005: evidence a semantic verifier read carried text addressed to it.
+
+    Code, logs or documents that tell their reader to ignore its rules, mark
+    something safe or return a decision are reported where they are, by record
+    and pattern, so a person can look. Advisory, deliberately: the content of
+    the evidence never moves the admission decision, in either direction. A
+    "supported" reading of such a packet was already refused (INJECTION_SUSPECTED,
+    under RG-SEM-002), and the rules decide the claim as they would have.
+    """
+    from release_gate.assurance.semantic_verifier import assertions_from_records
+    flagged = [(eid, a) for eid, a in assertions_from_records(records)
+               if a.injection_markers]
+    if not flagged:
+        return []
+    patterns: Dict[str, int] = {}
+    for _, assertion in flagged:
+        for marker in assertion.injection_markers:
+            key = marker.split(" in ", 1)[0]
+            patterns[key] = patterns.get(key, 0) + 1
+    refused = sum(1 for _, a in flagged
+                  if getattr(a.unknown_reason, "value", "") == "INJECTION_SUSPECTED")
+    shown = "; ".join(f"{a.claim_id}: {', '.join(a.injection_markers[:3])}"
+                      for _, a in flagged[:4]) + (
+        f" (+{len(flagged) - 4} more)" if len(flagged) > 4 else "")
+    return [Finding(
+        rule_id="RG-SEM-005", domain=AnalysisDomain.VERIFICATION,
+        effect=RequirementEffect.ADVISORY,
+        summary=(f"{len(flagged)} semantic reading(s) were made of evidence that "
+                 "carries text addressed to a verifier"),
+        detail=("The evidence was sent as data and kept unchanged; text in it reads "
+                "as an instruction to the model reading it. It was assessed as "
+                "content, and a supported reading of it is not accepted "
+                f"({refused} refused). The decision is the rules', as it would have "
+                "been without it. " + shown),
+        remedy="look at the cited records: an instruction to a reviewer inside code, "
+               "a log or a document is worth knowing about whoever put it there",
+        refs=tuple(dict.fromkeys(a.claim_id for _, a in flagged))[:12],
+        observed={"readings": len(flagged), "patterns": patterns,
+                  "support_refused": refused})]
+
+
 def _analyse_authorship(assessment: Optional[Any], policy: Any) -> List[Finding]:
     """RG-INDEP-007/008: whether anyone but the author checked the work.
 
@@ -2427,11 +2469,11 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     state_binding = claim_graph.state_binding if claim_graph is not None else None
     findings.extend(_analyse_state_binding(state_binding))
 
+    resolved_records = [r for kind in ("evidence", "verification",
+                                       "contradictions", "counterexamples")
+                        for r in case.records(kind) if isinstance(r, EvidenceRecord)]
     resolution = resolve_claims(
-        claim_graph, records=[r for kind in ("evidence", "verification",
-                                             "contradictions", "counterexamples")
-                              for r in case.records(kind)
-                              if isinstance(r, EvidenceRecord)],
+        claim_graph, records=resolved_records,
         counterexamples=counterexamples, criticality=criticality,
         policy=policy)
     findings.extend(_analyse_resolution(resolution))
@@ -2439,6 +2481,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     claim_coverage = assess_claim_coverage(claim_graph, resolution, records)
     findings.extend(_analyse_claim_coverage(claim_coverage, policy))
     findings.extend(_analyse_semantic(resolution))
+    findings.extend(_analyse_injection(resolved_records))
     from release_gate.assurance.authorship import assess_authorship
     authorship = assess_authorship(
         claim_graph, resolution,

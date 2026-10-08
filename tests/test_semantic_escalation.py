@@ -406,7 +406,7 @@ class TestWhatAReaderIsSent:
             dataclasses.replace(packet, question=decision.question))
         assert "unresolved_because" not in rebuilt.user
         assert "semantic verifier" not in rebuilt.user
-        assert "contradict" not in json.loads(rebuilt.user)["question"]["statement"]
+        assert "contradict" not in json.loads(rebuilt.user)["evidence_packet"]["question"]["statement"]
         assert packet.to_dict()["unresolved_because"]       # kept for the reviewer
 
     def test_a_record_is_sent_as_what_it_says(self, tmp_path):

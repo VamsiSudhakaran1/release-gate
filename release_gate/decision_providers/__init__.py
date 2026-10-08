@@ -38,10 +38,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from release_gate.assurance.model_neutral import tool_calls_in
 from release_gate.assurance.semantic_verifier import (DecisionReply, DecisionRequest,
                                                       ProviderCapabilities, ProviderIdentity,
                                                       ProviderInterface, ProviderUnavailable,
-                                                      SemanticVerifierError,
+                                                      SemanticVerifierError, ToolCallRefused,
                                                       default_capabilities)
 from release_gate.semantic_providers import (SemanticProviderConfigError, _is_local,
                                              _public_endpoint, exchange_json,
@@ -148,6 +149,10 @@ class DecisionHTTPProvider:
                                   headers=self._headers(),
                                   timeout=request.timeout_seconds,
                                   endpoint=self.endpoint, user_agent=self.user_agent)
+        calls = tool_calls_in(data)
+        if calls:
+            raise ToolCallRefused(f"{self.endpoint} replied with a tool call at "
+                                  f"{', '.join(calls)}")
         return reply_from_json(data, raw)
 
 

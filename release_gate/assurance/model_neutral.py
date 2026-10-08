@@ -53,9 +53,11 @@ __all__ = [
     "ModelDialect",
     "RequestPlan",
     "SystemPlacement",
+    "TOOL_CALL_SHAPES",
     "build_request",
     "extract_text",
     "resolve_dialect",
+    "tool_calls_in",
 ]
 
 MODEL_NEUTRAL_SCHEMA_VERSION = 1
@@ -401,6 +403,57 @@ def build_request(dialect: ModelDialect, *, base_url: str, model: str,
 
     return RequestPlan(url=url, headers=headers, body=body,
                        dialect_id=dialect.dialect_id)
+
+
+# ── a reply that asks to run something ───────────────────────────────────────
+
+#: Where each wire format puts a request to call a tool, as data like the
+#: dialects: keys whose non-empty value is a call, `type` values that mark a
+#: call block, and stop reasons that say the turn ended to call one. A request
+#: carries no tools (`build_request` never sends a tools field), so any of
+#: these in a reply is a model asking for something it was never offered.
+TOOL_CALL_SHAPES: Mapping[str, Tuple[str, ...]] = {
+    "keys": ("tool_calls", "function_call", "functionCall", "tool_use",
+             "executableCode", "toolUse"),
+    "block_types": ("tool_use", "server_tool_use", "function_call", "tool_call",
+                    "computer_call", "code_interpreter_call", "mcp_call"),
+    "stop_reasons": ("tool_calls", "function_call", "tool_use"),
+}
+_STOP_KEYS = ("finish_reason", "stop_reason", "done_reason", "finishReason")
+
+
+def tool_calls_in(response: Any, *, limit: int = 8) -> Tuple[str, ...]:
+    """Every place a reply asks for a tool call, whatever its wire format.
+
+    Each entry is a short path-and-shape description (`choices[0].message.
+    tool_calls`), at most `limit` of them. Only the reply's structure is read:
+    text that mentions a tool is text, and is the verifier's to assess.
+    """
+    found: list = []
+
+    def walk(node: Any, path: str) -> None:
+        if len(found) >= limit:
+            return
+        if isinstance(node, Mapping):
+            for key in sorted(node, key=str):
+                value = node[key]
+                where = f"{path}.{key}" if path else str(key)
+                if key in TOOL_CALL_SHAPES["keys"] and value not in (None, "", [], {}):
+                    found.append(where)
+                elif (key == "type" and isinstance(value, str)
+                      and value in TOOL_CALL_SHAPES["block_types"]):
+                    found.append(f"{where}={value}")
+                elif (key in _STOP_KEYS and isinstance(value, str)
+                      and value in TOOL_CALL_SHAPES["stop_reasons"]):
+                    found.append(f"{where}={value}")
+                else:
+                    walk(value, where)
+        elif isinstance(node, (list, tuple)):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]")
+
+    walk(response, "")
+    return tuple(found[:limit])
 
 
 def extract_text(dialect: ModelDialect, response: Any) -> str:

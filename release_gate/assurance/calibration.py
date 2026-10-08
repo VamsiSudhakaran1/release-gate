@@ -65,6 +65,7 @@ __all__ = [
     "CalibrationPolicy",
     "PrivacyMode",
     "apply_labels",
+    "calibration_metrics",
     "calibration_records",
     "evaluate_corpus",
     "read_calibration",
@@ -666,8 +667,12 @@ def _rate(numerator: int, denominator: int) -> Optional[float]:
     return round(numerator / denominator, 4) if denominator else None
 
 
-def _calibration(pairs: List[Tuple[float, bool]], bins: int) -> Dict[str, Any]:
-    """Brier score and expected calibration error over (stated probability, right)."""
+def calibration_metrics(pairs: List[Tuple[float, bool]], bins: int) -> Dict[str, Any]:
+    """Brier score and expected calibration error over (stated probability, right).
+
+    Shared with the provider benchmark (`provider_benchmark.py`), so a model is
+    held to one definition of calibrated wherever it is measured.
+    """
     if not pairs:
         return {"n": 0, "brier": None, "ece": None, "bins": []}
     brier = sum((p - (1.0 if right else 0.0)) ** 2 for p, right in pairs) / len(pairs)
@@ -778,7 +783,7 @@ def evaluate_corpus(records: Sequence[Mapping[str, Any]], *,
             "confirmed_by_outcome": _rate(
                 sum(1 for r in judged if r["confirmed_by_outcome"]), len(judged)),
             "incidents": sorted({r["incident_ref"] for r in rows if r.get("incident_ref")}),
-            "calibration": _calibration(pairs, bins),
+            "calibration": calibration_metrics(pairs, bins),
             "stated_probability": sum(1 for r in rows
                                       if isinstance(r.get("probability"), (int, float))),
             "agreement_with_deterministic": _rate(agree_det, len(consistent)),

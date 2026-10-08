@@ -799,6 +799,15 @@ class _Resolver:
                                 reason=f"{assertion.unknown_reason.value}: "
                                        f"{assertion.detail}"[:240]), None
         verdict = assertion.verdict.value
+        if verdict == "supported" and getattr(assertion, "injection_markers", ()):
+            # The verifier refuses this itself; a record made some other way is
+            # refused here, so no route lets hostile evidence content count.
+            return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_UNKNOWN,
+                                Strength.JUDGEMENT, method, binding,
+                                reason=("INJECTION_SUSPECTED: a supported reading of "
+                                        "evidence that addresses its reader ("
+                                        + ", ".join(assertion.injection_markers[:3])
+                                        + ")")[:240]), None
         if verdict == "contradicted":
             return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_CHALLENGE,
                                 Strength.JUDGEMENT, method, binding,
@@ -897,6 +906,11 @@ class _Resolver:
                     "nothing bears on it directly")
 
         # From here something counts. Gaps the claim itself names come first.
+        # A counted reading (semantic_support: COUNTS) corroborates and never
+        # closes a gap: it cannot be the method a claim requires, nor the support
+        # that names the candidate. Otherwise one "supported", which hostile text
+        # in the evidence can produce, would carry a claim to the admission level.
+        evidence_counted = [i for i in counted if i.item_kind != "semantic"]
         gaps: List[str] = []
         if any(r is ItemRole.INCONCLUSIVE for r in roles):
             gaps.append("a check reached no conclusion")
@@ -907,8 +921,8 @@ class _Resolver:
                 gaps.append(why)
         requires = _required_methods(claim)
         if requires:
-            have = {i.method.upper() for i in counted} | {
-                (i.strength.value if i.strength else "") for i in counted}
+            have = {i.method.upper() for i in evidence_counted} | {
+                (i.strength.value if i.strength else "") for i in evidence_counted}
             missing = [m for m in requires if m not in have]
             if missing:
                 gaps.append(f"it requires {', '.join(missing)} and none counted")
@@ -917,7 +931,7 @@ class _Resolver:
         if weak_dep:
             gaps.append(f"it rests on {', '.join(weak_dep)}, which is not supported")
         if self.explicit_candidate and counted and all(
-                i.binding in ("", "UNKNOWN") for i in counted):
+                i.binding in ("", "UNKNOWN") for i in evidence_counted):
             gaps.append("none of its support names the candidate it is about")
         if gaps:
             return (S.PARTIALLY_SUPPORTED, "CR-08",

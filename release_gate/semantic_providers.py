@@ -63,14 +63,14 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from release_gate.assurance.model_neutral import (DialectError, ModelDialect,
                                                   build_request, extract_text,
-                                                  resolve_dialect)
+                                                  resolve_dialect, tool_calls_in)
 from release_gate.assurance.producer_contract import ConfidenceSemantics, Determinism
 from release_gate.assurance.semantic_verifier import (Locality, OutputKind,
                                                       ProviderCapabilities, ProviderIdentity,
                                                       ProviderInterface, ProviderRegistry,
                                                       ProviderReply, ProviderRequest,
                                                       ProviderTimeout, ProviderUnavailable,
-                                                      SemanticVerifierError)
+                                                      SemanticVerifierError, ToolCallRefused)
 
 __all__ = [
     "ENTRY_POINT_GROUP",
@@ -232,6 +232,12 @@ class OpenAICompatibleProvider:
                                 timeout=request.timeout_seconds,
                                 endpoint=_public_endpoint(self.base_url),
                                 user_agent=self.user_agent)
+        calls = tool_calls_in(data)
+        if calls:
+            # Refused here, before any text is read: the request offered no
+            # tools, and nothing downstream can run one.
+            raise ToolCallRefused(f"{_public_endpoint(self.base_url)} replied with "
+                                  f"a tool call at {', '.join(calls)}")
         reported = data.get("model") if isinstance(data, Mapping) else None
         try:
             text = extract_text(self.dialect, data)

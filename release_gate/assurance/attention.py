@@ -82,7 +82,7 @@ _FOCUS_KIND = {
     "RG-CRIT-006": "claim", "RG-INDEP-005": "claim", "RG-INDEP-006": "claim",
     "RG-INDEP-007": "claim", "RG-INDEP-008": "claim",
     "RG-SEM-001": "claim", "RG-SEM-002": "claim", "RG-SEM-003": "claim",
-    "RG-SEM-004": "claim",
+    "RG-SEM-004": "claim", "RG-SEM-005": "claim",
     "RG-COV-001": "input", "RG-COV-002": "input", "RG-COV-003": "claim",
     "RG-COV-004": "execution", "RG-COV-005": "case",
     "RG-COV-006": "claim", "RG-COV-007": "claim", "RG-COV-008": "claim",
@@ -209,6 +209,8 @@ _RULE_REASON = {
     "RG-SEM-002": AttentionReason.NOT_VERIFIED,
     "RG-SEM-003": AttentionReason.NOT_VERIFIED,
     "RG-SEM-004": AttentionReason.STALE_VERIFICATION,
+    # Text in the evidence addressed to whoever reads it: a person should look.
+    "RG-SEM-005": AttentionReason.ADVERSARIAL_FINDING,
     "RG-EXPECT-001": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-003": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-005": AttentionReason.SELECTIVE_EVIDENCE,
@@ -945,7 +947,7 @@ _NON_MONOTONE_RULES = frozenset({
     "RG-CRIT-006", "RG-INDEP-005", "RG-INDEP-006",
     # An independent check, or a statement of who did the work, arrives later.
     "RG-INDEP-007", "RG-INDEP-008",
-    "RG-SEM-001", "RG-SEM-002", "RG-SEM-003", "RG-SEM-004",
+    "RG-SEM-001", "RG-SEM-002", "RG-SEM-003", "RG-SEM-004", "RG-SEM-005",
     # More evidence can reveal a capability that was exercised and undeclared, so
     # a clean capability comparison is never settled by arrival.
     "RG-CAP-001", "RG-CAP-002",
