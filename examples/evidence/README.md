@@ -1,6 +1,6 @@
 # External evidence examples
 
-One file per generic evidence contract, and one envelope that composes them.
+One file per generic evidence contract, and one envelope that composes five of them.
 Release-gate ran none of these tools. It reads what each one says, keeps it in
 that tool's words, and decides from it under a declared policy. Every report
 says so, under EVIDENCE ORIGIN.
@@ -12,6 +12,7 @@ says so, under EVIDENCE ORIGIN.
 | `sast.json` | `release-gate.sast/1` | two findings at the tool's own severity, one of them suppressed, with the declared scan scope |
 | `review.json` | `release-gate.review/1` | an approval of the overdraft claim and a changes-requested review of the transfer claim, both bound to a commit, plus an approval of a previous release that names no claim and is recorded as nothing more than that |
 | `formal.json` | `release-gate.formal/1` | a model checker's result for the overdraft claim: the spec it checked, its assumptions, the commit and the proof artifact |
+| `behavior.json` | `release-gate.behavior/1` | a behavioural harness's three checks of the transfer claim. A deterministic pass is a SIMULATION check. A pass decided by a jury of models is a CROSS_MODEL_REVIEW, which supports and never establishes. An `EVALUATOR_ERROR` is inconclusive, never a pass. On its own the claim is PARTIALLY_SUPPORTED and the decision HOLD. The harness's REVIEW recommendation and its scores are recorded and read by nothing. It is not in `release.jsonl`; compose it with `--evidence`. `examples/proofagent/` maps ProofAgent's PER export to this contract |
 | `release.jsonl` | an envelope with `producer_export` rows | the release: a candidate, three claims and all five exports. It blocks on `atk-017`, and the proof establishes the overdraft claim |
 
 ```

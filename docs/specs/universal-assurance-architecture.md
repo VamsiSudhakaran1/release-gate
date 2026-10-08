@@ -9897,6 +9897,112 @@ decision is **BLOCK** under `counterexample_effect: BLOCK` and **HOLD** under
   - without the declared suite size there is no expectation gap.
 - A copy elsewhere gives the same case digest.
 
+### 10bp. Behavioural evaluations as attributed evidence — `release-gate.behavior/1`, and ProofAgent through it
+
+> **Implemented.**
+> - `reference_adapters.py`: `BEHAVIOR_SCHEMA`, `BEHAVIOR_DECLARATION` and
+>   `BehaviorEvalAdapter`, the sixth generic contract.
+> - `producer_contract.NativeResult.method`.
+> - `examples/evidence/behavior.json`.
+> - `examples/proofagent/`: `per_to_behavior.py`, a synthetic
+>   `sample-run.per.json`, `release.jsonl`, static evidence, and
+>   `run_example.py --check`.
+> - Tests: `tests/test_behavior_evidence.py`.
+
+**The question.** A behavioural harness (ProofAgent among them) runs an agent
+through adversarial scenarios and decides checks, some by code, some by a jury
+of models and some by people. It may prove a violation, and it may recommend a
+release decision with a readiness score. Release-gate must consume that
+without competing with it: no re-grading, no reading its score as confidence,
+and its result attributed to it.
+
+**The contract.** Each part of a `behavior/1` document maps to one thing:
+
+| `behavior/1` | becomes |
+|---|---|
+| a check's state word | kept verbatim. Through the shared result table only a pass passes and only a fail fails; evaluator faults and unlisted words are inconclusive |
+| a check's `decided_by` | the attempt's method, through the new `NativeResult.method`: `deterministic` SIMULATION, `semantic` CROSS_MODEL_REVIEW, `human` HUMAN_REVIEW, otherwise OTHER (named in a note). A model jury's pass therefore supports and never establishes under the default policy |
+| a violation | a COUNTEREXAMPLE when the harness marks it proven; otherwise a finding, beside the failed check that already contradicts the claim |
+| the recommendation | an external decision (ATTESTATION), bearing on no claim |
+| the scores | verbatim inside that record; read by nothing; confidence semantics NONE |
+| `state` | candidate binding, so a run against another model or AI-BOM stops supporting the release |
+
+**ProofAgent.** ProofAgent Harness 0.13 exports a run as a PER, the
+EIO-Agents Portable Evaluation Record. Its JSON Schemas (2.1.0 to 2.1.2,
+Apache-2.0) are published and versioned. The example shim maps the PER fields
+it needs to `behavior/1`:
+
+- claims (state and `decided_by` verbatim, one `pa:<predicate>` claim per
+  predicate);
+- BEHAVIOURAL findings, as violations;
+- the release recommendation;
+- scores, verbatim;
+- the subject's model, version and AI-BOM digest, as state.
+
+The release's own claims rest on the predicate claims through `depends_on`, so
+a contradicted predicate contradicts them (CR-04).
+
+The shim is an example, not native guaranteed support. Release-gate could not
+test against a PER that ProofAgent produced. The sample's `claims` objects
+validate against the published PER 2.1.2 `claim` definition (checked in the
+suite where `eio-agents` is installed); its other sections hold only the
+fields the shim reads. A version the shim was not written against is refused.
+
+**What the example establishes, by test:**
+
+- the decision (BLOCK) comes from the proven violation and the failed check;
+- flipping ProofAgent's recommendation or changing its scores moves nothing;
+- making the check pass and removing the finding moves the decision;
+- a PER about another AI-BOM is withheld.
+
+### 10bq. Calibration data — the corpus a future decision model is judged on
+
+> **Implemented.**
+> - `release_gate/assurance/calibration.py`: `CalibrationPolicy`,
+>   `PrivacyMode`, `calibration_records`, `CalibrationLabel`, `apply_labels`,
+>   `write_calibration`, `read_calibration`, `write_parquet` (optional
+>   pyarrow), `evaluate_corpus` and `render_evaluation`.
+> - `assure --calibration-out FILE`, `--calibration-privacy`,
+>   `--calibration-declared-by`.
+> - `scripts/evaluate_decision_models.py`.
+> - Schema `calibration` (protocol count 82).
+> - Tests: `tests/test_calibration.py`.
+
+**The record.** One flat row per semantic adjudication, under a fixed column
+set: claim and rule, adjudication mode, candidate state hash, packet (by
+privacy mode), provider, model, version, prompt hash, choice, verdict, stated
+probability and confidence, explanation, the deterministic outcome and what
+the resolution did with the reading, independence and contradiction context,
+and label columns. JSON-valued columns are strings, so the rows load as
+Parquet without nested types.
+
+**Privacy.**
+- `hash-only` is the default and keeps no text.
+- `redacted` withholds code, credential-shaped strings and addresses by a
+  deterministic, conservative heuristic, applied value by value inside JSON
+  excerpts.
+- `full` requires a named chooser and marks every row unshareable.
+
+No mode holds more than the packet the model was sent, so source code the
+model was not shown never enters a corpus. Nothing is uploaded.
+
+**Labels.** A human adjudication and a later outcome (HOLDS, DOES_NOT_HOLD,
+UNDETERMINED, with a basis, and an incident reference only beside one). Each
+says who supplied it. Disagreeing labels are an error. Nothing is inferred.
+
+**Evaluation, without training.** Per model and per declared class (general
+reasoning model, Laya/Jev-style decision model, a future specialist):
+
+- answer, abstention and unknown rates;
+- agreement with people;
+- confirmation by later outcomes;
+- Brier score and ECE over stated probabilities only;
+- head-to-head on shared packets.
+
+Agreement with the deterministic outcome is reported and marked as not ground
+truth. A corpus changes no decision: the run with `--calibration-out` exits
+and decides as the run without it. Appending is idempotent by record id.
+
 ---
 
 ## 11. Methodology behaviour
@@ -10127,6 +10233,10 @@ fixed, rather than the expectations being lowered.
 | verifier family coverage (§10bn) | `DOMAIN_VALIDATOR`'s default limit is one sentence; `OTHER`'s "nothing is recorded" limit is dropped when the report states `covers` | coverage notes, and the digests over them, change for those reports only |
 | Action (§10bn) | `command: assure`; inputs `input`, `evidence`, `methodology`, `candidate`, `resolution-policy`, `org-config`, `hold-policy`, `output-dir`, `artifact-name`; outputs `decision` (now set, for every command) and `admission-report` | additive; existing commands behave as before. `decision` was declared and never set, and now carries the step's decision |
 | CI templates (§10bn) | `ci-templates/admission/` for five platforms; the audit templates handle exit 10 | **behaviour change for anyone who copied the audit templates**: HOLD now passes with a warning under the default `normal` hold policy where it failed the job; set `RELEASE_GATE_HOLD_POLICY: strict` (or drop GitLab's `allow_failure`) to keep stopping on it. `--json release-gate.json`, which wrote nothing, is gone |
+| `release-gate.behavior/1` (§10bp) | a sixth reference contract, `BehaviorEvalAdapter`, in the built-in registry | additive: a document naming no such schema is read exactly as before |
+| `NativeResult.method` (§10bp) | optional; a result may state its check's method | additive: None takes the lane's method, so every existing producer's attempts are unchanged |
+| ProofAgent (§10bp) | `examples/proofagent/` maps a PER 2.1.0 to 2.1.2 to `behavior/1` | an example, not native support; the documented route for ProofAgent's verdict moves from `external_decision` to `behavior/1` |
+| calibration corpus (§10bq) | `calibration.py`; `assure --calibration-out`, `--calibration-privacy`, `--calibration-declared-by`; `scripts/evaluate_decision_models.py`; schema `calibration` (protocol count 82) | additive and opt-in; a run with `--calibration-out` decides exactly as one without |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

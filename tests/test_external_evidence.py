@@ -99,30 +99,33 @@ class TestEveryContractIsAContract:
     @pytest.mark.parametrize("adapter", reference_adapters(), ids=lambda a: a.name)
     def test_each_holds_the_producer_contract_on_its_shipped_example(self, adapter):
         sample = {"eval": "eval.json", "red_team": "red-team.json",
-                  "sast": "sast.json", "human_review": "review.json"}[adapter.name]
+                  "sast": "sast.json", "human_review": "review.json",
+                  "behavior": "behavior.json"}[adapter.name]
         report = check_adapter_contract(adapter, example(sample))
         assert report.holds, report.violations
 
     @pytest.mark.parametrize("adapter", reference_adapters(), ids=lambda a: a.name)
     def test_nothing_is_read_by_resemblance(self, adapter):
         sample = {"eval": "eval.json", "red_team": "red-team.json",
-                  "sast": "sast.json", "human_review": "review.json"}[adapter.name]
+                  "sast": "sast.json", "human_review": "review.json",
+                  "behavior": "behavior.json"}[adapter.name]
         doc = example(sample)
         doc.pop("schema")
         assert adapter.detect(doc) == 0
         doc["schema"] = doc.get("schema", "") + "release-gate.eval/2"
         assert adapter.detect(doc) == 0
 
-    def test_the_five_schemas_are_named_in_one_place(self):
+    def test_the_six_schemas_are_named_in_one_place(self):
         assert REFERENCE_SCHEMAS == ("release-gate.eval/1", "release-gate.red-team/1",
                                      "release-gate.sast/1", "release-gate.review/1",
-                                     "release-gate.formal/1")
+                                     "release-gate.formal/1", "release-gate.behavior/1")
 
     def test_every_shipped_example_is_recognised_as_its_own_contract(self, tmp_path):
         expected = {"eval.json": "PRODUCER_EXPORT:eval",
                     "red-team.json": "PRODUCER_EXPORT:red_team",
                     "sast.json": "PRODUCER_EXPORT:sast",
                     "review.json": "PRODUCER_EXPORT:human_review",
+                    "behavior.json": "PRODUCER_EXPORT:behavior",
                     "formal.json": "VERIFIER_REPORT"}
         from release_gate.assurance.ingest import detect_document
         for name, kind in expected.items():

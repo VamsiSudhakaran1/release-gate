@@ -4,6 +4,69 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🧪 Behavioural evaluations as attributed evidence, and ProofAgent through them
+
+- **`release-gate.behavior/1`, a sixth generic evidence contract**, for
+  behavioural-evaluation harnesses. Each check keeps its harness's own state
+  word: only a pass passes, only a fail fails, and evaluator faults are
+  inconclusive. Who decided a check fixes its method:
+  - code over the simulated run is SIMULATION;
+  - a jury of models is CROSS_MODEL_REVIEW, which supports and never
+    establishes under the default policy;
+  - a person is HUMAN_REVIEW.
+
+  A violation the harness proved is a counterexample. Its release
+  recommendation is recorded as its external decision, and its scores are
+  kept verbatim and read by nothing: a harness's score is not Release-Gate
+  confidence.
+- **`NativeResult.method`**: a producer can state the method a check used. It
+  is optional, and without it every producer is read as before.
+- **`examples/proofagent/`** maps ProofAgent Harness's PER export (the
+  EIO-Agents Portable Evaluation Record, 2.1.0 to 2.1.2) to `behavior/1`. It
+  combines that with static analysis and runtime traces in one claim graph and
+  decides under a declared methodology. `run_example.py --check` runs in the
+  test suite.
+  - **This is an example, not native guaranteed support.** The sample run is
+    synthetic, written to the published schema.
+  - Flipping ProofAgent's recommendation or changing its scores provably moves
+    nothing; the proven violation is what blocks.
+
+### 📊 Calibration data for a future decision model (no model is trained)
+
+- **`assure --semantic … --calibration-out FILE`** appends each semantic
+  adjudication to a versioned corpus (`release-gate.calibration/1`). It
+  appends once per adjudication and never changes the decision. Each flat row
+  holds:
+  - the claim and rule, the adjudication mode and the candidate state hash;
+  - the evidence packet;
+  - the model, version and prompt hash;
+  - the choice, the stated probability and confidence, and the explanation;
+  - the final deterministic outcome;
+  - independence and contradiction context;
+  - label columns.
+- **Private by default.**
+  - `hash-only` keeps no text.
+  - `redacted` withholds code, credentials and addresses.
+  - `full` needs `--calibration-declared-by` and marks every row unshareable.
+
+  No mode holds more than the model was sent, and nothing is uploaded.
+- **Labels** (`release-gate.calibration-label/1`) add a person's adjudication
+  and a later outcome of the claim, with an incident reference only when one
+  is supplied. Each label names who supplied it; disagreeing labels are an
+  error.
+- **`scripts/evaluate_decision_models.py`** compares models per model and per
+  declared class (general model, Laya/Jev-style decision model, future
+  specialist). It reports answer and abstention rates, agreement with people,
+  confirmation by outcomes, Brier score and calibration error over stated
+  probabilities only, and head-to-head on shared packets. It writes JSONL or
+  Parquet (pyarrow optional). Nothing is trained.
+
+#### Migration notes
+
+- The protocol registers one more schema, `calibration`: the count is 82.
+- The documented route for ProofAgent's verdict moves from `external_decision`
+  to `release-gate.behavior/1`, through the example mapping.
+
 ### 🚀 Admission in CI: evidence in, PROMOTE / HOLD / BLOCK out, HOLD kept apart
 
 - **`release-gate assure FILE --evidence PATH`.** Repeatable. It decides over the

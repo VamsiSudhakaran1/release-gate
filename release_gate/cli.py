@@ -1903,6 +1903,9 @@ def _run_assure_command():
                                   [--semantic-policy FILE]
                                   [--escalation-policy FILE]]
                                  [--semantic-assertions FILE]
+                                 [--calibration-out FILE
+                                  [--calibration-privacy hash-only|redacted|full]
+                                  [--calibration-declared-by WHO]]
       release-gate assure --list-methodologies
       release-gate assure --diagnostics
 
@@ -2058,6 +2061,30 @@ def _run_assure_command():
     # More of the release's evidence, decided over together with <file>.
     evidence = _flags(argv, '--evidence')
 
+    # A calibration corpus records each semantic adjudication of this run
+    # (assurance/calibration.py). Settled before any model is asked, so a bad
+    # privacy setting never costs a call.
+    calibration_out = _flag(argv, '--calibration-out')
+    calibration_policy = None
+    if calibration_out:
+        from release_gate.assurance.calibration import CalibrationError, CalibrationPolicy
+        if '--semantic' not in argv and not _flag(argv, '--semantic-assertions'):
+            print("Error: --calibration-out records semantic adjudications; without "
+                  "--semantic or --semantic-assertions this run makes none")
+            sys.exit(1)
+        try:
+            calibration_policy = CalibrationPolicy(
+                mode=_flag(argv, '--calibration-privacy') or 'hash-only',
+                declared_by=_flag(argv, '--calibration-declared-by') or "")
+        except CalibrationError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+    elif _flag(argv, '--calibration-privacy') or _flag(argv, '--calibration-declared-by'):
+        print("Error: --calibration-privacy and --calibration-declared-by apply to "
+              "--calibration-out")
+        sys.exit(1)
+    kept = {}
+
     semantic_assertions, semantic_submitted = _semantic_assertions_from_argv(
         target, ask='--semantic' in argv,
         replay=_flag(argv, '--semantic-assertions'),
@@ -2065,7 +2092,7 @@ def _run_assure_command():
         policy_ref=_flag(argv, '--semantic-policy'),
         escalation_ref=_flag(argv, '--escalation-policy'),
         methodology=methodology, candidate=candidate,
-        resolution_policy=resolution_policy, evidence=evidence)
+        resolution_policy=resolution_policy, evidence=evidence, keep=kept)
 
     try:
         outcome = assure(target, methodology=methodology, candidate=candidate,
@@ -2082,6 +2109,10 @@ def _run_assure_command():
         _Path(case_output).write_text(
             _json.dumps(outcome.case.to_dict(), indent=2, sort_keys=True) + "\n",
             encoding='utf-8')
+
+    if calibration_policy is not None:
+        _write_calibration_corpus(calibration_out, calibration_policy, outcome,
+                                  semantic_assertions, kept)
 
     admission_out = _flag(argv, '--admission-out')
     admission_report = None
@@ -2121,8 +2152,37 @@ def _run_assure_command():
     sys.exit(outcome.exit_code)
 
 
+def _write_calibration_corpus(path, policy, outcome, assertions, kept):
+    """Append this run's adjudications to a calibration corpus, once each.
+
+    Appending is idempotent by record id: re-running the same replay adds
+    nothing, so a corpus accumulates runs without counting one twice.
+    """
+    from pathlib import Path as _Path
+
+    from release_gate.assurance.calibration import (
+        CalibrationError, calibration_records, read_calibration, write_calibration)
+    rows = calibration_records(outcome, assertions, packets=kept.get("packets") or (),
+                               plan=kept.get("plan"), policy=policy)
+    try:
+        held = ({r["record_id"] for r in read_calibration(path)}
+                if _Path(path).exists() else set())
+    except CalibrationError as exc:
+        print(f"Error: {path} is not a calibration corpus this version can extend: {exc}")
+        sys.exit(1)
+    fresh = [r for r in rows if r["record_id"] not in held]
+    write_calibration(fresh, path, append=True)
+    print(f"  calibration: {len(fresh)} adjudication(s) added to {path} "
+          f"({policy.mode.value}; {len(rows) - len(fresh)} already held)",
+          file=sys.stderr)
+    if policy.mode.value == "full":
+        print(f"  calibration: {path} holds verbatim packets and explanations, kept by "
+              f"{policy.declared_by}'s choice. It is not shareable; nothing sent it "
+              "anywhere.", file=sys.stderr)
+
+
 def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
-                                   escalation_ref=None, **assure_kwargs):
+                                   escalation_ref=None, keep=None, **assure_kwargs):
     """`--semantic` asks; `--semantic-assertions FILE` replays. Not both.
 
     Asking is planned first: the escalation policy decides which questions go
@@ -2130,7 +2190,8 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
     persisted with the answers. Returns the assertions and whether they were
     read from a file (DECLARED) or produced in this process (DERIVED).
     Misconfiguration is an error; a provider that fails once configured is not —
-    that is an UNKNOWN assertion per question.
+    that is an UNKNOWN assertion per question. `keep`, when given, receives the
+    packets and the escalation plan, for a calibration corpus to record.
     """
     import json as _json
     from pathlib import Path as _Path
@@ -2161,6 +2222,12 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
         except (OSError, ValueError, SemanticVerifierError) as exc:
             print(f"Error: {replay} is not a readable assertions file: {exc}")
             sys.exit(1)
+        if keep is not None:
+            # What the earlier run persisted beside its answers, as it was kept.
+            keep["packets"] = [r for r in rows if isinstance(r, dict)
+                               and r.get('record_type') == 'evidence_packet']
+            keep["plan"] = next((r for r in rows if isinstance(r, dict)
+                                 and r.get('record_type') == 'escalation_plan'), None)
         return tuple(found), True
 
     policy = DEFAULT_SEMANTIC_VERIFIER_POLICY
@@ -2207,6 +2274,8 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
                            state_hash=state_hash_for(analysis))
     packets = list(plan.packets)
     assertions = verifier.verify_all(packets)
+    if keep is not None:
+        keep["packets"], keep["plan"] = packets, plan
 
     answered = sum(1 for a in assertions if a.answered)
     held_back = ", ".join(f"{n} {reason.lower().replace('_', ' ')}"

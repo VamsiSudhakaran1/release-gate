@@ -65,6 +65,7 @@ _PRODUCER_TYPE_LABEL = {
     "release_gate_static": "Release-Gate Static", "promptfoo": "Promptfoo",
     "sarif": "SARIF", "eval": "Eval harness", "red_team": "Red team",
     "sast": "SAST", "human_review": "Human review",
+    "behavior": "Behavioural evaluation",
     "external_decision": "External decision",
 }
 #: Traces, by the format they were read from.

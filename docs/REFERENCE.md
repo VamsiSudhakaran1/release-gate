@@ -132,6 +132,8 @@ release-gate assure <file> [--evidence PATH ...]
                            [--semantic [--semantic-out FILE] [--semantic-policy FILE]
                                        [--escalation-policy FILE]]
                            [--semantic-assertions FILE]
+                           [--calibration-out FILE [--calibration-privacy MODE]
+                                                   [--calibration-declared-by WHO]]
 release-gate assure --list-methodologies
 ```
 
@@ -180,6 +182,9 @@ nothing.
 | `--escalation-policy FILE` | With `--semantic`: the escalation policy as JSON (`scope`, `always`, `never`, `hybrid`, `max_questions`, `max_cost`, `modes`). It decides which questions are asked, never what an answer does. An error without `--semantic`. |
 | `--semantic-policy FILE` | With `--semantic`: the verifier policy as JSON (`min_confidence`, `low_confidence`, packet and excerpt limits, `timeout_seconds`, and for decision models `probability_tolerance` and `unscored`). |
 | `--semantic-assertions FILE` | Replay assertions an earlier `--semantic-out` kept, without calling any model. The same file gives the same case. Cannot be combined with `--semantic`. |
+| `--calibration-out FILE` | With `--semantic` or `--semantic-assertions`: append each semantic adjudication of the run to a [calibration corpus](#calibration-data--for-a-future-decision-model), once. It changes nothing about the decision. An error without a semantic run. |
+| `--calibration-privacy MODE` | `hash-only` (default), `redacted` or `full`: how much text each corpus row keeps. |
+| `--calibration-declared-by WHO` | Required for `full`: who chose to keep verbatim text. Every row names them. |
 | `--list-methodologies` | The built-ins, with each one's requirement count and digest. |
 | `--diagnostics` | Which optional backends are unavailable and why. A broken native dependency is reported here rather than taking the CLI down; assurance runs regardless. |
 
@@ -549,6 +554,78 @@ The remaining questions are asked in a fixed order, so a budget cuts the same on
 
 A policy can withdraw a rule from reading (`DETERMINISTIC`). It cannot open a deterministic rule to a model; that policy is refused.
 
+#### Calibration data — for a future decision model
+
+Release-gate trains no model. It keeps the data a later one would be judged on.
+Add `--calibration-out FILE` to a run that adjudicates semantically
+(`--semantic`, or a replay with `--semantic-assertions`). Each adjudication is
+then appended to a corpus, once: a re-run adds nothing it already holds. The
+corpus never changes the run's decision.
+
+Each row (`release-gate.calibration/1`, JSONL, one flat object per
+adjudication) holds the following. The column set is fixed
+(`calibration.CALIBRATION_COLUMNS`), and nested values are JSON strings, so
+the same rows load as a Parquet table.
+
+| Group | Columns |
+|---|---|
+| what was asked | `claim_id`, `rule_id`, `subject_kind`, `adjudication_mode`, `escalation_reason`, `question_id`, `question_kind`, `question_text`, `question_digest`, `candidate_state_hash`, `packet_hash`, `packet_refs`, `packet_item_count`, `packet` |
+| of whom | `provider`, `interface` (CHAT or DECISION), `model`, `model_version`, `model_family`, `prompt_hash` |
+| what came back | `status`, `unknown_reason`, `returned_choice`, `verdict`, `choices`, `probability`, `probabilities`, `confidence`, `explanation`, `explanation_digest`, `response_digest`, `answered_at`, `assertion_id` |
+| what the deterministic engine did | `reading_role` (what the resolution did with the reading), `deterministic_claim_status`, `deterministic_rule`, `case_decision` |
+| context | `independence` (the claim's correlation groups), `contradiction_count`, `contradictions` (each with its classification) |
+| labels, empty until supplied | `human_verdict`, `human_adjudicator`, `human_role`, `human_adjudicated_at`, `human_rationale`, `human_rationale_digest`, `later_outcome`, `later_outcome_basis`, `later_outcome_at`, `incident_ref`, `agrees_with_human`, `confirmed_by_outcome`, `label_sources` |
+| privacy | `privacy_mode`, `privacy_declared_by`, `shareable` |
+
+`probability` and `probabilities` hold only what a provider stated. A
+chat model that gave no probability has none, and nothing fills one in.
+
+**Privacy.** `--calibration-privacy` sets how much text a row keeps:
+
+| Mode | What a row keeps |
+|---|---|
+| `hash-only` (default) | Ids, enumerations, numbers and digests. A packet item keeps its reference, kind, structural fields and content digest. The question, explanation and rationale keep their digests. Shareable; cannot be re-asked |
+| `redacted` | Text, with code (fenced, inline and code-shaped lines), credential-shaped strings and email addresses replaced by digest markers. A packet excerpt that is serialised JSON is redacted value by value. A deterministic heuristic that errs towards withholding, which is why it is not the default |
+| `full` | Exactly what the model was sent and said. It requires `--calibration-declared-by WHO`, every row names who chose it, and the run warns that the file is not shareable |
+
+No mode holds more than the packet the model was sent. That packet already
+had credentials and identifiers withheld (the verifier policy's `withhold`),
+so source code the model was not shown never reaches a corpus. Nothing is
+uploaded: the corpus is written where `--calibration-out` says, and nowhere
+else.
+
+**Labels.** A person or a later outcome labels a row with a
+`release-gate.calibration-label/1` JSONL row. Each label names its
+`record_id` and who supplied it (`supplied_by`), and carries a human
+adjudication, a later outcome, or both:
+
+```json
+{"schema": "release-gate.calibration-label/1", "record_id": "cal_…", "supplied_by": "release-council",
+ "human": {"verdict": "contradicted", "adjudicator": "dana", "role": "security"},
+ "outcome": {"claim": "DOES_NOT_HOLD", "basis": "a batch transfer ran without approval",
+             "incident_ref": "INC-2291"}}
+```
+
+A human verdict uses the model's three words. A later outcome says the claim
+`HOLDS`, `DOES_NOT_HOLD` or is `UNDETERMINED`, always with a basis, and an
+incident reference only beside one. Labels are never inferred. Two labels that
+disagree about one row are an error, never settled by order.
+
+**Evaluation.** `scripts/evaluate_decision_models.py corpus.jsonl --labels
+labels.jsonl --class MODEL=CLASS …` joins the labels and reports, per model and
+per class (for example `general`, `decision-model`, `specialist`):
+
+- how often a model answered, abstained or gave no answer;
+- its agreement with people, with a confusion table;
+- how often later outcomes confirmed it;
+- Brier score and expected calibration error, over stated probabilities only;
+- head-to-head results on packets that more than one model answered.
+
+The script can also write the joined corpus, as JSONL or as a Parquet table
+(Parquet needs pyarrow), and its own help lists the options. Nothing is trained, tuned or called, and nothing reported feeds a
+decision. Agreement with the deterministic outcome is reported and marked as
+not ground truth, because that outcome may itself have read the answer.
+
 #### Evidence producers — adding a source without changing the engine
 
 Every source of evidence meets the engine through one contract (`release_gate/assurance/producer_contract.py`). A producer **declares** what its evidence means before any arrives. Its modality is one of the seven evidence lanes, and it states whether it is deterministic, its confidence semantics (an ordinal label, a score on its own scale, a probability it says is calibrated), its coverage semantics, its independence, and what it cannot establish (required). An **adapter** reads one format and reports `NativeResult`s: the producer's own identifiers, outcome words, severities, counts and source fields. Only the normaliser builds records, the same way for every producer:
@@ -567,6 +644,8 @@ Built in: promptfoo, SARIF 2.1.0 (any static analyser; the tool is named by the 
                        "state": {"commit": "9f2c1a7"}}}
 ```
 
+A result can state the `method` its check used (a `VerificationMethod`), where its lane's method would overstate it. A behavioural harness's model-jury verdicts are CROSS_MODEL_REVIEW, not a test suite. A result that states none takes its lane's.
+
 There are two ways to add a producer, and neither edits the engine. From Python, subclass `EvidenceAdapter`, register it on a `ProducerRegistry`, and pass `producers=registry` to `assure()`. From a file, put a `producer` record (a declaration) in an envelope ahead of that producer's evidence. `check_adapter_contract(adapter, sample)` runs any adapter against the contract.
 
 #### External evidence — read, never re-run
@@ -579,6 +658,7 @@ Release-gate does not compete with the tools that produce evidence. For each cla
 | `release-gate.red-team/1` | behavioural and security testing | a **succeeded** attack is a COUNTEREXAMPLE to its target claim. Its own word is kept, its claim outcome is "failed", and it blocks a critical claim however many attacks were blocked. A **blocked** attack is an observation that supports and never establishes. `partial`, `error` and `timeout` are inconclusive; any other word is UNKNOWN. An attack with no target is its own claim |
 | `release-gate.sast/1` | static analysis without SARIF (SARIF stays the first choice) | the tool's rule at its own severity; suppressed findings stay as suppressed; the declared scan scope is stated |
 | `release-gate.review/1` | human review | reviewer `id`, `reference` and `role`; `decision`; `scope`; `state` or `state_hash`; `reviewed_at`, `expires_at`; `rationale`; `reference`. With a claim it is a HUMAN_REVIEW check: approve passes it, reject or changes requested fails it, and comment is inconclusive. Without one it is the reviewer's decision, recorded and adopted as nothing. An `expires_at` is checked against the document's `evaluated_at`, and with none stated the review is inconclusive: release-gate does not read a clock |
+| `release-gate.behavior/1` | behavioural evaluation | each check under its harness's own state word: only a pass passes, only a fail fails, and evaluator faults (`EVALUATOR_ERROR`, `EVIDENCE_INVALID`, `EVIDENCE_INCOMPLETE`, `UNRESOLVED`) are inconclusive. The check's `decided_by` fixes its method: `deterministic` is SIMULATION, `semantic` (a jury of models) is CROSS_MODEL_REVIEW, which the default policy does not let establish, and `human` is HUMAN_REVIEW. A violation the harness marks proven is a COUNTEREXAMPLE; an unproven one is a finding beside its failed check. The harness's `recommendation` is its external decision, recorded and adopted as nothing. Its `scores` are kept verbatim and read as nothing: they are not confidence |
 | `release-gate.formal/1` | formal verification | per row: `claim_id`, `claim`, `artifact` (`name`, `digest`), `method`, `result`, `assumptions`, `state`, `proof_artifact` (`locator`, `digest`), under a `verifier` with its version and family. The artifact binds as the candidate's `artifact:<name>`, so a proof of another version of the spec does not establish. Assumptions are listed under what the result does not cover |
 
 ```json
@@ -591,7 +671,7 @@ Release-gate does not compete with the tools that produce evidence. For each cla
               "severity": "critical", "reproduction": {"steps": ["…"]}}]}
 ```
 
-Observability exports from Langfuse, OpenTelemetry and Arize/Phoenix arrive through their trace adapters as DECLARED traces. A tool whose export format is not published as stable is read through a shim to one of these contracts: ProofAgent's attacks through `red-team/1`, its verdict through `external_decision`.
+Observability exports from Langfuse, OpenTelemetry and Arize/Phoenix arrive through their trace adapters as DECLARED traces. A tool whose own export release-gate cannot test against is read through a shim to one of these contracts. [`examples/proofagent/`](../examples/proofagent/) maps ProofAgent Harness's PER export (the EIO-Agents Portable Evaluation Record, versions 2.1.0 to 2.1.2) to `behavior/1`. It is an example, not native guaranteed support: the sample run is synthetic, written to the published schema.
 
 To compose a release from several tools, put each tool's document in an envelope as a `producer_export` row:
 

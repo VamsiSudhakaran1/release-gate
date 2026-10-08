@@ -13,15 +13,17 @@ vendor:
     release-gate.sast/1       static-analysis findings, for a tool without SARIF
     release-gate.review/1     a person's review: who, in what role, of which state
     release-gate.formal/1     a proof result (read by `verifiers.GenericVerifierAdapter`)
+    release-gate.behavior/1   a behavioural evaluation: checks, who decided each, the
+                              violations the harness proved, and its recommendation
 
 Each is a registrant of `producer_contract`, like the promptfoo, SARIF and
 external-decision adapters beside it: it declares what its producer is and
 cannot establish, reads one shape, and returns `NativeResult`s. The normaliser
 writes every record, every one is DECLARED, and none can become a verdict. A
 vendor format becomes evidence through a short shim to one of these — which is
-also how a tool whose export is not published as stable is read (ProofAgent's
-attacks through the red-team contract, its verdict through `external_decision`)
-without release-gate guessing at a format it cannot test.
+also how a tool whose own export release-gate cannot test against is read
+(ProofAgent's PER export through the behaviour contract, by the example mapping
+in `examples/proofagent/`) without release-gate guessing at a format.
 
 **What each contract adds over a raw evidence row is the semantics of its
 class, stated once.** An attack that *succeeded* is a counterexample to the
@@ -43,7 +45,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from release_gate.assurance.canonical import is_digest
-from release_gate.assurance.evidence import EvidenceType
+from release_gate.assurance.evidence import EvidenceType, VerificationMethod
 from release_gate.assurance.producer_contract import (
     AdapterOutput,
     ConfidenceSemantics,
@@ -60,6 +62,9 @@ from release_gate.assurance.producer_contract import (
 from release_gate.assurance.producers import EvidenceLane
 
 __all__ = [
+    "BEHAVIOR_DECLARATION",
+    "BEHAVIOR_SCHEMA",
+    "BehaviorEvalAdapter",
     "EVAL_DECLARATION",
     "EVAL_SCHEMA",
     "FORMAL_SCHEMA",
@@ -85,12 +90,13 @@ EVAL_SCHEMA = "release-gate.eval/1"
 RED_TEAM_SCHEMA = "release-gate.red-team/1"
 SAST_SCHEMA = "release-gate.sast/1"
 REVIEW_SCHEMA = "release-gate.review/1"
+BEHAVIOR_SCHEMA = "release-gate.behavior/1"
 #: Read by `verifiers.GenericVerifierAdapter`, which already receives every
 #: verifier's results; named here so the five contracts are listed in one place.
 FORMAL_SCHEMA = "release-gate.formal/1"
 
 REFERENCE_SCHEMAS: Tuple[str, ...] = (EVAL_SCHEMA, RED_TEAM_SCHEMA, SAST_SCHEMA,
-                                      REVIEW_SCHEMA, FORMAL_SCHEMA)
+                                      REVIEW_SCHEMA, FORMAL_SCHEMA, BEHAVIOR_SCHEMA)
 
 
 # ── shared reading ───────────────────────────────────────────────────────────
@@ -398,6 +404,227 @@ class RedTeamAdapter(EvidenceAdapter):
                              notes=tuple(dict.fromkeys(notes)))
 
 
+# ── release-gate.behavior/1 ──────────────────────────────────────────────────
+
+BEHAVIOR_DECLARATION = ProducerDeclaration(
+    producer_type="behavior",
+    label="behavioural evaluation (release-gate.behavior/1)",
+    origin=("any behavioural-evaluation harness that emits release-gate.behavior/1, "
+            "or a shim from its own export; the document names the harness"),
+    modality=EvidenceLane.EVALS,
+    determinism=Determinism.NON_DETERMINISTIC,
+    evidence_types=(EvidenceType.EVAL_RESULT, EvidenceType.COUNTEREXAMPLE,
+                    EvidenceType.ATTESTATION),
+    supported_claims=(
+        "that the named harness ran a scenario against the agent and decided a check "
+        "the way it reports, by the decider it names",
+        "that the harness proved a violation, which is a counterexample to the claim "
+        "the check bears on",
+        "that the harness recommended a release decision, recorded and adopted as "
+        "nothing"),
+    confidence=ConfidenceSemantics.NONE,
+    confidence_note=("the harness's scores are its own: kept as reported, and read by "
+                     "nothing here as confidence, a probability or a threshold"),
+    coverage=CoverageSemantics.ENUMERATED,
+    coverage_note=("the checks listed, under the scenarios the harness ran; behaviour "
+                   "outside them is not covered, and an evaluator-fault state is not "
+                   "a pass"),
+    limitations=(
+        "behaviour under scenarios, turns or inputs the harness did not run",
+        "that a check a model jury decided is correct: it is the jury's reading",
+        "that the harness's score measures what the release's policy asks about",
+        "the agent's behaviour in any state other than the one the document names"),
+    independence=Independence(independent_of_subject=True,
+                              operated_by="whoever ran the evaluation"),
+    default_producer_id="behavior-harness")
+
+#: A check's state, and what it is for the claim the check bears on. The words
+#: are a superset of the seven non-conflated decision states a behavioural
+#: harness commonly reports (APPLICABLE_PASS, APPLICABLE_FAIL, NOT_APPLICABLE,
+#: UNRESOLVED, EVIDENCE_INVALID, EVIDENCE_INCOMPLETE, EVALUATOR_ERROR): only a
+#: pass passes, only a fail fails, and every evaluator fault is inconclusive.
+#: A word outside the table is kept, and read as unknown — which the shared
+#: result table makes inconclusive, never a pass.
+_CHECK_PASSED = frozenset({"pass", "passed", "applicable_pass"})
+_CHECK_FAILED = frozenset({"fail", "failed", "applicable_fail"})
+_CHECK_UNSETTLED = {
+    "not_applicable": "not_run", "skipped": "not_run", "not_run": "not_run",
+    "unresolved": "inconclusive", "evidence_invalid": "inconclusive",
+    "evidence_incomplete": "inconclusive", "evaluator_error": "inconclusive",
+    "error": "inconclusive", "timeout": "inconclusive", "inconclusive": "inconclusive"}
+
+#: Who decided a check, and the method that makes it. A model jury's verdict is
+#: a model's reading (CROSS_MODEL_REVIEW, which the default resolution policy
+#: does not let establish a claim); a person's is a review; code over the run is
+#: the simulation the harness ran. A check whose decider is not stated is OTHER:
+#: nothing establishes what kind of check it was.
+_DECIDER_METHOD = {
+    "deterministic": VerificationMethod.SIMULATION,
+    "semantic": VerificationMethod.CROSS_MODEL_REVIEW,
+    "human": VerificationMethod.HUMAN_REVIEW,
+}
+
+#: How the harness proved a violation. A proven one is a counterexample; an
+#: unproven one is a finding beside the failed check, which already stands
+#: against the claim.
+_PROVEN = frozenset({"proven", "proved", "confirmed"})
+
+
+def _word(value: Any) -> str:
+    return _text(value).lower().replace("-", "_").replace(" ", "_")
+
+
+class BehaviorEvalAdapter(EvidenceAdapter):
+    """`release-gate.behavior/1` — a behavioural evaluation, read as the harness's account.
+
+    ```json
+    {"schema": "release-gate.behavior/1",
+     "producer": {"id": "proofagent-harness", "version": "0.13.0"},
+     "run_id": "…", "ran_at": "2026-10-07T09:00:00Z",
+     "state": {"model": "acme-treasury-v3", "commit": "c4f8d31"},
+     "provenance": {"provider": "acme", "model_family": "judge-2", "session": "…"},
+     "checks": [{"id": "c-17", "claim_id": "bh_guardrail_circumvented",
+                 "claim": "the agent does not reach a prohibited outcome by staged requests",
+                 "outcome": "APPLICABLE_FAIL", "decided_by": "deterministic",
+                 "turns": [5, 6], "severity": "CRITICAL"}],
+     "violations": [{"id": "f-3", "check_ids": ["c-17"], "proof": "PROVEN",
+                     "severity": "CRITICAL", "observed": "t05 · guardrail-circumvented"}],
+     "recommendation": {"decision": "BLOCK", "basis": "…"},
+     "scores": {"…": "…"}}
+    ```
+
+    What each part becomes, without re-grading anything:
+
+    - a **check** is the harness's check of the claim it names (or its own
+      claim, "check X passes"), in the method its decider makes it: a model
+      jury's verdict is CROSS_MODEL_REVIEW, a person's HUMAN_REVIEW, code over
+      the simulated run SIMULATION, and an unnamed decider OTHER. Its state
+      goes through one table: only a pass passes, only a fail fails, and every
+      evaluator fault, and any word nobody listed, is inconclusive;
+    - a **violation** the harness proved is a COUNTEREXAMPLE to the claim its
+      checks bear on; one it did not prove is a finding, and the failed check
+      already stands against the claim;
+    - the **recommendation** is the harness's release decision, recorded as an
+      external decision: it bears on no claim and moves no verdict;
+    - **scores** are kept verbatim in that record and read by nothing. A
+      harness's score on its own scale is not release-gate's confidence.
+    """
+
+    declaration = BEHAVIOR_DECLARATION
+
+    def detect(self, doc: Any) -> int:
+        return _detect(doc, BEHAVIOR_SCHEMA, "checks")
+
+    def read(self, doc: Any) -> AdapterOutput:
+        identity = _identity(doc, "producer", BEHAVIOR_DECLARATION)
+        rows = _rows(doc, "checks")
+        results: List[NativeResult] = []
+        skipped: Dict[str, int] = {}
+        notes: List[str] = []
+        claims_of: Dict[str, Tuple[str, str]] = {}
+        for row in rows:
+            if not isinstance(row, Mapping):
+                _skip(skipped, "check is not an object")
+                continue
+            check = _text(row.get("id"))
+            if not check:
+                _skip(skipped, "check names no id")
+                continue
+            word = _text(row.get("outcome") or row.get("state") or row.get("result"))
+            key = _word(word)
+            statement, claim_id = _claim(row, doc)
+            if not statement:
+                statement = f"behaviour check {check!r} passes"
+            claims_of[check] = (statement, claim_id)
+            if key in _CHECK_PASSED:
+                for_claim = "passed"
+            elif key in _CHECK_FAILED:
+                for_claim = "failed"
+            else:
+                for_claim = _CHECK_UNSETTLED.get(key, "unknown")
+            decider = _word(row.get("decided_by"))
+            method = _DECIDER_METHOD.get(decider, VerificationMethod.OTHER)
+            if decider and decider not in _DECIDER_METHOD:
+                notes.append(f"check {check!r} names its decider {decider!r}, which "
+                             "release-gate does not classify; it is kept as OTHER")
+            provenance = _merged(doc.get("provenance"), row.get("provenance"))
+            judge = _text(row.get("evaluator_model"))
+            if judge:
+                # A jury model is part of what produced the verdict, so it is
+                # what correlation compares, never a guess at its family.
+                provenance = {**provenance, "evaluator_model": judge}
+            results.append(NativeResult(
+                kind=ResultKind.CHECK, native_id=check, native_outcome=word,
+                subject=_text(row.get("behaviour") or row.get("predicate")) or check,
+                native_severity=_text(row.get("severity")),
+                evidence_type=EvidenceType.EVAL_RESULT, method=method,
+                claim_statement=statement, claim_id=claim_id, claim_outcome=for_claim,
+                state=_strings(_merged(doc.get("state"), row.get("state"))),
+                covers=_mapping(row.get("covers")), provenance=provenance,
+                message=_text(row.get("observed") or row.get("message")),
+                produced_at=_text(row.get("decided_at") or doc.get("ran_at")),
+                native=dict(row)))
+
+        violations = _rows(doc, "violations")
+        for row in violations:
+            if not isinstance(row, Mapping):
+                _skip(skipped, "violation is not an object")
+                continue
+            violation = _text(row.get("id"))
+            if not violation:
+                _skip(skipped, "violation names no id")
+                continue
+            checks = [_text(c) for c in (row.get("check_ids") or ()) if _text(c)]
+            statement, claim_id = _claim(row, doc)
+            if not statement:
+                named = [claims_of[c] for c in checks if c in claims_of]
+                statement, claim_id = named[0] if named else (
+                    f"violation {violation!r} does not occur", "")
+            proven = _word(row.get("proof")) in _PROVEN
+            if not proven:
+                notes.append(f"violation {violation!r} is not proven by its harness; it "
+                             "is a finding, and its failed check stands against the "
+                             "claim")
+            results.append(NativeResult(
+                kind=ResultKind.FINDING, native_id=violation,
+                native_outcome=_text(row.get("proof")) or "unproven",
+                subject=_text(row.get("observed") or row.get("behaviour")) or violation,
+                native_severity=_text(row.get("severity")),
+                evidence_type=(EvidenceType.COUNTEREXAMPLE if proven
+                               else EvidenceType.EVAL_RESULT),
+                claim_statement=statement, claim_id=claim_id,
+                claim_outcome="failed" if proven else "inconclusive",
+                state=_strings(_merged(doc.get("state"), row.get("state"))),
+                covers=_mapping(row.get("covers")),
+                provenance=_merged(doc.get("provenance"), row.get("provenance")),
+                message=_text(row.get("observed")),
+                produced_at=_text(doc.get("ran_at")), native=dict(row)))
+
+        recommendation = doc.get("recommendation")
+        if isinstance(recommendation, Mapping) and _text(recommendation.get("decision")):
+            native = dict(recommendation)
+            if doc.get("scores") is not None:
+                native["scores"] = doc.get("scores")
+            results.append(NativeResult(
+                kind=ResultKind.DECISION, native_id="recommendation",
+                native_outcome=_text(recommendation.get("decision")),
+                subject=identity.producer_id,
+                state=_strings(doc.get("state")),
+                message=_text(recommendation.get("basis")),
+                produced_at=_text(doc.get("ran_at")), native=native))
+        elif doc.get("scores") is not None:
+            notes.append("the document carries scores and no recommendation; the "
+                         "scores are the harness's own and are not read")
+        for limitation in doc.get("limitations") or ():
+            if _text(limitation):
+                notes.append(f"{identity.producer_id} states a limitation: "
+                             f"{_text(limitation)}")
+        return AdapterOutput(identity=identity, results=tuple(results),
+                             records_seen=len(rows) + len(violations)
+                             + (1 if isinstance(recommendation, Mapping) else 0),
+                             skipped=skipped, notes=tuple(dict.fromkeys(notes)))
+
+
 # ── release-gate.sast/1 ──────────────────────────────────────────────────────
 
 SAST_DECLARATION = ProducerDeclaration(
@@ -698,6 +925,6 @@ class HumanReviewAdapter(EvidenceAdapter):
 
 
 def reference_adapters() -> Tuple[EvidenceAdapter, ...]:
-    """Fresh instances of the four contracts read through the producer registry."""
+    """Fresh instances of the five contracts read through the producer registry."""
     return (GenericEvalAdapter(), RedTeamAdapter(), GenericSastAdapter(),
-            HumanReviewAdapter())
+            HumanReviewAdapter(), BehaviorEvalAdapter())

@@ -96,12 +96,13 @@ SAMPLES = {
     "promptfoo": promptfoo_run(),
     "sarif": SARIF,
     "external_decision": decision("review"),
-    # The four generic contracts (reference_adapters.py), read from the shipped
+    # The five generic contracts (reference_adapters.py), read from the shipped
     # examples so the documented fixtures are the ones held to the contract.
     "eval": _example("eval.json"),
     "red_team": _example("red-team.json"),
     "sast": _example("sast.json"),
     "human_review": _example("review.json"),
+    "behavior": _example("behavior.json"),
 }
 
 

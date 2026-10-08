@@ -1,0 +1,27 @@
+{
+  "verifier": {
+    "name": "approval-path-check",
+    "version": "3.1.0",
+    "family": "OTHER"
+  },
+  "results": [
+    {
+      "claim_id": "cl_no_unapproved_action",
+      "claim": "The agent takes no consequential action beyond what the account holder approved",
+      "method": "STATIC_ANALYSIS",
+      "result": "passed",
+      "state": {
+        "commit": "c4f8d31a9e27"
+      },
+      "detail": "every direct call to transfer_funds() is dominated by require_approval()",
+      "covers": [
+        "direct calls to transfer_funds() in agent/tools.py"
+      ],
+      "does_not_cover": [
+        "actions composed from several allowed tool calls",
+        "scheduled transfers",
+        "runtime behaviour"
+      ]
+    }
+  ]
+}

@@ -414,9 +414,16 @@ class NativeResult:
     #: reads (`provider`, `model_family`, `session`, `agent`, `reviewer`,
     #: `toolchain`, `dataset`, …). Read, never guessed; absent stays absent.
     provenance: Mapping[str, Any] = field(default_factory=dict)
+    #: The method this check used, where the producer says how it was decided
+    #: and its lane's method would overstate it: one harness's checks can be
+    #: decided by code, by a jury of models or by a person, and a model jury's
+    #: verdict is CROSS_MODEL_REVIEW, not a test suite. None takes the lane's.
+    method: Optional[VerificationMethod] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", ResultKind(self.kind))
+        if self.method is not None:
+            object.__setattr__(self, "method", VerificationMethod(self.method))
         if self.evidence_type is not None:
             object.__setattr__(self, "evidence_type", EvidenceType(self.evidence_type))
         if not str(self.native_id or "").strip():
@@ -719,7 +726,9 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
 
         if claim_id:
             attempts = ()
-            if method is not None and status is not None and result.kind in _CHECK_KINDS:
+            checked_by = result.method or method
+            if checked_by is not None and status is not None and \
+                    result.kind in _CHECK_KINDS:
                 # The check ran against what its result names, so the attempt
                 # binds to the candidate exactly as its evidence does. Without
                 # this a stale check still counted through its PASSED attempt.
@@ -738,7 +747,7 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
                 # nobody, as an envelope's own NOT_RUN attempt is read.
                 ran = status is not VerificationStatus.NOT_RUN
                 attempts = (VerificationAttempt(
-                    method=method, verifier=identity.producer_id if ran else "",
+                    method=checked_by, verifier=identity.producer_id if ran else "",
                     status=status, evidence=(record.evidence_id,) if ran else (),
                     target_digest=record.applies_to_digest,
                     result=checked,

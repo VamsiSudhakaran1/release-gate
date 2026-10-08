@@ -20,6 +20,7 @@ are already collecting — no new instrumentation, no new SDK, no new dependency
 | **[Promptfoo](promptfoo/)** | A graded eval suite | A release verdict that weighs *which* evals failed, not how many |
 | **[OpenTelemetry](opentelemetry/)** | GenAI-semconv spans, any backend | The same verdict, vendor-neutral |
 | **[Arize / Phoenix](arize/)** | OpenInference spans | The same verdict, from AX or Phoenix |
+| **[ProofAgent](../examples/proofagent/)** *(example mapping)* | A behavioural evaluation exported as a PER | Attributed behavioural evidence in the claim graph, beside static and runtime evidence. Its verdicts are not re-graded, and its scores are never read as confidence |
 | **[GitHub Actions](github-actions/)** | A CI pipeline | All of the above, blocking a merge |
 
 ## The 60-second version
