@@ -35,6 +35,12 @@ jobs:
         # than letting the published demo quietly become a mockup.
         run: ./examples/demo-code-risk/build_demo.sh --check
 
+      - name: Reproduce the admission demo (asserts every conclusion in its README)
+        # Six tools' evidence about one release, decided under two declared
+        # policies: BLOCK under one, HOLD under the other, for the reasons the
+        # README gives. Fails if any of that stops being what the engine does.
+        run: python examples/demo-admission/run_demo.py --check
+
       - name: Run Impact Simulator demo (safe)
         run: release-gate impact examples/governance-safe-pass.yaml
 
@@ -49,3 +55,72 @@ jobs:
             exit 1
           fi
           echo "Correctly blocked unsafe deployment (exit $EXIT)"
+
+  # The Action itself, run on the admission demo under each hold policy. HOLD
+  # must pass the step under `normal` and fail it under `strict`; BLOCK must
+  # fail it; and each must still report its own decision. This is the
+  # three-state contract checked in real GitHub Actions, not only in a test.
+  admission-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Admission, block-on-counterexample (expect BLOCK; the step fails)
+        id: block
+        continue-on-error: true
+        uses: ./
+        with:
+          command: assure
+          input: examples/demo-admission/release.jsonl
+          evidence: examples/demo-admission/evidence
+          methodology: examples/demo-admission/methodology.json
+          resolution-policy: examples/demo-admission/policy/block-on-counterexample.json
+          output-dir: rg-block
+          artifact-name: admission-demo-block
+
+      - name: Admission, hold-on-counterexample, hold-policy normal (expect HOLD; the step passes)
+        id: hold-normal
+        continue-on-error: true
+        uses: ./
+        with:
+          command: assure
+          input: examples/demo-admission/release.jsonl
+          evidence: examples/demo-admission/evidence
+          methodology: examples/demo-admission/methodology.json
+          resolution-policy: examples/demo-admission/policy/hold-on-counterexample.json
+          hold-policy: normal
+          output-dir: rg-hold-normal
+          artifact-name: admission-demo-hold-normal
+
+      - name: Admission, hold-on-counterexample, hold-policy strict (expect HOLD; the step fails)
+        id: hold-strict
+        continue-on-error: true
+        uses: ./
+        with:
+          command: assure
+          input: examples/demo-admission/release.jsonl
+          evidence: examples/demo-admission/evidence
+          methodology: examples/demo-admission/methodology.json
+          resolution-policy: examples/demo-admission/policy/hold-on-counterexample.json
+          hold-policy: strict
+          output-dir: rg-hold-strict
+          artifact-name: admission-demo-hold-strict
+
+      - name: Verify HOLD is neither BLOCK nor PROMOTE
+        env:
+          BLOCK_OUTCOME: ${{ steps.block.outcome }}
+          HOLD_NORMAL_OUTCOME: ${{ steps.hold-normal.outcome }}
+          HOLD_NORMAL_DECISION: ${{ steps.hold-normal.outputs.decision }}
+          HOLD_STRICT_OUTCOME: ${{ steps.hold-strict.outcome }}
+        run: |
+          set -eu
+          check() { if [ "$2" != "$3" ]; then echo "::error::$1: got '$2', expected '$3'"; exit 1; fi; echo "ok  $1 = $3"; }
+          check "block step outcome" "$BLOCK_OUTCOME" failure
+          check "block decision" "$(cat rg-block/decision.env)" RELEASE_GATE_DECISION=BLOCK
+          check "hold/normal step outcome" "$HOLD_NORMAL_OUTCOME" success
+          check "hold/normal decision output" "$HOLD_NORMAL_DECISION" HOLD
+          check "hold/normal decision" "$(cat rg-hold-normal/decision.env)" RELEASE_GATE_DECISION=HOLD
+          check "hold/strict step outcome" "$HOLD_STRICT_OUTCOME" failure
+          check "hold/strict decision" "$(cat rg-hold-strict/decision.env)" RELEASE_GATE_DECISION=HOLD
+          python -c "import json; assert json.load(open('rg-block/admission-report.json'))['decision'] == 'BLOCK'"
+          python -c "import json; assert json.load(open('rg-hold-normal/admission-report.json'))['decision'] == 'HOLD'"

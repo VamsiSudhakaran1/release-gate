@@ -1,0 +1,2 @@
+{"record_type":"claim","claim_id":"cl_no_unauthorised_action","is_root":true,"proposition":"The agent performs no consequential action without the account holder's authorization","producer":{"producer_id":"release-owner","kind":"human"}}
+{"record_type":"claim","claim_id":"cl_policy_answers","proposition":"Answers about policy follow the published policy","producer":{"producer_id":"release-owner","kind":"human"}}

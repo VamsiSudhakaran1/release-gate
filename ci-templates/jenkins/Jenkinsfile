@@ -1,17 +1,37 @@
+// release-gate audit as a Jenkins stage. For the full admission pipeline
+// (evals, scanners and approvals decided together before deploy) see
+// ../admission/Jenkinsfile.
+//
+// Exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK. HOLD is not BLOCK. Under the
+// normal policy a HOLD marks the build UNSTABLE; under strict it fails it.
 pipeline {
     agent any
+    environment {
+        RELEASE_GATE_HOLD_POLICY = 'normal'            // normal | strict
+    }
     stages {
         stage('AI Safeguard Audit') {
             steps {
                 sh 'pip install release-gate'
-                sh 'release-gate audit . --sarif release-gate.sarif --json release-gate.json'
-                archiveArtifacts artifacts: 'release-gate.sarif', allowEmptyArchive: true
+                sh 'release-gate audit . --json > release-gate.json || true'
+                script {
+                    def code = sh(script: 'release-gate audit . --sarif release-gate.sarif', returnStatus: true)
+                    if (code == 0) {
+                        echo 'release-gate: PROMOTE'
+                    } else if (code == 10 && env.RELEASE_GATE_HOLD_POLICY == 'normal') {
+                        unstable('release-gate: HOLD; a person must review this change')
+                    } else if (code == 10) {
+                        error('release-gate: HOLD under the strict policy; stopped pending approval')
+                    } else {
+                        error("release-gate: BLOCK or error (exit ${code})")
+                    }
+                }
             }
         }
     }
     post {
         always {
-            archiveArtifacts artifacts: 'release-gate.sarif'
+            archiveArtifacts artifacts: 'release-gate.sarif, release-gate.json', allowEmptyArchive: true
         }
     }
 }

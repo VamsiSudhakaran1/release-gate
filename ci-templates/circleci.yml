@@ -1,8 +1,17 @@
+# release-gate audit as a CircleCI job. For the full admission pipeline
+# (evals, scanners and approvals decided together before deploy) see
+# admission/circleci/.
+#
+# Exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK. HOLD is not BLOCK. Under the
+# normal policy a HOLD passes this job with a message saying a person must look;
+# under strict it fails the job.
 version: 2.1
 jobs:
   release-gate:
     docker:
       - image: cimg/python:3.11
+    environment:
+      RELEASE_GATE_HOLD_POLICY: normal          # normal | strict
     steps:
       - checkout
       - run:
@@ -10,9 +19,25 @@ jobs:
           command: pip install release-gate
       - run:
           name: AI safeguard audit
-          command: release-gate audit . --sarif release-gate.sarif --json release-gate.json
+          command: |
+            release-gate audit . --json > release-gate.json || true
+            code=0
+            release-gate audit . --sarif release-gate.sarif || code=$?
+            case "$code" in
+              0) echo "release-gate: PROMOTE" ;;
+              10)
+                if [ "${RELEASE_GATE_HOLD_POLICY:-normal}" != "normal" ]; then
+                  echo "release-gate: HOLD under the ${RELEASE_GATE_HOLD_POLICY} policy: stopped pending approval"; exit 1
+                fi
+                echo "release-gate: HOLD: a person must review release-gate.json before this merges" ;;
+              *) echo "release-gate: BLOCK or error (exit $code)"; exit 1 ;;
+            esac
       - store_artifacts:
           path: release-gate.sarif
+          when: always
+      - store_artifacts:
+          path: release-gate.json
+          when: always
 workflows:
   release-gate:
     jobs:

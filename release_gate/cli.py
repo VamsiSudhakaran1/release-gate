@@ -560,6 +560,11 @@ def _flag(argv, name):
     return None
 
 
+def _flags(argv, name):
+    """Every value following a repeatable --flag, in order."""
+    return [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == name]
+
+
 def _score_exit_code(decision):
     """PROMOTE -> 0, HOLD -> 10, BLOCK -> 1."""
     return {"PROMOTE": 0, "HOLD": 10, "BLOCK": 1}.get(decision, 1)
@@ -1889,7 +1894,8 @@ def _run_assure_command():
     """release-gate assure — structural assurance from one file, no configuration.
 
     Usage:
-      release-gate assure <file> [--json] [--full] [--review]
+      release-gate assure <file> [--evidence PATH ...]
+                                 [--json] [--full] [--review]
                                  [--admission] [--admission-out FILE]
                                  [--methodology REF|FILE]
                                  [--config FILE] [--case-output FILE]
@@ -1899,6 +1905,11 @@ def _run_assure_command():
                                  [--semantic-assertions FILE]
       release-gate assure --list-methodologies
       release-gate assure --diagnostics
+
+    `--evidence PATH` (repeatable) adds a file, or every .json/.jsonl/.sarif
+    file in a directory, to the same decision: a pipeline's eval exports,
+    scanner output, reviews and proofs beside the envelope that states the
+    release's claims. One case, one decision, every source named.
 
     `--review` prints the one-screen case review: what arrived, what the decision
     rests on, what coverage the case has, what a person must look at, and the
@@ -1956,8 +1967,9 @@ def _run_assure_command():
 
     target = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
     if not target:
-        print("Usage: release-gate assure <file> [--json] [--full] [--review] "
-              "[--methodology REF] [--config FILE] [--case-output FILE]")
+        print("Usage: release-gate assure <file> [--evidence PATH ...] [--json] [--full] "
+              "[--review] [--admission] [--admission-out FILE] [--methodology REF] "
+              "[--config FILE] [--case-output FILE]")
         print("       release-gate assure --list-methodologies")
         sys.exit(1)
 
@@ -2043,6 +2055,9 @@ def _run_assure_command():
     # the deterministic rules left open, or replay answers an earlier run
     # persisted. Either way the answers are assertions the resolution policy
     # reads; neither path lets a model choose the verdict.
+    # More of the release's evidence, decided over together with <file>.
+    evidence = _flags(argv, '--evidence')
+
     semantic_assertions, semantic_submitted = _semantic_assertions_from_argv(
         target, ask='--semantic' in argv,
         replay=_flag(argv, '--semantic-assertions'),
@@ -2050,13 +2065,14 @@ def _run_assure_command():
         policy_ref=_flag(argv, '--semantic-policy'),
         escalation_ref=_flag(argv, '--escalation-policy'),
         methodology=methodology, candidate=candidate,
-        resolution_policy=resolution_policy)
+        resolution_policy=resolution_policy, evidence=evidence)
 
     try:
         outcome = assure(target, methodology=methodology, candidate=candidate,
                          resolution_policy=resolution_policy,
                          semantic_assertions=semantic_assertions,
-                         semantic_submitted=semantic_submitted)
+                         semantic_submitted=semantic_submitted,
+                         evidence=evidence)
     except IngestError as exc:
         print(f"Error: {exc}")
         sys.exit(1)

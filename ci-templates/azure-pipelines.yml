@@ -1,8 +1,18 @@
+# release-gate audit on pushes to main. For the full admission pipeline (evals,
+# scanners and approvals decided together before deploy) see
+# admission/azure-pipelines.yml.
+#
+# Exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK. HOLD is not BLOCK. Under the
+# normal policy a HOLD finishes the step SucceededWithIssues; under strict it
+# fails the step.
 trigger:
   - main
 
 pool:
   vmImage: ubuntu-latest
+
+variables:
+  RELEASE_GATE_HOLD_POLICY: normal              # normal | strict
 
 steps:
   - task: UsePythonVersion@0
@@ -12,7 +22,19 @@ steps:
   - script: pip install release-gate
     displayName: Install release-gate
 
-  - script: release-gate audit . --sarif release-gate.sarif
+  - bash: |
+      code=0
+      release-gate audit . --sarif release-gate.sarif || code=$?
+      case "$code" in
+        0) echo "release-gate: PROMOTE" ;;
+        10)
+          if [ "${RELEASE_GATE_HOLD_POLICY:-normal}" != "normal" ]; then
+            echo "##vso[task.logissue type=error]release-gate HOLD under the ${RELEASE_GATE_HOLD_POLICY} policy: stopped pending approval"; exit 1
+          fi
+          echo "##vso[task.logissue type=warning]release-gate HOLD: a person must review this change"
+          echo "##vso[task.complete result=SucceededWithIssues;]HOLD" ;;
+        *) echo "##vso[task.logissue type=error]release-gate BLOCK or error (exit $code)"; exit 1 ;;
+      esac
     displayName: AI safeguard audit
 
   - task: PublishBuildArtifacts@1

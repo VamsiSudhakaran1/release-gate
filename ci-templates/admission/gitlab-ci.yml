@@ -1,0 +1,145 @@
+# release-gate admission pipeline for GitLab CI.
+#
+#   Build -> Tests -> External evals -> Security scanners -> Collect evidence
+#     -> release-gate assure -> PROMOTE / HOLD / BLOCK -> Deploy
+#
+# Copy to .gitlab-ci.yml. Replace the ./build.sh, ./test.sh and ./deploy.sh
+# lines with your own; keep the admission and deploy jobs as they are.
+#
+# HOLD is not BLOCK. The admission job exits 0 PROMOTE, 10 HOLD, 1 BLOCK or
+# error, and RELEASE_GATE_HOLD_POLICY says what HOLD does:
+#   normal  PROMOTE -> deploy · HOLD -> the admission job passes with a warning
+#           (allow_failure on exit 10), `deploy` stays undeployed, and a person
+#           runs the manual `deploy:reviewed` job · BLOCK -> stop
+#   strict  PROMOTE -> deploy · HOLD -> stop pending approval · BLOCK -> stop
+variables:
+  RELEASE_GATE_HOLD_POLICY: normal            # normal | strict
+  RELEASE_GATE_INPUT: release-gate/claims.jsonl
+  RELEASE_GATE_METHODOLOGY: general-agent-action@1.0.0
+  RELEASE_GATE_OUT: release-gate-out
+
+stages: [build, test, evidence, admit, deploy]
+
+default:
+  image: python:3.11-slim
+
+build:
+  stage: build
+  script:
+    - ./build.sh
+
+test:
+  stage: test
+  script:
+    - ./test.sh
+
+# A failing eval is evidence, not a pipeline error: the gate reads the results
+# and decides. Only a missing results file stops the pipeline here.
+external-evals:
+  stage: evidence
+  image: node:20
+  script:
+    - mkdir -p "$RELEASE_GATE_OUT/evidence"
+    - npx --yes promptfoo@latest eval -o "$RELEASE_GATE_OUT/evidence/promptfoo.json" || true
+    - test -s "$RELEASE_GATE_OUT/evidence/promptfoo.json"
+  artifacts:
+    paths: [release-gate-out/evidence/]
+
+security-scanners:
+  stage: evidence
+  script:
+    - pip install release-gate --quiet
+    - mkdir -p "$RELEASE_GATE_OUT/evidence"
+    - release-gate audit . --sarif release-gate.sarif --evidence-out "$RELEASE_GATE_OUT/evidence/static.json" || true
+    - test -s "$RELEASE_GATE_OUT/evidence/static.json"
+  artifacts:
+    reports:
+      sast: release-gate.sarif
+    paths: [release-gate-out/evidence/, release-gate.sarif]
+
+admission:
+  stage: admit
+  needs: [external-evals, security-scanners]
+  before_script:
+    - pip install release-gate --quiet
+    # Optional: name the exact release, so evidence about any other state of it
+    # stops supporting its claims. Every producer must then state what it ran
+    # against for its support to count.
+    # - printf '{"commit": "%s"}\n' "$CI_COMMIT_SHA" > "$RELEASE_GATE_OUT/candidate.json"
+    # - export RELEASE_GATE_CANDIDATE="$RELEASE_GATE_OUT/candidate.json"
+  script:
+    - |
+      # release-gate admission gate: 0 PROMOTE · 10 HOLD · 1 BLOCK or error
+      out="${RELEASE_GATE_OUT:-release-gate-out}"
+      policy="${RELEASE_GATE_HOLD_POLICY:-normal}"
+      case "$policy" in
+        normal|strict) ;;
+        *) echo "RELEASE_GATE_HOLD_POLICY must be normal or strict, not '$policy'"; exit 1 ;;
+      esac
+      [ -n "${RELEASE_GATE_INPUT:-}" ] || { echo "RELEASE_GATE_INPUT names no claims file"; exit 1; }
+      mkdir -p "$out"
+      rm -f "$out/admission-report.json" "$out/admission-report.txt" "$out/case.json" "$out/decision.env"
+      set -- "$RELEASE_GATE_INPUT" --evidence "${RELEASE_GATE_EVIDENCE:-$out/evidence}"
+      if [ -n "${RELEASE_GATE_METHODOLOGY:-}" ]; then set -- "$@" --methodology "$RELEASE_GATE_METHODOLOGY"; fi
+      if [ -n "${RELEASE_GATE_CANDIDATE:-}" ]; then set -- "$@" --candidate "$RELEASE_GATE_CANDIDATE"; fi
+      if [ -n "${RELEASE_GATE_RESOLUTION_POLICY:-}" ]; then set -- "$@" --resolution-policy "$RELEASE_GATE_RESOLUTION_POLICY"; fi
+      if [ -n "${RELEASE_GATE_CONFIG:-}" ]; then set -- "$@" --config "$RELEASE_GATE_CONFIG"; fi
+      code=0
+      release-gate assure "$@" --admission --admission-out "$out/admission-report.json" --case-output "$out/case.json" > "$out/admission-report.txt" 2>&1 || code=$?
+      cat "$out/admission-report.txt"
+      reported=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$out/admission-report.json" 2>/dev/null || echo NONE)
+      case "$code:$reported" in
+        0:PROMOTE) decision=PROMOTE ;;
+        10:HOLD) decision=HOLD ;;
+        1:BLOCK) decision=BLOCK ;;
+        *) decision=ERROR ;;
+      esac
+      echo "RELEASE_GATE_DECISION=$decision" > "$out/decision.env"
+      echo "release-gate: $decision (exit $code, hold policy $policy)"
+      case "$decision" in
+        PROMOTE) exit 0 ;;
+        HOLD)
+          if [ "$policy" = "strict" ]; then echo "HOLD under the strict policy: stopped pending approval"; exit 1; fi
+          echo "HOLD: a person must review this release; run the deploy:reviewed job to release it"
+          exit 10 ;;
+        *) exit 1 ;;
+      esac
+  allow_failure:
+    exit_codes: [10]
+  artifacts:
+    when: always
+    expose_as: release-gate admission
+    paths: [release-gate-out/]
+
+deploy:
+  stage: deploy
+  needs:
+    - job: admission
+      artifacts: true
+  script:
+    - |
+      . "${RELEASE_GATE_OUT:-release-gate-out}/decision.env"
+      case "$RELEASE_GATE_DECISION" in
+        PROMOTE) ./deploy.sh ;;
+        HOLD) echo "HOLD: not deployed; a person reviews the Admission Report and runs deploy:reviewed"; exit 10 ;;
+        *) echo "not admitted: $RELEASE_GATE_DECISION"; exit 1 ;;
+      esac
+  allow_failure:
+    exit_codes: [10]
+
+deploy:reviewed:
+  stage: deploy
+  needs:
+    - job: admission
+      artifacts: true
+  when: manual
+  script:
+    - |
+      . "${RELEASE_GATE_OUT:-release-gate-out}/decision.env"
+      case "$RELEASE_GATE_DECISION" in
+        HOLD) echo "HOLD reviewed and released by ${GITLAB_USER_LOGIN:-unknown}" | tee "${RELEASE_GATE_OUT:-release-gate-out}/hold-review.txt"; ./deploy.sh ;;
+        PROMOTE) echo "PROMOTE: the deploy job released this candidate; nothing to do" ;;
+        *) echo "not admitted: $RELEASE_GATE_DECISION"; exit 1 ;;
+      esac
+  artifacts:
+    paths: [release-gate-out/hold-review.txt]

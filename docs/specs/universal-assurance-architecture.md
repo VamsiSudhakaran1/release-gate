@@ -9752,6 +9752,151 @@ the admission evaluation, claim statuses from the resolution, sources from
 evidence origin. The suite checks that each agrees with its source. The scanner
 report, SARIF, the case report, `--review` and the packet are unchanged.
 
+### 10bn. Admission in CI — `assure --evidence`, the Action and the three-state templates
+
+> **Implemented.**
+> - `release_gate/assurance/ingest.py`: `compose_inputs()` and `EVIDENCE_SUFFIXES`.
+> - `zero_config.assure(..., evidence=...)`, and `assure --evidence PATH` (repeatable).
+> - `action.yml`: `command: assure`, with the inputs `input`, `evidence`,
+>   `methodology`, `candidate`, `resolution-policy`, `org-config`,
+>   `hold-policy`, `output-dir` and `artifact-name`, and the outputs `decision`
+>   and `admission-report`.
+> - Templates: `ci-templates/admission/` for GitHub Actions, GitLab CI, Azure
+>   Pipelines, Jenkins and CircleCI. The audit templates are fixed.
+> - Tests: `tests/test_ci_admission.py`.
+
+**What existed.** `assure` read one file. A pipeline with eval exports, scanner
+output and reviews had to build one envelope by hand. The Action had no
+admission command. Its `decision` output was declared without a `value`, so it
+was never set. All four non-GitHub templates ran `release-gate audit` as a bare
+step, so exit 10 failed the job. Two of them passed `--json release-gate.json`,
+which writes no file, because `--json` takes no value.
+
+**Composition.** `--evidence` adds files, and directories (every `.json`,
+`.jsonl` and `.sarif` file directly in one, in name order), to the same case.
+
+- An envelope's rows are taken whole.
+- Any other document becomes a `producer_export` row. It is read by the same
+  detector, registry and verifier adapters as on its own, or refused with the
+  reason in `ingest.notes`.
+- The composed rows are the subject. Their canonical bytes are what the subject
+  digest names.
+- A file named twice is read once.
+- One document under two names (a file beside an envelope that already embeds
+  it) is read once, with a note, where before it counted twice.
+- A verification attempt repeated across exports is absorbed. Before, it made
+  the case builder refuse a duplicate id and take the run down.
+- A missing path is an `IngestError`. Without `--evidence`, the old single-file
+  path runs unchanged.
+
+**Exit codes are the CLI's.** 0 PROMOTE, 10 HOLD, 1 BLOCK, and an error also
+exits 1 (fail closed). No new command and no new exit code: the CI templates
+interpret, and the CLI stays what every existing caller relies on.
+
+**The gate script.** Every template carries the same few lines:
+
+1. Validate the hold policy (`normal` or `strict`; anything else stops before
+   running).
+2. Remove the previous run's report.
+3. Run `assure ... --admission --admission-out --case-output`.
+4. Read the Admission Report's `decision`. Accept it only if it agrees with the
+   exit code; otherwise the decision is `ERROR`. So an error is never read as
+   a BLOCK that a later step might treat differently, and a stale report never
+   passes a run that wrote none.
+5. Write `decision.env`.
+6. Map the decision under the hold policy:
+
+| | PROMOTE | HOLD, `normal` | HOLD, `strict` | BLOCK / ERROR |
+|---|---|---|---|---|
+| GitHub Action | step passes | passes with a warning, `decision=HOLD` | fails | fails |
+| GitLab | 0 | 10, `allow_failure: exit_codes: [10]` | 1 | 1 |
+| Azure | succeeds | `SucceededWithIssues` | fails | fails |
+| Jenkins | continues | `unstable` | `error` | `error` |
+| CircleCI | continues to `deploy` | continues to `review-then-deploy` | fails | fails |
+
+Routing then keeps HOLD from deploying unreviewed:
+
+- **GitHub:** the deploy `if:` requires PROMOTE, or HOLD with a successful job
+  on a protected environment, and a successful admission job.
+- **Azure:** the Deploy `condition:` requires PROMOTE, or HOLD with a
+  `ManualValidation@0` that succeeded.
+- **GitLab:** a manual `deploy:reviewed` job. The automatic `deploy` exits 10
+  on HOLD.
+- **Jenkins:** an `input` step.
+- **CircleCI:** a dynamic-config continuation whose parameter admits only
+  PROMOTE and HOLD.
+
+**Verified by execution, not inspection.**
+
+- Each template's gate script is taken from the file a user copies and run
+  under `sh` and `bash` against a stub returning every exit code and report
+  combination. It is also run once against the real CLI on the demo.
+- The GitHub and Azure conditions are evaluated over their whole truth table.
+- The GitLab deploy jobs are run against every decision.
+- The Action's own step is executed the same way, and in CI it runs on the demo
+  under each hold policy. A HOLD must pass under `normal` and fail under
+  `strict`, and a BLOCK must fail.
+
+**Two corrections made in passing**, both in `verifiers.py` and `ingest.py`:
+
+- A verifier report's record is `FORMAL_PROOF` only when every check in it is
+  proof-carrying; otherwise it is `TOOL_RESULT`. A static analyser read through
+  the generic verifier contract was typed a formal proof, which is the
+  conflation `methods.py` exists to prevent.
+- `DOMAIN_VALIDATOR`'s default limit was a bare string, so it was split into
+  characters. An unclassified tool's "nothing is recorded about what this result
+  covers" is now dropped when its report states what it covers.
+
+The 117-run corpus is byte-identical through all of this.
+
+### 10bo. The admission demo — what Release-Gate does that the tools it reads do not
+
+> **Implemented.** `examples/demo-admission/`:
+> - `release.jsonl`, five tool outputs in `evidence/`, `methodology.json`, and
+>   two resolution policies;
+> - `run_demo.py`, whose `--check` runs in CI;
+> - a README.
+>
+> Tests: `tests/test_demo_admission.py`.
+
+**Scenario.** An agent that can move money. The critical claim: no transfer
+executes without a signed human approval for that exact transfer. Six sources:
+
+| Source | What it says | What release-gate reads it as |
+|---|---|---|
+| static analysis | every direct call guarded | supportive, incomplete by its own stated limits |
+| Promptfoo | 49/50 | 49 positive observations, none about the claim; the 50th declared case never ran (RG-EXPECT-001) |
+| behaviour tests | one unauthorized transfer succeeded | a valid counterexample on this candidate (RG-CEX-001) |
+| production traces | no violation in 30 days | evidence about the previous commit; support withheld |
+| TLC | the invariant is verified for the v2 policy model | the candidate's governance policy is v3; support withheld |
+| approval | the release owner approved | approved the previous commit; the required approval is unmet |
+
+The claim is **CONTRADICTED**. The methodology declares an open contradiction a
+HOLD and leaves what a counterexample does to the resolution policy. So the
+decision is **BLOCK** under `counterexample_effect: BLOCK` and **HOLD** under
+`counterexample_effect: HOLD`.
+
+**What makes it a demo of the engine rather than of a story.**
+
+- The left column of the output is read from each tool's own file, and the
+  right from the computed outcome.
+- `--check` asserts:
+  - the decision and exit code under each policy;
+  - the claim's status;
+  - the counterexample's standing;
+  - exactly which sources are withheld, and for which component;
+  - that the static analysis counts and states its limits;
+  - that no promptfoo case bears on the claim;
+  - the imported-source labels.
+- The tests change one input at a time in a copy, and each conclusion moves
+  with its input:
+  - an approval re-bound to the candidate satisfies the requirement;
+  - a proof of v3 is no longer withheld;
+  - without the successful violation nothing blocks;
+  - traces of the candidate count;
+  - without the declared suite size there is no expectation gap.
+- A copy elsewhere gives the same case digest.
+
 ---
 
 ## 11. Methodology behaviour
@@ -9976,6 +10121,12 @@ fixed, rather than the expectations being lowered.
 | review contract | each review's `native` carries the document's `evaluated_at` when the row has none | review evidence ids change once; outcomes do not |
 | `ResolutionPolicy.semantic_uncertainty` | new, default `null` | the policy digest, and every case digest, changes; the default decides exactly as before |
 | `assure --admission`, `--admission-out FILE` (§10bm) | new | additive; the default report, `--json`, `--review` and the audit outputs are unchanged |
+| `assure --evidence PATH` (§10bn) | new, repeatable; `assure(..., evidence=...)`; `ingest.compose_inputs` | additive; without it a file is read exactly as before (same case digest) |
+| envelope `producer_export` (§10bn) | one document carried twice is read once, with a note; a verification attempt repeated across exports is absorbed | before, the repeat counted its evidence twice, or a repeated attempt made the case builder refuse a duplicate id and fail the run |
+| verifier record type (§10bn) | `FORMAL_PROOF` only when every attempt is proof-carrying; otherwise `TOOL_RESULT` | evidence types, ids and case digests change for verifier reports with test, static-analysis or other non-proof methods; provers and model checkers are unchanged; the 117-run corpus is byte-identical |
+| verifier family coverage (§10bn) | `DOMAIN_VALIDATOR`'s default limit is one sentence; `OTHER`'s "nothing is recorded" limit is dropped when the report states `covers` | coverage notes, and the digests over them, change for those reports only |
+| Action (§10bn) | `command: assure`; inputs `input`, `evidence`, `methodology`, `candidate`, `resolution-policy`, `org-config`, `hold-policy`, `output-dir`, `artifact-name`; outputs `decision` (now set, for every command) and `admission-report` | additive; existing commands behave as before. `decision` was declared and never set, and now carries the step's decision |
+| CI templates (§10bn) | `ci-templates/admission/` for five platforms; the audit templates handle exit 10 | **behaviour change for anyone who copied the audit templates**: HOLD now passes with a warning under the default `normal` hold policy where it failed the job; set `RELEASE_GATE_HOLD_POLICY: strict` (or drop GitLab's `allow_failure`) to keep stopping on it. `--json release-gate.json`, which wrote nothing, is gone |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

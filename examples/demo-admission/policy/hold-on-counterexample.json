@@ -1,0 +1,6 @@
+{
+  "policy_id": "treasury-hold-on-counterexample",
+  "version": "1",
+  "counterexample_effect": "HOLD",
+  "note": "A valid counterexample against a critical claim goes to a person, who answers it or stops the release."
+}

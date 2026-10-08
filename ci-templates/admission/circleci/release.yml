@@ -1,0 +1,36 @@
+# release-gate admission pipeline for CircleCI: the continuation half.
+#
+# config.yml continues here only with PROMOTE, or with HOLD under the normal
+# hold policy. BLOCK, a strict HOLD and errors stopped the setup workflow, and
+# the parameter accepts no other value.
+version: 2.1
+
+parameters:
+  release-gate-decision:
+    type: enum
+    enum: [NONE, PROMOTE, HOLD]
+    default: NONE
+
+jobs:
+  deploy:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run: ./deploy.sh
+
+workflows:
+  deploy:
+    when:
+      equal: [PROMOTE, << pipeline.parameters.release-gate-decision >>]
+    jobs:
+      - deploy
+
+  review-then-deploy:
+    when:
+      equal: [HOLD, << pipeline.parameters.release-gate-decision >>]
+    jobs:
+      - human-review:
+          type: approval
+      - deploy:
+          requires: [human-review]

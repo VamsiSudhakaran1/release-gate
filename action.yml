@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "governance.yaml"
   command:
-    description: "Command: 'pr' (AI-change review gate), 'audit', 'score', 'evidence-pack', 'impact', 'run', or 'loop-sim'"
+    description: "Command: 'assure' (admission decision over a release's collected evidence), 'pr' (AI-change review gate), 'audit', 'score', 'evidence-pack', 'impact', 'run', or 'loop-sim'"
     required: false
     default: "score"
   base:
@@ -52,9 +52,45 @@ inputs:
     required: false
     default: ""
   fail-on-warn:
-    description: "Exit with code 1 on WARN as well as FAIL (default: false)"
+    description: "Exit with code 1 on WARN as well as FAIL (default: false). For 'assure' it means hold-policy: strict."
     required: false
     default: "false"
+  input:
+    description: "command: assure — the file stating the release's claims (an assurance envelope), or any one evidence file"
+    required: false
+    default: ""
+  evidence:
+    description: "command: assure — more evidence files or directories (every .json/.jsonl/.sarif in one), one per line or comma-separated. Decided over together with 'input' as one case."
+    required: false
+    default: ""
+  methodology:
+    description: "command: assure — methodology id@version or a JSON file. Without one the decision is HOLD (METHODOLOGY_REQUIRED)."
+    required: false
+    default: ""
+  candidate:
+    description: "command: assure — JSON file naming the exact release (e.g. {\"commit\": \"<sha>\"}). Evidence about another state of it stops supporting its claims."
+    required: false
+    default: ""
+  resolution-policy:
+    description: "command: assure — JSON resolution policy file"
+    required: false
+    default: ""
+  org-config:
+    description: "command: assure — organisation config file (--config); it can only tighten the bar"
+    required: false
+    default: ""
+  hold-policy:
+    description: "command: assure — what HOLD (exit 10) does to this step. 'normal' (default): the step passes with a warning and sets decision=HOLD, so a later job must route the release to a person. 'strict': the step fails, pending approval. BLOCK and errors always fail the step."
+    required: false
+    default: "normal"
+  output-dir:
+    description: "command: assure — where the Admission Report (text and JSON), the case and decision.env are written"
+    required: false
+    default: "release-gate-out"
+  artifact-name:
+    description: "command: assure — upload output-dir as a workflow artifact under this name; empty to skip"
+    required: false
+    default: "release-gate-admission"
   python-version:
     description: "Python version to use"
     required: false
@@ -74,7 +110,11 @@ inputs:
 
 outputs:
   decision:
-    description: "PROMOTE/HOLD/BLOCK (score) or PASS/WARN/FAIL (run, impact)"
+    description: "PROMOTE/HOLD/BLOCK (assure, audit, pr, loop-sim, score) or PASS/WARN/FAIL (run, impact); ERROR when no decision was reached. A job that deploys must check it: under hold-policy normal a HOLD leaves the step green."
+    value: ${{ steps.assure.outputs.decision || steps.audit.outputs.decision || steps.pr.outputs.decision || steps.loop-sim.outputs.decision || steps.gate.outputs.decision }}
+  admission-report:
+    description: "command: assure — path of the Admission Report JSON"
+    value: ${{ steps.assure.outputs.admission-report }}
   audit-score:
     description: "Readiness score 0-100 from the audit command"
   daily-cost:
@@ -121,6 +161,12 @@ runs:
         EXIT_CODE=$?
         set -e
         # audit exit codes: 0 PROMOTE/no-agent · 10 HOLD · 1 BLOCK
+        case "$EXIT_CODE" in
+          0) echo "decision=PROMOTE" >> "$GITHUB_OUTPUT" ;;
+          10) echo "decision=HOLD" >> "$GITHUB_OUTPUT" ;;
+          1) echo "decision=BLOCK" >> "$GITHUB_OUTPUT" ;;
+          *) echo "decision=ERROR" >> "$GITHUB_OUTPUT" ;;
+        esac
         if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then
           echo "Audit decision: HOLD (allowed — set fail-on-warn: true to block)"
           exit 0
@@ -159,6 +205,12 @@ runs:
         release-gate loop-sim "${{ inputs.scenarios }}" $AGENT_FLAG
         EXIT_CODE=$?
         set -e
+        case "$EXIT_CODE" in
+          0) echo "decision=PROMOTE" >> "$GITHUB_OUTPUT" ;;
+          10) echo "decision=HOLD" >> "$GITHUB_OUTPUT" ;;
+          1) echo "decision=BLOCK" >> "$GITHUB_OUTPUT" ;;
+          *) echo "decision=ERROR" >> "$GITHUB_OUTPUT" ;;
+        esac
 
         # loop-sim exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK
         if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then
@@ -181,6 +233,12 @@ runs:
         release-gate pr --base "${{ inputs.base }}" --comment > /tmp/rg-pr.md
         EXIT_CODE=$?
         set -e
+        case "$EXIT_CODE" in
+          0) echo "decision=PROMOTE" >> "$GITHUB_OUTPUT" ;;
+          10) echo "decision=HOLD" >> "$GITHUB_OUTPUT" ;;
+          1) echo "decision=BLOCK" >> "$GITHUB_OUTPUT" ;;
+          *) echo "decision=ERROR" >> "$GITHUB_OUTPUT" ;;
+        esac
         cat /tmp/rg-pr.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
         cat /tmp/rg-pr.md
 
@@ -204,8 +262,88 @@ runs:
         fi
         exit $EXIT_CODE
 
+    - name: Run release-gate assure (admission decision)
+      if: inputs.command == 'assure'
+      id: assure
+      shell: bash
+      # Inputs reach the script as environment variables, never spliced into it.
+      env:
+        RELEASE_GATE_INPUT: ${{ inputs.input }}
+        RELEASE_GATE_EVIDENCE: ${{ inputs.evidence }}
+        RELEASE_GATE_METHODOLOGY: ${{ inputs.methodology }}
+        RELEASE_GATE_CANDIDATE: ${{ inputs.candidate }}
+        RELEASE_GATE_RESOLUTION_POLICY: ${{ inputs.resolution-policy }}
+        RELEASE_GATE_CONFIG: ${{ inputs.org-config }}
+        RELEASE_GATE_HOLD_POLICY: ${{ inputs.fail-on-warn == 'true' && 'strict' || inputs.hold-policy }}
+        RELEASE_GATE_OUT: ${{ inputs.output-dir }}
+      run: |
+        # One admission decision over everything the pipeline collected.
+        # Exit codes are the CLI's: 0 PROMOTE · 10 HOLD · 1 BLOCK. HOLD is not
+        # BLOCK: under hold-policy normal it passes this step and sets
+        # decision=HOLD for a later job to route to a person; under strict it
+        # fails the step pending approval. Anything that is not a decision the
+        # Admission Report confirms is ERROR, and fails.
+        out="${RELEASE_GATE_OUT:-release-gate-out}"
+        policy="${RELEASE_GATE_HOLD_POLICY:-normal}"
+        fail() { echo "decision=ERROR" >> "$GITHUB_OUTPUT"; echo "::error title=release-gate::$1"; exit 1; }
+        case "$policy" in normal|strict) ;; *) fail "hold-policy must be normal or strict, not '$policy'" ;; esac
+        [ -n "${RELEASE_GATE_INPUT:-}" ] || fail "command: assure needs an 'input' file"
+        mkdir -p "$out"
+        rm -f "$out/admission-report.json" "$out/admission-report.txt" "$out/case.json" "$out/decision.env"
+        args=("$RELEASE_GATE_INPUT")
+        while IFS= read -r item; do
+          item="$(printf '%s' "$item" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -n "$item" ]; then args+=(--evidence "$item"); fi
+        done < <(printf '%s\n' "${RELEASE_GATE_EVIDENCE:-}" | tr ',' '\n')
+        if [ -n "${RELEASE_GATE_METHODOLOGY:-}" ]; then args+=(--methodology "$RELEASE_GATE_METHODOLOGY"); fi
+        if [ -n "${RELEASE_GATE_CANDIDATE:-}" ]; then args+=(--candidate "$RELEASE_GATE_CANDIDATE"); fi
+        if [ -n "${RELEASE_GATE_RESOLUTION_POLICY:-}" ]; then args+=(--resolution-policy "$RELEASE_GATE_RESOLUTION_POLICY"); fi
+        if [ -n "${RELEASE_GATE_CONFIG:-}" ]; then args+=(--config "$RELEASE_GATE_CONFIG"); fi
+        code=0
+        release-gate assure "${args[@]}" --admission \
+          --admission-out "$out/admission-report.json" --case-output "$out/case.json" \
+          > "$out/admission-report.txt" 2>&1 || code=$?
+        cat "$out/admission-report.txt"
+        reported="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$out/admission-report.json" 2>/dev/null || echo NONE)"
+        case "$code:$reported" in
+          0:PROMOTE) decision=PROMOTE ;;
+          10:HOLD) decision=HOLD ;;
+          1:BLOCK) decision=BLOCK ;;
+          *) decision=ERROR ;;
+        esac
+        echo "RELEASE_GATE_DECISION=$decision" > "$out/decision.env"
+        echo "decision=$decision" >> "$GITHUB_OUTPUT"
+        echo "admission-report=$out/admission-report.json" >> "$GITHUB_OUTPUT"
+        {
+          echo "## Admission decision: $decision"
+          echo
+          echo '```'
+          cat "$out/admission-report.txt"
+          echo '```'
+        } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+        case "$decision" in
+          PROMOTE) exit 0 ;;
+          HOLD)
+            if [ "$policy" = "strict" ]; then
+              echo "::error title=release-gate HOLD::held under hold-policy strict: stopped pending approval"
+              exit 1
+            fi
+            echo "::warning title=release-gate HOLD::a person must review this release before it deploys (decision=HOLD)"
+            exit 0 ;;
+          BLOCK) echo "::error title=release-gate BLOCK::this release is not admitted"; exit 1 ;;
+          *) echo "::error title=release-gate::no admission decision was reached (exit $code, report: $reported)"; exit 1 ;;
+        esac
+
+    - name: Upload the Admission Report
+      if: inputs.command == 'assure' && inputs.artifact-name != '' && always()
+      uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.output-dir }}
+        if-no-files-found: warn
+
     - name: Run release-gate ${{ inputs.command }}
-      if: inputs.command != 'audit' && inputs.command != 'loop-sim' && inputs.command != 'pr'
+      if: inputs.command != 'audit' && inputs.command != 'loop-sim' && inputs.command != 'pr' && inputs.command != 'assure'
       id: gate
       shell: bash
       run: |
@@ -230,6 +368,15 @@ runs:
         release-gate ${{ inputs.command }} ${{ inputs.config }} $EXTRA_FLAGS
         EXIT_CODE=$?
         set -e
+        case "${{ inputs.command }}:$EXIT_CODE" in
+          run:0|impact:0) echo "decision=PASS" >> "$GITHUB_OUTPUT" ;;
+          run:10|impact:10) echo "decision=WARN" >> "$GITHUB_OUTPUT" ;;
+          run:1|impact:1) echo "decision=FAIL" >> "$GITHUB_OUTPUT" ;;
+          *:0) echo "decision=PROMOTE" >> "$GITHUB_OUTPUT" ;;
+          *:10) echo "decision=HOLD" >> "$GITHUB_OUTPUT" ;;
+          *:1) echo "decision=BLOCK" >> "$GITHUB_OUTPUT" ;;
+          *) echo "decision=ERROR" >> "$GITHUB_OUTPUT" ;;
+        esac
 
         # Exit code 10 = WARN. Treat as failure only if fail-on-warn is true.
         if [ "$EXIT_CODE" -eq "10" ] && [ "${{ inputs.fail-on-warn }}" != "true" ]; then

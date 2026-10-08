@@ -1,0 +1,121 @@
+// release-gate admission pipeline for Jenkins (declarative).
+//
+//   Build -> Tests -> External evals -> Security scanners -> Collect evidence
+//     -> release-gate assure -> PROMOTE / HOLD / BLOCK -> Deploy
+//
+// Replace the ./build.sh, ./test.sh and ./deploy.sh lines with your own; keep
+// the Admission, Human review and Deploy stages as they are.
+//
+// HOLD is not BLOCK. The gate reads exit 0 PROMOTE, 10 HOLD, 1 BLOCK, and
+// RELEASE_GATE_HOLD_POLICY says what HOLD does:
+//   normal  PROMOTE -> deploy · HOLD -> the build turns UNSTABLE and a person in
+//           RELEASE_GATE_REVIEWERS answers the input step, then deploy · BLOCK -> stop
+//   strict  PROMOTE -> deploy · HOLD -> stop pending approval · BLOCK -> stop
+pipeline {
+    agent any
+    environment {
+        RELEASE_GATE_HOLD_POLICY = 'normal'            // normal | strict
+        RELEASE_GATE_INPUT = 'release-gate/claims.jsonl'
+        RELEASE_GATE_METHODOLOGY = 'general-agent-action@1.0.0'
+        RELEASE_GATE_OUT = 'release-gate-out'
+        RELEASE_GATE_REVIEWERS = 'release-reviewers'
+    }
+    stages {
+        stage('Build') {
+            steps { sh './build.sh' }
+        }
+        stage('Tests') {
+            steps { sh './test.sh' }
+        }
+        stage('External evals') {
+            // A failing eval is evidence, not a pipeline error: the gate reads the
+            // results and decides. Only a missing results file stops it here.
+            steps {
+                sh '''
+                    mkdir -p "$RELEASE_GATE_OUT/evidence"
+                    npx --yes promptfoo@latest eval -o "$RELEASE_GATE_OUT/evidence/promptfoo.json" || true
+                    test -s "$RELEASE_GATE_OUT/evidence/promptfoo.json"
+                '''
+            }
+        }
+        stage('Security scanners') {
+            steps {
+                sh 'pip install release-gate'
+                sh '''
+                    release-gate audit . --sarif release-gate.sarif --evidence-out "$RELEASE_GATE_OUT/evidence/static.json" || true
+                    test -s "$RELEASE_GATE_OUT/evidence/static.json"
+                '''
+            }
+        }
+        stage('Admission') {
+            steps {
+                // Optional: name the exact release (and set RELEASE_GATE_CANDIDATE
+                // to the file), so evidence about any other state of it stops
+                // supporting its claims. Every producer must then state what it
+                // ran against.
+                // sh 'printf \'{"commit": "%s"}\' "$GIT_COMMIT" > "$RELEASE_GATE_OUT/candidate.json"'
+                sh '''
+                    # release-gate admission gate: 0 PROMOTE · 10 HOLD · 1 BLOCK or error
+                    out="${RELEASE_GATE_OUT:-release-gate-out}"
+                    policy="${RELEASE_GATE_HOLD_POLICY:-normal}"
+                    case "$policy" in
+                      normal|strict) ;;
+                      *) echo "RELEASE_GATE_HOLD_POLICY must be normal or strict, not '$policy'"; exit 1 ;;
+                    esac
+                    [ -n "${RELEASE_GATE_INPUT:-}" ] || { echo "RELEASE_GATE_INPUT names no claims file"; exit 1; }
+                    mkdir -p "$out"
+                    rm -f "$out/admission-report.json" "$out/admission-report.txt" "$out/case.json" "$out/decision.env"
+                    set -- "$RELEASE_GATE_INPUT" --evidence "${RELEASE_GATE_EVIDENCE:-$out/evidence}"
+                    if [ -n "${RELEASE_GATE_METHODOLOGY:-}" ]; then set -- "$@" --methodology "$RELEASE_GATE_METHODOLOGY"; fi
+                    if [ -n "${RELEASE_GATE_CANDIDATE:-}" ]; then set -- "$@" --candidate "$RELEASE_GATE_CANDIDATE"; fi
+                    if [ -n "${RELEASE_GATE_RESOLUTION_POLICY:-}" ]; then set -- "$@" --resolution-policy "$RELEASE_GATE_RESOLUTION_POLICY"; fi
+                    if [ -n "${RELEASE_GATE_CONFIG:-}" ]; then set -- "$@" --config "$RELEASE_GATE_CONFIG"; fi
+                    code=0
+                    release-gate assure "$@" --admission --admission-out "$out/admission-report.json" --case-output "$out/case.json" > "$out/admission-report.txt" 2>&1 || code=$?
+                    cat "$out/admission-report.txt"
+                    reported=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$out/admission-report.json" 2>/dev/null || echo NONE)
+                    case "$code:$reported" in
+                      0:PROMOTE) decision=PROMOTE ;;
+                      10:HOLD) decision=HOLD ;;
+                      1:BLOCK) decision=BLOCK ;;
+                      *) decision=ERROR ;;
+                    esac
+                    echo "RELEASE_GATE_DECISION=$decision" > "$out/decision.env"
+                    echo "release-gate: $decision (exit $code, hold policy $policy)"
+                '''
+                script {
+                    def decision = readFile("${env.RELEASE_GATE_OUT}/decision.env").trim().replace('RELEASE_GATE_DECISION=', '')
+                    env.RELEASE_GATE_DECISION = decision
+                    if (decision == 'PROMOTE') {
+                        echo 'release-gate: PROMOTE'
+                    } else if (decision == 'HOLD' && env.RELEASE_GATE_HOLD_POLICY == 'normal') {
+                        unstable('release-gate: HOLD; a person must review this release before it deploys')
+                    } else if (decision == 'HOLD') {
+                        error('release-gate: HOLD under the strict policy; stopped pending approval')
+                    } else {
+                        error("release-gate: ${decision}; not admitted")
+                    }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'release-gate-out/**', allowEmptyArchive: true
+                }
+            }
+        }
+        stage('Human review') {
+            when { environment name: 'RELEASE_GATE_DECISION', value: 'HOLD' }
+            steps {
+                input message: 'release-gate held this release. Read the archived Admission Report, then approve to deploy.',
+                      ok: 'Deploy',
+                      submitter: "${env.RELEASE_GATE_REVIEWERS}"
+            }
+        }
+        stage('Deploy') {
+            // Reached only on PROMOTE, or on HOLD once Human review was approved
+            // (a rejected input aborts the build). BLOCK and errors stopped above.
+            when { expression { env.RELEASE_GATE_DECISION == 'PROMOTE' || env.RELEASE_GATE_DECISION == 'HOLD' } }
+            steps { sh './deploy.sh' }
+        }
+    }
+}

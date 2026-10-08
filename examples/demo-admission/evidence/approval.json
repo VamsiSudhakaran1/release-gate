@@ -1,0 +1,21 @@
+{
+  "schema": "release-gate.review/1",
+  "evaluated_at": "2026-10-07T12:00:00Z",
+  "reviews": [
+    {
+      "id": "rel-311",
+      "reviewer": {
+        "id": "priya@acme.example",
+        "role": "release-owner"
+      },
+      "decision": "approve",
+      "claim_id": "cl_transfer_requires_approval",
+      "claim": "No transfer executes without a signed human approval for that exact transfer",
+      "state": {
+        "commit": "7a1c9e2b40d6"
+      },
+      "reviewed_at": "2026-10-01T15:00:00Z",
+      "rationale": "approved the release after reviewing the TLA+ proof and the behaviour suite"
+    }
+  ]
+}

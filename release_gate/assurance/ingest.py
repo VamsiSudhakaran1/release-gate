@@ -47,6 +47,7 @@ from release_gate.assurance.counterexample import (
 from release_gate.assurance.failed_branches import (
     MAX_INLINE_DETAIL, BranchOutcome, FailedBranch, FailureLocus,
 )
+from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 from release_gate.assurance.verifiers import (
     VerifierError, VerifierReport, default_verifier_registry,
 )
@@ -957,7 +958,23 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             f"{repeated_claims} claim row(s) repeated a claim_id already seen and "
             "were absorbed into the first record under that id")
 
+    # One document carried twice — under two names, or a file passed to
+    # `--evidence` that an envelope beside it already embeds — is one tool's one
+    # run. Read twice it would count its evidence twice, so it is read once and
+    # the repeat is named.
+    read_documents: Dict[str, str] = {}
     for index, row in enumerate(export_rows):
+        name = str(row.get("source") or f"export-{index}")
+        if isinstance(row.get("document"), (Mapping, list)):
+            key = digest_object({"producer_type": row.get("producer_type"),
+                                 "document": row.get("document")})
+            if key in read_documents:
+                notes.append(f"producer_export {name!r} carries the same document as "
+                             f"{read_documents[key]!r}; it was read once and the repeat "
+                             "absorbed rather than counted twice")
+                mapped += 1
+                continue
+            read_documents[key] = name
         if _fold_export(row, index, source=source, producers=producers,
                         evidence=evidence, claims=claims,
                         attempts=attempts_out if attempts_out is not None else [],
@@ -979,11 +996,17 @@ def _verifier_record(report: VerifierReport, *, source: str,
     """A verifier's own account of its run, as one DECLARED record.
 
     Release-gate read the output; it did not watch the prover run, and it does
-    not re-check the result.
+    not re-check the result. The record is a FORMAL_PROOF only when every check
+    in it is proof-carrying: a static analyser's or a test runner's report read
+    through the same contract is that tool's result, and typing it a proof would
+    be the conflation `methods.py` exists to prevent.
     """
+    proofs = all(CHARACTERS.get(a.method) is MethodCharacter.PROOF_CARRYING
+                 for a in report.attempts)
     return EvidenceRecord.from_producer(
         {"verifier": report.tool.to_dict(), "coverage": report.coverage.to_dict()},
-        evidence_type=EvidenceType.FORMAL_PROOF, source=source,
+        evidence_type=EvidenceType.FORMAL_PROOF if proofs else EvidenceType.TOOL_RESULT,
+        source=source,
         producer=Producer(producer_id=report.tool.reference, kind=ProducerKind.TOOL,
                           identity_basis=("pinned-digest" if report.tool.pinned
                                           else "unauthenticated"),
@@ -1117,7 +1140,15 @@ def _fold_export(row: Mapping[str, Any], index: int, *, source: str,
     # A check whose target the case declares joins that claim; every check is
     # also kept whole, as a verifier file's are.
     position = {c.claim_id: i for i, c in enumerate(claims)}
+    kept = {a.verification_id for a in attempts}
+    repeated = 0
     for attempt in checks:
+        if attempt.verification_id in kept:
+            # The same check read twice (one document carried twice) is one
+            # check: counted once, like its evidence above.
+            repeated += 1
+            continue
+        kept.add(attempt.verification_id)
         target = attempt.target
         at = (position.get(target.target_id)
               if target is not None and target.kind is TargetKind.CLAIM else None)
@@ -1129,6 +1160,9 @@ def _fold_export(row: Mapping[str, Any], index: int, *, source: str,
                     holder, verification_attempts=holder.verification_attempts
                     + (attempt,))
         attempts.append(attempt)
+    if repeated:
+        notes.append(f"{name}: {repeated} verification attempt(s) repeated attempts "
+                     "already held and were absorbed rather than counted twice")
     return True
 
 
@@ -1947,6 +1981,61 @@ def _audit_records(doc: Mapping[str, Any], source: str,
 
 
 # ── the one-call path ────────────────────────────────────────────────────────
+
+#: What an `--evidence` directory contributes: structured exports, nothing else.
+EVIDENCE_SUFFIXES = (".json", ".jsonl", ".sarif")
+
+
+def _evidence_files(evidence: Sequence[str | Path], primary: Path) -> List[Path]:
+    """Each named file, and each directory's evidence files in name order, once."""
+    seen = {primary.resolve()}
+    files: List[Path] = []
+    for raw in evidence:
+        path = Path(raw)
+        if path.is_dir():
+            found = sorted(p for p in path.iterdir()
+                           if p.is_file() and p.suffix.lower() in EVIDENCE_SUFFIXES)
+        elif path.is_file():
+            found = [path]
+        else:
+            raise IngestError(f"{path}: no such evidence file or directory")
+        for item in found:
+            if item.resolve() not in seen:
+                seen.add(item.resolve())
+                files.append(item)
+    return files
+
+
+def compose_inputs(primary: str | Path, evidence: Sequence[str | Path], *,
+                   producers: Optional[Any] = None
+                   ) -> Tuple[List[Any], bytes, Tuple[str, ...]]:
+    """One envelope from a release's own records and every tool's output.
+
+    How a pipeline hands release-gate its evidence: the primary file (usually
+    the envelope that states the claims and the candidate) and any number of
+    files or directories beside it. An envelope's rows are taken as they are;
+    any other document becomes a `producer_export` row and is read exactly as
+    the same file is read on its own — or refused, with the reason in the case,
+    when it is not one producer's document. The composed rows are what the case
+    is about, and their bytes are what the subject digest names. Returns the
+    rows, those bytes, and the files read, in order.
+    """
+    primary = Path(primary)
+    rows: List[Any] = []
+    read: List[str] = []
+    for path in [primary] + _evidence_files(evidence, primary):
+        doc = load_input(path)
+        detection = detect_document(doc, filename=path.name, producers=producers)
+        if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
+            rows.extend(doc)
+        else:
+            rows.append({"record_type": "producer_export", "source": str(path),
+                         "document": doc})
+        read.append(str(path))
+    content = "".join(json.dumps(r, sort_keys=True, separators=(",", ":"),
+                                 ensure_ascii=False) + "\n" for r in rows).encode("utf-8")
+    return rows, content, tuple(read)
+
 
 def ingest_path(path: str | Path, *, producers: Optional[Any] = None) -> Normalisation:
     """Read, identify and fold one file. The whole zero-config front door."""

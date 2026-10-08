@@ -1,0 +1,25 @@
+{
+  "schema": "release-gate.formal/1",
+  "verifier": {
+    "name": "tlc",
+    "version": "2.19",
+    "family": "MODEL_CHECKER"
+  },
+  "results": [
+    {
+      "claim_id": "cl_transfer_requires_approval",
+      "claim": "No transfer executes without a signed human approval for that exact transfer",
+      "method": "FORMAL_PROOF",
+      "result": "verified",
+      "state": {
+        "governance_policy": "sha256:1bc5cd2ee64e9a6e4c0546c216552073e71343e1a7596713fad5713ffbfcee01"
+      },
+      "assumptions": [
+        "transfers enter only through transfer_funds()"
+      ],
+      "covers": [
+        "the approval-policy v2 model: 3 accounts, 4 concurrent transfers"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+# release-gate admission pipeline for GitHub Actions.
+#
+#   Build -> Tests -> External evals -> Security scanners -> Collect evidence
+#     -> release-gate assure -> PROMOTE / HOLD / BLOCK -> Deploy
+#
+# Copy to .github/workflows/release.yml. Replace the ./build.sh, ./test.sh and
+# ./deploy.sh lines with your own; keep the admission, human-review and deploy
+# wiring as it is.
+#
+# HOLD is not BLOCK. The hold policy says what HOLD does:
+#   normal  PROMOTE -> deploy · HOLD -> a required reviewer of the
+#           `release-review` environment approves, then deploy · BLOCK -> stop
+#   strict  PROMOTE -> deploy · HOLD -> stop pending approval · BLOCK -> stop
+# Protect the `release-review` environment with required reviewers
+# (Settings -> Environments), or a HOLD under `normal` deploys after a job
+# nobody had to approve.
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_GATE_HOLD_POLICY: normal        # normal | strict
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build.sh
+      - run: ./test.sh
+
+  evidence:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install release-gate
+      - run: mkdir -p release-gate-evidence
+
+      # External evals. A failing eval is evidence, not a pipeline error: the
+      # gate reads the results and decides. Only a missing results file stops
+      # the pipeline here.
+      - name: External evals (promptfoo)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          npx --yes promptfoo@latest eval -o release-gate-evidence/promptfoo.json || true
+          test -s release-gate-evidence/promptfoo.json
+
+      # Security scanners. release-gate's own static analysis, as evidence the
+      # gate weighs beside everything else; any SARIF scanner can join it.
+      - name: Security scanners
+        run: |
+          release-gate audit . --evidence-out release-gate-evidence/static.json || true
+          test -s release-gate-evidence/static.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: release-gate-evidence
+
+  admission:
+    needs: evidence
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.admit.outputs.decision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: release-gate-evidence
+      # Optional: name the exact release. Evidence about any other state of it
+      # then stops supporting its claims, and every producer must state what it
+      # ran against (commit, model, prompt or artifact digest) for its support
+      # to count. Uncomment, and pass `candidate:` below.
+      # - run: mkdir -p release-gate-out && printf '{"commit": "%s"}\n' "$GITHUB_SHA" > release-gate-out/candidate.json
+      - uses: VamsiSudhakaran1/release-gate@v0.11.2
+        id: admit
+        with:
+          command: assure
+          input: release-gate/claims.jsonl          # the claims this release makes
+          evidence: release-gate-evidence
+          methodology: general-agent-action@1.0.0
+          # candidate: release-gate-out/candidate.json
+          hold-policy: ${{ env.RELEASE_GATE_HOLD_POLICY }}
+          # The Admission Report (text + JSON), the case and decision.env are
+          # uploaded as the `release-gate-admission` artifact.
+
+  human-review:
+    needs: admission
+    if: needs.admission.outputs.decision == 'HOLD'
+    runs-on: ubuntu-latest
+    environment: release-review                  # required reviewers approve here
+    steps:
+      - run: echo "HOLD reviewed by a required reviewer of release-review; see the release-gate-admission artifact"
+
+  deploy:
+    needs: [admission, human-review]
+    # always(): human-review is skipped on PROMOTE. The admission job must have
+    # succeeded, so a strict HOLD, a BLOCK or an error never reaches here.
+    if: >-
+      always() && needs.admission.result == 'success' &&
+      (needs.admission.outputs.decision == 'PROMOTE' ||
+       (needs.admission.outputs.decision == 'HOLD' && needs.human-review.result == 'success'))
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh

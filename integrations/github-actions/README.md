@@ -61,7 +61,7 @@ place — there is no separate conversion step to wire up.
 
 | Input | What it does |
 |---|---|
-| `command` | `pr` (change gate), `audit`, `score`, `evidence-pack`, `impact`, `run`, `loop-sim` |
+| `command` | `assure` (admission over the pipeline's evidence), `pr` (change gate), `audit`, `score`, `evidence-pack`, `impact`, `run`, `loop-sim` |
 | `config` | Path to `governance.yaml` (default) |
 | `base` | Base ref for `command: pr` — needs `fetch-depth: 0` |
 | `traces` | Native trace file **or** a raw Langfuse / OTel / Arize export |
@@ -72,9 +72,15 @@ place — there is no separate conversion step to wire up.
 | `pr-comment` | Post/update a sticky summary comment on the PR |
 | `html-report` | Write a self-contained HTML evidence file |
 | `output-evidence` | Write the JSON readiness report |
-| `fail-on-warn` | Treat HOLD as a failure (default: `false`) |
+| `fail-on-warn` | Treat HOLD as a failure (default: `false`); for `assure`, the same as `hold-policy: strict` |
+| `input` | `assure`: the claims file (or any one evidence file) |
+| `evidence` | `assure`: evidence files or directories, one per line or comma-separated |
+| `methodology` · `candidate` · `resolution-policy` · `org-config` | `assure`: the declared policy and the exact release |
+| `hold-policy` | `assure`: `normal` (HOLD passes the step, `decision=HOLD`) or `strict` (HOLD fails it) |
+| `output-dir` · `artifact-name` | `assure`: where the Admission Report goes, and the artifact it is uploaded as |
 
-Outputs: `decision`, `score`, `daily-cost`, `runaway-cost`.
+Outputs: `decision` (PROMOTE / HOLD / BLOCK, PASS / WARN / FAIL for `run` and
+`impact`, or ERROR) and, for `assure`, `admission-report`.
 
 ## Exit codes are the whole contract
 
@@ -83,6 +89,10 @@ Outputs: `decision`, `score`, `daily-cost`, `runaway-cost`.
 | `0` | PROMOTE | Merge |
 | `10` | HOLD | Needs a human; not a hard stop |
 | `1` | BLOCK | Stop |
+
+Under `command: assure` an error also exits `1`, but the step's `decision`
+output says `ERROR`, read from the Admission Report rather than guessed from the
+code.
 
 The three-state design is deliberate. A two-state gate forces every judgement
 call into "block," and a gate that blocks on ambiguity is a gate that gets
@@ -150,9 +160,62 @@ Three layers, three tools, each doing the job it's best at. release-gate does no
 compete with steps 1 and 2 — it is the thing that consumes them and answers the
 question neither one asks.
 
+## Admission: one decision over every tool's evidence
+
+`command: assure` is the release decision itself. Build and test, let your eval
+and scanner jobs write their output files into one directory, then:
+
+```yaml
+  admission:
+    needs: evidence
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.admit.outputs.decision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: release-gate-evidence, path: release-gate-evidence }
+      - uses: VamsiSudhakaran1/release-gate@v0.11.2
+        id: admit
+        with:
+          command: assure
+          input: release-gate/claims.jsonl
+          evidence: release-gate-evidence
+          methodology: general-agent-action@1.0.0
+          hold-policy: normal            # strict: HOLD stops pending approval
+
+  human-review:
+    needs: admission
+    if: needs.admission.outputs.decision == 'HOLD'
+    environment: release-review          # required reviewers approve here
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "reviewed"
+
+  deploy:
+    needs: [admission, human-review]
+    if: >-
+      always() && needs.admission.result == 'success' &&
+      (needs.admission.outputs.decision == 'PROMOTE' ||
+       (needs.admission.outputs.decision == 'HOLD' && needs.human-review.result == 'success'))
+```
+
+Under `normal` a HOLD leaves the admission job green with a warning. Only the
+`deploy` condition keeps it from shipping unreviewed, so keep that condition as
+it is. The Admission Report is in the job summary and in the
+`release-gate-admission` artifact. The whole workflow is
+[`ci-templates/admission/github-actions.yml`](../../ci-templates/admission/github-actions.yml),
+and [`examples/demo-admission/`](../../examples/demo-admission/) is a release
+decided this way.
+
 ## Other CI systems
 
-The same evidence and exit codes work anywhere. Ready-to-copy templates:
+The same evidence and exit codes work anywhere, and every template keeps HOLD
+apart from BLOCK ([how](../../ci-templates/README.md)). Admission pipelines:
+[GitLab CI](../../ci-templates/admission/gitlab-ci.yml) ·
+[CircleCI](../../ci-templates/admission/circleci/config.yml) ·
+[Azure Pipelines](../../ci-templates/admission/azure-pipelines.yml) ·
+[Jenkins](../../ci-templates/admission/Jenkinsfile). Audit only:
 [GitLab CI](../../ci-templates/gitlab-ci.yml) ·
 [CircleCI](../../ci-templates/circleci.yml) ·
 [Azure Pipelines](../../ci-templates/azure-pipelines.yml) ·

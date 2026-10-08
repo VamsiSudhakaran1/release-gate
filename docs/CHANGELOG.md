@@ -4,6 +4,68 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🚀 Admission in CI: evidence in, PROMOTE / HOLD / BLOCK out, HOLD kept apart
+
+- **`release-gate assure FILE --evidence PATH`.** Repeatable. It decides over the
+  release's claims file together with every tool's output (eval exports,
+  scanner output, reviews, proofs) as one case. A directory contributes its
+  `.json`, `.jsonl` and `.sarif` files. Each document is read exactly as it
+  would be read on its own, or refused with the reason in `ingest.notes`. A
+  file named twice, or one document under two names, is read once.
+- **The GitHub Action gains `command: assure`.** Its inputs are `input`,
+  `evidence`, `methodology`, `candidate`, `resolution-policy`, `org-config`,
+  `hold-policy` (`normal` or `strict`), `output-dir` and `artifact-name`. It
+  sets the `decision` output (which was declared and never set, for every
+  command) and `admission-report`. The Admission Report goes to the job summary
+  and is uploaded as an artifact.
+- **Admission pipelines for five CI systems** in `ci-templates/admission/`:
+  GitHub Actions, GitLab CI, Azure Pipelines, Jenkins and CircleCI. Each
+  follows build → tests → evals → scanners → evidence → `assure` → deploy.
+  - Under the **`normal`** hold policy, a HOLD routes to a person: a protected
+    environment, a manual job, a `ManualValidation`, an `input` step, or an
+    approval workflow.
+  - Under **`strict`**, a HOLD stops pending approval.
+  - BLOCK, and anything the Admission Report does not confirm, always stops.
+  - Every gate script is executed in the test suite against every exit code.
+- **The audit templates now keep HOLD apart from BLOCK.** They also no longer
+  pass `--json release-gate.json`, which wrote no file.
+
+### 🎯 The admission demo
+
+`examples/demo-admission/` gives one money-moving agent and six sources about
+one release:
+
+- a static check that passed;
+- Promptfoo at 49/50;
+- a behaviour test where one unauthorized transfer succeeded;
+- 30 days of clean production traces;
+- a TLC proof of the approval invariant;
+- the release owner's approval.
+
+Release-Gate reads the static check as supportive but incomplete and the evals
+as observations about other things. The behaviour test contradicts the claim.
+The traces, the proof and the approval are each about a different state of the
+release. The decision is BLOCK or HOLD according to the declared policy, and
+never PROMOTE. `run_demo.py --check` runs in CI, and the Action runs on the demo
+under each hold policy. The README says exactly what each tool did and what
+Release-Gate did that none of them does.
+
+#### Migration notes
+
+- **Audit templates:** if you copied one, HOLD (exit 10) now passes with a
+  warning under the default `normal` policy, where it failed the job before. To
+  keep stopping on HOLD, set `RELEASE_GATE_HOLD_POLICY: strict` (on GitLab,
+  remove the `allow_failure` block).
+- **Verifier reports:** a verifier report whose checks are not all
+  proof-carrying (tests, static analysis, unclassified methods) is now typed
+  `TOOL_RESULT` instead of `FORMAL_PROOF`. Its evidence ids and the case digest
+  change. Provers and model checkers are unchanged.
+- **Verifier coverage notes:** `DOMAIN_VALIDATOR`'s default limit is no longer
+  split into characters. An unclassified verifier that states what it covers no
+  longer also says that nothing is recorded about it.
+- Over the 117-run verdict corpus, every decision, fired rule and reason is
+  byte-identical.
+
 ### 🚦 The release decision is an admission decision
 
 PROMOTE, HOLD and BLOCK now come from one admission evaluation over the case.

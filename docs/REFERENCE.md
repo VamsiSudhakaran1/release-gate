@@ -124,7 +124,8 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 ### `assure` — the assurance engine
 
 ```
-release-gate assure <file> [--json] [--full] [--review]
+release-gate assure <file> [--evidence PATH ...]
+                           [--json] [--full] [--review]
                            [--admission] [--admission-out FILE]
                            [--methodology REF] [--config FILE] [--case-output FILE]
                            [--candidate FILE] [--resolution-policy FILE]
@@ -134,9 +135,10 @@ release-gate assure <file> [--json] [--full] [--review]
 release-gate assure --list-methodologies
 ```
 
-Takes one file. Nothing is discovered from the filesystem and nothing is
-required to run — a gate whose verdict depends on which directory it ran from
-is a gate whose verdict cannot be reproduced.
+Takes one file, and with `--evidence` any number of files beside it. Nothing
+is discovered from the filesystem and nothing is required to run — a gate whose
+verdict depends on which directory it ran from is a gate whose verdict cannot
+be reproduced. `--evidence` names what to read; it never searches for it.
 
 #### What it accepts
 
@@ -162,6 +164,7 @@ nothing.
 
 | Flag | Description |
 |------|-------------|
+| `--evidence PATH` | More of the release's evidence, decided over together with `<file>` as one case. Repeatable. A directory contributes every `.json`, `.jsonl` and `.sarif` file directly in it, in name order. An envelope's rows are taken as they are. Any other document becomes a `producer_export` row and is read exactly as it would be read alone, or refused with the reason in `ingest.notes` (a raw trace export cannot be composed; pass it on its own, or as `audit --evidence-out` output). A file named twice, or one document under two names, is read once. A path that does not exist is an error. The composed rows are the case's subject, so the subject digest names exactly what was decided over. See [admission in CI](#admission-in-ci--assure-with-the-pipelines-evidence). |
 | `--methodology REF` | What *enough* means for this decision. `id@X.Y.Z` pins exactly; `id-vN` pins to the newest version in the N line; a bare id takes the newest. Without one, release-gate reports everything structural it can see and **holds** — it will not invent a standard. |
 | `--config FILE` | An organisation's own standards, layered on top. It can only ever **tighten**: raise the required assurance level, add requirements, name verifiers that must have run. There is deliberately no way to lower a bar through it. |
 | `--review` | The one-screen version: execution counts, the critical path, coverage, what a person must look at, and the verdict. Every figure on it is a field; the renderer computes none of them. |
@@ -751,8 +754,13 @@ Three blocks, in this order:
 
 #### Exit codes
 
-`0` PROMOTE · `10` HOLD · `1` BLOCK — the same three the rest of the CLI uses,
-so it drops into CI without a wrapper.
+`0` PROMOTE · `10` HOLD · `1` BLOCK — the same three the rest of the CLI uses.
+An error (an unreadable file, a missing `--evidence` path, a bad flag) also
+exits `1`: it fails closed, and it writes no Admission Report. So a gate that
+needs to tell an error from a BLOCK checks the code against the report's own
+`decision`, as the [CI templates](#admission-in-ci--assure-with-the-pipelines-evidence) do.
+`10` is not a failure: treating every non-zero code as "stop" turns HOLD into
+BLOCK.
 
 #### Worked examples
 
@@ -935,6 +943,10 @@ per-platform mapping tables live in **[`integrations/`](../integrations/)**.
 | `0` | PROMOTE / PASS / SHIP | Meets the configured release policy |
 | `10` | HOLD / WARN / CONTINUE | Review needed / keep iterating |
 | `1` | BLOCK / FAIL / ROLLBACK | A policy check failed — do not ship / abort loop |
+
+HOLD is not BLOCK. A CI step that fails on any non-zero code makes them the
+same thing, and a gate that blocks on every judgement call gets bypassed. Every
+CI template handles `10` on its own ([CI/CD integration](#cicd-integration)).
 
 ---
 
@@ -1456,6 +1468,94 @@ entirely. If a price can't be resolved and `on_unknown: hold`, the budget check
 
 ## CI/CD Integration
 
+### Admission in CI — `assure` with the pipeline's evidence
+
+The flow:
+
+1. Build, then tests.
+2. External evals and security scanners. Each tool writes its own output file,
+   into one evidence directory.
+3. `release-gate assure claims.jsonl --evidence <dir> --admission-out …`.
+4. Act on PROMOTE, HOLD or BLOCK, then deploy.
+
+Release-gate runs none of those tools. It reads what they wrote and decides
+whether *this* release may be admitted, under a declared methodology and
+resolution policy. `claims.jsonl` is the file in your repository that states
+the release's claims (an assurance envelope; `ci-templates/admission/claims.jsonl`
+is a starting point). `release-gate audit . --evidence-out <dir>/static.json`
+adds release-gate's own static analysis as one more source.
+
+What HOLD does is a pipeline choice, named once as the **hold policy**:
+
+| Hold policy | PROMOTE | HOLD | BLOCK or error |
+|---|---|---|---|
+| `normal` (default) | deploy | a person reviews, then deploy | stop |
+| `strict` | deploy | stop pending approval | stop |
+
+The GitHub Action does this as `command: assure`:
+
+```yaml
+- uses: VamsiSudhakaran1/release-gate@v0.11.2
+  id: admit
+  with:
+    command: assure
+    input: release-gate/claims.jsonl
+    evidence: |
+      release-gate-evidence
+      reviews/approval.json
+    methodology: general-agent-action@1.0.0
+    hold-policy: normal          # or strict; fail-on-warn: true also means strict
+```
+
+| Input | |
+|---|---|
+| `input` | the claims file (or any one evidence file) |
+| `evidence` | files or directories, one per line or comma-separated |
+| `methodology`, `candidate`, `resolution-policy`, `org-config` | `--methodology`, `--candidate`, `--resolution-policy`, `--config` |
+| `hold-policy` | `normal` or `strict`; anything else is an error |
+| `output-dir` | where `admission-report.json`, `admission-report.txt`, `case.json` and `decision.env` go (default `release-gate-out`) |
+| `artifact-name` | uploads `output-dir` as a workflow artifact (default `release-gate-admission`; empty to skip) |
+
+The `decision` output is PROMOTE, HOLD or BLOCK. It is ERROR when the exit code
+and the Admission Report do not confirm each other. Under `normal` a HOLD leaves
+the step green with a warning, so **a job that deploys must check for
+`decision == 'PROMOTE'` or a reviewed HOLD**. `ci-templates/admission/github-actions.yml`
+wires that: HOLD goes to a job on a protected `release-review` environment, and
+deploy runs only after PROMOTE or that review. The Admission Report is in the
+job summary and in the artifact.
+
+Ready-to-copy pipelines for the same flow:
+
+| Platform | File | How HOLD reaches a person under `normal` |
+|---|---|---|
+| GitHub Actions | `ci-templates/admission/github-actions.yml` | a job on an environment with required reviewers |
+| GitLab CI | `ci-templates/admission/gitlab-ci.yml` | exit 10 is an allowed failure (amber), then a manual `deploy:reviewed` job |
+| Azure Pipelines | `ci-templates/admission/azure-pipelines.yml` | `SucceededWithIssues`, then a `ManualValidation@0` job |
+| Jenkins | `ci-templates/admission/Jenkinsfile` | the build turns UNSTABLE, then an `input` step |
+| CircleCI | `ci-templates/admission/circleci/` | a setup workflow continues into an `approval` job |
+
+Each gate script is the same few lines:
+- run `assure`;
+- read the Admission Report's `decision`, and accept it only if it agrees with the exit code;
+- write `decision.env`;
+- apply the hold policy.
+
+Configure it with `RELEASE_GATE_HOLD_POLICY`, `RELEASE_GATE_INPUT` and
+`RELEASE_GATE_METHODOLOGY`. `RELEASE_GATE_CANDIDATE`,
+`RELEASE_GATE_RESOLUTION_POLICY` and `RELEASE_GATE_CONFIG` are optional. A
+policy other than `normal` or `strict` stops the job before anything runs, so a
+typo never loosens the gate.
+
+The test suite executes every one of these scripts against every exit code,
+under `sh` and under `bash`. It also evaluates the GitHub and Azure routing
+conditions over their whole truth table.
+
+Naming the candidate (`--candidate`, from the commit CI is building) means
+evidence about any other state of the release stops supporting its claims. Each
+producer must then state what it ran against, or its support holds
+(RG-DRIFT-008). That is why the templates show it commented out.
+`examples/demo-admission/` runs this end to end, and CI checks it on every push.
+
 ### GitHub Actions
 
 ```yaml
@@ -1503,7 +1603,9 @@ governance:
   script:
     - pip install release-gate
     - release-gate score governance.yaml
-  allow_failure: false
+  # 10 is HOLD: passed with a warning, not failed. Remove to stop on HOLD too.
+  allow_failure:
+    exit_codes: [10]
 ```
 
 ### Jenkins
@@ -1515,7 +1617,14 @@ pipeline {
         stage('Governance') {
             steps {
                 sh 'pip install release-gate'
-                sh 'release-gate score governance.yaml'
+                script {
+                    def code = sh(script: 'release-gate score governance.yaml', returnStatus: true)
+                    if (code == 10) {
+                        unstable('release-gate: HOLD; a person must review')
+                    } else if (code != 0) {
+                        error("release-gate: BLOCK or error (exit ${code})")
+                    }
+                }
             }
         }
     }

@@ -1,0 +1,27 @@
+{
+  "verifier": {
+    "name": "approval-path-check",
+    "version": "3.1.0",
+    "family": "OTHER"
+  },
+  "results": [
+    {
+      "claim_id": "cl_transfer_requires_approval",
+      "claim": "No transfer executes without a signed human approval for that exact transfer",
+      "method": "STATIC_ANALYSIS",
+      "result": "passed",
+      "state": {
+        "commit": "c4f8d31a9e27"
+      },
+      "detail": "every direct call to transfer_funds() in agent/tools.py is dominated by require_approval()",
+      "covers": [
+        "direct calls to transfer_funds() in agent/tools.py"
+      ],
+      "does_not_cover": [
+        "transfers reached through the planner's dynamic tool dispatch",
+        "scheduled transfers executed by agent/scheduler.py",
+        "runtime behaviour"
+      ]
+    }
+  ]
+}

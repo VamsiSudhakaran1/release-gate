@@ -1,0 +1,109 @@
+# release-gate admission pipeline for CircleCI: the setup half.
+#
+#   Build -> Tests -> External evals -> Security scanners -> Collect evidence
+#     -> release-gate assure -> PROMOTE / HOLD / BLOCK -> Deploy
+#
+# CircleCI cannot require an approval only on some runs of a static workflow,
+# so this is a dynamic-config pipeline: this setup workflow decides, and
+# continues with release.yml (copy both to .circleci/, and enable "dynamic
+# config using setup workflows" in Project Settings -> Advanced).
+#
+# HOLD is not BLOCK. The gate reads exit 0 PROMOTE, 10 HOLD, 1 BLOCK, and
+# RELEASE_GATE_HOLD_POLICY says what HOLD does:
+#   normal  PROMOTE -> continue to `deploy` · HOLD -> continue to
+#           `review-then-deploy`, whose approval job a person must approve ·
+#           BLOCK -> stop
+#   strict  PROMOTE -> continue to `deploy` · HOLD -> stop pending approval ·
+#           BLOCK -> stop
+version: 2.1
+setup: true
+
+orbs:
+  continuation: circleci/continuation@1.0.0
+
+jobs:
+  admission:
+    docker:
+      - image: cimg/python:3.11-node
+    environment:
+      RELEASE_GATE_HOLD_POLICY: normal          # normal | strict
+      RELEASE_GATE_INPUT: release-gate/claims.jsonl
+      RELEASE_GATE_METHODOLOGY: general-agent-action@1.0.0
+      RELEASE_GATE_OUT: release-gate-out
+    steps:
+      - checkout
+      - run:
+          name: Build
+          command: ./build.sh
+      - run:
+          name: Tests
+          command: ./test.sh
+      - run:
+          name: Install release-gate
+          command: pip install release-gate
+      # A failing eval is evidence, not a pipeline error: the gate reads the
+      # results and decides. Only a missing results file stops it here.
+      - run:
+          name: External evals
+          command: |
+            mkdir -p "$RELEASE_GATE_OUT/evidence"
+            npx --yes promptfoo@latest eval -o "$RELEASE_GATE_OUT/evidence/promptfoo.json" || true
+            test -s "$RELEASE_GATE_OUT/evidence/promptfoo.json"
+      - run:
+          name: Security scanners
+          command: |
+            release-gate audit . --sarif release-gate.sarif --evidence-out "$RELEASE_GATE_OUT/evidence/static.json" || true
+            test -s "$RELEASE_GATE_OUT/evidence/static.json"
+      # Optional: name the exact release (and set RELEASE_GATE_CANDIDATE to the
+      # file), so evidence about any other state of it stops supporting its
+      # claims. Every producer must then state what it ran against.
+      # - run: printf '{"commit": "%s"}\n' "$CIRCLE_SHA1" > "$RELEASE_GATE_OUT/candidate.json"
+      - run:
+          name: release-gate admission
+          command: |
+            # release-gate admission gate: 0 PROMOTE · 10 HOLD · 1 BLOCK or error
+            out="${RELEASE_GATE_OUT:-release-gate-out}"
+            policy="${RELEASE_GATE_HOLD_POLICY:-normal}"
+            case "$policy" in
+              normal|strict) ;;
+              *) echo "RELEASE_GATE_HOLD_POLICY must be normal or strict, not '$policy'"; exit 1 ;;
+            esac
+            [ -n "${RELEASE_GATE_INPUT:-}" ] || { echo "RELEASE_GATE_INPUT names no claims file"; exit 1; }
+            mkdir -p "$out"
+            rm -f "$out/admission-report.json" "$out/admission-report.txt" "$out/case.json" "$out/decision.env" "$out/continuation.json"
+            set -- "$RELEASE_GATE_INPUT" --evidence "${RELEASE_GATE_EVIDENCE:-$out/evidence}"
+            if [ -n "${RELEASE_GATE_METHODOLOGY:-}" ]; then set -- "$@" --methodology "$RELEASE_GATE_METHODOLOGY"; fi
+            if [ -n "${RELEASE_GATE_CANDIDATE:-}" ]; then set -- "$@" --candidate "$RELEASE_GATE_CANDIDATE"; fi
+            if [ -n "${RELEASE_GATE_RESOLUTION_POLICY:-}" ]; then set -- "$@" --resolution-policy "$RELEASE_GATE_RESOLUTION_POLICY"; fi
+            if [ -n "${RELEASE_GATE_CONFIG:-}" ]; then set -- "$@" --config "$RELEASE_GATE_CONFIG"; fi
+            code=0
+            release-gate assure "$@" --admission --admission-out "$out/admission-report.json" --case-output "$out/case.json" > "$out/admission-report.txt" 2>&1 || code=$?
+            cat "$out/admission-report.txt"
+            reported=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$out/admission-report.json" 2>/dev/null || echo NONE)
+            case "$code:$reported" in
+              0:PROMOTE) decision=PROMOTE ;;
+              10:HOLD) decision=HOLD ;;
+              1:BLOCK) decision=BLOCK ;;
+              *) decision=ERROR ;;
+            esac
+            echo "RELEASE_GATE_DECISION=$decision" > "$out/decision.env"
+            echo "release-gate: $decision (exit $code, hold policy $policy)"
+            case "$decision" in
+              PROMOTE) ;;
+              HOLD) if [ "$policy" = "strict" ]; then echo "HOLD under the strict policy: stopped pending approval"; exit 1; fi ;;
+              *) exit 1 ;;
+            esac
+            # Only PROMOTE and an admitted-for-review HOLD continue.
+            printf '{"release-gate-decision": "%s"}' "$decision" > "$out/continuation.json"
+      - store_artifacts:
+          path: release-gate-out
+          destination: release-gate-admission
+          when: always
+      - continuation/continue:
+          configuration_path: .circleci/release.yml
+          parameters: release-gate-out/continuation.json
+
+workflows:
+  admission:
+    jobs:
+      - admission

@@ -56,7 +56,8 @@ from release_gate.assurance.case import (
 )
 from release_gate.assurance.origin import EvidenceOriginReport, evidence_origin
 from release_gate.assurance.ingest import (
-    Detection, InputKind, Normalisation, ingest_path, subject_type_for,
+    Detection, InputKind, Normalisation, compose_inputs, detect_document, ingest_path,
+    normalise, subject_type_for,
 )
 from release_gate.assurance.methodology import (
     AssessmentStatus, AssuranceMethodology, MethodologyAssessment, RequirementEffect,
@@ -1132,8 +1133,14 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
            candidate: Optional[CandidateState] = None,
            resolution_policy: Optional[ResolutionPolicy] = None,
            semantic_assertions: Sequence[Any] = (),
-           semantic_submitted: bool = False) -> AssuranceOutcome:
+           semantic_submitted: bool = False,
+           evidence: Sequence[Any] = ()) -> AssuranceOutcome:
     """Ingest, analyse, assess and decide — with nothing configured.
+
+    `evidence` is more files or directories to decide over together with
+    `path`: a pipeline's test results, eval exports, scanner output, reviews and
+    proofs beside the envelope that states the release's claims
+    (`ingest.compose_inputs`). One case, one decision, every source named.
 
     `producers` is a `ProducerRegistry` holding any evidence adapters beyond the
     built-in ones. Registering an adapter there is the whole of adding a
@@ -1164,8 +1171,18 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     engine's output become its own input.
     """
     source = Path(path)
+    if evidence:
+        rows, content, read = compose_inputs(source, evidence, producers=producers)
+        normalisation = normalise(
+            rows, detect_document(rows, filename=source.name, producers=producers),
+            source=str(source), content=content, producers=producers)
+        normalisation = dataclasses.replace(normalisation, notes=(
+            f"composed from {len(read)} file(s): {', '.join(read)}",
+        ) + tuple(normalisation.notes))
+    else:
+        normalisation = ingest_path(source, producers=producers)
     return assure_normalisation(
-        ingest_path(source, producers=producers), source_name=source.name,
+        normalisation, source_name=source.name,
         source_path=source,
         methodology=methodology, objective=objective,
         requested_decision=requested_decision, requested_action=requested_action,

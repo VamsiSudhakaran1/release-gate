@@ -69,6 +69,11 @@ class VerifierError(ValueError):
     """A verifier result was read in a way that would overstate what it established."""
 
 
+#: An unclassified tool's default limit. True only while its report records
+#: no coverage of its own; one that states what it covers drops it.
+_NO_COVERAGE_RECORDED = "nothing is recorded about what this result covers"
+
+
 class ToolFamily(str, Enum):
     """What kind of machine checking this is. Selects the default method, nothing else."""
 
@@ -137,7 +142,7 @@ _FAMILY_COVERAGE: Mapping[ToolFamily, Tuple[Tuple[str, ...], Tuple[str, ...]]] =
          "absence of defects outside the suite")),
     ToolFamily.DOMAIN_VALIDATOR: (
         ("the rules the validator encodes",),
-        ("anything the rule set does not mention")),
+        ("anything the rule set does not mention",)),
     ToolFamily.LANGUAGE_MODEL: (
         # Nothing in the "covers" column, and that is the entry rather than an
         # omission. Every other family here establishes something about the
@@ -151,7 +156,7 @@ _FAMILY_COVERAGE: Mapping[ToolFamily, Tuple[Tuple[str, ...], Tuple[str, ...]]] =
          "anything the model was not shown",
          "reproducibility: the same prompt to the same model may read differently",
          "independence from whatever produced the material it read")),
-    ToolFamily.OTHER: ((), ("nothing is recorded about what this result covers",)),
+    ToolFamily.OTHER: ((), (_NO_COVERAGE_RECORDED,)),
 }
 
 
@@ -497,6 +502,9 @@ class GenericVerifierAdapter(VerifierAdapter):
                             for a in extent)
 
         family_covers, family_does_not = _FAMILY_COVERAGE[tool.family]
+        if covers:
+            family_does_not = tuple(x for x in family_does_not
+                                    if x != _NO_COVERAGE_RECORDED)
         coverage = VerifierCoverage(
             covers=tuple(dict.fromkeys(list(family_covers) + covers)),
             does_not_cover=tuple(dict.fromkeys(list(family_does_not) + does_not)),

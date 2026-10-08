@@ -1,3 +1,10 @@
+# release-gate audit on every merge request. For the full admission pipeline
+# (evals, scanners and approvals decided together before deploy) see
+# admission/gitlab-ci.yml.
+#
+# Exit codes: 0 PROMOTE · 10 HOLD · 1 BLOCK. HOLD is not BLOCK: it needs a
+# person, so the job passes with a warning (allow_failure on exit 10). To stop
+# on HOLD as well, delete the allow_failure block.
 release-gate:
   stage: test
   image: python:3.11-slim
@@ -5,7 +12,10 @@ release-gate:
     - pip install release-gate --quiet
   script:
     - release-gate audit . --sarif release-gate.sarif
+  allow_failure:
+    exit_codes: [10]
   artifacts:
+    when: always
     reports:
       sast: release-gate.sarif
     paths:

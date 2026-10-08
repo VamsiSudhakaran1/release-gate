@@ -1,0 +1,6 @@
+{
+  "policy_id": "treasury-block-on-counterexample",
+  "version": "1",
+  "counterexample_effect": "BLOCK",
+  "note": "A valid counterexample against a critical claim stops the release."
+}

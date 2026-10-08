@@ -1,0 +1,148 @@
+# release-gate admission pipeline for Azure Pipelines.
+#
+#   Build -> Tests -> External evals -> Security scanners -> Collect evidence
+#     -> release-gate assure -> PROMOTE / HOLD / BLOCK -> Deploy
+#
+# Copy to azure-pipelines.yml. Replace the ./build.sh, ./test.sh and
+# ./deploy.sh lines with your own; keep the Release stage's three jobs as they
+# are.
+#
+# HOLD is not BLOCK. The gate step reads exit 0 PROMOTE, 10 HOLD, 1 BLOCK, and
+# RELEASE_GATE_HOLD_POLICY says what HOLD does:
+#   normal  PROMOTE -> deploy · HOLD -> the Admission job finishes
+#           SucceededWithIssues, a reviewer approves the HumanReview
+#           ManualValidation, then deploy · BLOCK -> stop
+#   strict  PROMOTE -> deploy · HOLD -> stop pending approval · BLOCK -> stop
+trigger:
+  - main
+
+variables:
+  RELEASE_GATE_HOLD_POLICY: normal            # normal | strict
+  RELEASE_GATE_INPUT: release-gate/claims.jsonl
+  RELEASE_GATE_METHODOLOGY: general-agent-action@1.0.0
+  RELEASE_GATE_OUT: release-gate-out
+  RELEASE_GATE_REVIEWERS: release-reviewers@example.com
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildAndTest
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: ./build.sh
+          - script: ./test.sh
+
+  - stage: Evidence
+    dependsOn: Build
+    jobs:
+      - job: Collect
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+          - script: pip install release-gate
+            displayName: Install release-gate
+          # A failing eval is evidence, not a pipeline error: the gate reads the
+          # results and decides. Only a missing results file stops it here.
+          - bash: |
+              mkdir -p "$RELEASE_GATE_OUT/evidence"
+              npx --yes promptfoo@latest eval -o "$RELEASE_GATE_OUT/evidence/promptfoo.json" || true
+              test -s "$RELEASE_GATE_OUT/evidence/promptfoo.json"
+            displayName: External evals
+          - bash: |
+              release-gate audit . --sarif release-gate.sarif --evidence-out "$RELEASE_GATE_OUT/evidence/static.json" || true
+              test -s "$RELEASE_GATE_OUT/evidence/static.json"
+            displayName: Security scanners
+          - publish: $(RELEASE_GATE_OUT)/evidence
+            artifact: release-gate-evidence
+
+  - stage: Release
+    dependsOn: Evidence
+    jobs:
+      - job: Admission
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+          - script: pip install release-gate
+            displayName: Install release-gate
+          - download: current
+            artifact: release-gate-evidence
+          # Optional: name the exact release (and set RELEASE_GATE_CANDIDATE to
+          # the file), so evidence about any other state of it stops supporting
+          # its claims. Every producer must then state what it ran against.
+          # - bash: mkdir -p "$RELEASE_GATE_OUT" && printf '{"commit": "%s"}\n' "$BUILD_SOURCEVERSION" > "$RELEASE_GATE_OUT/candidate.json"
+          - bash: |
+              # release-gate admission gate: 0 PROMOTE · 10 HOLD · 1 BLOCK or error
+              out="${RELEASE_GATE_OUT:-release-gate-out}"
+              policy="${RELEASE_GATE_HOLD_POLICY:-normal}"
+              case "$policy" in
+                normal|strict) ;;
+                *) echo "RELEASE_GATE_HOLD_POLICY must be normal or strict, not '$policy'"; exit 1 ;;
+              esac
+              [ -n "${RELEASE_GATE_INPUT:-}" ] || { echo "RELEASE_GATE_INPUT names no claims file"; exit 1; }
+              mkdir -p "$out"
+              rm -f "$out/admission-report.json" "$out/admission-report.txt" "$out/case.json" "$out/decision.env"
+              set -- "$RELEASE_GATE_INPUT" --evidence "${RELEASE_GATE_EVIDENCE:-$PIPELINE_WORKSPACE/release-gate-evidence}"
+              if [ -n "${RELEASE_GATE_METHODOLOGY:-}" ]; then set -- "$@" --methodology "$RELEASE_GATE_METHODOLOGY"; fi
+              if [ -n "${RELEASE_GATE_CANDIDATE:-}" ]; then set -- "$@" --candidate "$RELEASE_GATE_CANDIDATE"; fi
+              if [ -n "${RELEASE_GATE_RESOLUTION_POLICY:-}" ]; then set -- "$@" --resolution-policy "$RELEASE_GATE_RESOLUTION_POLICY"; fi
+              if [ -n "${RELEASE_GATE_CONFIG:-}" ]; then set -- "$@" --config "$RELEASE_GATE_CONFIG"; fi
+              code=0
+              release-gate assure "$@" --admission --admission-out "$out/admission-report.json" --case-output "$out/case.json" > "$out/admission-report.txt" 2>&1 || code=$?
+              cat "$out/admission-report.txt"
+              reported=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$out/admission-report.json" 2>/dev/null || echo NONE)
+              case "$code:$reported" in
+                0:PROMOTE) decision=PROMOTE ;;
+                10:HOLD) decision=HOLD ;;
+                1:BLOCK) decision=BLOCK ;;
+                *) decision=ERROR ;;
+              esac
+              echo "RELEASE_GATE_DECISION=$decision" > "$out/decision.env"
+              echo "##vso[task.setvariable variable=decision;isOutput=true]$decision"
+              echo "release-gate: $decision (exit $code, hold policy $policy)"
+              case "$decision" in
+                PROMOTE) exit 0 ;;
+                HOLD)
+                  if [ "$policy" = "strict" ]; then echo "##vso[task.logissue type=error]release-gate HOLD under the strict policy: stopped pending approval"; exit 1; fi
+                  echo "##vso[task.logissue type=warning]release-gate HOLD: a person must approve HumanReview before this release deploys"
+                  echo "##vso[task.complete result=SucceededWithIssues;]HOLD"
+                  exit 0 ;;
+                *) echo "##vso[task.logissue type=error]release-gate $decision: not admitted"; exit 1 ;;
+              esac
+            name: gate
+            displayName: release-gate admission
+          - publish: $(RELEASE_GATE_OUT)
+            artifact: release-gate-admission
+            condition: always()
+
+      - job: HumanReview
+        dependsOn: Admission
+        # succeeded() counts SucceededWithIssues, so a normal HOLD reaches review
+        # and a strict HOLD (a failed Admission job) does not.
+        condition: and(succeeded(), eq(dependencies.Admission.outputs['gate.decision'], 'HOLD'))
+        pool: server
+        timeoutInMinutes: 4320
+        steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 4320
+            inputs:
+              notifyUsers: $(RELEASE_GATE_REVIEWERS)
+              instructions: 'release-gate held this release. Read the release-gate-admission artifact, then approve to deploy or reject.'
+              onTimeout: reject
+
+      - job: Deploy
+        dependsOn: [Admission, HumanReview]
+        # Replaces the default succeeded(): HumanReview is skipped on PROMOTE. The
+        # Admission job must have finished, so a strict HOLD, a BLOCK or an error
+        # never reaches here.
+        condition: and(in(dependencies.Admission.result, 'Succeeded', 'SucceededWithIssues'), or(eq(dependencies.Admission.outputs['gate.decision'], 'PROMOTE'), and(eq(dependencies.Admission.outputs['gate.decision'], 'HOLD'), eq(dependencies.HumanReview.result, 'Succeeded'))))
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: ./deploy.sh
