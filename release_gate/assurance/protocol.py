@@ -340,6 +340,10 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "model, what came back, what the deterministic engine did — and the "
                   "labels people later supply; hash-only by default, never an input "
                   "to a decision"),
+        _ref("semantic_panel", "semantic_panel", "SEMANTIC_PANEL_SCHEMA_VERSION", 1,
+             note="several verifiers asked the same questions: each answer recorded as "
+                  "its own reading with its declared lineage, independence read from "
+                  "provenance, and disagreement a finding for a person, never a vote"),
         _ref("semantic_benchmark", "provider_benchmark", "BENCHMARK_SCHEMA_VERSION", 1,
              note="labelled questions for semantic-verification providers and one row "
                   "per reading of them; scored so that false certainty costs most, "

@@ -160,6 +160,7 @@ _RULE = {
     # A check of superseded content, or of no stated state, is a binding question.
     "RG-VERIF-004": _D.STATE_BINDING, "RG-VERIF-005": _D.STATE_BINDING,
     "RG-SEM-001": _D.CONTRADICTIONS, "RG-SEM-004": _D.STATE_BINDING,
+    "RG-SEM-006": _D.INDEPENDENCE, "RG-SEM-007": _D.CONTRADICTIONS,
     "RG-CONS-001": _D.UNKNOWNS, "RG-CONS-005": _D.UNKNOWNS,
     "RG-CAP-003": _D.UNKNOWNS, "RG-CAP-004": _D.UNKNOWNS, "RG-CAP-005": _D.UNKNOWNS,
     "RG-EXPECT-002": _D.UNKNOWNS,

@@ -59,12 +59,14 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 from release_gate.assurance.canonical import digest_object
 from release_gate.assurance.correlation import (
     DEFAULT_INDEPENDENCE_POLICY,
+    READER_INDEPENDENCE_POLICY,
     IndependenceAssessment,
     IndependencePolicy,
     ProvenanceIndex,
     SourceProvenance,
     assess_independence,
 )
+from release_gate.assurance.escalation import EscalationScope
 from release_gate.assurance.evidence import EpistemicStatus, TrustStatus, VerificationMethod
 from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 
@@ -74,10 +76,12 @@ __all__ = [
     "RESOLUTION_SCHEMA_VERSION",
     "ClaimResolution",
     "ClaimResolutionReport",
+    "CorroborationRoute",
     "ItemRole",
     "ResolutionPolicy",
     "ResolutionStatus",
     "ResolvedItem",
+    "SemanticCorroboration",
     "Strength",
     "resolve_claims",
 ]
@@ -154,6 +158,96 @@ class AdmissionEffect(str, Enum):
 SemanticChallenge = AdmissionEffect
 
 
+class CorroborationRoute(str, Enum):
+    """What may corroborate a model's "supported" on a critical claim (RG-SEM-006)."""
+
+    #: A check or an observation counts toward the claim: a test, a proof, a
+    #: trace. Not a declaration, and not another reading.
+    DETERMINISTIC_SUPPORT = "DETERMINISTIC_SUPPORT"
+    #: Agreeing readings from verifiers the stated provenance shows independent.
+    INDEPENDENT_READINGS = "INDEPENDENT_READINGS"
+    #: A person approved or reviewed the claim.
+    HUMAN_APPROVAL = "HUMAN_APPROVAL"
+
+    @property
+    def described(self) -> str:
+        return _ROUTE_WORDS[self.value]
+
+
+@dataclass(frozen=True)
+class SemanticCorroboration:
+    """When a model's "supported" on a critical claim counts at all. Declared.
+
+    Read only under `semantic_support: COUNTS`, which is what lets a reading
+    count; without this, a reading citing what the claim rests on counts.
+    With it, a reading on a claim in `applies_to` counts only when one of the
+    `routes` holds. Unmet, the reading is recorded and not counted, and
+    RG-SEM-006 says what is missing, advisory unless `unmet` says HOLD or
+    BLOCK.
+
+    A corroborated reading is still a reading. It never establishes and never
+    closes a gap (CR-08). Verifiers reading one packet share it, so an
+    instruction written into it reaches all of them: agreement among readers
+    corroborates a reading and never stands in for a check.
+    """
+
+    routes: Tuple[CorroborationRoute, ...] = tuple(CorroborationRoute)
+    #: Readings that must agree, from this many groups under `independence`.
+    min_independent_readings: int = 2
+    applies_to: EscalationScope = EscalationScope.REQUIRED
+    independence: IndependencePolicy = READER_INDEPENDENCE_POLICY
+    unmet: Optional[AdmissionEffect] = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "routes", tuple(sorted(
+            {CorroborationRoute(r) for r in self.routes}, key=lambda r: r.value)))
+        if not self.routes:
+            raise ResolutionError("a corroboration policy names at least one route; with "
+                                  "none, no reading on a critical claim could ever count")
+        if (isinstance(self.min_independent_readings, bool)
+                or int(self.min_independent_readings) < 2):
+            raise ResolutionError(
+                "min_independent_readings is at least 2: one reading does not corroborate "
+                "itself")
+        object.__setattr__(self, "min_independent_readings",
+                           int(self.min_independent_readings))
+        object.__setattr__(self, "applies_to", EscalationScope(self.applies_to))
+        if self.unmet is not None:
+            object.__setattr__(self, "unmet", AdmissionEffect(self.unmet))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"routes": [r.value for r in self.routes],
+                "min_independent_readings": self.min_independent_readings,
+                "applies_to": self.applies_to.value,
+                "independence": self.independence.to_dict(),
+                "unmet": self.unmet.value if self.unmet else None}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "SemanticCorroboration":
+        if not isinstance(data, Mapping):
+            raise ResolutionError("`semantic_corroboration` is an object")
+        unknown = sorted(set(data) - {"routes", "min_independent_readings", "applies_to",
+                                      "independence", "unmet"})
+        if unknown:
+            raise ResolutionError(f"unknown semantic_corroboration keys: {', '.join(unknown)}")
+        try:
+            return cls(
+                routes=tuple(CorroborationRoute(str(r)) for r in (
+                    data["routes"] if data.get("routes") is not None
+                    else [r.value for r in CorroborationRoute])),
+                min_independent_readings=data.get("min_independent_readings", 2),
+                applies_to=EscalationScope(str(data.get("applies_to")
+                                               or EscalationScope.REQUIRED.value)),
+                independence=(IndependencePolicy.from_dict(data["independence"])
+                              if isinstance(data.get("independence"), Mapping)
+                              else READER_INDEPENDENCE_POLICY),
+                unmet=AdmissionEffect(str(data["unmet"])) if data.get("unmet") else None)
+        except (TypeError, ValueError) as exc:
+            if isinstance(exc, ResolutionError):
+                raise
+            raise ResolutionError(f"unusable semantic_corroboration: {exc}") from exc
+
+
 @dataclass(frozen=True)
 class ResolutionPolicy:
     """What it takes to establish a claim, and what a required claim must reach.
@@ -211,10 +305,16 @@ class ResolutionPolicy:
     #: policy asks for more verification (RG-SEM-003). Low confidence never blocks
     #: unless this says BLOCK.
     semantic_uncertainty: Optional[AdmissionEffect] = None
+    #: When a model's "supported" on a critical claim counts (RG-SEM-006). None:
+    #: under COUNTS, a reading citing what the claim rests on counts, as before.
+    semantic_corroboration: Optional[SemanticCorroboration] = None
     note: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "semantic_support", SemanticSupport(self.semantic_support))
+        if self.semantic_corroboration is not None and not isinstance(
+                self.semantic_corroboration, SemanticCorroboration):
+            raise ResolutionError("semantic_corroboration is a SemanticCorroboration")
         object.__setattr__(self, "semantic_contradiction",
                            SemanticChallenge(self.semantic_contradiction))
         object.__setattr__(self, "critical_contradiction",
@@ -289,6 +389,10 @@ class ResolutionPolicy:
                                         if self.author_independence else None),
                 "semantic_uncertainty": (self.semantic_uncertainty.value
                                          if self.semantic_uncertainty else None),
+                # Present only when declared, so a policy without one digests
+                # exactly as it did before the field existed.
+                **({"semantic_corroboration": self.semantic_corroboration.to_dict()}
+                   if self.semantic_corroboration is not None else {}),
                 "note": self.note, "schema_version": RESOLUTION_SCHEMA_VERSION}
 
     def digest(self) -> str:
@@ -342,6 +446,9 @@ class ResolutionPolicy:
                                      if data.get("author_independence") else None),
                 semantic_uncertainty=(AdmissionEffect(str(data["semantic_uncertainty"]))
                                       if data.get("semantic_uncertainty") else None),
+                semantic_corroboration=(
+                    SemanticCorroboration.from_dict(data["semantic_corroboration"])
+                    if data.get("semantic_corroboration") is not None else None),
                 note=str(data.get("note") or ""))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, ResolutionError):
@@ -393,6 +500,17 @@ def _inert_reading(item: "ResolvedItem") -> bool:
         item.role in _INERT or item.role is ItemRole.WITHHELD_STATE)
 
 
+#: Support that corroborates a reading as a check or an observation would: not
+#: a declaration, and not a judgement (another reading, a person's say-so).
+_DETERMINISTIC = frozenset({Strength.PROOF, Strength.MECHANICAL, Strength.EMPIRICAL,
+                            Strength.OBSERVATION})
+
+_ROUTE_WORDS = {
+    "DETERMINISTIC_SUPPORT": "a check or an observation that supports the claim",
+    "INDEPENDENT_READINGS": "agreeing readings from independent verifiers",
+    "HUMAN_APPROVAL": "a person's approval of the claim",
+}
+
 #: Semantic readings the rules treat as a named gap (CR-08).
 _SEMANTIC_GAPS = {
     ItemRole.SEMANTIC_CHALLENGE: "a semantic verifier read its evidence as "
@@ -441,6 +559,9 @@ class ClaimResolution:
     #: they like without moving a claim, so this, not `independence`, is the
     #: grouping that held a claim at SUPPORTED.
     establishing_independence: Optional[IndependenceAssessment] = None
+    #: Whether a "supported" reading of this claim was corroborated, when the
+    #: policy declares `semantic_corroboration` and the claim is in its scope.
+    corroboration: Optional[Mapping[str, Any]] = None
 
     @property
     def held_by_independence(self) -> bool:
@@ -472,7 +593,9 @@ class ClaimResolution:
                 "independence": self.independence.to_dict() if self.independence else None,
                 "establishing_independence": (self.establishing_independence.to_dict()
                                               if self.establishing_independence else None),
-                "dependencies": [{"claim_id": c, "status": s} for c, s in self.dependencies]}
+                "dependencies": [{"claim_id": c, "status": s} for c, s in self.dependencies],
+                **({"corroboration": dict(self.corroboration)}
+                   if self.corroboration is not None else {})}
 
 
 @dataclass(frozen=True)
@@ -749,8 +872,9 @@ class _Resolver:
         # this claim rests on, and cannot stand in for evidence.
         bearing = {i.item_id for i in items
                    if i.role in (ItemRole.SUPPORTS, ItemRole.INCONCLUSIVE)}
+        corroboration = self._corroboration(cid, items, self.semantic.get(cid, ()))
         for eid, assertion in self.semantic.get(cid, ()):
-            item, provenance = self._semantic_item(eid, assertion, bearing)
+            item, provenance = self._semantic_item(eid, assertion, bearing, corroboration)
             items.append(item)
             if item.role is ItemRole.SUPPORTS and provenance is not None:
                 # Counted under the policy, and grouped like any source; never in
@@ -779,9 +903,73 @@ class _Resolver:
             required=required, items=tuple(items), independence=independence,
             dependencies=dependencies,
             claim_status=self.graph.status(cid).value if self.graph else "",
-            establishing_independence=grade_independence)
+            establishing_independence=grade_independence, corroboration=corroboration)
 
-    def _semantic_item(self, eid: str, assertion: Any, bearing: Set[str]
+    def _stale(self, assertion: Any) -> bool:
+        stated = assertion.state_hash
+        return bool(stated and self.candidate_digest and stated != self.candidate_digest)
+
+    def _human_approval(self, item: ResolvedItem) -> bool:
+        """A counted item that is a person's approval or review of the claim: a
+        HUMAN_REVIEW check, or a record typed as an approval or a review whose
+        producer is not declared to be an agent, a tool or release-gate."""
+        if item.item_kind == "verification":
+            return item.method.upper() == VerificationMethod.HUMAN_REVIEW.value
+        record = self.evidence.get(item.item_id)
+        if record is None:
+            return False
+        producer = getattr(getattr(record, "producer", None), "kind", None)
+        return (getattr(record.evidence_type, "value", "") in ("APPROVAL", "HUMAN_REVIEW")
+                and getattr(producer, "value", "") not in ("agent", "tool", "release_gate"))
+
+    def _corroboration(self, cid: str, items: Sequence[ResolvedItem],
+                       readings: Sequence[Tuple[str, Any]]
+                       ) -> Optional[Dict[str, Any]]:
+        """Which declared route, if any, corroborates a "supported" reading of `cid`.
+
+        None when the policy declares no corroboration, the claim is outside its
+        scope, or no current reading says supported: there is nothing to judge.
+        """
+        policy = self.policy.semantic_corroboration
+        if policy is None:
+            return None
+        required = None if self.critical is None else cid in self.critical
+        if policy.applies_to is EscalationScope.REQUIRED and required is not True:
+            return None
+        if (policy.applies_to is EscalationScope.REQUIRED_OR_UNDETERMINED
+                and required is False):
+            return None
+        current = [(eid, a) for eid, a in readings
+                   if a.answered and a.verdict is not None and not self._stale(a)
+                   and not getattr(a, "injection_markers", ())]
+        supported = [(eid, a) for eid, a in current if a.verdict.value == "supported"]
+        if not supported:
+            return None
+        routes = set(policy.routes)
+        R = CorroborationRoute
+        own = [i for i in items if i.role is ItemRole.SUPPORTS and i.item_kind != "semantic"]
+        met: List[str] = []
+        if R.DETERMINISTIC_SUPPORT in routes and any(
+                i.strength in _DETERMINISTIC for i in own):
+            met.append(R.DETERMINISTIC_SUPPORT.value)
+        if R.HUMAN_APPROVAL in routes and any(self._human_approval(i) for i in own):
+            met.append(R.HUMAN_APPROVAL.value)
+        groups, disagree = 0, sorted({a.verdict.value for _, a in current} - {"supported"})
+        if R.INDEPENDENT_READINGS in routes:
+            from release_gate.assurance.semantic_panel import reading_provenance
+            readers = assess_independence([reading_provenance(eid, a) for eid, a in supported],
+                                          policy.independence)
+            groups = readers.independent_groups
+            if groups >= policy.min_independent_readings and not disagree:
+                met.append(R.INDEPENDENT_READINGS.value)
+        missing = [r.value for r in policy.routes if r.value not in met]
+        return {"met": bool(met), "routes_met": sorted(met), "routes_missing": missing,
+                "supported_readings": len(supported), "independent_reader_groups": groups,
+                "readings_disagreeing": disagree,
+                "min_independent_readings": policy.min_independent_readings}
+
+    def _semantic_item(self, eid: str, assertion: Any, bearing: Set[str],
+                       corroboration: Optional[Mapping[str, Any]] = None
                        ) -> Tuple[ResolvedItem, Optional[SourceProvenance]]:
         """One semantic assertion as an item, under the policy. Never a decision."""
         method = "SEMANTIC_VERIFIER"
@@ -827,6 +1015,15 @@ class _Resolver:
                                 reason="recorded; it cites nothing this claim rests on, "
                                        "and a reading corroborates evidence — it does "
                                        "not replace it"), None
+        if corroboration is not None and not corroboration["met"]:
+            return ResolvedItem(eid, "semantic", ItemRole.SEMANTIC_SUPPORT,
+                                Strength.JUDGEMENT, method, binding,
+                                reason=("recorded; uncorroborated on a critical claim: "
+                                        "the corroboration policy asks for "
+                                        + " or ".join(CorroborationRoute(r).described
+                                                      for r in
+                                                      corroboration["routes_missing"])
+                                        )[:240]), None
         return (ResolvedItem(eid, "semantic", ItemRole.SUPPORTS, Strength.JUDGEMENT,
                              method, binding, reason=assertion.reason[:240]),
                 self.provenance.of(eid))

@@ -1663,10 +1663,17 @@ def _as_json(value: Any) -> str:
 _METADATA_CHARS = 2000
 
 
+#: Metadata keys a provider's reply may not set: `panel` holds what the operator
+#: declared about a verifier (semantic_panel.tag_reading), and a reply claiming
+#: a lineage for itself would be a model vouching for its own independence.
+_RESERVED_METADATA = ("panel",)
+
+
 def _plain_metadata(metadata: Any) -> Dict[str, Any]:
     """Provider metadata as plain, bounded JSON, or a note saying why it is not."""
     if not isinstance(metadata, Mapping):
         return {} if metadata in (None, "") else {"unreadable": type(metadata).__name__}
+    metadata = {k: v for k, v in metadata.items() if k not in _RESERVED_METADATA}
     try:
         text = canonical_json(dict(metadata))
     except (TypeError, ValueError):

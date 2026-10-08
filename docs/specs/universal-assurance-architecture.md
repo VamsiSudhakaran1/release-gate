@@ -10141,6 +10141,122 @@ written with the cases and are not independently adjudicated. The page says
 so, and a team's own labelled cases are read beside them. Nothing here
 configures a provider or reaches a decision.
 
+### 10bt. Several semantic verifiers — independent readings, never a vote
+
+> **Implemented.**
+> - `release_gate/assurance/semantic_panel.py`: `SemanticPanel`,
+>   `PanelMember`, `plan_panel`, `tag_reading`, `reading_provenance`,
+>   `semantic_disagreements` and `ReadingDisagreement`.
+> - `resolution.SemanticCorroboration` and `CorroborationRoute`;
+>   `correlation.READER_INDEPENDENCE_POLICY`.
+> - `plan_escalation(..., asked_of=)`; `semantic_providers.panel_providers`;
+>   `assure --semantic-panel`.
+> - RG-SEM-006 and RG-SEM-007.
+> - Schema `semantic_panel` (protocol count 84).
+> - Tests: `tests/test_semantic_panel.py`.
+
+**Each verifier is its own evidence.** A panel asks several verifiers the same
+question about the same packet. Each answer is a reading record, tagged with
+the panel, the member and the lineage the operator declared. The probability
+or confidence it stated is kept as it was stated. No structure in the engine
+holds a combined figure. A test asserts that the means of the example's
+figures appear nowhere in the case.
+
+**Independence is correlation's** (§10bc), over what is stated about each
+model:
+
+- the provider, which correlates under `READER_INDEPENDENCE_POLICY`, the
+  default policy plus `provider`;
+- the model family, unscoped by provider, so one family served by two hosts
+  is one source;
+- the model id;
+- the declared lineage;
+- any session or run the reply reported.
+
+What a reading read is not a dimension: every member reads the same packet by
+design. Only a stated family or lineage places a reading. A reply's metadata
+cannot set the operator's `panel` key, so a model cannot vouch for its own
+independence.
+
+**Disagreement is classified and held** (RG-SEM-007):
+
+- `CONTRADICTION` when independent, placed verifiers read the same packet
+  about the same state and answered `supported` and `contradicted`;
+- `REQUIRES_REVIEW` for every other disagreement:
+  - decisive against insufficient;
+  - opposite answers within one correlation group, an unstable reading rather
+    than a second opinion;
+  - different packets or states;
+  - independence that cannot be told.
+
+It holds a claim the decision needs, or one whose criticality is undetermined,
+and is advisory otherwise. Stale readings (§10ba) and unanswered questions are
+not answers. The finding's observed block lists each reading with its own
+figure and correlation group. The attention engine files it on the claim, as
+UNRESOLVED_DISAGREEMENT.
+
+**Corroboration** is a declared part of the resolution policy, absent by
+default. Under `COUNTS`, a `supported` reading of a claim in `applies_to`
+counts only when a declared route holds:
+
+- `DETERMINISTIC_SUPPORT`: a counted proof, mechanical, empirical or
+  observation item;
+- `INDEPENDENT_READINGS`: at least `min_independent_readings` (2 or more)
+  supported readings from that many placed groups, and no current reading
+  answering otherwise;
+- `HUMAN_APPROVAL`: a HUMAN_REVIEW check, or an APPROVAL or HUMAN_REVIEW record
+  from a producer not declared an agent, a tool or release-gate.
+
+Unmet, the reading is recorded and not counted, and RG-SEM-006 names the
+missing routes. It is advisory, or `unmet` (HOLD or BLOCK). The claim
+resolution records which routes held. Serialised only when declared, so every
+existing policy and case digest is unchanged.
+
+**What corroboration cannot do.** A corroborated reading is a reading:
+
+- it never establishes;
+- since §10br, it closes no gap;
+- no decision becomes more permissive because readings agree. A test forges
+  five independent agreeing readings of every claim of three shipped cases
+  under a policy that corroborates everywhere.
+
+Panel members read one packet, so an instruction in it reaches all of them.
+Agreement corroborates a reading and never substitutes for a check.
+
+**Planning.** Each member is planned by `plan_escalation` with its own declared
+capabilities and cost:
+
+- the first member is planned under the escalation policy;
+- the others under it, with the panel's scope and no `always` claims;
+- `asked_of` makes a member count only its own earlier readings as already
+  asked. Re-asking one model until it agrees is still refused, and a declared
+  second opinion is not shopping.
+
+
+### 10bu. Positioning — the independent admission controller
+
+The project's primary statement is now the admission controller. Release-Gate
+combines code-level agent risk, external evaluations, runtime traces, governance
+evidence, verification results and human approvals into an auditable
+PROMOTE / HOLD / BLOCK decision, without requiring teams to replace the tools
+that produced the evidence. The case-building statement (§10au) is what the
+decision stands on.
+
+Each phrase rests on code:
+
+- the admission engine and the Admission Report (§10bl, §10bm);
+- the evidence contracts and their origin reporting (§10bj);
+- the static producer (§10ag);
+- state binding (§10ba) and the policy digests that make a decision
+  reproducible.
+
+The scanner is a capability: one evidence producer for code-level agent risk.
+Comparative claims about what other tools miss were removed, because they go
+stale as those tools change and nothing in the repository would notice.
+
+`tests/test_positioning.py` still greps the surfaces for the six refusals. The
+register for a PROMOTE is *meets the declared release policy with the following
+evidence and gaps*.
 ---
 
 ## 11. Methodology behaviour
@@ -10385,6 +10501,12 @@ fixed, rather than the expectations being lowered.
 | injection markers (§10br) | `injection_markers` on `EvidencePacket.to_dict()` and on assertions; UNKNOWN `INJECTION_SUSPECTED`; RG-SEM-005 (advisory) | assertion ids are unchanged (the markers are outside the identity). A supported reading of evidence the patterns match is now UNKNOWN |
 | counted readings (§10br) | under `semantic_support: COUNTS`, a reading is never the method a claim `requires` nor the support that names the candidate | **stricter**: a claim that reached SUPPORTED only through such a reading stays PARTIALLY_SUPPORTED. `RECORD_ONLY`, the default, is unchanged |
 | provider benchmark (§10bs) | `provider_benchmark.py`; `benchmark/semantic.py`; schema `semantic_benchmark` (protocol count 83); `calibration._calibration` is now the public `calibration_metrics` | additive; nothing in a decision path reads it |
+| positioning (§10au, §10bu) | README, POSITIONING, ARCHITECTURE, quick start, integration docs, site, package metadata, Action and MCP descriptions, `--help` | no behaviour change; the audit report's wording changed from "the agent-layer risks SAST tools miss" to "code-level agent risk" |
+| semantic corroboration (§10bt) | `ResolutionPolicy.semantic_corroboration`, default absent; `ClaimResolution.corroboration` | additive: serialised only when declared, so every existing policy and case digest is unchanged |
+| reading disagreement (§10bt) | RG-SEM-007 holds where current readings of a needed claim give different answers | **stricter**: replayed readings that disagree now hold with a named finding. A contradicted reading already held (RG-SEM-001); a supported reading beside an insufficient one now holds too |
+| panel (§10bt) | `assure --semantic-panel`; `plan_escalation(asked_of=)`; schema `semantic_panel` (protocol count 84) | additive; without a panel every run plans and asks as before |
+| reply metadata (§10bt) | a provider reply's `panel` key is not recorded in `provider_metadata` (it stays in the verbatim response) | assertion ids change only for decision replies that set that key |
+| verification attempt order | attempts with no stated time are ordered as if read in one second; a time stamped on arrival orders nothing | case digests are now independent of the second evidence was read in. Before, a read across a second boundary gave a different digest; the 117-run corpus is unchanged |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

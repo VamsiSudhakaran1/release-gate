@@ -1,8 +1,32 @@
 # 📋 Examples
 
-This folder contains example configurations and sample data for release-gate.
+release-gate is the independent admission controller for AI systems. Start with
+the admission examples: each decides PROMOTE, HOLD or BLOCK from evidence, and
+CI or the test suite re-runs it, so the published answer is the one the engine
+reaches.
+
+| Example | What it shows |
+|---|---|
+| [`demo-admission/`](demo-admission/README.md) | Six tools, one release, one decision: five tools report good news, and the release still holds or blocks for the reason it prints |
+| [`evidence/`](evidence/README.md) | One sample per external-evidence contract (eval, red team, SAST, formal verification, review, behavioural evaluation) and a release decided over all of them |
+| [`agents/`](agents/README.md) | Five agent runs in the shapes real systems emit: an OpenTelemetry trace, a promptfoo eval, a destructive migration, a research swarm, and one that promotes |
+| [`assurance/`](assurance/) | The three sample runs the browser demo uses, byte for byte |
+| [`proofagent/`](proofagent/README.md) | A labelled example mapping a ProofAgent evaluation record to attributed behavioural evidence |
+| [`demo-code-risk/`](demo-code-risk/README.md) | The pull-request gate catching a net-new code-level agent risk, one evidence source among many |
+
+```bash
+release-gate assure evidence/release.jsonl --evidence evidence \
+  --methodology general-agent-action@1.0.0 --admission
+```
 
 ---
+
+## Governance-file examples
+
+The rest of this folder serves the governance-file lane (`release-gate run`,
+`score`, `evidence-pack` over a `governance.yaml` or `release-gate.yaml`). Its
+checks establish that safeguards are declared; the admission decision reads them
+as one source of evidence.
 
 ## Files
 
@@ -57,7 +81,7 @@ Example of **invalid requests** that should fail your schema.
 ### Step 1: Initialize a Project
 
 ```bash
-python cli.py init --project my-system
+release-gate init
 ```
 
 This creates:
@@ -102,7 +126,7 @@ cp examples/example-config.yaml release-gate.yaml
 ### Step 4: Run the Gate
 
 ```bash
-python cli.py run --config release-gate.yaml --format text
+release-gate run release-gate.yaml
 ```
 
 ---
@@ -297,7 +321,7 @@ from how each agent behaves *in the loop*, not from the tasks.
 1. Copy `example-config.yaml` to `release-gate.yaml`
 2. Create your own `valid_requests.jsonl`
 3. Create your own `invalid_requests.jsonl`
-4. Run: `python cli.py run --config release-gate.yaml --format text`
+4. Run: `release-gate run release-gate.yaml`
 5. Check the output
 6. Iterate on your schema based on results
 

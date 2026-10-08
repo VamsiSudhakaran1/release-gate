@@ -4,14 +4,16 @@
 > north star, not a commitment: each frontier item ships only when a **real
 > user's pain** validates it — not on our hypothesis.
 
-> **Architecture track (design only, not shipped):** the evolution of release-gate
-> from a pre-deploy gate into a universal autonomous assurance endpoint — an
-> `AssuranceCase` root, an admission plane and a decision plane — is specified in
+> **Positioning.** release-gate is the independent admission controller for AI
+> systems: it combines code-level agent risk, external evaluations, runtime traces,
+> governance evidence, verification results and human approvals into an auditable
+> PROMOTE / HOLD / BLOCK, without replacing the tools that produced the evidence.
+> The architecture behind it (an `AssuranceCase` root, an admission plane and a
+> decision plane) shipped as `release-gate assure` and is specified in
 > [`docs/specs/universal-assurance-architecture.md`](docs/specs/universal-assurance-architecture.md),
 > [`docs/specs/assurance-data-model.md`](docs/specs/assurance-data-model.md) and
-> [`docs/specs/assurance-protocol.md`](docs/specs/assurance-protocol.md).
-> It preserves every capability described below; the frontier items here become
-> evidence producers within it rather than standalone features.
+> [`docs/specs/assurance-protocol.md`](docs/specs/assurance-protocol.md). The
+> capabilities below are evidence producers within it, not standalone products.
 
 ## The principle: armor the engine, not the wings
 
@@ -27,47 +29,45 @@ were hit — not where the returning planes have visible bullet holes.
   *incidents*, not as grep-able patterns. That a repo scans clean is often the
   survivorship bias, not proof of safety.
 
-So the durable value is **not** more static rules. It is checking the volatile,
-un-standardized, necessary-before-production risks that static analysis,
-guardrails, and evaluators structurally cannot see.
+So the durable value is **not** more static rules. It is the decision that reads
+every tool's evidence about one candidate, against one declared policy, and says
+what is established, what is not, and what nobody checked.
 
 ## Where we sit (and why we complement, not duplicate)
 
-| Layer | Job | Blind spot we cover |
-|---|---|---|
-| SAST (SonarQube, Bandit, Snyk) | code-layer vulns | can't tell a value came from an LLM |
-| Guardrails (Lakera, NeMo, Llama Guard) | filter one request at runtime | injection that succeeds *inside* the model; the action *after* the filter |
-| Evaluators (Ragas, DeepEval, Braintrust) | score an output's quality | damage happens *before/regardless of* the score |
-| **release-gate** | **verdict on readiness, from evidence, pre-deploy** | *"can this agent hurt you, and is the hurt gated?"* |
+| Tool | The question it answers |
+|---|---|
+| Linter | Is the code well written? |
+| SAST | Does the code contain known vulnerability patterns? |
+| Guardrail | Should this live interaction be allowed? |
+| Evaluator | How did the agent behave in these tests? |
+| Observability | What happened when the system ran? |
+| **release-gate** | **Does the evidence establish that this exact candidate satisfies its release policy?** |
 
-## Lifecycle positioning — the first gate, and the persistent one
+The others' results are release-gate's inputs, read and attributed, never re-run
+or re-graded. A claim about what another tool misses goes stale as that tool
+changes, so the positioning rests on the question release-gate answers, not on
+the gaps of the tools it reads.
 
-release-gate is the agent's release gate across its **whole life**, and this is the
-position no evaluator occupies:
+## Lifecycle positioning — the first decision, and the persistent one
 
-- **Day zero is uncontested.** A brand-new agent — model and agent built for the
-  first time — has *no* runtime evals, rails, or traces, because nothing has run yet.
-  The eval platforms (Braintrust, LangSmith, Ragas, DeepEval) **cannot** compete
-  here: they start at "you have traffic," and there is none. The *only* thing that
-  can render a pre-deploy verdict on a never-run agent is what release-gate does —
-  read the **code** (static agent-risk), the **declared policy** (governance), and
-  the **team's baseline** (the `governance.yaml` + lock/AIBOM + first audit saved as
-  a baseline). Not a head start — an empty field.
-- **Going live doesn't displace us — it feeds us.** Once the agent runs and
-  accumulates eval outputs, version upgrades, and traces, release-gate **ingests**
-  them as inputs to the verdict: compare each new version to the baseline, show
-  *what changed and how* (code risk moved here, the team's own eval scores moved
-  there, governance still holds or doesn't), fold in agent-score + cost, and rule
-  again — PROMOTE/HOLD/BLOCK. We never *produce* the quality evals; we **consume**
-  them. The giants' outputs become our inputs; "works with your Braintrust setup" is
-  a sales advantage, not a weakness. (Scaffolding already exists: `compare`,
-  `--baseline`/`--write-baseline`, the lock **drift** gate, the two-axis score.)
-- **The value is the evidence-backed diff, not the number.** "Score 82→74" is noise;
-  "dropped because the new version added an ungated shell sink and the team's own
-  faithfulness eval fell 6 pts" is the product. The score is the surface; the
-  what-changed-and-why is the substance — and the coverage matrix still states what
-  we did not see. When we ingest a team's evals we rule *on* them; we do not vouch
-  for their quality.
+release-gate decides admission across an agent's **whole life**:
+
+- **Before anything has run.** A new agent has no traces and little evaluation
+  history. release-gate can still decide on what exists: the code
+  (code-level agent risk), the declared policy (governance), the pinned context
+  (lock/AIBOM), and whatever pre-deploy evaluations, red teams and simulations the
+  team ran. The decision says what was not assessed, and holds where the policy
+  needs evidence that does not exist yet.
+- **Going live feeds it.** As the agent runs and accumulates evaluation results,
+  version upgrades and traces, release-gate reads them as inputs to the next
+  decision: each version against the claims it makes and the baseline, with what
+  changed and why. We never *produce* the quality evals; we **consume** them, and
+  "works with the evaluation platform you already use" is the point, not a gap.
+- **The value is the evidence-backed decision, not a number.** "Score 82→74" is
+  noise; "held because the new version added an ungated shell sink and the team's
+  own faithfulness eval failed on these cases" is the product. When we read a
+  team's evals we rule *on* them; we do not vouch for their quality.
 
 ## Anti-goals — what release-gate deliberately is NOT (category discipline)
 

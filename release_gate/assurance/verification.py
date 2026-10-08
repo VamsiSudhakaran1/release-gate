@@ -637,8 +637,12 @@ class VerificationGraph:
         #: The case's `correlation.ProvenanceIndex`, when the graph was read from
         #: a case: what an attempt relied on is then grouped by its provenance.
         self._provenance = provenance
+        # A time stamped on arrival is when this process read the attempt, not
+        # when the check ran, so it does not order anything: two reads a second
+        # apart would otherwise order, and digest, the same attempts differently.
         held.sort(key=lambda a: (a.target.key if a.target else ("", ""),
-                                 a.timestamp, a.verification_id))
+                                 "" if a.stamped_on_arrival else a.timestamp,
+                                 a.verification_id))
         self._attempts: Tuple[VerificationAttempt, ...] = tuple(held)
         # Current content digest per target, so applicability is computable.
         self._digests: Dict[Tuple[str, str], str] = dict(digests or {})

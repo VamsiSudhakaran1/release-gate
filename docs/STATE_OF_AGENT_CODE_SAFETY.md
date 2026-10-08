@@ -25,8 +25,8 @@ including, deliberately, the things we decided *not* to report.
 ### 1. Model output reaching `eval` / `exec` is real, and one is a published CVE
 
 In roughly **one in five** of the frameworks we scanned, model-generated text
-flows into `eval`, `exec`, `new Function`, or a shell — the remote-code-execution
-surface SAST can't model.
+flows into `eval`, `exec`, `new Function`, or a shell — a remote-code-execution
+surface that turns on where a value came from, not on the call alone.
 
 Most of these are **code-writing agents by design**: a Minecraft skill-writer, a
 browser-automation agent, a coding agent. The model writes code and the framework
@@ -130,8 +130,9 @@ That's the bar — a click, not a claim.
 ## What this means if you ship an agent
 
 - The risks that actually bite agents — model output reaching a sink,
-  cross-agent trust, runaway loops — are **structurally invisible** to the SAST,
-  guardrails, and evaluators you already run. They live in the seam between them.
+  cross-agent trust, runaway loops — live in the seam between the SAST,
+  guardrails and evaluators you already run, each of which answers a different
+  question. They are worth checking for explicitly.
 - The blind spot is near-universal, not exotic: uncapped output in 73% of the
   frameworks we sampled, model-code execution in ~1 in 5.
 - But a scanner is only worth putting in blocking CI if it **doesn't cry wolf.**

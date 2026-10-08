@@ -130,7 +130,7 @@ release-gate assure <file> [--evidence PATH ...]
                            [--methodology REF] [--config FILE] [--case-output FILE]
                            [--candidate FILE] [--resolution-policy FILE]
                            [--semantic [--semantic-out FILE] [--semantic-policy FILE]
-                                       [--escalation-policy FILE]]
+                                       [--escalation-policy FILE] [--semantic-panel FILE]]
                            [--semantic-assertions FILE]
                            [--calibration-out FILE [--calibration-privacy MODE]
                                                    [--calibration-declared-by WHO]]
@@ -180,6 +180,7 @@ nothing.
 | `--semantic` | Ask a model the questions the deterministic rules left open and the [escalation policy](#which-questions-are-asked--semantic-escalation) selects (see [semantic verifier](#semantic-verifier--a-model-reads-what-structure-cannot)). Needs `RG_SEMANTIC_BASE_URL` and `RG_SEMANTIC_MODEL`. Each answer is a bounded assertion, and the resolution policy decides what it does. A provider failure makes an UNKNOWN assertion, never a pass. |
 | `--semantic-out FILE` | With `--semantic`: write the escalation plan, then each evidence packet and its assertion, as JSONL. The file records what was considered and why, what was sent, to which model, and what came back. |
 | `--escalation-policy FILE` | With `--semantic`: the escalation policy as JSON (`scope`, `always`, `never`, `hybrid`, `max_questions`, `max_cost`, `modes`). It decides which questions are asked, never what an answer does. An error without `--semantic`. |
+| `--semantic-panel FILE` | With `--semantic`: several verifiers instead of the one `RG_SEMANTIC_*` configures (`release-gate.semantic-panel/1`). The first is asked what the escalation policy selects, the others the questions about claims in the panel's `scope` (critical claims by default). Every answer is recorded as its own reading. See [several verifiers](#several-verifiers--independent-readings-never-a-vote). An error without `--semantic`. |
 | `--semantic-policy FILE` | With `--semantic`: the verifier policy as JSON (`min_confidence`, `low_confidence`, packet and excerpt limits, `timeout_seconds`, and for decision models `probability_tolerance` and `unscored`). |
 | `--semantic-assertions FILE` | Replay assertions an earlier `--semantic-out` kept, without calling any model. The same file gives the same case. Cannot be combined with `--semantic`. |
 | `--calibration-out FILE` | With `--semantic` or `--semantic-assertions`: append each semantic adjudication of the run to a [calibration corpus](#calibration-data--for-a-future-decision-model), once. It changes nothing about the decision. An error without a semantic run. |
@@ -275,7 +276,7 @@ The default policy, `rg-resolution@1`:
  "independence": {"policy_id": "rg-independence", "version": "1", "min_independent_groups": 2}}
 ```
 
-`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION`, `OBSERVATION` or `UNCLASSIFIED`: a hundred clean traces show what happened, never that anything else cannot. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `author_independence` and `semantic_uncertainty` may be `null`. For `author_independence` that means [authorship](#authorship--who-checked-the-work) is reported and required of nothing. For `semantic_uncertainty` it means a model's unanswered or low-confidence reading is reported (RG-SEM-002, advisory), or held where the verifier policy asks for more verification (RG-SEM-003). It never blocks: a model's low confidence blocks a required claim only under `"semantic_uncertainty": "BLOCK"`. `surface_coverage` is within (0, 1]. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION`, `OBSERVATION` or `UNCLASSIFIED`: a hundred clean traces show what happened, never that anything else cannot. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `author_independence` and `semantic_uncertainty` may be `null`. For `author_independence` that means [authorship](#authorship--who-checked-the-work) is reported and required of nothing. For `semantic_uncertainty` it means a model's unanswered or low-confidence reading is reported (RG-SEM-002, advisory), or held where the verifier policy asks for more verification (RG-SEM-003). It never blocks: a model's low confidence blocks a required claim only under `"semantic_uncertainty": "BLOCK"`. `surface_coverage` is within (0, 1]. `semantic_corroboration` is absent by default. When declared, it says when a model's `supported` on a critical claim counts at all (see [several verifiers](#several-verifiers--independent-readings-never-a-vote)), and its `unmet` is `null`, `HOLD` or `BLOCK`. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
 
 #### Counterexamples — one outweighs any amount of support
 
@@ -472,6 +473,8 @@ deterministic analysis → unresolved question → escalation plan → evidence 
 | UNKNOWN, low confidence, verifier policy `REQUIRE_VERIFICATION` | a named gap; **RG-SEM-003 holds** | — |
 | made against another stated candidate | set aside; RG-SEM-004 (advisory) | — |
 | any reading of evidence that addresses its reader | RG-SEM-005 (advisory) names the records and patterns for a person to look at | — |
+| `supported` on a critical claim, under a declared `semantic_corroboration`, with no route holding | recorded, not counted; RG-SEM-006 names what is missing | `unmet: HOLD` or `BLOCK` |
+| readings of one claim that give different answers | **RG-SEM-007 holds** for a person, with each reading's own figure: `CONTRADICTION` or `REQUIRES_REVIEW`. Advisory for a claim the decision does not need | — |
 
 **Every failure is UNKNOWN:** no provider, provider unavailable, timeout, a reply that is not one JSON object, a field outside the reply's schema, a tool call, a verdict outside the three, a confidence outside 0..1, a citation of a record not in the packet, an answer to a different question, or confidence below `min_confidence` (default 0.75). Confidence only ever withholds; a high confidence promotes nothing.
 
@@ -533,6 +536,93 @@ The assertion records the choices, what was chosen, the probabilities and scores
 | `POST {base}/decide` | `{"protocol": "release-gate-decision/1", "model", "state", "question", "choices", "state_hash"}` | any of `{"probabilities", "scores", "choice", "reasoning", "model_version", "metadata"}` |
 
 An endpoint with no usable `/capabilities` gets a conservative default, labelled as one. `laya` and `jev` are the same provider under their own names, so an answer is recorded as theirs. Neither is imported unless you name it, and neither encodes an API release-gate cannot test against: a deployment with its own interface is reached through a small adapter that serves these two endpoints.
+
+#### Several verifiers — independent readings, never a vote
+
+For a critical claim, one model's reading is one opinion. `--semantic-panel
+FILE` asks several verifiers the same question about the same packet. Each
+answer is recorded as its own evidence: who answered, what they answered, and
+the probability or confidence they stated. Nothing is averaged, counted into a
+majority, or blended into a number.
+
+```json
+{"schema": "release-gate.semantic-panel/1", "panel_id": "critical-claims", "scope": "REQUIRED",
+ "verifiers": [
+   {"name": "local", "provider": "ollama", "base_url": "http://localhost:11434",
+    "model": "llama3.1", "model_family": "llama-3.1"},
+   {"name": "hosted", "base_url": "https://api.example.com/v1", "model": "reader-2",
+    "model_family": "reader", "api_key_env": "READER_API_KEY", "lineage": ["vendor-base-9"]}]}
+```
+
+- **A member is built as `RG_SEMANTIC_*` builds one.** It has the same keys
+  (`provider`, `base_url`, `model`, `model_family`, `dialect`, `cost_per_call`,
+  `max_input_chars`). Its key is read from the environment variable
+  `api_key_env` names: a panel file that carries a key is refused. Two members
+  that are the same provider and model are refused too, since that is one
+  verifier asked twice.
+- **Every member is planned by the same escalation rules.** The first member
+  is asked what the policy selects. The others are asked the questions about
+  claims in `scope` (`REQUIRED`, `REQUIRED_OR_UNDETERMINED`, `ALL`). Each
+  counts only its own earlier readings as already asked, and the question and
+  cost budgets apply to each member at its own declared cost.
+- **Each reading is tagged** with the panel, the member and the `lineage` the
+  file declares. That is the operator's statement, and a provider's reply
+  cannot set it: the `panel` key of reply metadata is stripped. The verbatim
+  reply is kept for audit.
+
+**Independence is read from provenance, never assumed.** Two readings share a
+source when they share any of these:
+
+- a provider, under the reader independence policy (`rg-semantic-readers`);
+- a model family, wherever it is served;
+- a model id;
+- a declared lineage;
+- a session or run the reply reported.
+
+Only a stated `model_family` or `lineage` places a reading, so a verifier that
+states neither is never counted as independent.
+
+**Disagreement goes to a person.** When the current readings of a claim give
+more than one answer, **RG-SEM-007** holds. A claim the decision does not
+need is advisory. The finding lists each reading with its own figure,
+classified as one of:
+
+| Class | When |
+|---|---|
+| `CONTRADICTION` | independent verifiers read the same evidence about the same state and reached opposite answers |
+| `REQUIRES_REVIEW` | any other disagreement: decisive against `insufficient_evidence`; one model, or two sharing provenance, answering both ways; different packets or states; or independence that cannot be told |
+
+A reading set aside as stale, or a question with no answer, disagrees with
+nothing. Verifier A at 0.91 `established` and verifier B at 0.87 `violated`
+read as exactly that, side by side. There is no 0.52.
+
+**Corroboration, when a policy declares it.** A resolution policy can say
+when a model's `supported` on a critical claim counts at all:
+
+```json
+{"semantic_support": "COUNTS",
+ "semantic_corroboration": {"routes": ["DETERMINISTIC_SUPPORT", "INDEPENDENT_READINGS", "HUMAN_APPROVAL"],
+                            "min_independent_readings": 2, "applies_to": "REQUIRED",
+                            "unmet": null}}
+```
+
+| Route | Holds when |
+|---|---|
+| `DETERMINISTIC_SUPPORT` | a check (proof, mechanical, empirical) or an observation counts toward the claim. A declaration does not |
+| `INDEPENDENT_READINGS` | at least `min_independent_readings` readings say `supported` from that many independent groups, and no current reading of the claim says otherwise |
+| `HUMAN_APPROVAL` | a `HUMAN_REVIEW` check, or an `APPROVAL` or `HUMAN_REVIEW` record whose producer is not declared to be an agent, a tool or release-gate, supports the claim |
+
+- **Met:** the reading counts as support, as `COUNTS` always let it.
+- **Unmet:** the reading is recorded and not counted, and **RG-SEM-006** names
+  what is missing. It is advisory unless `unmet` says `HOLD` or `BLOCK`.
+- **Outside `applies_to`:** a claim is read as before.
+- **Its digest.** The claim resolution records which routes held. A policy
+  without the key digests exactly as before.
+
+A corroborated reading is still a reading. It never establishes a claim and
+never closes a gap. Verifiers on a panel read one packet, so an instruction
+written into it reaches all of them: agreement among readers corroborates a
+reading, and never stands in for a check.
 
 #### Which questions are asked — semantic escalation
 

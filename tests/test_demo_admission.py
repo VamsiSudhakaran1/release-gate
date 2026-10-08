@@ -101,6 +101,31 @@ class TestTheDemoAsShipped:
         assert here["case_digest"] == there["case_digest"]
         assert here == there
 
+    def test_the_case_does_not_depend_on_the_second_it_was_read_in(self, monkeypatch):
+        """Attempts with no stated time are stamped when they are read. Read
+        across a second boundary, the stamps differ, and they once ordered the
+        attempts, so the same evidence gave a different case digest about one run
+        in fifteen. Every stamp a different second here, against a stopped clock."""
+        import itertools
+
+        from release_gate.assurance import evidence, verification
+
+        def stopped():
+            return "2026-01-01T00:00:00Z"
+
+        ticks = itertools.count()
+
+        def running():
+            n = next(ticks)
+            return f"2026-01-01T00:{n // 60 % 60:02d}:{n % 60:02d}Z"
+
+        for module in (evidence, verification):
+            monkeypatch.setattr(module, "_utc_now", stopped)
+        steady = _facts(DEMO, BLOCK)["report"]["case_digest"]
+        for module in (evidence, verification):
+            monkeypatch.setattr(module, "_utc_now", running)
+        assert _facts(DEMO, BLOCK)["report"]["case_digest"] == steady
+
     def test_the_tool_column_is_read_from_the_tools_files(self, copy):
         _edit(copy / "evidence" / "promptfoo.json",
               lambda d: d["results"]["results"].pop())

@@ -1,4 +1,4 @@
-"""release-gate: AI agent release decision engine"""
+"""release-gate: the independent admission controller for AI systems."""
 
 try:
     from importlib.metadata import version, PackageNotFoundError

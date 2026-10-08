@@ -1,16 +1,63 @@
 # release-gate
 
-**A machine produced something consequential. A human has to decide whether the
-evidence is enough to act on it. Release-gate builds the case they decide from.**
+**The independent admission controller for AI systems.**
 
-It does not generate results and it does not verify them — agents generate, tools
-verify, and release-gate assembles the argument those two leave behind, then says
-whether that argument is sound enough to put to a person.
+Release-Gate combines code-level agent risk, external evaluations, runtime
+traces, governance evidence, verification results and human approvals into an
+auditable **PROMOTE / HOLD / BLOCK** decision, without requiring teams to
+replace the tools that produced the evidence.
+
+A PROMOTE means the candidate **meets the declared release policy, with the
+evidence and the gaps the decision lists**. It is never a statement that a
+release is safe.
 
 [![PyPI version](https://badge.fury.io/py/release-gate.svg)](https://badge.fury.io/py/release-gate)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Benchmark](https://img.shields.io/badge/benchmark-93--case_corpus_%C2%B7_100%25_precision-blue.svg)](benchmark/RESULTS.md)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-scanner_%C2%B7_assurance_%C2%B7_semantic_providers-blue.svg)](benchmark/README.md)
 [![Security Policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
+
+```text
+ code-level agent risk     SARIF from your scanner, or release-gate's own ──┐
+ external evaluations      promptfoo, ProofAgent, red teams, eval harnesses ─┤
+ runtime traces            OpenTelemetry, Langfuse, Arize-Phoenix ───────────┤   one candidate state,
+ verification results      tests, provers, model checkers ───────────────────┼─▶ one claim graph,      ─▶ PROMOTE / HOLD / BLOCK
+ governance evidence       governance.yaml, the pinned AIBOM ────────────────┤   one declared policy      + the Admission Report
+ human approvals           reviews and approvals of this exact candidate ───┘
+```
+
+## Where it sits
+
+Each of these answers a different question. Release-gate reads the others'
+results as attributed evidence and answers the last one.
+
+| Tool | The question it answers |
+|---|---|
+| Linter | Is the code well written? |
+| SAST | Does the code contain known vulnerability patterns? |
+| Guardrail | Should this live interaction be allowed? |
+| Evaluator | How did the agent behave in these tests? |
+| Observability | What happened when the system ran? |
+| **Release-Gate** | **Does the evidence establish that this exact candidate satisfies its release policy?** |
+
+It does not re-run, re-grade or replace any of them. A promptfoo result stays
+promptfoo's, a scanner's finding stays the scanner's, and the Admission Report
+says which evidence release-gate produced itself and which it read from another
+tool. Its own agent-code scanner is one producer among them, not the product.
+
+## What a decision says
+
+| | Meaning |
+|---|---|
+| **PROMOTE** | the candidate meets the declared release policy with the evidence listed, and the gaps listed are ones the policy accepts |
+| **HOLD** | something a person has to settle first, named, with the evidence that would settle it |
+| **BLOCK** | the policy is violated: a failed check, a valid counterexample, a contradiction the policy blocks on |
+
+Unknown is never a pass. Every decision states what was **not** assessed, and
+evidence about another state of the release does not count for this one. The
+decision is deterministic from the declared policy and the evidence. Models can
+be asked to read evidence, and their readings never decide.
+
+## Try it
 
 ```bash
 pip install release-gate
@@ -18,17 +65,31 @@ release-gate assure your-run.jsonl        # no config file, no YAML, no account
 ```
 
 That works on an OpenTelemetry trace, a Langfuse export, a promptfoo result, or
-release-gate's own record format — the shape is detected, not declared. You get a
+release-gate's own record format: the shape is detected, not declared. You get a
 verdict, what a person has to look at, and what would resolve it.
+
+In a pipeline, the release's claims and everything the pipeline produced decide
+together:
+
+```bash
+release-gate assure release.jsonl --evidence evidence/ \
+  --methodology general-agent-action@1.0.0 --admission
+```
+
+Exit 0 PROMOTE, 10 HOLD, 1 BLOCK. [CI templates](ci-templates/admission/) cover
+GitHub Actions, GitLab, Jenkins, CircleCI and Azure Pipelines.
 
 Nothing to install first: **[drop a run into the browser demo](https://release-gate.com/assurance.html)**
 — it runs this same engine, and its three sample runs are the files in
 [`examples/assurance/`](examples/assurance/), byte for byte.
 
-Or run the five worked examples — an OpenTelemetry agent trace, a promptfoo eval,
-a destructive migration, a research swarm, and one that **promotes**:
+Or run the worked examples. In [six tools, one release, one decision](examples/demo-admission/README.md),
+five tools report good news and the decision still holds, for the reason it
+prints. Five agent runs cover an OpenTelemetry trace, a promptfoo eval, a
+destructive migration, a research swarm, and one that **promotes**:
 
 ```bash
+python examples/demo-admission/run_demo.py
 cd examples/agents && ./run-all.sh
 ```
 
@@ -36,7 +97,7 @@ cd examples/agents && ./run-all.sh
 
 ---
 
-## Three things it does that a scanner or a score cannot
+## Three things a scanner or a score cannot do
 
 ### 1. It reduces machine work to a list a person can actually read
 
@@ -154,25 +215,30 @@ One input, four yardsticks, four answers — each naming what it is missing:
 | `research-mathematics@1.1.0` | BLOCK | machine check, assumptions, independence |
 
 Organisation config (`--config`) layers your own standards on top and can only
-ever **tighten**.
+ever **tighten**. The methodology, the resolution policy (`--resolution-policy`:
+what it takes to establish a claim, what a counterexample does) and the
+organisation config together are the **declared release policy** a PROMOTE is
+measured against. Each is digested into the case.
 
 📖 **[Full walkthrough: inputs, outputs, and what to configure →](docs/DEMO.md)**
 
 ---
 
-## We also do this
+## What feeds the decision
 
-The assurance engine above is the product. These are separate lanes that feed it
-or stand on their own — each documented in its own place:
+The admission decision above is the product. These produce or carry its
+evidence, and each is documented in its own place:
 
 | | |
 |---|---|
-| **[`release-gate pr`](docs/EXTENDED_README.md#pr-gating)** | One verdict on what a pull request *introduced* — net-new agent risk only, inherited debt shown and never gated |
-| **[Agent code scanning](docs/RULES.md)** | AST + taint analysis for the agent layer: model output reaching `eval`/`pickle`, prompt injection from RAG, uncapped LLM loops. [93-case corpus](benchmark/RESULTS.md), 100% precision / 100% recall |
-| **[Trace & eval ingestion](docs/INTEGRATION_GUIDE.md)** | OpenTelemetry · Langfuse · Arize-Phoenix · promptfoo convert in place — no bespoke file, no new instrumentation |
+| **[External evidence](examples/evidence/README.md)** | Evaluations, red teams, SAST, formal verification, reviews and behavioural evaluations, each through one documented contract. Read and attributed, never re-run |
+| **[Trace & eval ingestion](docs/INTEGRATION_GUIDE.md)** | OpenTelemetry · Langfuse · Arize-Phoenix · promptfoo read in place: no bespoke file, no new instrumentation |
+| **[Agent code scanning](docs/RULES.md)** | Release-gate's own evidence producer for code-level agent risk: AST and taint analysis of model output reaching `eval`/`pickle`, retrieved text reaching prompts, uncapped LLM loops. Measured on its own [93-case corpus](benchmark/RESULTS.md) |
+| **[`release-gate pr`](docs/REFERENCE.md#commands)** | One verdict on what a pull request *introduced*: net-new agent risk only, inherited debt shown and never gated |
+| **[Semantic verification](docs/REFERENCE.md)** | Optional. A model, or a panel of independent models, reads evidence the rules cannot. Its readings are recorded and never decide; disagreement goes to a person |
 | **[Evidence packs](docs/REFERENCE.md)** | A sealed, verifiable record of what was decided and on what |
-| **[GitHub Action](action.yml)** · **[MCP server](docs/REFERENCE.md)** | `pip install 'release-gate[mcp]'` |
-| **[Assurance corpus](benchmark/ASSURANCE.md)** | 16 constructed cases for the engine itself — publishes no headline precision figure, because on most of them precision is not a meaningful thing to measure |
+| **[GitHub Action](action.yml)** · **[MCP server](docs/REFERENCE.md)** | `command: assure` in the Action; `pip install 'release-gate[mcp]'` |
+| **[Benchmarks](benchmark/README.md)** | The scanner, the assurance layer and semantic providers, measured separately. The [assurance corpus](benchmark/ASSURANCE.md) publishes no headline precision figure, because on most of its cases precision is not a meaningful thing to measure |
 
 ---
 

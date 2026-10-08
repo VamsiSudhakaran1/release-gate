@@ -4,6 +4,88 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🧭 Positioning: the independent admission controller for AI systems
+
+- **The product is the admission decision.** README, POSITIONING, ARCHITECTURE,
+  the docs index, the quick start, the integration guide, the integrations
+  README, the examples index, the homepage, the package metadata, the GitHub
+  Action description, the MCP registry entry and `release-gate --help` now lead
+  with the same statement. Release-Gate combines code-level agent risk, external
+  evaluations, runtime traces, governance evidence, verification results and
+  human approvals into an auditable PROMOTE / HOLD / BLOCK, without requiring
+  teams to replace the tools that produced the evidence.
+- **One category table everywhere:** a linter asks whether the code is well
+  written; SAST, whether it contains known vulnerability patterns; a guardrail,
+  whether a live interaction should be allowed; an evaluator, how the agent
+  behaved in tests; observability, what happened when it ran. Release-Gate asks
+  whether the evidence establishes that this exact candidate satisfies its
+  release policy.
+- **The scanner is a capability, not the product.** "The risks SAST misses" is
+  gone from the site, the MCP server, the audit report and the research pages.
+  The scanner is described by what it checks: code-level agent risk, one
+  evidence producer among the others.
+- **No universal safety claims.** A PROMOTE "meets the declared release policy
+  with the following evidence and gaps". Stale claims are corrected or removed:
+  - a "production ready" status;
+  - "prevents" for checks that establish only that a safeguard is declared;
+  - "Ship with confidence" and "Deploy with confidence";
+  - market claims that evaluators cannot work before deployment.
+- **Stale instructions fixed.** The quick start, the examples index and the
+  integration guide no longer tell readers to run a `python cli.py` that does
+  not exist. The README's pull-request gate link points at a heading that does.
+
+#### Migration notes
+
+- `release-gate --help` is grouped by role, with the admission decision first.
+  Every command is still listed, and none changed.
+- The audit report says "code-level agent risk" where it said "the agent-layer
+  risks SAST tools miss"; the MCP server's instructions changed to match. Nothing
+  that parses the report reads either string.
+
+### 🧑‍⚖️ Several semantic verifiers: independent readings, never a vote
+
+- **`assure --semantic --semantic-panel FILE`** asks several verifiers the
+  same question. The first is asked what the escalation policy selects; the
+  others, the questions about critical claims (the panel's `scope`).
+  - Each answer is recorded as its own reading, with the probability or
+    confidence it stated and the member and lineage the panel declares.
+  - Members are built as `RG_SEMANTIC_*` builds a provider, and their keys are
+    read from the variables the file names, never from the file.
+- **Independence is read from what is stated about each model, never
+  assumed.** A shared provider, model family (wherever it is served), model id,
+  declared lineage or reported session makes two readings one source. A model
+  that states no family or lineage is never counted as independent, and a
+  reply cannot vouch for its own independence.
+- **Disagreement goes to a person** (RG-SEM-007, HOLD). It is a
+  `CONTRADICTION` when independent verifiers read the same evidence and
+  answered oppositely, and `REQUIRES_REVIEW` otherwise. Verifier A at 0.91
+  "established" and verifier B at 0.87 "violated" are listed side by side.
+  Nothing averages them.
+- **Declared corroboration for critical claims.** `semantic_corroboration` in
+  the resolution policy lets a "supported" count only beside one of:
+  - a check or an observation;
+  - agreeing readings from independent verifiers;
+  - a person's approval.
+
+  Unmet, the reading is recorded, not counted, and RG-SEM-006 says what is
+  missing; `unmet` can make that HOLD or BLOCK. A corroborated reading still
+  never establishes a claim or closes a gap. Verifiers reading one packet
+  share any instruction written into it.
+
+#### Migration notes
+
+- Stricter: readings of a needed claim that give different answers now hold
+  with RG-SEM-007.
+- A policy without `semantic_corroboration` digests exactly as before.
+- A provider reply's `panel` metadata key is no longer recorded in the
+  assertion's metadata. It is still in the verbatim response.
+- The protocol registers `semantic_panel`: the count is 84.
+- Fixed: verification attempts with no stated time were ordered by the time
+  they were read, so the same evidence read across a second boundary gave a
+  different case digest (about one run in fifteen of the admission demo). They
+  are now ordered as if read in one second, which is what every run that
+  finished within one second already produced.
+
 ### 📏 A benchmark for semantic providers that punishes false certainty
 
 - **`benchmark/semantic.py`** asks semantic-verification providers fifteen

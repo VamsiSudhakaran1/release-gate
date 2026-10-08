@@ -74,7 +74,7 @@ def intro():
         "Before your agent goes live, it answers one question:"
     )
     print()
-    print("        ❓ Is this agent safe to deploy?")
+    print("        ❓ Does this agent meet its declared release policy?")
     print()
     say(
         "It checks five things: cost, cost simulation, fallback safety, "
@@ -205,7 +205,8 @@ def demo_safe():
     say(
         "The agent costs ~$132/day under normal load. Even if it runs "
         "into a 15× retry loop, the kill switch can stop it. "
-        "Budget has $368/day of headroom. Deploy with confidence."
+        "Budget has $368/day of headroom against the declared ceiling. "
+        "That is what these five checks establish, and all they establish."
     )
     pause()
 

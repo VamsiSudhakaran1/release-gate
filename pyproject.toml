@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "release-gate"
 version = "0.11.2"
-description = "Assurance for autonomous work: submit a run, get the case a person decides from - what needs a human, what would resolve it, and what was never assessed."
+description = "The independent admission controller for AI systems: an auditable PROMOTE / HOLD / BLOCK from code-level agent risk, evaluations, traces, governance evidence, verification results and human approvals, read from the tools that produced them."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
     {name = "Vamsi Sudhakaran", email = "vamsi.sudhakaran@gmail.com"}
 ]
-keywords = ["ai", "agents", "assurance", "evidence", "verification",
+keywords = ["ai", "agents", "admission", "release", "assurance", "evidence", "verification",
             "observability", "opentelemetry", "governance", "safety", "ci-cd"]
 classifiers = [
     "Programming Language :: Python :: 3",

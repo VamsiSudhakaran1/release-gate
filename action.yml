@@ -1,5 +1,5 @@
 name: "release-gate"
-description: "Gate AI-agent pull requests: one PROMOTE/HOLD/BLOCK on the agent-layer risk a change introduced — model output reaching eval, prompt-injection surfaces, uncapped LLM loops."
+description: "Admission control for AI systems: one auditable PROMOTE/HOLD/BLOCK from a release's evidence (command: assure), or on the agent-layer risk a pull request introduced (command: pr)."
 author: "Vamsi Sudhakaran"
 
 branding:

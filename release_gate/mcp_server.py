@@ -62,9 +62,10 @@ SAFETY_NOTE = (
 )
 
 SERVER_INSTRUCTIONS = (
-    "release-gate audits AI-agent code for the risks generic SAST misses: model "
-    "output reaching eval/exec/pickle, prompt-injection surfaces, uncapped LLM "
-    "calls, and hardcoded secrets. It is read-only, runs entirely locally, makes "
+    "release-gate is an admission controller for AI systems; this server exposes "
+    "its agent-code scanner, which reports code-level agent risk: model output "
+    "reaching eval/exec/pickle, prompt-injection surfaces, uncapped LLM calls, and "
+    "hardcoded secrets. It is read-only, runs entirely locally, makes "
     "no network calls, and never executes the code it analyzes. Use "
     "audit_local_repo to score a checked-out repo, or analyze_code to check a "
     "snippet. Findings include a severity, a confidence, and whether the risk is "

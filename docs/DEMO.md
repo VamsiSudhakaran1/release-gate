@@ -5,8 +5,6 @@ What to feed it, what comes back, and what — if anything — you have to confi
 Every command and output in this file was run against the repository at the
 commit that added it. Where a figure appears it was measured, not estimated.
 
-Every figure here was measured on the repository at the commit that added it.
-
 ---
 
 ## The short version

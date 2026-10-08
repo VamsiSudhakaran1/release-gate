@@ -58,6 +58,7 @@ __all__ = [
     "IndependencePolicy",
     "IndependenceStatus",
     "ProvenanceDimension",
+    "READER_INDEPENDENCE_POLICY",
     "ProvenanceIndex",
     "SourceProvenance",
     "assess_independence",
@@ -178,6 +179,17 @@ DEFAULT_INDEPENDENCE_POLICY = IndependencePolicy(
     note="every stated dimension correlates except a shared provider: two model "
          "families from one provider are not assumed to be one source. A policy "
          "that wants them to be adds `provider`.")
+
+#: For models reading one packet (semantic_panel.py): a shared provider
+#: correlates too. Two verifiers answering a question are judged on what
+#: generated each answer, so one serving organisation is one source until a
+#: policy says otherwise.
+READER_INDEPENDENCE_POLICY = IndependencePolicy(
+    policy_id="rg-semantic-readers",
+    correlate_on=tuple(ProvenanceDimension),
+    note="every dimension correlates, a shared provider included: two readings "
+         "are independent only when nothing stated about their models, providers, "
+         "sessions or declared lineage joins them")
 
 
 # ── provenance ───────────────────────────────────────────────────────────────

@@ -1,18 +1,25 @@
 # release-gate integrations
 
-**Turn what your AI platform already records into a release decision.**
+**Turn what your AI platform already records into evidence for a release decision.**
 
-release-gate does not build observability, and it does not build quality evals.
-Those layers are mature, crowded, and better served by the platforms below. What
-is still missing is the layer *after* them: the thing that reads their output and
-answers a different question.
+release-gate is an admission controller. It does not build observability,
+evaluation or guardrails: those layers are mature and better served by the
+platforms below. It reads what they produced and answers a different question.
 
-> Observability answers **"what happened?"**
-> Evaluation answers **"was the output good?"**
-> Neither answers **"should this ship?"**
+| Tool | The question it answers |
+|---|---|
+| Observability | What happened when the system ran? |
+| Evaluator | How did the agent behave in these tests? |
+| Guardrail | Should this live interaction be allowed? |
+| **release-gate** | **Does the evidence establish that this exact candidate satisfies its release policy?** |
 
-These integrations exist so the third question can be answered from evidence you
-are already collecting — no new instrumentation, no new SDK, no new dependency.
+These integrations let that question be answered from evidence you are already
+collecting: no new instrumentation, no new SDK, no new dependency. With
+`release-gate assure release.jsonl --evidence DIR`, every export in `DIR` is read
+beside the release's claims and every other tool's output, and decided together
+([integration guide](../docs/INTEGRATION_GUIDE.md)). The examples below use
+`release-gate score`, the governance-file lane, which judges one policy file
+against the same exports.
 
 | Integration | You already have | release-gate turns it into |
 |---|---|---|
@@ -77,7 +84,7 @@ back, so the gate does not trade it away.
 
 ## Three design rules every adapter follows
 
-These are what make the integrations safe to put in front of a deploy.
+These are what make the integrations fit to put in front of a deploy.
 
 **1. No new dependencies.** Adapters parse your platform's *exported JSON*. They
 never import its SDK. `pip install release-gate` remains a three-library install

@@ -191,8 +191,9 @@ _FAMILY_LIST: Tuple[RuleFamily, ...] = (
                          "what the declared policy did with it", Origin.STRUCTURAL,
                notes="a reading never establishes a claim and never decides; these "
                      "rules report a reading the policy weighed, one that could not "
-                     "be used, one made against another state, or evidence that "
-                     "carried text addressed to the model reading it"),
+                     "be used, one made against another state, evidence that "
+                     "carried text addressed to the model reading it, a reading of a "
+                     "critical claim nothing corroborates, or readings that disagree"),
     RuleFamily("RG-ADV", "adversarial review and challenge", Origin.STRUCTURAL),
     RuleFamily("RG-CAP", "capability surface — what the system could reach",
                Origin.STRUCTURAL),

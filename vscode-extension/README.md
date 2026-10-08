@@ -1,4 +1,7 @@
-# release-gate — AI Agent Readiness
+# release-gate — agent code risk
+
+release-gate is an admission controller for AI systems. This extension surfaces
+one of its evidence producers, the agent-code scanner, while you write the code.
 
 Inline AI deployment safeguard feedback as you code. The extension runs `release-gate audit` against your workspace or active file and surfaces findings directly in VS Code's Problems panel, so you catch missing governance, unbounded loops, hardcoded secrets, and unsafe tool usage before you push. A status bar item shows your live readiness score and PROMOTE / HOLD / BLOCK decision at a glance.
 

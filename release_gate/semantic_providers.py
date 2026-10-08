@@ -81,6 +81,7 @@ __all__ = [
     "discover_providers",
     "exchange_json",
     "operator_capabilities",
+    "panel_providers",
     "provider_from_env",
 ]
 
@@ -384,3 +385,57 @@ def provider_from_env(environ: Optional[Mapping[str, str]] = None, *,
                 + (f": an installed plugin offers it and failed to load ({broken})"
                    if broken else f"; available: {', '.join(chosen.names())}"))
     return chosen.create(name, **config)
+
+
+#: A panel member's keys, as the RG_SEMANTIC_* variable each stands for.
+_PANEL_ENV = (("base_url", "RG_SEMANTIC_BASE_URL"),
+              ("model_family", "RG_SEMANTIC_MODEL_FAMILY"),
+              ("dialect", "RG_SEMANTIC_DIALECT"),
+              ("cost_per_call", "RG_SEMANTIC_COST_PER_CALL"),
+              ("max_input_chars", "RG_SEMANTIC_MAX_INPUT_CHARS"))
+
+
+def panel_providers(panel: Any, environ: Optional[Mapping[str, str]] = None, *,
+                    registry: Optional[ProviderRegistry] = None,
+                    entry_points: Optional[Callable[[str], Any]] = None) -> Dict[str, Any]:
+    """Each panel member's provider, built exactly as `provider_from_env` builds one.
+
+    A member names the environment variable holding its key (`api_key_env`);
+    the key is read from the environment and never from the panel file. Two
+    members that are the same provider and model are refused: that is one
+    verifier asked twice.
+    """
+    env = os.environ if environ is None else environ
+    built: Dict[str, Any] = {}
+    seen: Dict[Tuple[str, str], str] = {}
+    for member in panel.members:
+        config = member.config
+        member_env = {"RG_SEMANTIC_PROVIDER": str(config.get("provider") or "openai_compatible"),
+                      "RG_SEMANTIC_MODEL": str(config.get("model") or "")}
+        for key, var in _PANEL_ENV:
+            if config.get(key) not in (None, ""):
+                member_env[var] = str(config[key])
+        key_env = str(config.get("api_key_env") or "").strip()
+        if key_env:
+            if not env.get(key_env):
+                raise SemanticProviderConfigError(
+                    f"panel verifier {member.name!r}: the environment variable {key_env} "
+                    "holds its key and is not set")
+            member_env["RG_SEMANTIC_API_KEY"] = env[key_env]
+        try:
+            provider = provider_from_env(member_env, registry=registry,
+                                         entry_points=entry_points)
+        except SemanticVerifierError as exc:
+            raise SemanticProviderConfigError(
+                f"panel verifier {member.name!r}: {exc}") from exc
+        identity = provider.identity()
+        who = (identity.provider, identity.model)
+        if who in seen:
+            raise SemanticProviderConfigError(
+                f"panel verifiers {seen[who]!r} and {member.name!r} are both "
+                f"{identity.provider}:{identity.model}; one verifier asked twice is not "
+                "a second opinion")
+        seen[who] = member.name
+        built[member.name] = provider
+    return built
+

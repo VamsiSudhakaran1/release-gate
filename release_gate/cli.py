@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """
-release-gate CLI - AI release decision engine
-Version: 0.8.5 — security-hardened MCP server (release-gate-mcp): audit from any
-         MCP-capable agent, stdio-only, no network egress, no code execution,
-         path-confined, injection-safe outputs. Builds on 0.8.2's trustworthy
-         findings (deserialization-sink calibration, example/cookbook excluded
-         from score, false-positive classes killed, opt-in --verify) and 0.8.1's
-         team-adoption workflow (--mode / --baseline / --pr-comment).
+release-gate CLI — the independent admission controller for AI systems.
+
+`assure` decides PROMOTE / HOLD / BLOCK for one candidate from all of its
+evidence. The other commands are evidence producers (`audit`, `pr`, `lock`,
+`authorship`, `loop-sim`, `agent-score`, `verify`), importers (`ingest`), and the
+governance-file lane (`score`, `run`, `evidence-pack`, `compare`, `impact`).
+The version is the installed package's (`release-gate --version`).
 """
 import os
 import sys
@@ -1135,10 +1135,30 @@ def run_evidence_pack_command(config_path, evals_path, traces_path, output_dir,
 def print_help():
     """Print help message"""
     print("\n" + "="*80)
-    print(f"\U0001f6aa release-gate v{_VERSION}  — AI release decision engine")
+    print(f"\U0001f6aa release-gate v{_VERSION}  — the independent admission controller for AI systems")
     print("="*80)
-    print("\nUsage:")
-    print("  release-gate audit [path|url]            # Scan a repo for AI deployment readiness")
+    print("\n  Does the evidence establish that this exact candidate satisfies its release")
+    print("  policy? PROMOTE / HOLD / BLOCK from code-level agent risk, external evaluations,")
+    print("  runtime traces, governance evidence, verification results and human approvals,")
+    print("  read from the tools that produced them. A PROMOTE says the candidate meets the")
+    print("  declared release policy with the evidence and gaps it lists, never that it is safe.")
+    print("\nThe admission decision:")
+    print("  release-gate assure <file> [--evidence PATH ...]  # Decide one candidate from all of its evidence")
+    print("      No config, no YAML. Auto-detects OTLP / Langfuse / Arize / promptfoo / SARIF /")
+    print("      audit reports / assurance envelopes; hashes the input; reconstructs execution,")
+    print("      claims and artifacts; reports contradictions, failed verification, drift and gaps.")
+    print("      Emits a Human Attention set (hardest first, deduplicated by what you'd open)")
+    print("      and the evidence that would resolve each hold. Exit 0 PROMOTE · 10 HOLD · 1 BLOCK.")
+    print("      Without --methodology it reports METHODOLOGY_REQUIRED and HOLDs: structure is")
+    print("      assessable without config, domain sufficiency is not, and it will not invent one.")
+    print("      --admission prints the Admission Report: candidate, policy, decision, critical")
+    print("      claims, what stands in the way, and every evidence source by who produced it.")
+    print("      --review prints the one-screen review: execution, critical path, coverage,")
+    print("      what a person must look at, and the verdict — every figure read from the case.")
+    print("  release-gate assure --list-methodologies  # Built-in methodologies you can pass")
+    print("  release-gate authorship --role ROLE     # Emit an authorship record (from CI with --from-ci)")
+    print("\nEvidence release-gate produces itself (each one source among the case's evidence):")
+    print("  release-gate audit [path|url]            # Agent-layer code risk: AST + taint analysis")
     print("  release-gate audit [path|url] --full          # Full breakdown (default is a concise summary)")
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
     print("  release-gate audit [path|url] --markdown      # Markdown report (CI job summaries)")
@@ -1163,11 +1183,17 @@ def print_help():
     print("      strict          = regulated: BLOCK on any missing critical safeguard or high finding")
     print("      public-advisory = outreach lens: production + confirmed-highs only, governance never gates,")
     print("                        emits an issue-ready shortlist (what you'd actually file on a stranger's repo)")
-    print("  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
-    print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
+    print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
+    print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
+    print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
+    print("  release-gate verify governance.yaml --trace otel.json  # …from OTel / Langfuse traces you already emit")
+    print("\nEvidence from the tools you already run:")
     print("  release-gate ingest <export.json>       # Convert Langfuse / promptfoo / OTel / Arize evidence -> release-gate")
     print("      Auto-detects the platform. Traces -> --traces, eval results -> --eval-results.")
     print("      Reports what it could NOT map, so a gap never passes as a clean verdict.")
+    print("      `assure --evidence` reads these exports, SARIF and verifier reports directly.")
+    print("\nGovernance-file checks (governance.yaml):")
+    print("  release-gate score <config.yaml>        # 0-100 readiness score -> PROMOTE/HOLD/BLOCK")
     print("  release-gate compare <base.json> <cand.json>  # Regression gate vs a baseline report")
     print("  release-gate evidence-pack <config.yaml> # Generate JSON + Markdown + HTML evidence")
     print("  release-gate impact <config.yaml>       # Impact Simulator — show money at risk")
@@ -1175,22 +1201,7 @@ def print_help():
     print("  release-gate init                       # Interactive wizard (use audit --emit-config instead)")
     print("  release-gate validate-and-lock          # Cryptographic sign/verify (v0.5)")
     print("  release-gate pricing-lock --models ...   # Snapshot live model pricing -> pricing.lock.json")
-    print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
-    print("  release-gate verify governance.yaml --trace otel.json  # …from OTel / Langfuse traces you already emit")
-    print("  release-gate loop-sim scenarios.yaml    # Loop Sim: PROMOTE / HOLD / BLOCK (pre-deploy)")
-    print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
-    print("  release-gate assure <file>              # Zero-config structural assurance from one file")
-    print("  release-gate authorship --role ROLE     # Emit an authorship record (from CI with --from-ci)")
-    print("      No config, no YAML. Auto-detects OTLP / Langfuse / Arize / promptfoo /")
-    print("      audit reports / assurance envelopes; hashes the input; reconstructs execution,")
-    print("      claims and artifacts; reports contradictions, failed verification, drift and gaps.")
-    print("      Emits a Human Attention set (hardest first, deduplicated by what you'd open)")
-    print("      and the evidence that would resolve each hold. Exit 0 PROMOTE · 10 HOLD · 1 BLOCK.")
-    print("      Without --methodology it reports METHODOLOGY_REQUIRED and HOLDs: structure is")
-    print("      assessable without config, domain sufficiency is not, and it will not invent one.")
-    print("      --review prints the one-screen review: execution, critical path, coverage,")
-    print("      what a person must look at, and the verdict — every figure read from the case.")
-    print("  release-gate assure --list-methodologies  # Built-in methodologies you can pass")
+    print("\n  release-gate demo                        # Live demo — two agents, 30 seconds, no config")
     print("\nOptions for 'agent-score':")
     print("  --full                                  Show the full breakdown (per-dimension bars, tiers, top issues)")
     print("                                          Default output is a concise summary; the full report lives online")
@@ -1218,6 +1229,8 @@ def print_help():
     print("  --output-dir <dir>                      Evidence pack output dir (evidence-pack)")
     print("\nExit codes:  0 = PROMOTE/PASS   10 = HOLD/WARN   1 = BLOCK/FAIL")
     print("\nExamples:")
+    print("  release-gate assure release.jsonl --evidence evidence/ \\")
+    print("      --methodology general-agent-action@1.0.0 --admission")
     print("  release-gate score governance.yaml")
     print("  release-gate score governance.yaml --evals evals.yaml --traces trace.json")
     print("  release-gate score governance.yaml --evals evals.yaml --agent py:my_pkg.agent:handle")
@@ -1891,7 +1904,9 @@ def _run_authorship_command():
 
 
 def _run_assure_command():
-    """release-gate assure — structural assurance from one file, no configuration.
+    """release-gate assure — the admission decision: PROMOTE / HOLD / BLOCK for one
+    candidate, from its claims and all of its evidence, against a declared policy.
+    Runs from one file with no configuration.
 
     Usage:
       release-gate assure <file> [--evidence PATH ...]
@@ -1901,7 +1916,8 @@ def _run_assure_command():
                                  [--config FILE] [--case-output FILE]
                                  [--semantic [--semantic-out FILE]
                                   [--semantic-policy FILE]
-                                  [--escalation-policy FILE]]
+                                  [--escalation-policy FILE]
+                                  [--semantic-panel FILE]]
                                  [--semantic-assertions FILE]
                                  [--calibration-out FILE
                                   [--calibration-privacy hash-only|redacted|full]
@@ -2091,6 +2107,7 @@ def _run_assure_command():
         out=_flag(argv, '--semantic-out'),
         policy_ref=_flag(argv, '--semantic-policy'),
         escalation_ref=_flag(argv, '--escalation-policy'),
+        panel_ref=_flag(argv, '--semantic-panel'),
         methodology=methodology, candidate=candidate,
         resolution_policy=resolution_policy, evidence=evidence, keep=kept)
 
@@ -2182,7 +2199,8 @@ def _write_calibration_corpus(path, policy, outcome, assertions, kept):
 
 
 def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
-                                   escalation_ref=None, keep=None, **assure_kwargs):
+                                   escalation_ref=None, panel_ref=None, keep=None,
+                                   **assure_kwargs):
     """`--semantic` asks; `--semantic-assertions FILE` replays. Not both.
 
     Asking is planned first: the escalation policy decides which questions go
@@ -2203,6 +2221,10 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
     if escalation_ref and not ask:
         print("Error: --escalation-policy decides which questions --semantic asks; "
               "without --semantic it would decide nothing")
+        sys.exit(1)
+    if panel_ref and not ask:
+        print("Error: --semantic-panel names the verifiers --semantic asks; without "
+              "--semantic nobody is asked")
         sys.exit(1)
     if not (replay or ask):
         return (), False
@@ -2249,11 +2271,19 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
             print(f"Error: {escalation_ref} is not a readable escalation policy: {exc}")
             sys.exit(1)
     from release_gate.semantic_providers import (SemanticProviderConfigError,
-                                                 provider_from_env)
+                                                 panel_providers, provider_from_env)
+    panel = None
     try:
-        provider = provider_from_env()
-    except (SemanticProviderConfigError, SemanticVerifierError) as exc:
-        print(f"Error: --semantic needs a provider. {exc}")
+        if panel_ref:
+            from release_gate.assurance.semantic_panel import SemanticPanel
+            panel = SemanticPanel.from_dict(
+                _json.loads(_Path(panel_ref).read_text(encoding='utf-8')))
+            providers = panel_providers(panel)
+        else:
+            provider = provider_from_env()
+    except (OSError, ValueError, SemanticProviderConfigError, SemanticVerifierError) as exc:
+        print(f"Error: --semantic needs a provider. {exc}" if not panel_ref
+              else f"Error: {panel_ref} is not a usable semantic panel: {exc}")
         sys.exit(1)
 
     from release_gate.assurance.ingest import IngestError
@@ -2267,6 +2297,9 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
     records = [r for r in first.case.records("evidence") if hasattr(r, "evidence_id")]
     graph = analysis.verification_graph
     attempts = {a.verification_id: a for a in (graph.attempts if graph else ())}
+    if panel is not None:
+        return _ask_panel(panel, providers, analysis, records, attempts, escalation,
+                          policy, out, keep)
     verifier = SemanticVerifier(provider, policy=policy)
     plan = plan_escalation(analysis.resolution, records, attempts=attempts,
                            policy=escalation, verifier_policy=policy,
@@ -2294,6 +2327,52 @@ def _semantic_assertions_from_argv(target, *, ask, replay, out, policy_ref,
         _Path(out).write_text("\n".join(lines) + ("\n" if lines else ""), encoding='utf-8')
         print(f"  semantic: packets and assertions written to {out}", file=sys.stderr)
     return tuple(assertions), False
+
+
+def _ask_panel(panel, providers, analysis, records, attempts, escalation, policy, out,
+               keep):
+    """Ask every verifier on a panel, each under its own plan; keep every answer.
+
+    The first verifier is asked what the escalation policy selects, the others
+    the questions about claims in the panel's scope. Each answer is tagged with
+    its panel member and the lineage the panel declares for it, and recorded as
+    its own reading: nothing is combined.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from release_gate.assurance.semantic_panel import plan_panel, tag_reading
+    from release_gate.assurance.semantic_verifier import SemanticVerifier, state_hash_for
+
+    verifiers = {name: SemanticVerifier(p, policy=policy) for name, p in providers.items()}
+    plans = plan_panel(analysis.resolution, records, panel,
+                       {name: (providers[name].identity(), verifiers[name].capabilities)
+                        for name in providers},
+                       attempts=attempts, policy=escalation, verifier_policy=policy,
+                       state_hash=state_hash_for(analysis))
+    members = {m.name: m for m in panel.members}
+    pairs = []
+    for name, plan in plans:
+        answers = verifiers[name].verify_all(list(plan.packets))
+        pairs += [(packet, tag_reading(answer, panel, members[name]))
+                  for packet, answer in zip(plan.packets, answers)]
+        answered = sum(1 for a in answers if a.answered)
+        print(f"  semantic panel {panel.panel_id}: {name} "
+              f"({providers[name].identity().model}) asked {len(plan.packets)} of "
+              f"{len(plan.decisions)} subject(s); {answered} answered, "
+              f"{len(answers) - answered} unknown", file=sys.stderr)
+    if keep is not None:
+        keep["packets"], keep["plan"] = [p for p, _ in pairs], plans[0][1]
+    if out:
+        lines = [_json.dumps({**plan.to_dict(), "panel_id": panel.panel_id,
+                              "panel_member": name}, sort_keys=True)
+                 for name, plan in plans]
+        for packet, assertion in pairs:
+            lines.append(_json.dumps(packet.to_dict(), sort_keys=True))
+            lines.append(_json.dumps(assertion.to_dict(), sort_keys=True))
+        _Path(out).write_text("\n".join(lines) + "\n", encoding='utf-8')
+        print(f"  semantic: packets and assertions written to {out}", file=sys.stderr)
+    return tuple(a for _, a in pairs), False
 
 
 def _run_verify_command():

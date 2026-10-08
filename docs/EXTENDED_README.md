@@ -1,10 +1,14 @@
-# release-gate v0.1.0
+# release-gate: the governance-file lane
 
-**Deployment Readiness Gate for Autonomous AI Agents**
+> **Scope of this document.** It describes the governance-file checks
+> (`release-gate run`, `score`, `evidence-pack` over `governance.yaml`) and the pull
+> request gate (`release-gate pr`), first written for v0.1.0. They remain supported.
+> They are not the product's centre: release-gate is the independent admission
+> controller for AI systems, deciding PROMOTE / HOLD / BLOCK from all of a release's
+> evidence ([README](../README.md), [QUICKSTART](QUICKSTART.md)). The governance
+> checks here are one source of that evidence.
 
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Python](https://img.shields.io/badge/python-3.7+-blue)
-![Status](https://img.shields.io/badge/status-production%20ready-brightgreen)
 
 ---
 
@@ -33,13 +37,13 @@
 
 **release-gate** is a command-line tool that enforces operational governance for autonomous AI agents before they reach production.
 
-It prevents the 9 most critical failure modes documented in [Agents of Chaos](https://arxiv.org/abs/2602.20021), a recent research paper analyzing real-world AI agent failures.
+Its checks ask whether safeguards are declared against failure modes documented in [Agents of Chaos](https://arxiv.org/abs/2602.20021), a research paper analysing real-world AI agent failures. A declared safeguard is not a demonstrated one: the checks establish that it is stated, and say so.
 
 ### Core Principle
 
 > **Traditional QA tests: "Does it work?"**
 > 
-> **release-gate tests: "Is it safe to run unsupervised?"**
+> **The governance checks ask: "Are the safeguards for running it unsupervised declared?"**
 
 These are fundamentally different questions that require different answers.
 
@@ -163,7 +167,7 @@ This is why SonarQube works for code quality and Terraform policy checks work fo
 - ✅ All invalid requests fail the schema
 - ✅ Schema has no syntax errors
 
-**Prevents:**
+**Guards it checks are declared against:**
 - Non-owner access
 - Resource exhaustion
 - Unexpected request behavior
@@ -200,7 +204,7 @@ input_contract:
 - ✅ Team ownership is assigned
 - ✅ Incident runbook is available
 
-**Prevents:**
+**Guards it checks are declared against:**
 - Unmanaged deployments
 - Unclear responsibility
 - No recovery path
@@ -558,12 +562,12 @@ schema:
 {"prompt":"Test","duration":120}
 ```
 
-#### What It Prevents
+#### What It Checks For
 
-- ✅ Prevents non-owner commands (schema enforces ownership checks)
-- ✅ Prevents resource exhaustion (duration limits)
-- ✅ Prevents unexpected behavior (schema validation)
-- ✅ Prevents invalid input handling (contract testing)
+- ✅ A declared guard against non-owner commands (schema enforces ownership checks)
+- ✅ A declared guard against resource exhaustion (duration limits)
+- ✅ A declared guard against unexpected behavior (schema validation)
+- ✅ A declared guard against invalid input handling (contract testing)
 
 #### Pass Criteria
 
@@ -621,12 +625,12 @@ ownership:
 runbook_url: https://wiki.internal/runbooks/my-system
 ```
 
-#### What It Prevents
+#### What It Checks For
 
-- ✅ Prevents unmanaged deployments (ownership required)
-- ✅ Prevents orphaned systems (clear responsibility)
-- ✅ Prevents unrecoverable failures (fallback required)
-- ✅ Prevents uncontrolled deployments (kill switch required)
+- ✅ A declared guard against unmanaged deployments (ownership required)
+- ✅ A declared guard against orphaned systems (clear responsibility)
+- ✅ A declared guard against unrecoverable failures (fallback required)
+- ✅ A declared guard against uncontrolled deployments (kill switch required)
 
 #### Pass Criteria
 
@@ -1000,7 +1004,7 @@ spec:
 
 **Scenario:** AI system in regulated industry (finance, healthcare)
 
-**Problem:** Need to prove agents are safe before use
+**Problem:** Need a record of which safeguards an agent declared before use
 
 **Solution:**
 - release-gate generates compliance reports
@@ -1037,7 +1041,7 @@ spec:
 **Problem:** Agents cause outages due to missing safeguards
 
 **Solution:**
-- Block deployments without safety mechanisms
+- Stop deployments whose safety mechanisms are undeclared
 - Enforce kill switches
 - Require incident runbooks
 - Validate request contracts
@@ -1071,7 +1075,7 @@ spec:
 ### 1. Governance is Different from Testing
 
 **Testing asks:** Does it work?
-**Governance asks:** Is it safe to run?
+**Governance asks:** Are its safeguards declared?
 
 These require different tools. release-gate is a governance tool, not a testing tool.
 
@@ -1085,17 +1089,17 @@ This is why:
 - Terraform policy checks work (automated infrastructure governance)
 - Release gates work (automated deployment governance)
 
-### 3. Prevent Problems Rather Than Debug
+### 3. Stop Before Deploying Rather Than Debug After
 
-It's easier to prevent bad deployments than to fix production incidents.
-
-release-gate prevents bad deployments.
+It's easier to stop a deployment whose safeguards are undeclared than to fix a
+production incident. The governance checks stop those deployments; what a
+declared safeguard does at runtime is outside what they can see.
 
 ### 4. Simplicity Over Completeness
 
 We implement the highest-impact checks first:
-- INPUT_CONTRACT (prevents non-owner access, resource exhaustion)
-- FALLBACK_DECLARED (prevents unmanaged deployments)
+- INPUT_CONTRACT (a tested request contract against non-owner access and resource exhaustion)
+- FALLBACK_DECLARED (a declared owner, kill switch, fallback and runbook)
 
 Future versions will add more checks.
 
@@ -1322,14 +1326,12 @@ python cli.py run --config teams/video-gen/release-gate.yaml
 - Jenkins
 - Kubernetes CronJobs
 
-### Q: Is release-gate production-ready?
+### Q: Is release-gate ready for production use?
 
-**A:** Yes! It's:
-- ✅ Thoroughly tested
-- ✅ Used in production
-- ✅ MIT licensed
-- ✅ Well-documented
-- ✅ Actively maintained
+**A:** It is tested, MIT-licensed and maintained, and every decision states what it
+checked and what it did not. Whether it fits your production process is your
+judgement, and the governance checks cannot make it for you: they establish that
+safeguards are declared, not that they work.
 
 ### Q: Can I modify the checks?
 
@@ -1566,10 +1568,10 @@ Include:
 
 ---
 
-**release-gate: Making autonomous agents deterministically reliable.** 🚀
+**release-gate: a recorded, reproducible decision, stating what it checked and what it did not.**
 
 ---
 
 Last Updated: March 16, 2026
 Version: 0.1.0
-Status: Production Ready ✅
+Status: supported (the governance-file lane)

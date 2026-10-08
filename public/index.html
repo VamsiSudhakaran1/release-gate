@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>release-gate — the case behind what the machine did</title>
-  <meta name="description" content="A machine produced something consequential and a person has to decide whether the evidence is enough. release-gate assembles the case from the run — a bounded list of what needs a human, what would resolve it, and what was never assessed — and returns one PROMOTE / HOLD / BLOCK.">
+  <title>release-gate — the independent admission controller for AI systems</title>
+  <meta name="description" content="release-gate is the independent admission controller for AI systems. It combines code-level agent risk, external evaluations, runtime traces, governance evidence, verification results and human approvals into an auditable PROMOTE / HOLD / BLOCK, without replacing the tools that produced the evidence.">
   <link rel="canonical" href="https://release-gate.com/">
   <meta name="theme-color" content="#08080A">
   <script>
@@ -20,10 +20,10 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://release-gate.com/">
   <meta property="og:site_name" content="release-gate">
-  <meta property="og:title" content="release-gate — know what the machine actually did">
-  <meta property="og:description" content="Agents generate. Tools verify. release-gate assembles the argument those two leave behind and says whether it is sound enough to put to a person — with the coverage it was reached under.">
+  <meta property="og:title" content="release-gate — the independent admission controller for AI systems">
+  <meta property="og:description" content="Does the evidence establish that this exact candidate satisfies its release policy? One auditable PROMOTE / HOLD / BLOCK from the evidence your tools already produce, with the gaps it was reached under.">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="release-gate — know what the machine actually did">
+  <meta name="twitter:title" content="release-gate — the independent admission controller for AI systems">
   <meta name="twitter:description" content="One PROMOTE / HOLD / BLOCK on a machine's work — with a bounded list of what needs a human, what would close it, and what was never checked.">
   <script type="application/ld+json">
   {
@@ -1783,7 +1783,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
         <div class="nav-dropdown-panel" role="menu">
           <a href="/assurance.html" role="menuitem"><span class="ndp-t">Assurance</span><span class="ndp-d">Submit a run — get the case a person decides from</span></a>
           <a href="#scan" role="menuitem"><span class="ndp-t">Repo audit</span><span class="ndp-d">Scan an agent repo in 10 seconds</span></a>
-          <a href="#agent-scan" role="menuitem"><span class="ndp-t">Agent Scan</span><span class="ndp-d">Find the agent-layer risks SAST misses</span></a>
+          <a href="#agent-scan" role="menuitem"><span class="ndp-t">Agent Scan</span><span class="ndp-d">Code-level agent risk, as one evidence source</span></a>
           <a href="#pr-gate" role="menuitem"><span class="ndp-t">Review Gate</span><span class="ndp-d">Gate AI-generated PRs on what they introduced</span></a>
           <a href="/demo.html" role="menuitem"><span class="ndp-t">Live demo</span><span class="ndp-d">Watch it block a bad AI change — reproducible</span></a>
           <a href="#loop-section" role="menuitem"><span class="ndp-t">Loop Verify</span><span class="ndp-d">The verify step for agent loops</span></a>
@@ -1814,13 +1814,14 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
 <section class="hero" id="main">
   <div class="container hero-inner" id="hero-inner">
    <div class="hero-left">
-    <span class="hero-eyebrow"><span class="dot"></span>Assurance for autonomous work</span>
-    <h1>Know what the machine actually did.</h1>
+    <span class="hero-eyebrow"><span class="dot"></span>The independent admission controller for AI systems</span>
+    <h1>Admit what the evidence establishes.</h1>
     <p class="hero-sub">
-      Agents generate. Tools verify. release-gate assembles the argument those two
-      leave behind and says whether it is sound enough to put to a person — one
-      <strong>PROMOTE · HOLD · BLOCK</strong>, carrying the coverage it was reached
-      under and a list of what still needs a human.
+      release-gate combines code-level agent risk, external evaluations, runtime
+      traces, governance evidence, verification results and human approvals into an
+      auditable <strong>PROMOTE · HOLD · BLOCK</strong>, without replacing the tools
+      that produced the evidence. A PROMOTE says the candidate meets the declared
+      release policy, with the evidence and the gaps it lists.
     </p>
 
     <ul class="hero-points">
@@ -2104,7 +2105,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
   <div class="container">
     <div class="section-header">
       <h2 class="section-title">The governance safeguards</h2>
-      <p class="section-subtitle">One of two axes. Every safeguard maps to a real production failure &mdash; no checkbox theater. The other axis, <strong>Agent Code Safety</strong>, scans the code itself for the agent-layer risks SAST misses (below).</p>
+      <p class="section-subtitle">One of two axes. Every safeguard maps to a real production failure &mdash; no checkbox theater. The other axis, <strong>Agent Code Safety</strong>, scans the code itself for code-level agent risk (below). Both are evidence for the admission decision, not the decision.</p>
     </div>
 
     <div class="checks-grid">
@@ -2160,7 +2161,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
   <div class="container">
     <div class="section-header">
       <p class="section-eyebrow">Agent Safety Scan</p>
-      <h2 class="section-title">Scan your agent code for the risks SAST tools miss</h2>
+      <h2 class="section-title">Scan your agent code: code-level agent risk as evidence</h2>
       <p class="section-subtitle">Point it at any GitHub repo running an LLM agent. It finds the failure modes that only exist once a model is in the loop &mdash; prompt-injection surfaces, exec sinks fed by model output, LLM calls with no token ceiling, hardcoded keys, and sensitive context that reaches the model <strong>unmasked on one path</strong> while an equivalent path redacts it. SonarQube won&rsquo;t flag these; this is the layer on top.</p>
     </div>
 
@@ -2344,7 +2345,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
         <div class="persona-role">Product & Platform Teams</div>
         <div class="persona-title">LLM-powered apps &amp; copilots</div>
         <div class="persona-desc">Your app calls GPT-4 or Claude on every user request. One bad prompt, one rate-limit gap, or one missing kill switch and you're dealing with a public incident. release-gate makes the checklist automatic.</div>
-        <div class="persona-benefit">Ship with confidence, not crossed fingers</div>
+        <div class="persona-benefit">A decision you can audit, not crossed fingers</div>
       </div>
 
       <div class="persona-card">
@@ -2367,7 +2368,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
         <div class="persona-icon">⚙️</div>
         <div class="persona-role">Infrastructure &amp; MLOps</div>
         <div class="persona-title">Self-hosted &amp; open-weight models</div>
-        <div class="persona-desc">You're running Llama, Mistral, or a fine-tuned model on your own infra. No managed guardrails, no built-in cost control. release-gate checks that you've declared your own — because nobody else will.</div>
+        <div class="persona-desc">You're running Llama, Mistral, or a fine-tuned model on your own infra. No managed guardrails, no built-in cost control. release-gate checks that you've declared your own, and holds the release until you have.</div>
         <div class="persona-benefit">Governance that works without a cloud provider</div>
       </div>
 
@@ -3991,7 +3992,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
       if (cs && cs.applicable && cs.score != null) {
         ax += _axisCard('Agent Code Safety', cs.score, cs.decision,
           (cs.high||0)+' high · '+(cs.medium||0)+' med · '+(cs.low||0)+' low',
-          'Injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SAST misses.',
+          'Injection surfaces, exec sinks &amp; uncapped LLM calls — code-level agent risk.',
           _decClass(cs.decision));
       }
       if (gov) {
@@ -4949,7 +4950,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
       if (cs && cs.applicable && cs.score !== null && cs.score !== undefined) {
         var risk = (cs.high || 0) + ' high · ' + (cs.medium || 0) + ' med · ' + (cs.low || 0) + ' low';
         cards += _axisCard('Agent Code Safety', cs.score, cs.decision, risk,
-          'Injection surfaces, exec sinks &amp; uncapped LLM calls — the agent-layer risks SAST tools miss.', _decClass(cs.decision));
+          'Injection surfaces, exec sinks &amp; uncapped LLM calls — code-level agent risk.', _decClass(cs.decision));
       } else if (cs && !cs.applicable) {
         cards += _axisCard('Agent Code Safety', '—', 'N/A', 'no agent framework detected',
           'No LLM agent code found to analyze.', 'hold');

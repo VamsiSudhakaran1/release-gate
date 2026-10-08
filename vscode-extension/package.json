@@ -1,6 +1,6 @@
 {
   "name": "release-gate",
-  "displayName": "release-gate — AI Agent Readiness",
+  "displayName": "release-gate — agent code risk",
   "description": "Inline AI deployment safeguard feedback as you code. Flags missing governance, unbounded loops, hardcoded secrets, and more before you push.",
   "version": "0.1.0",
   "publisher": "release-gate",

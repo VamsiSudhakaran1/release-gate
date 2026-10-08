@@ -579,8 +579,8 @@ def compute_code_safety(findings: Optional[List[Dict[str, Any]]],
 
     The half of the audit that does NOT depend on adopting a governance.yaml: it
     reflects real agent-layer risk in the source (prompt-injection surfaces,
-    exec sinks fed by model output, uncapped LLM calls, hardcoded secrets) — the
-    risks generic SAST/SonarQube don't model. It moves per-repo, and per finding
+    exec sinks fed by model output, uncapped LLM calls, hardcoded secrets), read
+    as agent-specific flows rather than generic patterns. It moves per-repo, and per finding
     *pattern* with diminishing returns, so the number is a believable gradient.
     """
     findings = findings or []
@@ -2369,7 +2369,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
         out.append(f"### {ce} Agent Code Safety: **{cs['score']} / 100** — {cs['decision']}")
         out.append(f"_{cs.get('high',0)} high · {cs.get('medium',0)} medium · "
                    f"{cs.get('low',0)} low — injection surfaces, exec sinks & uncapped LLM calls "
-                   f"(the agent-layer risks SAST tools miss)._")
+                   f"(code-level agent risk)._")
         factors = cs.get("factors") or []
         if factors:
             driving = "; ".join(f"{f['title']} ×{f['count']}" for f in factors[:3])
@@ -2585,7 +2585,7 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
                                 for f in factors[:3])
             print(f"     {_col('Driving the score: ' + driving, _MUTED)}")
         else:
-            print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — the agent-layer SAST misses', _MUTED)}")
+            print(f"     {_col('Injection surfaces, exec sinks & uncapped LLM calls — code-level agent risk', _MUTED)}")
     elif cs.get("reason") == "language_not_static":
         lang = cs.get("language", "this language")
         print(f"  {_col('Agent Code Safety', _BOLD)}  {_col('N/A', _YELLOW, _BOLD)}   "

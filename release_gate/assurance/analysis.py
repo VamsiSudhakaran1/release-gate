@@ -1745,6 +1745,87 @@ def _analyse_injection(records: Sequence[Any]) -> List[Finding]:
                   "support_refused": refused})]
 
 
+def _analyse_readers(report: Optional[Any], records: Sequence[Any]) -> List[Finding]:
+    """RG-SEM-006/007: whether readings of a critical claim corroborate, and where
+    readings disagree.
+
+    Each reading is its own evidence and stays its own: what a verifier answered
+    and the probability or confidence it stated are listed beside the others',
+    and nothing combines them. A disagreement is never averaged into an answer;
+    it is a CONTRADICTION (independent verifiers, the same evidence, opposite
+    answers) or REQUIRES_REVIEW (any other), and either way a person settles it.
+    """
+    if report is None or not report.resolutions:
+        return []
+    from release_gate.assurance.correlation import READER_INDEPENDENCE_POLICY
+    from release_gate.assurance.semantic_panel import semantic_disagreements
+    findings: List[Finding] = []
+    corroboration = report.policy.semantic_corroboration
+    unmet = [r for r in report.resolutions
+             if r.corroboration is not None and not r.corroboration["met"]]
+    if unmet and corroboration is not None:
+        findings.append(Finding(
+            rule_id="RG-SEM-006", domain=AnalysisDomain.VERIFICATION,
+            effect=(RequirementEffect(corroboration.unmet.value)
+                    if corroboration.unmet is not None else RequirementEffect.ADVISORY),
+            summary=(f"{len(unmet)} critical claim(s) have a supported reading that "
+                     "nothing corroborates"),
+            detail=("The corroboration policy lets a model's \"supported\" count on a "
+                    "critical claim only beside "
+                    + " or ".join(r.described for r in corroboration.routes)
+                    + ". These readings are recorded and count toward nothing. "
+                    + "; ".join(
+                        f"{r.claim_id}: {r.corroboration['supported_readings']} supported "
+                        f"reading(s) from {r.corroboration['independent_reader_groups']} "
+                        "independent verifier group(s)"
+                        + (f", and readings answering "
+                           f"{', '.join(r.corroboration['readings_disagreeing'])}"
+                           if r.corroboration["readings_disagreeing"] else "")
+                        for r in unmet[:4])
+                    + (f" (+{len(unmet) - 4} more)" if len(unmet) > 4 else "")),
+            remedy="supply a check or an observation of the claim, a person's approval of "
+                   "it, or readings from verifiers whose stated provenance is independent",
+            refs=tuple(r.claim_id for r in unmet)[:12],
+            observed={"claims": [{"claim_id": r.claim_id, **dict(r.corroboration)}
+                                 for r in unmet[:12]],
+                      "policy": corroboration.to_dict()}))
+    disagreements = semantic_disagreements(
+        report, records, independence=(corroboration.independence if corroboration
+                                       else READER_INDEPENDENCE_POLICY))
+    if disagreements:
+        contradictions = sum(1 for d in disagreements
+                             if d.classification.value == "CONTRADICTION")
+
+        def stated(row: Mapping[str, Any]) -> str:
+            value = row.get("confidence")
+            return (f"{row['verifier']}: {row['verdict']} at {value:g}"
+                    if isinstance(value, (int, float))
+                    else f"{row['verifier']}: {row['verdict']}, no stated confidence")
+
+        findings.append(Finding(
+            rule_id="RG-SEM-007", domain=AnalysisDomain.VERIFICATION,
+            effect=(RequirementEffect.HOLD
+                    if any(d.required is not False for d in disagreements)
+                    else RequirementEffect.ADVISORY),
+            summary=(f"semantic readings disagree on {len(disagreements)} claim(s): "
+                     f"{contradictions} contradiction(s), "
+                     f"{len(disagreements) - contradictions} requiring review"),
+            detail=("Readings are never averaged or put to a vote: each answer stands as "
+                    "its verifier gave it, and a person settles which holds. "
+                    + "; ".join(f"{d.claim_id} {d.classification.value} ({d.basis}): "
+                                + " / ".join(stated(r) for r in d.readings[:4])
+                                for d in disagreements[:3])
+                    + (f" (+{len(disagreements) - 3} more)"
+                       if len(disagreements) > 3 else "")),
+            remedy="read the cited records and settle each claim with a check or a "
+                   "recorded resolution; the readings stay on the record beside each other",
+            refs=tuple(d.claim_id for d in disagreements)[:12],
+            observed={"disagreements": [d.to_dict() for d in disagreements[:12]],
+                      "contradictions": contradictions,
+                      "requires_review": len(disagreements) - contradictions}))
+    return findings
+
+
 def _analyse_authorship(assessment: Optional[Any], policy: Any) -> List[Finding]:
     """RG-INDEP-007/008: whether anyone but the author checked the work.
 
@@ -2482,6 +2563,7 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
     findings.extend(_analyse_claim_coverage(claim_coverage, policy))
     findings.extend(_analyse_semantic(resolution))
     findings.extend(_analyse_injection(resolved_records))
+    findings.extend(_analyse_readers(resolution, resolved_records))
     from release_gate.assurance.authorship import assess_authorship
     authorship = assess_authorship(
         claim_graph, resolution,

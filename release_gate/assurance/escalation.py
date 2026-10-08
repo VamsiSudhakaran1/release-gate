@@ -463,12 +463,16 @@ def plan_escalation(resolution: Any, records: Iterable[Any], *,
                     policy: EscalationPolicy = DEFAULT_ESCALATION_POLICY,
                     verifier_policy: SemanticVerifierPolicy = DEFAULT_SEMANTIC_VERIFIER_POLICY,
                     capabilities: Optional[ProviderCapabilities] = None,
-                    state_hash: str = "") -> EscalationPlan:
+                    state_hash: str = "",
+                    asked_of: Optional[Tuple[str, str]] = None) -> EscalationPlan:
     """Decide, for every claim and every static finding, whether a question is asked.
 
     `resolution` is the deterministic claim resolution (`analysis.resolution`);
     `records` the case's evidence; `capabilities` what the provider declared, or
-    None when no provider is available. Pure: nothing here asks anything.
+    None when no provider is available. `asked_of` is the (provider, model) a
+    panel member is: only its own earlier readings count as already asked
+    (semantic_panel.py). Without it, any reading of the question does. Pure:
+    nothing here asks anything.
     """
     evidence = [r for r in records if getattr(r, "evidence_id", None)]
     by_id = {r.evidence_id: r for r in evidence}
@@ -476,8 +480,9 @@ def plan_escalation(resolution: Any, records: Iterable[Any], *,
                          key=lambda r: r.claim_id)
     by_claim = {r.claim_id: r for r in resolutions}
     prior = {(a.question_id, a.packet_hash) for _, a in assertions_from_records(evidence)
-             if a.status is AssertionStatus.ANSWERED
-             or a.unknown_reason in _ANSWERED_UNKNOWNS}
+             if (a.status is AssertionStatus.ANSWERED
+                 or a.unknown_reason in _ANSWERED_UNKNOWNS)
+             and (asked_of is None or (a.provider, a.model) == tuple(asked_of))}
 
     decisions: List[EscalationDecision] = []
     candidates: List[Tuple[Tuple[Any, ...], EscalationDecision]] = []
