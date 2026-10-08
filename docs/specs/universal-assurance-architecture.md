@@ -9639,6 +9639,121 @@ WORK section when somebody stated authorship. There is no independence score.
 
 ---
 
+### 10bl. The admission decision — PROMOTE, HOLD or BLOCK from claims and declared policy (`evaluate_admission`)
+
+> **Implemented.** `release_gate/assurance/admission.py` — `AdmissionDimension`,
+> `ConditionEffect`, `AdmissionCondition`, `ClaimStanding`, `DimensionStanding`,
+> `AdmissionEvaluation`, `evaluate_admission()`, `dimension_of_rule()`; the verdict's
+> own rules RG-ZC-001..005 now live here. `zero_config.decide()` returns the
+> evaluation's verdict; `AssuranceOutcome.admission`. Approvals:
+> `methodology.ApprovalRequired`, `ApprovalNotRefused`, `approval_readings()`;
+> `OrganisationConfig.required_approvals`. `ResolutionPolicy.semantic_uncertainty`.
+> Schema `admission` (protocol count 81). Tests: `tests/test_admission.py`.
+
+**What existed.** `decide()` composed structural findings, the methodology
+assessment, open disagreements on critical claims and accepted exceptions into a
+verdict, in a fixed order, with every rule it fired named. It already read only
+the case: no scanner score, level or count entered it. What it did not have was a
+shape that says, for each reason, which question of admission it answers, which
+claims it concerns and whose policy declared it.
+
+**One shape for every reason.** `evaluate_admission` turns each of those inputs
+into an `AdmissionCondition`. Each condition carries:
+
+- an effect: BLOCK, HOLD, ADVISORY, ACCEPTED, SATISFIED or NOT_APPLICABLE;
+- one of fourteen dimensions:
+  - `critical_claims`, `claim_status`, `coverage`;
+  - `counterexamples`, `contradictions`, `assumptions`;
+  - `state_binding`, `independence`, `required_evidence`;
+  - `approvals`, `exceptions`, `unknowns`;
+  - `failed_branches`, `action_scope`;
+- the claims it concerns, including those a counterexample or disagreement targets;
+- the policy or ruleset that declared it.
+
+Every analyser rule has a dimension, and the suite checks it.
+
+**The worst condition decides.** BLOCK when a declared blocking condition is
+established. HOLD when anything holds. PROMOTE only when a methodology was
+assessed, at least one of its requirements applied, and nothing holds or blocks.
+The verdict the case records is composed from the conditions in the order
+`decide()` always used, so over the 117-run verdict corpus every decision, fired
+rule and reason is byte-identical. The evaluation asserts that the composed
+verdict and the worst condition agree, so the two cannot drift.
+
+One change is stricter than before. A methodology none of whose requirements
+applies used to PROMOTE a structurally clean case ("every requirement is met"
+over none). It now holds: it stated nothing the case meets. No case in the corpus
+reached that path.
+
+**Approvals.** A mandatory approval is a declared requirement. `required_approvals`
+in an organisation configuration generates two requirements:
+
+- `org.approvals` (`approval_required`, HOLD): every role has approved this release.
+- `org.approvals.refused` (`approval_not_refused`, BLOCK): no role refused this release.
+
+Methodologies can use the predicates directly. `approval_readings` reads each
+human-review or approval record's reviewer, role, decision and expiry, and binds
+it to the candidate. An approval counts only if it approves, has not lapsed and
+binds EXACT or PARTIAL. A refusal blocks only when it is of the candidate. A
+refusal of another state holds, because the approval it did not give is still
+missing. Without any candidate, whether an approval is of this release cannot be
+established, so it is not assessed. The review contract now carries the
+document's `evaluated_at` on each review, so expiry is checkable from the record.
+
+**A model's uncertainty.** An unanswered or low-confidence semantic reading is
+advisory (RG-SEM-002), or holds where the verifier policy asks for more
+verification (RG-SEM-003). `ResolutionPolicy.semantic_uncertainty: HOLD | BLOCK`
+gives both that effect for required claims. Nothing else lets low confidence
+block.
+
+**Scores.** None is an input. A score in a record's content stays content, the
+assurance level is computed after the decision and only reported, and
+`AdmissionEvaluation.to_dict()` states `decided_by_score: false`.
+
+### 10bm. The Admission Report — the admission artifact (`build_admission_report`)
+
+> **Implemented.** `release_gate/assurance/admission_report.py` — `AdmissionReport`,
+> `EvidenceSource`, `build_admission_report()`, `render_admission_report()`;
+> `assure --admission` (text, or JSON with `--json`) and `--admission-out FILE`.
+> Schema `admission_report`. Tests: `tests/test_admission.py`.
+
+**What existed.** Three readings of one outcome: the case report (`render_text`),
+the one-screen review (`--review`) and the approval packet. Each was organised
+around the case, not around the question "may this exact release be admitted,
+and on what basis".
+
+**The report, in the order a person reads it.**
+
+1. **Header.** Candidate components and who stated them, the state hash, the
+   methodology and resolution policy (by reference and digest), and the decision
+   with its basis.
+2. **Critical claims**, grouped by resolution status. Established, partially
+   supported, contradicted, unknown and not assessed are always shown, even
+   empty. A claim whose criticality could not be determined is listed, and said so.
+3. **What stands in the way.** Blocking reasons (the BLOCK conditions), human
+   attention required, contradictions, counterexamples with their standing,
+   coverage gaps (missing surface by claim), state-binding failures (STALE,
+   INCOMPATIBLE, and against a stated candidate, unbound support) and
+   independence concerns (independence conditions and authorship rows).
+4. **Evidence sources**, from `evidence_origin`:
+   - *generated by Release-Gate*: computed in this run, or a release-gate run's
+     document read now and labelled attributed;
+   - *obtained in this run*: a model asked at release-gate's request;
+   - *imported evidence*: read and not run.
+
+   Each source is labelled by its class: Release-Gate Static, Promptfoo, SARIF,
+   eval, red team, SAST, human review, formal verification, Langfuse,
+   OpenTelemetry, Arize / Phoenix, external decision.
+5. **Summaries.** Assurance level supported and required, and condition counts,
+   marked as not inputs to the decision.
+
+**It computes nothing.** Every field is read from the outcome: the decision from
+the admission evaluation, claim statuses from the resolution, sources from
+evidence origin. The suite checks that each agrees with its source. The scanner
+report, SARIF, the case report, `--review` and the packet are unchanged.
+
+---
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
@@ -9856,6 +9971,11 @@ fixed, rather than the expectations being lowered.
 | envelope record types | `producer_export`, `authorship` | additive |
 | evidence origin (§10bj) | `evidence_origin` in the outcome; EVIDENCE ORIGIN in the text report and the one-screen review | additive; no rule reads it |
 | authorship (§10bk) | `analysis.authorship`; RG-INDEP-007 / -008; `ResolutionPolicy.author_independence`; `release-gate authorship` | a case that states no authorship raises nothing new. The policy gains a field, so its digest — and every case digest — changes |
+| admission decision (§10bl) | `decide()` returns `evaluate_admission(...).verdict()`; `outcome.admission`; RG-ZC-001..005 defined in `admission.py`, still importable from `zero_config` | every decision, fired rule and reason over the 117-run corpus is byte-identical. Stricter only: a methodology none of whose requirements applies now holds where it promoted |
+| approvals (§10bl) | predicates `approval_required`, `approval_not_refused`; `--config` key `required_approvals` | additive; a configuration without the key serialises byte-identically. `approval_roles` is unchanged and still requires nothing |
+| review contract | each review's `native` carries the document's `evaluated_at` when the row has none | review evidence ids change once; outcomes do not |
+| `ResolutionPolicy.semantic_uncertainty` | new, default `null` | the policy digest, and every case digest, changes; the default decides exactly as before |
+| `assure --admission`, `--admission-out FILE` (§10bm) | new | additive; the default report, `--json`, `--review` and the audit outputs are unchanged |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

@@ -1643,6 +1643,14 @@ def _analyse_semantic(report: Optional[Any]) -> List[Finding]:
             refs=tuple(dict.fromkeys(c for c, _ in challenged))[:12],
             observed={"claims": len({c for c, _ in challenged}),
                       "policy": report.policy.ref}))
+    # A model's uncertainty moves a required claim only when the resolution
+    # policy says so (`semantic_uncertainty`); low confidence never blocks
+    # because a model said it, only because a declared policy does.
+    uncertain = report.policy.semantic_uncertainty
+
+    def required(pairs: List[Tuple[str, Any]]) -> bool:
+        return any(getattr(report.of(c), "required", None) is not False for c, _ in pairs)
+
     unknown = by_role.get("SEMANTIC_UNKNOWN", [])
     if unknown:
         reasons: Dict[str, int] = {}
@@ -1651,7 +1659,9 @@ def _analyse_semantic(report: Optional[Any]) -> List[Finding]:
             reasons[key] = reasons.get(key, 0) + 1
         findings.append(Finding(
             rule_id="RG-SEM-002", domain=AnalysisDomain.VERIFICATION,
-            effect=RequirementEffect.ADVISORY,
+            effect=(RequirementEffect(uncertain.value)
+                    if uncertain is not None and required(unknown)
+                    else RequirementEffect.ADVISORY),
             summary=(f"{len(unknown)} semantic question(s) got no usable answer"),
             detail=("Unknown is not a pass: these questions were asked and not "
                     "answered, so each claim stands where the deterministic rules "
@@ -1666,7 +1676,10 @@ def _analyse_semantic(report: Optional[Any]) -> List[Finding]:
     if needs:
         findings.append(Finding(
             rule_id="RG-SEM-003", domain=AnalysisDomain.VERIFICATION,
-            effect=RequirementEffect.HOLD,
+            effect=(RequirementEffect.BLOCK
+                    if uncertain is not None and uncertain.value == "BLOCK"
+                    and required(needs)
+                    else RequirementEffect.HOLD),
             summary=(f"{len(needs)} semantic reading(s) were not confident enough, and "
                      "the verifier policy asks for more verification"),
             detail=("A model answered below the policy's confidence threshold, and "

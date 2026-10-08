@@ -279,6 +279,8 @@ _PREDICATE_KIND: Mapping[str, EvidenceRequirementKind] = {
     "critical_claims_verified": _K.FORMAL_VERIFICATION,
     "declared_independence_holds": _K.PROVENANCE_ATTESTATION,
     "applies_to_current_state": _K.RE_VERIFICATION,
+    "approval_required": _K.HUMAN_REVIEW,
+    "approval_not_refused": _K.HUMAN_REVIEW,
 }
 
 

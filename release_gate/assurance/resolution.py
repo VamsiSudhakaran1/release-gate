@@ -205,6 +205,12 @@ class ResolutionPolicy:
     #: shares its author takes this effect, and one whose independence from its
     #: author cannot be established holds — unknown is not a pass.
     author_independence: Optional[AdmissionEffect] = None
+    #: What a model's uncertainty does to a required claim: a question it could
+    #: not answer, or answered below the verifier policy's confidence (RG-SEM-002,
+    #: -003). None: reported (RG-SEM-002 advisory) or held only where the verifier
+    #: policy asks for more verification (RG-SEM-003). Low confidence never blocks
+    #: unless this says BLOCK.
+    semantic_uncertainty: Optional[AdmissionEffect] = None
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -233,6 +239,9 @@ class ResolutionPolicy:
         if self.author_independence is not None:
             object.__setattr__(self, "author_independence",
                                AdmissionEffect(self.author_independence))
+        if self.semantic_uncertainty is not None:
+            object.__setattr__(self, "semantic_uncertainty",
+                               AdmissionEffect(self.semantic_uncertainty))
         object.__setattr__(self, "establishing",
                            tuple(sorted({Strength(s) for s in self.establishing},
                                         key=lambda s: s.value)))
@@ -278,6 +287,8 @@ class ResolutionPolicy:
                 "counterexample_exceptions": self.counterexample_exceptions,
                 "author_independence": (self.author_independence.value
                                         if self.author_independence else None),
+                "semantic_uncertainty": (self.semantic_uncertainty.value
+                                         if self.semantic_uncertainty else None),
                 "note": self.note, "schema_version": RESOLUTION_SCHEMA_VERSION}
 
     def digest(self) -> str:
@@ -329,6 +340,8 @@ class ResolutionPolicy:
                                                    default.counterexample_exceptions),
                 author_independence=(AdmissionEffect(str(data["author_independence"]))
                                      if data.get("author_independence") else None),
+                semantic_uncertainty=(AdmissionEffect(str(data["semantic_uncertainty"]))
+                                      if data.get("semantic_uncertainty") else None),
                 note=str(data.get("note") or ""))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, ResolutionError):

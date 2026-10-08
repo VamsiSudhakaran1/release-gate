@@ -1932,6 +1932,208 @@ class AssumptionsExamined(Predicate):
             violation_detail="; ".join(problems), observed=observed)
 
 
+# ── approvals: who must approve, and of what ────────────────────────────────
+
+_APPROVING = frozenset({"approve", "approved", "accept", "accepted"})
+_REFUSING = frozenset({"reject", "rejected", "changes_requested", "request_changes",
+                       "refuse", "refused", "deny", "denied"})
+
+
+@dataclass(frozen=True)
+class ApprovalReading:
+    """One person's review or approval in a case, as the record states it."""
+
+    record_id: str
+    reviewer: str
+    role: str
+    stance: str        # APPROVED | REFUSED | UNSETTLED
+    word: str
+    binding: str       # EXACT | PARTIAL | STALE | INCOMPATIBLE | UNKNOWN | NO_CANDIDATE
+    reason: str = ""
+
+    @property
+    def of_candidate(self) -> bool:
+        """Bound to the release being admitted: every component it names matches."""
+        return self.binding in ("EXACT", "PARTIAL")
+
+    def describe(self) -> str:
+        who = f"{self.reviewer} ({self.role})" if self.role else self.reviewer
+        said = f"{self.word!r}" if self.word else "no decision word"
+        return f"{who} {said} [{self.binding}]" + (f": {self.reason}" if self.reason else "")
+
+
+def approval_readings(case: AssuranceCase) -> Tuple[Tuple[ApprovalReading, ...], bool]:
+    """Every review or approval record in the case, read and bound to the candidate.
+
+    Read from what each record states — its reviewer, role and decision, as a
+    review contract (`release-gate.review/1`) or an envelope row puts them —
+    and never from a producer's name. A review whose claim outcome is not a
+    pass, or that has lapsed or cannot be shown not to have, is UNSETTLED. The
+    second value says whether there was a candidate to bind against.
+    """
+    from release_gate.assurance.candidate import bind, candidate_for_case, record_state
+    from release_gate.assurance.evidence import EvidenceRecord, EvidenceType
+    from release_gate.assurance.reference_adapters import review_lapse
+    from release_gate.assurance.verifiers import VerifierAdapter
+    from release_gate.assurance.verification import VerificationStatus
+
+    candidate, _notes = candidate_for_case(case)
+    readings: List[ApprovalReading] = []
+    for record in case.collection("evidence").materialised:
+        if not isinstance(record, EvidenceRecord) or record.evidence_type not in (
+                EvidenceType.HUMAN_REVIEW, EvidenceType.APPROVAL):
+            continue
+        content = record.content if isinstance(record.content, Mapping) else {}
+        native = content.get("native") if isinstance(content.get("native"), Mapping) else {}
+        block = content.get("reviewer") or native.get("reviewer")
+        reviewer = role = ""
+        if isinstance(block, Mapping):
+            reviewer = str(block.get("id") or block.get("reference") or "").strip()
+            role = str(block.get("role") or "").strip()
+        elif isinstance(block, str):
+            reviewer = block.strip()
+        role = role or str(content.get("role") or native.get("role") or "").strip()
+        reviewer = reviewer or record.producer.producer_id
+        external = content.get("external_decision")
+        word = str(content.get("decision") or native.get("decision")
+                   or (external.get("decision") if isinstance(external, Mapping) else "")
+                   or content.get("native_outcome") or "").strip()
+        reason = ""
+        if content.get("claim_outcome"):
+            status = VerifierAdapter.status_for(content.get("claim_outcome"))
+            stance = ("APPROVED" if status is VerificationStatus.PASSED
+                      else "REFUSED" if status is VerificationStatus.FAILED
+                      else "UNSETTLED")
+        else:
+            key = word.lower().replace("-", "_").replace(" ", "_")
+            stance = ("APPROVED" if key in _APPROVING else "REFUSED" if key in _REFUSING
+                      else "UNSETTLED")
+        lapsed, why = review_lapse(native or content)
+        if stance == "APPROVED" and lapsed:
+            stance, reason = "UNSETTLED", why
+        if stance == "UNSETTLED" and not reason:
+            reason = why or "the record states no approval or refusal"
+        if candidate is None:
+            binding = "NO_CANDIDATE"
+        else:
+            binding = bind(candidate, state=record_state(record),
+                           digests=(record.applies_to_digest,),
+                           record_id=record.evidence_id,
+                           record_kind="evidence").match.value
+        readings.append(ApprovalReading(record.evidence_id, reviewer, role, stance, word,
+                                        binding, reason))
+    readings.sort(key=lambda r: (r.role.lower(), r.reviewer, r.record_id))
+    return tuple(readings), candidate is not None
+
+
+def _roles(values: Iterable[Any]) -> Tuple[str, ...]:
+    return tuple(sorted({str(v).strip() for v in values if str(v).strip()},
+                        key=str.lower))
+
+
+@_predicate
+@dataclass(frozen=True)
+class ApprovalRequired(Predicate):
+    """Each named role has approved the exact release being admitted.
+
+    An approval counts only when the record says it approves, it has not
+    lapsed, and it binds to the candidate: every component it names matches
+    (EXACT or PARTIAL). An approval of another commit, one that names no state,
+    one past its expiry and one whose expiry cannot be checked do not count,
+    and each is named. Without a candidate to bind against, whether any
+    approval is of this release cannot be established, which is not assessed —
+    never met.
+    """
+
+    KIND = "approval_required"
+    roles: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        roles = _roles(self.roles)
+        if not roles:
+            raise MethodologyError("approval_required must name at least one role")
+        object.__setattr__(self, "roles", roles)
+
+    def describe(self) -> str:
+        return ("each of these roles approved the release being admitted: "
+                + ", ".join(self.roles))
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        readings, bindable = approval_readings(case)
+        observed: Dict[str, Any] = {"required": list(self.roles),
+                                    "readings": [r.describe() for r in readings]}
+        if not bindable:
+            return _Finding(
+                RequirementOutcome.NOT_ASSESSED,
+                "the case states no candidate, so whether any approval is of the "
+                "release being admitted cannot be established", observed)
+        missing: List[str] = []
+        for role in self.roles:
+            mine = [r for r in readings if r.role.lower() == role.lower()]
+            if any(r.stance == "APPROVED" and r.of_candidate for r in mine):
+                continue
+            if not mine:
+                missing.append(f"{role}: no review by this role")
+            else:
+                missing.append(f"{role}: " + "; ".join(r.describe() for r in mine[:3]))
+        observed["missing"] = missing
+        if missing:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(missing)} required approval(s) do not bind to the release being "
+                "admitted — " + " | ".join(missing), observed)
+        return _Finding(
+            RequirementOutcome.SATISFIED,
+            f"all {len(self.roles)} required approval(s) bind to the release being "
+            "admitted", observed)
+
+
+@_predicate
+@dataclass(frozen=True)
+class ApprovalNotRefused(Predicate):
+    """No required approver refused the exact release being admitted.
+
+    The other half of an approval requirement, kept separate so its effect can
+    differ: an approval that has not arrived is something to wait for, and a
+    refusal of this release is a declared blocking condition. Only a refusal
+    bound to the candidate is one. A refusal of another state, or one that
+    names none, does not establish that this release was refused; it is named,
+    and the approval it did not give is still missing. `roles` empty means a
+    refusal by anyone counts.
+    """
+
+    KIND = "approval_not_refused"
+    roles: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "roles", _roles(self.roles))
+
+    def describe(self) -> str:
+        return ("no required approver refused the release being admitted"
+                + (f" ({', '.join(self.roles)})" if self.roles else ""))
+
+    def evaluate(self, case: AssuranceCase) -> _Finding:
+        readings, _bindable = approval_readings(case)
+        wanted = {r.lower() for r in self.roles}
+        relevant = [r for r in readings if r.stance == "REFUSED"
+                    and (not wanted or r.role.lower() in wanted)]
+        refused = [r for r in relevant if r.of_candidate]
+        elsewhere = [r for r in relevant if not r.of_candidate]
+        observed = {"refused": [r.describe() for r in refused],
+                    "not_of_this_release": [r.describe() for r in elsewhere]}
+        if refused:
+            return _Finding(
+                RequirementOutcome.UNSATISFIED,
+                f"{len(refused)} required approver(s) refused the release being "
+                "admitted: " + "; ".join(r.describe() for r in refused), observed)
+        detail = "no required approver refused the release being admitted"
+        if elsewhere:
+            detail += (f"; {len(elsewhere)} refusal(s) concern another state or name "
+                       "none, and do not establish a refusal of this one: "
+                       + "; ".join(r.describe() for r in elsewhere[:3]))
+        return _Finding(RequirementOutcome.SATISFIED, detail, observed)
+
+
 def predicate_from_dict(data: Mapping[str, Any]) -> Predicate:
     kind = data.get("kind")
     cls = _PREDICATE_TYPES.get(kind)

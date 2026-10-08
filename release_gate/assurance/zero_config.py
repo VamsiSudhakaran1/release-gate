@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from release_gate.assurance.analysis import (
-    ANALYSIS_RULESET_VERSION, AnalysisDomain, AnalysisResult, Finding, analyse,
+    ANALYSIS_RULESET_VERSION, AnalysisDomain, AnalysisResult, analyse,
 )
 from release_gate.assurance.attention import (
     HumanAttentionSet, RequiredEvidenceSet, build_attention, build_required_evidence,
@@ -95,15 +95,12 @@ __all__ = [
 
 ZERO_CONFIG_RULESET_VERSION = "zero-config-1"
 
-# The rule that fires when sufficiency cannot be assessed at all. It is a rule
-# rather than a bare string so the verdict names it like any other.
-RULE_METHODOLOGY_REQUIRED = "RG-ZC-001"
-RULE_STRUCTURAL_BLOCK = "RG-ZC-002"
-RULE_STRUCTURAL_HOLD = "RG-ZC-003"
-RULE_METHODOLOGY_SATISFIED = "RG-ZC-004"
-#: A structural HOLD the methodology accepted up front. Named on the verdict so
-#: the audit trail shows an acceptance was applied rather than a shorter list.
-RULE_STRUCTURAL_ACCEPTED = "RG-ZC-005"
+# The verdict's own rules (RG-ZC-001..005) are defined where the decision is
+# taken (admission.py) and named here, where they have always been importable.
+from release_gate.assurance.admission import (  # noqa: E402,F401
+    RULE_METHODOLOGY_REQUIRED, RULE_METHODOLOGY_SATISFIED, RULE_STRUCTURAL_ACCEPTED,
+    RULE_STRUCTURAL_BLOCK, RULE_STRUCTURAL_HOLD, AdmissionEvaluation, evaluate_admission,
+)
 
 _EXIT = {Decision.PROMOTE: 0, Decision.HOLD: 10, Decision.BLOCK: 1}
 
@@ -128,6 +125,9 @@ class AssuranceOutcome:
     #: neither soften a finding nor change a verdict.
     level: LevelAssessment = field(
         default_factory=lambda: assess_level())
+    #: The admission evaluation the verdict was taken from: every condition, its
+    #: dimension, the claims it concerns and the policy that declared it.
+    admission: Optional[AdmissionEvaluation] = None
 
     @property
     def decision(self) -> Decision:
@@ -223,6 +223,7 @@ class AssuranceOutcome:
             "capabilities": (self.capabilities.to_dict() if self.capabilities
                              else None),
             "consequence": self.consequence.to_dict(),
+            "admission": self.admission.to_dict() if self.admission else None,
             "evidence_origin": self.evidence_origin.to_dict(),
             "verification": (self.verification.to_dict() if self.verification
                              else None),
@@ -1061,162 +1062,49 @@ def decide(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
            has_methodology: bool,
            methodology: Optional[AssuranceMethodology] = None,
            consequence: Optional[ConsequenceProfile] = None) -> CaseVerdict:
-    """Compose structural findings and methodology assessment into one verdict.
+    """The verdict of the admission evaluation (`admission.evaluate_admission`).
 
-    The ordering is deliberate. Structural BLOCKs come first because they are
-    facts about the evidence that no methodology can wave through: a case whose
-    own evidence refutes it is not made sound by a yardstick that does not
-    mention refutation.
-
-    Then sufficiency. With no methodology the answer is HOLD and the reason is
+    The decision is taken over the case: every structural finding, every
+    methodology requirement, every open disagreement on a critical claim and
+    every documented exception, each as a condition with its dimension, its
+    claims and the policy that declared it. The worst condition decides. A
+    structural BLOCK is a fact about the evidence no methodology can wave
+    through; with no methodology the answer is HOLD and the reason
     `METHODOLOGY_REQUIRED` — never PROMOTE, and never a silently generous
-    default. That branch is the whole point of this module.
+    default.
 
     **Accepted structural holds.** A methodology may declare, up front, that a
     named structural HOLD is not disqualifying for the class of decision it
-    covers (`AcceptedFinding`). This exists because some findings are
-    tautological at a given scale: "all evidence traces to a single producer" is
-    true by construction of every one-agent case, and holding on it means an
-    ordinary single-agent action can never be promoted however much evidence it
-    carries — penalising a case for being small, which is the volume judgement
-    Invariants 6 and 12 refuse.
-
-    The acceptance is narrow and loud. Only HOLD findings are eligible; a
-    structural BLOCK is never accepted, and `blocking` is not consulted here at
-    all. Each acceptance is recorded in `reasons` with the methodology's own
-    rationale, so the verdict states what was accepted and why rather than
-    quietly showing a shorter list. The finding itself still reaches Human
-    Attention and the packet: this narrows what *blocks*, never what is *shown*.
+    covers (`AcceptedFinding`), because some findings are tautological at a
+    given scale: "all evidence traces to a single producer" is true of every
+    one-agent case, and holding on it would penalise a case for being small,
+    which Invariants 6 and 12 refuse. Only HOLD findings are eligible, each
+    acceptance is named in `reasons` with its rationale, and the finding still
+    reaches Human Attention and the packet: this narrows what *blocks*, never
+    what is *shown*.
     """
-    fired: List[str] = []
-    reasons: List[str] = []
+    return _admit(analysis, assessment, has_methodology=has_methodology,
+                  methodology=methodology, consequence=consequence)[1]
 
-    blocking = analysis.blocking
-    holding = analysis.holding
-    decision = Decision.HOLD
 
-    # Which structural holds this methodology has accepted, given what the case
-    # actually states about consequence. Computed before any branch so that the
-    # acceptance is recorded even on a case that BLOCKs for another reason.
-    accepted_holds: List[Tuple[Finding, Any]] = []
-    if methodology is not None and holding:
-        stated = {d.dimension.value: d.value for d in (consequence.known if consequence
-                                                       else ())}
-        for finding in holding:
-            accepted = methodology.acceptance_for(finding.rule_id, stated)
-            if accepted is not None:
-                accepted_holds.append((finding, accepted))
-    if accepted_holds:
-        accepted_ids = {f.rule_id for f, _ in accepted_holds}
-        holding = tuple(f for f in holding if f.rule_id not in accepted_ids)
-        for finding, acceptance in accepted_holds:
-            reasons.append(
-                f"{finding.rule_id}: accepted by {assessment.methodology_ref} — "
-                f"{acceptance.rationale}. The finding stands and is shown; this "
-                "methodology does not treat it as disqualifying here.")
-
-    if blocking:
-        decision = Decision.BLOCK
-        fired.append(RULE_STRUCTURAL_BLOCK)
-        fired.extend(sorted({f.rule_id for f in blocking}))
-        reasons.extend(f"{f.rule_id}: {f.summary}" for f in blocking)
-
-    if assessment.status is AssessmentStatus.METHODOLOGY_REQUIRED:
-        fired.append(RULE_METHODOLOGY_REQUIRED)
-        reasons.append(
-            "METHODOLOGY_REQUIRED: structural assurance is complete as far as it goes, "
-            "but no methodology states what evidence this decision requires. Domain "
-            "sufficiency is NOT_ASSESSED.")
-        if decision is not Decision.BLOCK:
-            decision = Decision.HOLD
-    elif assessment.status is AssessmentStatus.CASE_TYPE_NOT_COVERED:
-        fired.append(RULE_METHODOLOGY_REQUIRED)
-        detail = assessment.detail or "the supplied methodology does not cover this case type"
-        reasons.append(
-            f"METHODOLOGY_REQUIRED: {detail}. Domain sufficiency is NOT_ASSESSED.")
-        if decision is not Decision.BLOCK:
-            decision = Decision.HOLD
-    else:
-        unmet_block = assessment.unmet(RequirementEffect.BLOCK)
-        unmet_hold = assessment.unmet(RequirementEffect.HOLD)
-        if unmet_block:
-            decision = Decision.BLOCK
-            fired.extend(r.requirement_id for r in unmet_block)
-            reasons.extend(f"{r.requirement_id}: {r.detail}" for r in unmet_block)
-        elif unmet_hold or holding:
-            if decision is not Decision.BLOCK:
-                decision = Decision.HOLD
-            fired.extend(r.requirement_id for r in unmet_hold)
-            reasons.extend(f"{r.requirement_id}: {r.detail}" for r in unmet_hold)
-        elif decision is not Decision.BLOCK:
-            decision = Decision.PROMOTE
-            fired.append(RULE_METHODOLOGY_SATISFIED)
-            reasons.append(
-                f"every requirement of {assessment.methodology_ref} is met, with the "
-                "coverage recorded on this case")
-
-    # Every unresolved disagreement on a critical claim is named here, whatever
-    # the decision turns out to be. `render_verdict` refuses a verdict that omits
-    # one, so this is not decoration — it is the clause that makes the refusal
-    # satisfiable rather than a wall.
-    for contradiction in (analysis.contradictions.unresolved_critical()
-                          if analysis.contradictions else ()):
-        fired.append(contradiction.contradiction_id)
-        reasons.append(
-            f"{contradiction.contradiction_id}: unresolved disagreement on "
-            f"{', '.join(contradiction.target_claims)} ({contradiction.critical_basis}) — "
-            + " vs ".join(f"{side.label} {len(side.evidence)} record(s)"
-                          for side in contradiction.sides)
-            + f" [{contradiction.described}]")
-        if decision is Decision.PROMOTE:
-            # Reachable only with a methodology whose requirements are all met.
-            # Promoting over an open disagreement on a load-bearing claim is a
-            # decision a person may take; taking it silently is not available.
-            decision = Decision.HOLD
-
-    # A counterexample accepted as documented risk does not block, and is never
-    # silent either: each is named, with who accepted it and where it is written.
-    from release_gate.assurance.counterexample import CounterexampleStanding
-    for standing in analysis.counterexample_standings:
-        if standing.standing is CounterexampleStanding.ACCEPTED:
-            fired.append(standing.counterexample_id)
-            reasons.append(f"{standing.counterexample_id}: a counterexample to "
-                           f"{standing.target_claim} stands, accepted as a documented "
-                           f"risk — {standing.reason}")
-
-    if holding and decision is Decision.HOLD and RULE_STRUCTURAL_HOLD not in fired:
-        fired.append(RULE_STRUCTURAL_HOLD)
-        # The holding rule ids, not only their summaries. `RG-ZC-002` above
-        # already extends `fired` with every blocking rule id, and this branch
-        # did not — so a BLOCK could be traced from the verdict down to the
-        # findings that caused it and a HOLD could not. `RG-ZC-003` said
-        # "structure held this" and a reviewer asking *which* structure had
-        # nowhere to go, because the ids were only ever inside prose.
-        fired.extend(sorted({f.rule_id for f in holding}))
-        reasons.extend(f"{f.rule_id}: {f.summary}" for f in holding)
-
-    if accepted_holds:
-        fired.append(RULE_STRUCTURAL_ACCEPTED)
-
-    if not fired:
-        # Reachable only with a methodology that has no applicable requirements.
-        fired.append(RULE_STRUCTURAL_HOLD)
-        reasons.append("no requirement applied to this case and nothing structural "
-                       "was found; there is no basis on which to promote")
-        decision = Decision.HOLD
+def _admit(analysis: AnalysisResult, assessment: MethodologyAssessment, *,
+           has_methodology: bool, methodology: Optional[AssuranceMethodology] = None,
+           consequence: Optional[ConsequenceProfile] = None
+           ) -> Tuple[AdmissionEvaluation, CaseVerdict]:
+    """The admission evaluation and the verdict it records, taken once."""
+    evaluation = evaluate_admission(analysis, assessment, methodology=methodology,
+                                    consequence=consequence)
+    verdict = evaluation.verdict(engine_version=_engine_version(),
+                                 ruleset_version=ZERO_CONFIG_RULESET_VERSION)
 
     # The invariant this module exists to hold. An assertion rather than a
     # comment, because a future edit that relaxes it must fail loudly.
-    if decision is Decision.PROMOTE and not has_methodology:
+    if verdict.decision is Decision.PROMOTE and not has_methodology:
         raise ZeroConfigError(
             "zero-config assurance produced PROMOTE without a methodology. Structural "
             "analysis can refuse, and can decline to answer; it cannot authorise. "
             "This is a bug in the decision function, not a case that should proceed.")
-
-    return CaseVerdict(
-        decision=decision, fired_rules=tuple(dict.fromkeys(fired)),
-        reasons=tuple(reasons), engine_version=_engine_version(),
-        ruleset_version=ZERO_CONFIG_RULESET_VERSION)
+    return evaluation, verdict
 
 
 def _engine_version() -> str:
@@ -1430,8 +1318,9 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
         final = final_builder.build()
 
     with timer.stage(Stage.DECIDE):
-        verdict = decide(analysis, assessment, has_methodology=methodology is not None,
-                         methodology=methodology, consequence=consequence)
+        admission, verdict = _admit(analysis, assessment,
+                                    has_methodology=methodology is not None,
+                                    methodology=methodology, consequence=consequence)
 
     with timer.stage(Stage.SEAL):
         decided = final.seal().render_verdict(verdict)
@@ -1467,7 +1356,7 @@ def assure_normalisation(normalisation: Normalisation, *, source_name: str,
     return AssuranceOutcome(case=decided, normalisation=normalisation,
                             analysis=analysis, assessment=assessment,
                             attention=attention, required_evidence=required,
-                            consequence=consequence, level=level)
+                            consequence=consequence, level=level, admission=admission)
 
 
 # ── rendering ────────────────────────────────────────────────────────────────

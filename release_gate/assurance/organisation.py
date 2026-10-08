@@ -95,6 +95,10 @@ class OrganisationConfig:
     domain_requirements: Tuple[Requirement, ...] = ()
     required_verifiers: Tuple[str, ...] = ()
     approval_roles: Tuple[str, ...] = ()
+    #: Roles whose approval of the exact release being admitted is mandatory.
+    #: Each becomes two requirements: an approval bound to the candidate (HOLD
+    #: until it arrives) and no refusal of the candidate by those roles (BLOCK).
+    required_approvals: Tuple[str, ...] = ()
     custom_capabilities: Tuple[str, ...] = ()
     #: A methodology reference (`id` or `id@version`), resolved against a
     #: registry by the caller. Selection, never definition.
@@ -115,10 +119,11 @@ class OrganisationConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, "risk_appetite", _level(self.risk_appetite))
         for name in ("domain_requirements", "required_verifiers", "approval_roles",
-                     "custom_capabilities", "override_rules",
+                     "required_approvals", "custom_capabilities", "override_rules",
                      "method_declarations"):
             object.__setattr__(self, name, tuple(getattr(self, name) or ()))
-        for name in ("required_verifiers", "approval_roles", "custom_capabilities"):
+        for name in ("required_verifiers", "approval_roles", "required_approvals",
+                     "custom_capabilities"):
             object.__setattr__(self, name, tuple(
                 sorted({str(v).strip() for v in getattr(self, name) if str(v).strip()})))
         permissive = [r.requirement_id for r in self.override_rules if r.permitted]
@@ -147,6 +152,7 @@ class OrganisationConfig:
         """True when this configures nothing, and is therefore a no-op."""
         return not (self.risk_appetite is not None or self.domain_requirements
                     or self.required_verifiers or self.approval_roles
+                    or self.required_approvals
                     or self.custom_capabilities or self.methodology
                     or self.override_rules or self.method_declarations)
 
@@ -161,9 +167,9 @@ class OrganisationConfig:
         # `to_dict` emits, so a config written by release-gate reads back in.
         unknown = set(data) - {
             "risk_appetite", "domain_requirements", "required_verifiers",
-            "approval_roles", "custom_capabilities", "methodology",
-            "override_rules", "organisation_id", "schema_version", "record_type",
-            "method_declarations"}
+            "approval_roles", "required_approvals", "custom_capabilities",
+            "methodology", "override_rules", "organisation_id", "schema_version",
+            "record_type", "method_declarations"}
         if unknown:
             # Refused rather than ignored: a misspelled key in a file whose whole
             # job is to tighten a gate would silently not tighten it.
@@ -190,6 +196,7 @@ class OrganisationConfig:
             domain_requirements=requirements,
             required_verifiers=tuple(data.get("required_verifiers", ())),
             approval_roles=tuple(data.get("approval_roles", ())),
+            required_approvals=tuple(data.get("required_approvals", ())),
             custom_capabilities=tuple(data.get("custom_capabilities", ())),
             methodology=(data.get("methodology") or None),
             override_rules=overrides,
@@ -232,6 +239,10 @@ class OrganisationConfig:
             "domain_requirements": [r.to_dict() for r in self.domain_requirements],
             "required_verifiers": list(self.required_verifiers),
             "approval_roles": list(self.approval_roles),
+            # Only when set, so a configuration that names no mandatory approval
+            # reads back byte-identical to one written before the key existed.
+            **({"required_approvals": list(self.required_approvals)}
+               if self.required_approvals else {}),
             "custom_capabilities": list(self.custom_capabilities),
             "methodology": self.methodology,
             "override_rules": [r.to_dict() for r in self.override_rules],
@@ -271,12 +282,14 @@ class OrganisationConfig:
         if methodology is None or self.is_empty:
             return methodology
         if not (self.domain_requirements or self.override_rules
-                or self.required_verifiers):
+                or self.required_verifiers or self.required_approvals):
             return methodology
 
         extras = list(self.domain_requirements)
         if self.required_verifiers:
             extras.append(self._verifier_requirement())
+        if self.required_approvals:
+            extras.extend(self._approval_requirements())
         suffix = self.organisation_id or "organisation"
         return methodology.extend(
             methodology_id=f"{methodology.methodology_id}+{suffix}",
@@ -289,6 +302,36 @@ class OrganisationConfig:
             metadata={"organisation_id": self.organisation_id,
                       "extends": methodology.ref_string,
                       "approval_roles": list(self.approval_roles)})
+
+    def _approval_requirements(self) -> Tuple[Requirement, ...]:
+        """An approval of this release from each role; no refusal of it by any."""
+        from release_gate.assurance.methodology import (
+            ApprovalNotRefused, ApprovalRequired, RequirementEffect)
+        roles = ", ".join(self.required_approvals)
+        return (
+            Requirement(
+                requirement_id="org.approvals",
+                description=f"each of these roles approved the release being admitted: "
+                            f"{roles}",
+                predicate=ApprovalRequired(roles=self.required_approvals),
+                effect=RequirementEffect.HOLD,
+                remedy=("obtain each approval as a review of this release — its state "
+                        "or state hash — from a reviewer in the role, within its "
+                        "expiry"),
+                rationale=("An approval is of an exact release. One that has not "
+                           "arrived, lapsed, or is of another state is something to "
+                           "wait for, not a reason to refuse the release.")),
+            Requirement(
+                requirement_id="org.approvals.refused",
+                description=f"none of these roles refused the release being admitted: "
+                            f"{roles}",
+                predicate=ApprovalNotRefused(roles=self.required_approvals),
+                effect=RequirementEffect.BLOCK,
+                remedy=("address what the refusing reviewer raised, and obtain their "
+                        "approval of the changed release"),
+                rationale=("A required approver who refused this exact release has "
+                           "declared it may not ship as it is.")),
+        )
 
     def _verifier_requirement(self) -> Requirement:
         """Every named verifier must appear among the case's verification attempts."""

@@ -76,6 +76,7 @@ __all__ = [
     "HumanReviewAdapter",
     "RedTeamAdapter",
     "reference_adapters",
+    "review_lapse",
 ]
 
 REFERENCE_EVIDENCE_SCHEMA_VERSION = 1
@@ -539,6 +540,17 @@ def _when(value: Any) -> Optional[datetime]:
         return None
 
 
+def review_lapse(row: Mapping[str, Any]) -> Tuple[bool, str]:
+    """Whether one review row has lapsed or cannot be shown not to have.
+
+    True with a reason when it expired before the evaluation time it states, or
+    states an expiry with no evaluation time or one that cannot be read. False
+    when it states no expiry, or one after its evaluation time.
+    """
+    lapse, why = _lapsed(row, {})
+    return lapse is not None, why
+
+
 def _lapsed(row: Mapping[str, Any], doc: Mapping[str, Any]) -> Tuple[Optional[str], str]:
     """Whether a review has expired, from the times the document states.
 
@@ -654,8 +666,14 @@ class HumanReviewAdapter(EvidenceAdapter):
             lapse, why = _lapsed(row, doc)
             if why:
                 notes.append(f"review {review_id!r} by {who}: {why}")
+            # The document's evaluation time travels with each review it applies
+            # to, so the review's expiry can be checked from the record alone
+            # (`review_lapse`) — by the approval requirement, for instance.
+            native = dict(row)
+            if _text(doc.get("evaluated_at")) and not _text(row.get("evaluated_at")):
+                native["evaluated_at"] = _text(doc.get("evaluated_at"))
             common = dict(
-                native_outcome=decision, native=dict(row), identity=identity,
+                native_outcome=decision, native=native, identity=identity,
                 subject=_text(scope) if isinstance(scope, str) else "",
                 state=state, covers=covers, provenance=provenance,
                 message=" — ".join(x for x in (_text(row.get("rationale")), why) if x),
