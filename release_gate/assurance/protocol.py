@@ -322,6 +322,12 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "release-gate.eval/1, red-team/1, sast/1, review/1, formal/1 and "
                   "behavior/1 — "
                   "each read through the producer contract and never re-run"),
+        _ref("first_party_evidence", "first_party",
+             "FIRST_PARTY_EVIDENCE_SCHEMA_VERSION", 1,
+             note="the contracts release-gate's own commands write — "
+                  "release-gate.pr/1, loop-verify/1, loop-sim/1 and agent-score/1 — "
+                  "read through the producer contract with no more standing than "
+                  "any other producer; each command's verdict and score decide nothing"),
         _ref("authorship", "authorship", "AUTHORSHIP_SCHEMA_VERSION", 1,
              note="who did each piece of the work, as CI, a commit or a person "
                   "states it, and whether each claim was checked by anyone but its "

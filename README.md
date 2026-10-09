@@ -57,6 +57,20 @@ evidence about another state of the release does not count for this one. The
 decision is deterministic from the declared policy and the evidence. Models can
 be asked to read evidence, and their readings never decide.
 
+> **The invariant.** Release-Gate may generate evidence, ingest evidence, normalize evidence, compare evidence, semantically interpret bounded evidence, and determine whether evidence satisfies policy. It must never pretend that one model, one scanner, one evaluator, one score, or one successful test establishes universal truth.
+
+The product is five parts, drawn in [ARCHITECTURE](docs/ARCHITECTURE.md#the-product-in-one-picture):
+
+1. first-party evidence producers;
+2. external evidence;
+3. bounded semantic verification;
+4. the assurance case;
+5. a deterministic admission policy.
+
+`tests/test_product_invariant.py` runs every clause of the invariant against
+the engine. For example, one passing test supports a claim and does not
+establish it, and a counterexample outranks any single kind of source.
+
 ## Try it
 
 ```bash
@@ -244,6 +258,7 @@ evidence, and each is documented in its own place:
 | **[Trace & eval ingestion](docs/INTEGRATION_GUIDE.md)** | OpenTelemetry · Langfuse · Arize-Phoenix · promptfoo read in place: no bespoke file, no new instrumentation |
 | **[Agent code scanning](docs/RULES.md)** | Release-gate's own evidence producer for code-level agent risk: AST and taint analysis of model output reaching `eval`/`pickle`, retrieved text reaching prompts, uncapped LLM loops. Measured on its own [93-case corpus](benchmark/RESULTS.md) |
 | **[`release-gate pr`](docs/REFERENCE.md#commands)** | One verdict on what a pull request *introduced*: net-new agent risk only, inherited debt shown and never gated |
+| **[Release-gate's other checks](docs/REFERENCE.md#first-party-evidence-pr-verify-loop-sim-agent-score)** | PR diff analysis (`pr`), trace validation (`verify --trace`), loop simulation (`loop-sim`) and the agent score (`agent-score`). Their `--json` is evidence `assure --evidence` reads like any producer's; their own verdicts and scores are recorded and decide nothing |
 | **[Semantic verification](docs/REFERENCE.md)** | Optional. A model, or a panel of independent models, reads evidence the rules cannot. Its readings are recorded and never decide; disagreement goes to a person |
 | **[Evidence packs](docs/REFERENCE.md)** | A sealed, verifiable record of what was decided and on what |
 | **[GitHub Action](action.yml)** · **[MCP server](docs/REFERENCE.md)** | `command: assure` in the Action; `pip install 'release-gate[mcp]'` |

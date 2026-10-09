@@ -1,0 +1,57 @@
+{
+  "schema": "release-gate.loop-verify/1",
+  "producer": {
+    "id": "release-gate/loop-verifier",
+    "version": "0.11.2"
+  },
+  "state": {
+    "governance_policy": "sha256:4197df60850a9296f668789deb4c6a14ec48a3e704c84c4f75c90618fbe16820"
+  },
+  "inputs": {
+    "governance": {
+      "path": "governance.yaml",
+      "sha256": "sha256:4197df60850a9296f668789deb4c6a14ec48a3e704c84c4f75c90618fbe16820"
+    },
+    "trace": {
+      "path": "trace.json",
+      "sha256": "sha256:80878a2abea3a9d660737c1a5dffbef76ba129be0aa2bea58154af5d0fe57f30"
+    }
+  },
+  "decision": "ROLLBACK",
+  "reasons": [
+    "Hard violations detected \u2014 the loop must abort.",
+    "Forbidden tool called: http_request"
+  ],
+  "violations": [
+    "Forbidden tool called: http_request"
+  ],
+  "warnings": [],
+  "checks": {
+    "loop_policy": {
+      "status": "PASS",
+      "violations": [],
+      "warnings": [],
+      "iteration": 2,
+      "cost_so_far": 0.06
+    },
+    "trace": {
+      "status": "FAIL",
+      "trace_id": "run-2291",
+      "total_steps": 5,
+      "tool_calls": 3,
+      "total_tokens": 2800,
+      "retries": 0,
+      "violations": [
+        "Forbidden tool called: http_request"
+      ],
+      "warnings": [],
+      "unauthorized_tool_calls": [
+        "http_request"
+      ],
+      "has_fallback_step": false
+    }
+  },
+  "iteration": 2,
+  "cost_so_far": 0.06,
+  "cost_remaining": 0.34
+}

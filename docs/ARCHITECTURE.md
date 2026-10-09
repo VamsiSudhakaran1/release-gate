@@ -25,6 +25,102 @@ evidence:
 - a model can be asked to read evidence; its reading never decides, and no
   reading moves a decision toward admission.
 
+## The product, in one picture
+
+<!-- product-model:start -->
+```text
+Release-Gate
+│
+├── First-party evidence producers
+│      ├── AST / taint
+│      ├── PR diff analysis
+│      ├── governance verification
+│      ├── trace validation
+│      └── behavioral safety where already present
+│
+├── External evidence
+│      ├── evaluators
+│      ├── red-team tools
+│      ├── observability
+│      ├── SAST
+│      ├── formal verification
+│      └── humans
+│
+├── Semantic verification
+│      ├── bounded questions only
+│      ├── Laya/Jev-style providers
+│      ├── reasoning LLM providers
+│      └── UNKNOWN on uncertainty/failure
+│
+├── AssuranceCase
+│      ├── claims
+│      ├── evidence
+│      ├── assumptions
+│      ├── contradictions
+│      ├── counterexamples
+│      ├── failed branches
+│      ├── coverage
+│      └── independence
+│
+└── Deterministic admission policy
+       ├── PROMOTE
+       ├── HOLD
+       └── BLOCK
+```
+<!-- product-model:end -->
+
+<!-- product-invariant:start -->
+> **The product invariant.** Release-Gate may generate evidence, ingest evidence, normalize evidence, compare evidence, semantically interpret bounded evidence, and determine whether evidence satisfies policy. It must never pretend that one model, one scanner, one evaluator, one score, or one successful test establishes universal truth.
+<!-- product-invariant:end -->
+
+Every node is code that runs, and `tests/test_product_invariant.py` resolves each
+one to the module that implements it, so the picture cannot drift from the code.
+
+| Part | Where it lives | How it reaches a case |
+|---|---|---|
+| AST / taint | `agent_analysis.py`, `assurance/static_producer.py` | `audit --evidence-out`, or an audit report |
+| PR diff analysis | `audit.compare_to_baseline`, `assurance/first_party.py` | `pr --json` (`release-gate.pr/1`) |
+| governance verification | `verify.py`, `static_producer.safeguard_profile` | the audit's safeguard checks |
+| trace validation | `trace_validator.py`, `assurance/first_party.py` | `verify --json` (`release-gate.loop-verify/1`) |
+| behavioural safety | `loop_verifier.py`, `loop_sim.py`, `agent_score.py` | `verify`, `loop-sim` and `agent-score --json` |
+| evaluators | `reference_adapters.py` (`eval/1`, `behavior/1`), `producer_adapters.py` (promptfoo) | `--evidence` |
+| red-team tools | `reference_adapters.py` (`red-team/1`) | `--evidence` |
+| observability | `adapters/` (OpenTelemetry, Langfuse, Arize/Phoenix) | the trace itself, or `--evidence` |
+| SAST | `producer_adapters.py` (SARIF), `reference_adapters.py` (`sast/1`) | `--evidence` |
+| formal verification | `assurance/verifiers.py` (`formal/1`) | `--evidence` |
+| humans | `reference_adapters.py` (`review/1`), `assurance/approval.py` | `--evidence`; approvals bound to a case digest |
+| bounded questions only | `assurance/escalation.py`, `assurance/semantic_verifier.py` | `assure --semantic` |
+| Laya/Jev-style providers | `decision_providers/` (`laya`, `jev`, `release-gate-decision/1`) | `--semantic`, with `RG_SEMANTIC_PROVIDER=laya` or `jev` |
+| reasoning LLM providers | `semantic_providers.py`, `assurance/semantic_panel.py` | `--semantic` (`RG_SEMANTIC_MODEL`), `--semantic-panel` |
+| UNKNOWN on uncertainty/failure | `semantic_verifier.UnknownReason` | every failure is an UNKNOWN that moves nothing |
+| the AssuranceCase | `claims.py`, `resolution.py`, `evidence.py`, `assumptions.py`, `contradiction.py`, `counterexample.py`, `failed_branches.py`, `claim_coverage.py`, `correlation.py`, `authorship.py` | built by `assure` |
+| the admission policy | `assurance/admission.py` | `decide()`; exit 0 / 10 / 1 |
+
+What each part may do, against the invariant:
+
+- **One model.** A reading answers a bounded question about a bounded packet.
+  By default it is recorded and counted toward nothing. Under a policy that
+  counts it, it supports and never establishes. Any failure is UNKNOWN and
+  moves nothing.
+- **One scanner, release-gate's own included.** A finding is what the analyser
+  saw. A clean scan supports the scanner's own scoped claim, and it bears on no
+  release claim it does not name.
+- **One evaluator.** Its own verdict is recorded as an external decision in its
+  vocabulary, refused any claim, and mapped onto nothing. So are release-gate's
+  own commands' verdicts: `pr`'s PROMOTE, the loop verifier's SHIP.
+- **One score.** No score is an input. Scores are kept in the record and read
+  by nothing, and the Admission Report says `decided_by_score: false`.
+- **One successful test.** A passing check supports. To establish a claim, the
+  default resolution policy asks for a bound proof or two independent groups of
+  passing checks. Five copies from one session are one group. A behavioural
+  sample of a live agent, such as a probe or a simulated scenario, supports and
+  never checks.
+- **Universal truth.** Even an established claim is established about the
+  candidate state it is bound to, under the policy digested into the case.
+  Every record carries what its producer cannot establish. PROMOTE says the
+  candidate meets the declared release policy, with the evidence and gaps
+  listed.
+
 ## Where it sits in the pipeline
 
 Each tool in a release pipeline answers a different question. release-gate reads
@@ -80,6 +176,7 @@ the attestation of what was admitted.
 | `release_gate/assurance/origin.py` | **Evidence origin**: for every producer in a case, whether release-gate computed its evidence, obtained it in this run, or read it without running the producer. On every report; no rule reads it. |
 | `release_gate/assurance/authorship.py` | **Authorship and verification correlation**: who did each piece of the work, as CI, a commit or a person states it, compared with who checked it. "Verification independence low" when every counted check shares the author's provenance. About independence, never a judgement of AI-written code; unknown authorship stays UNKNOWN. |
 | `release_gate/assurance/static_producer.py` | The scanner as a **first-class evidence producer** (`release_gate_static`): turns an audit report into Universal Evidence. Each finding becomes a scoped observation with what it does *not* establish and its source→sink path, bound to the scanned code. `assure audit.json` and `audit --evidence-out` both go through it. |
+| `release_gate/assurance/first_party.py` | **Release-gate's other checks as evidence producers**: `release-gate.pr/1` (PR diff analysis), `release-gate.loop-verify/1` (trace validation, the loop policy, evals of a stated output), `release-gate.loop-sim/1` and `release-gate.agent-score/1` (behavioural samples of a live agent). The `--json` of `pr`, `verify`, `loop-sim` and `agent-score` names its contract, and `assure --evidence` reads it through the producer contract like any producer's. Each command's own verdict is an external decision and its score is read by nothing. A deterministic check is scoped to the trace, iteration or output it checked. A behavioural pass supports and never checks; a breach is a counterexample. |
 | `release_gate/lockfile.py` | The **AIBOM / context lock** — pins model + prompts + governance + evals + MCP/tool config with a TTL; `compare_lock()` detects behaviour drift. |
 | `release_gate/loop_verifier.py`, `loop_sim.py`, `agent_score.py` | The *behavioural* half — actually run an agent/loop for SHIP/CONTINUE/ROLLBACK and a 0-100 score. (Advanced; complements the static gate.) |
 | `release_gate/trace_validator.py` | Judges one execution trace against `trace_policies` — forbidden tools, retry storms, token overruns, and an agent repeating an *identical* call instead of progressing. |
@@ -96,7 +193,8 @@ the attestation of what was admitted.
 release claims (release.jsonl) + --evidence: every tool's output
   → detect each document's shape; read it through its producer contract
         (OTel, Langfuse, promptfoo, SARIF, verifier reports, eval/red-team/
-         review/behaviour contracts, release-gate's own audit reports)
+         review/behaviour contracts, release-gate's own audit reports and
+         the --json of its pr, verify, loop-sim and agent-score commands)
   → bind each record to the stated candidate state      stale support counts for nothing
   → resolve every claim (CR-01 … CR-11)                 a counterexample outranks any support
   → correlation groups, contradictions, coverage, authorship
@@ -187,7 +285,8 @@ is what lets "why did this block my release?" resolve to a URL, not a code dive.
 
 ## Testing & CI
 
-- ~600 tests, deterministic core, run in seconds (`pytest tests/`).
+- Over 6,000 tests, deterministic core (`pytest tests/`). `tests/test_product_invariant.py`
+  pins the picture above against the code and executes each clause of the invariant.
 - `scripts/check_version_sync.py` enforces version consistency across
   pyproject / package / API / Action pins.
 - `.github/workflows/release-gate-pr.yml` dogfoods the `pr` gate on every PR to

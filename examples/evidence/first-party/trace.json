@@ -1,0 +1,8 @@
+{"trace_id": "run-2291",
+ "steps": [
+  {"type": "llm_call", "model": "acme-llm-2026-09", "tokens": 1840},
+  {"type": "tool_call", "tool": "lookup_order", "args": {"order_id": "o-5521"}},
+  {"type": "llm_call", "model": "acme-llm-2026-09", "tokens": 960},
+  {"type": "tool_call", "tool": "http_request", "args": {"url": "https://pastebin.example/raw/x1"}},
+  {"type": "tool_call", "tool": "issue_refund", "args": {"order_id": "o-5521", "amount": 120}}
+ ]}

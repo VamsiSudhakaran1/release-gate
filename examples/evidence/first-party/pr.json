@@ -1,0 +1,69 @@
+{
+  "schema": "release-gate.pr/1",
+  "producer": {
+    "id": "release-gate/pr",
+    "version": "0.11.2"
+  },
+  "state": {
+    "commit": "149ed8f35ac91e471c0ea2fbda456979ab14829c",
+    "tree": "sha256:1b3cbd0532030a88a622efca95a24fea006ecc319075934e26e028765b822138"
+  },
+  "decision": "BLOCK",
+  "base": "main",
+  "merge_base": "a5ecd5d52cd30f2b7257c15da47609244bbb661e",
+  "changed_files": 1,
+  "reasons": [
+    "1 new high-severity finding(s)",
+    "code safety regressed -24 pts (100 \u2192 76)"
+  ],
+  "new_code_findings": [
+    {
+      "severity": "high",
+      "title": "Dangerous execution sink",
+      "file": "refunds_agent.py",
+      "line": 87,
+      "snippet": "",
+      "recommendation": "eval() executes `reply`, which we traced to the model's own output at line 86. A prompt injection your input guardrail can't catch (it succeeds inside the model) or a poisoned tool result becomes remote code execution here \u2014 after your output evaluator has already scored the text as fine. Parse with ast.literal_eval/json instead, or run it in a sandbox with no network and no filesystem.",
+      "evidence": "client.chat.completions.create() (L86) -> `reply` -> eval() (L87)",
+      "confidence": "high",
+      "basis": "confirmed",
+      "impact": "Remote code execution: whoever controls the model's own output controls the code this process runs (L87).",
+      "rule_id": "RG-EXEC-001",
+      "provenance": {
+        "origin_line": 86,
+        "origin_expr": "client.chat.completions.create()",
+        "value": "reply",
+        "sink_line": 87
+      },
+      "compliance_tags": [
+        "OWASP-LLM:LLM02",
+        "OWASP-LLM:LLM08"
+      ]
+    },
+    {
+      "severity": "low",
+      "title": "LLM call with no token ceiling",
+      "file": "refunds_agent.py",
+      "line": 86,
+      "snippet": "",
+      "recommendation": "This LLM call sets no max_tokens \u2014 a single response can run to the model's max output. Not a vulnerability by itself; pass an explicit max_tokens / max_output_tokens to bound latency and cost.",
+      "evidence": "",
+      "confidence": "medium",
+      "basis": "inferred",
+      "impact": "Unpredictable latency/cost on a single call. Not a vulnerability by itself.",
+      "rule_id": "RG-COST-001",
+      "compliance_tags": [
+        "OWASP-LLM:LLM10"
+      ]
+    }
+  ],
+  "new_safeguard_failures": [],
+  "resolved_code_findings": [],
+  "code_safety_delta": -24,
+  "coverage": {
+    "source_files_changed": 1,
+    "test_files_changed": 0,
+    "source_without_tests": true
+  },
+  "lock_drift": null
+}

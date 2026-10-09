@@ -10327,6 +10327,84 @@ scan would bind to release-gate's own commit instead of the agent's tree. That
 is the same binding a real pipeline gets from its own checkout.
 `tests/test_acceptance.py` changes one input at a time to show that each
 conclusion comes from its input.
+
+### 10bx. The product invariant — five parts, and no single source as truth
+
+The product is drawn as five parts in `docs/ARCHITECTURE.md`:
+
+1. first-party evidence producers;
+2. external evidence;
+3. bounded semantic verification;
+4. the AssuranceCase;
+5. a deterministic admission policy.
+
+It keeps one invariant: release-gate may generate, ingest, normalise and
+compare evidence, semantically interpret bounded evidence, and determine whether
+evidence satisfies policy. It never pretends that one model, one scanner, one
+evaluator, one score or one successful test establishes universal truth.
+`tests/test_product_invariant.py` resolves every node of the drawing to the
+code that implements it, and executes each clause.
+
+**What checking the drawing found.** The first-party layer was partly a claim.
+The CLI listed `pr`, `verify`, `loop-sim` and `agent-score` as evidence
+release-gate produces itself. `assure` read each one's output as UNRECOGNISED:
+hashed, held (RG-COV-001), and otherwise ignored. A trace that called a
+forbidden tool, a probe that leaked a planted secret, an adversarial scenario
+the loop did not roll back and a net-new HIGH finding all reached the case as
+"a file nobody could read". The two halves of the product shared a name and no
+data.
+
+> Schema `first_party_evidence` (protocol count 85). Tests:
+> `tests/test_first_party_producers.py`, `tests/test_product_invariant.py`.
+
+**The fix reuses the producer contract.** It adds no new path. `first_party.py`
+registers four contracts:
+
+- `release-gate.pr/1`;
+- `release-gate.loop-verify/1`;
+- `release-gate.loop-sim/1`;
+- `release-gate.agent-score/1`.
+
+Each command's `--json` names its contract, its producer and version, the
+candidate components it can state, and its inputs by digest. `assure --evidence`
+reads it through `normalise_output`, exactly as it reads an eval harness or a
+red team. The scanner keeps its in-process producer (§10ag).
+
+**The rules the contracts apply are the ones the external contracts already
+apply.**
+
+- A command's own verdict is a DECISION result: recorded, refused any claim,
+  mapped onto nothing.
+- Its score is kept and read by nothing.
+- A deterministic check of a stated artifact is a check of a claim naming that
+  artifact. Trace validation is a RUNTIME_ASSERTION of "trace T violated none
+  of the trace policies it was checked against", bound to the governance file.
+- A behavioural sample of a live agent supports and never checks. A breach is a
+  counterexample, as a red team's successful attack is (§10bj, §10bi).
+- A WARN is inconclusive.
+- An eval the runner passed without checking anything (no output, or an
+  expected behaviour it does not know) is NOT_RUN. The legacy readiness score
+  still counts it, and that is recorded as a limit of that score, not of the
+  evidence.
+
+**The executed invariant.**
+
+| Single source, alone | What it does |
+|---|---|
+| a model reading | moves nothing; counted under a policy that counts it, supports and never establishes |
+| a clean scanner | bears on no release claim it does not name |
+| an evaluator's "approve" | an external decision, adopted by nothing |
+| a score with no stated outcome | unread, holds |
+| one passing test | supports |
+| five copies of that test from one session | one group, still only supports |
+| release-gate's own commands at full marks | none can admit a release held on an unassessed claim |
+| any of the above, against a found counterexample | nothing outvotes it |
+
+The contrast is executed too. Two independent groups of passing checks do
+establish (CR-09), and a policy asking only for support admits on the support
+it asked for. So the invariant concerns a single source. It does not stop
+evidence from satisfying a policy.
+
 ---
 
 ## 11. Methodology behaviour
@@ -10588,6 +10666,10 @@ fixed, rather than the expectations being lowered.
 | Action (§10bv, D9) | output `decided-by` | additive; `decision` and every exit code unchanged |
 | hosted API (§10bv, D7) | `case.source`; the same bytes give the same `case.digest` on every call | the digest an API call returns changes once, and from then on is reproducible |
 | acceptance test (§10bw) | `examples/acceptance/`; `tests/test_acceptance.py`; a CI step | additive |
+| first-party contracts (§10bx) | `assurance/first_party.py`: `release-gate.pr/1`, `release-gate.loop-verify/1`, `release-gate.loop-sim/1`, `release-gate.agent-score/1`; registered as built-ins; schema `first_party_evidence` (protocol count 85) | **stricter**: these outputs used to hold as unrecognised input; a failure in them now contradicts its claim and blocks, like any producer's |
+| command JSON (§10bx) | `pr`, `verify`, `loop-sim` and `agent-score` `--json` (and `agent-score --report`) gain `schema`, `producer`, `state`, `inputs` ahead of their keys | additive; no key moved; exit codes unchanged |
+| verdict wording (§10bx) | the loop verifier's SHIP, `loop-sim`'s and `agent-score`'s PROMOTE reasons name what ran and say they are not admission decisions | text only; decisions unchanged |
+| Admission Report labels (§10bx) | the four producers are listed under *generated by release-gate* with their own labels | label text only |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

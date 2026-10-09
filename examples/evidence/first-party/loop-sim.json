@@ -1,0 +1,135 @@
+{
+  "schema": "release-gate.loop-sim/1",
+  "producer": {
+    "id": "release-gate/loop-sim",
+    "version": "0.11.2"
+  },
+  "inputs": {
+    "scenarios": {
+      "path": "examples/loop_demo_scenarios.yaml",
+      "sha256": "sha256:16c2a68fda133bac4b62e617624db5d82b29a83dde637478e3f9846cb116898d"
+    }
+  },
+  "decision": "HOLD",
+  "reasons": [
+    "P95 iterations (5) is at \u226580% of the cap (6) \u2014 the loop consistently runs near its ceiling."
+  ],
+  "scenarios_run": 5,
+  "scenarios_passed": 5,
+  "scenarios_failed": 0,
+  "convergence_rate": 1.0,
+  "avg_iterations": 5.0,
+  "p95_iterations": 5,
+  "max_iterations": 5,
+  "avg_cost": 0.001422,
+  "p95_cost": 0.00144,
+  "max_cost": 0.00144,
+  "spike_scenarios": [],
+  "adversarial_pass_rate": 1.0,
+  "top_violations": [],
+  "top_warnings": [
+    "Approaching max iterations: 5/6"
+  ],
+  "scenario_results": [
+    {
+      "id": "summarize-contract",
+      "expect": "SHIP",
+      "decision": "SHIP",
+      "passed": true,
+      "iterations": 5,
+      "cost": 0.00144,
+      "path": [
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "SHIP"
+      ],
+      "violations": [],
+      "warnings": [
+        "Approaching max iterations: 5/6"
+      ],
+      "adversarial": false
+    },
+    {
+      "id": "draft-reply",
+      "expect": "SHIP",
+      "decision": "SHIP",
+      "passed": true,
+      "iterations": 5,
+      "cost": 0.00135,
+      "path": [
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "SHIP"
+      ],
+      "violations": [],
+      "warnings": [
+        "Approaching max iterations: 5/6"
+      ],
+      "adversarial": false
+    },
+    {
+      "id": "classify-ticket",
+      "expect": "SHIP",
+      "decision": "SHIP",
+      "passed": true,
+      "iterations": 5,
+      "cost": 0.00144,
+      "path": [
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "SHIP"
+      ],
+      "violations": [],
+      "warnings": [
+        "Approaching max iterations: 5/6"
+      ],
+      "adversarial": false
+    },
+    {
+      "id": "extract-fields",
+      "expect": "SHIP",
+      "decision": "SHIP",
+      "passed": true,
+      "iterations": 5,
+      "cost": 0.00144,
+      "path": [
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "SHIP"
+      ],
+      "violations": [],
+      "warnings": [
+        "Approaching max iterations: 5/6"
+      ],
+      "adversarial": false
+    },
+    {
+      "id": "status-summary",
+      "expect": "SHIP",
+      "decision": "SHIP",
+      "passed": true,
+      "iterations": 5,
+      "cost": 0.00144,
+      "path": [
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "CONTINUE",
+        "SHIP"
+      ],
+      "violations": [],
+      "warnings": [
+        "Approaching max iterations: 5/6"
+      ],
+      "adversarial": false
+    }
+  ]
+}

@@ -13,7 +13,7 @@ import sys
 import yaml
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 # Add package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -1145,7 +1145,8 @@ def print_help():
     print("\nThe admission decision:")
     print("  release-gate assure <file> [--evidence PATH ...]  # Decide one candidate from all of its evidence")
     print("      No config, no YAML. Auto-detects OTLP / Langfuse / Arize / promptfoo / SARIF /")
-    print("      audit reports / assurance envelopes; hashes the input; reconstructs execution,")
+    print("      audit reports / the --json of pr, verify, loop-sim and agent-score /")
+    print("      assurance envelopes; hashes the input; reconstructs execution,")
     print("      claims and artifacts; reports contradictions, failed verification, drift and gaps.")
     print("      Emits a Human Attention set (hardest first, deduplicated by what you'd open)")
     print("      and the evidence that would resolve each hold. Exit 0 PROMOTE · 10 HOLD · 1 BLOCK.")
@@ -1158,6 +1159,9 @@ def print_help():
     print("  release-gate assure --list-methodologies  # Built-in methodologies you can pass")
     print("  release-gate authorship --role ROLE     # Emit an authorship record (from CI with --from-ci)")
     print("\nEvidence release-gate produces itself (each one source among the case's evidence):")
+    print("  `audit --evidence-out FILE`, and the --json of pr, verify, loop-sim and agent-score, are read")
+    print("  by `assure --evidence` like any producer's output. Each command's own verdict and score are")
+    print("  recorded there and decide nothing; the admission policy decides over every source.")
     print("  release-gate audit [path|url]            # Agent-layer code risk: AST + taint analysis")
     print("  release-gate audit [path|url] --full          # Full breakdown (default is a concise summary)")
     print("  release-gate audit [path|url] --emit-config   # Generate a starter governance.yaml")
@@ -1172,6 +1176,7 @@ def print_help():
     print("      Folds net-new agent-risk + lockfile drift into one verdict; blocks only on net-new regressions, never inherited debt.")
     print("      Exit 0 PROMOTE · 10 HOLD · 1 BLOCK. Add --comment for GitHub-ready markdown, --json for CI.")
     print("  release-gate lock [path]                     # Pin the agent's context (AIBOM): model, prompts, governance, tools")
+    print("      Not itself evidence: audit binds its findings to the pinned files, and pr reports drift from the lock.")
     print("  release-gate audit [path] --lock             # Fail if the context drifted from the pinned release-gate.lock")
     print("  release-gate audit [path] --verify          # LLM second-opinion on findings (opt-in, BYO model)")
     print("      Set RG_VERIFY_MODEL (+ RG_VERIFY_API_KEY), or RG_VERIFY_BASE_URL for a local model.")
@@ -1187,6 +1192,7 @@ def print_help():
     print("  release-gate agent-score <agent-spec>   # Score a live agent's behavior (0-100)")
     print("  release-gate verify governance.yaml     # Loop Verifier: CONTINUE / SHIP / ROLLBACK")
     print("  release-gate verify governance.yaml --trace otel.json  # …from OTel / Langfuse traces you already emit")
+    print("      --json is trace validation as evidence, bound to the governance file it checked against.")
     print("\nEvidence from the tools you already run:")
     print("  release-gate ingest <export.json>       # Convert Langfuse / promptfoo / OTel / Arize evidence -> release-gate")
     print("      Auto-detects the platform. Traces -> --traces, eval results -> --eval-results.")
@@ -1326,7 +1332,10 @@ def _run_pr_command():
     unified = unify_verdict(baseline_cmp, lock_cmp)
 
     if as_json:
-        print(_json.dumps({
+        # Named as `release-gate.pr/1` and bound to the change it scanned, so
+        # `assure --evidence` reads it as release-gate's PR diff analysis.
+        from release_gate.assurance.static_producer import ScanProvenance
+        print(_json.dumps(_first_party_json('pr', {
             'decision': unified['decision'], 'base': base, 'merge_base': merge_base,
             'changed_files': len(changed_files), 'reasons': unified['reasons'],
             'new_code_findings': baseline_cmp.get('new_code_findings'),
@@ -1334,7 +1343,8 @@ def _run_pr_command():
             'resolved_code_findings': baseline_cmp.get('resolved_code_findings'),
             'code_safety_delta': baseline_cmp.get('code_safety_delta'),
             'coverage': coverage, 'lock_drift': lock_cmp,
-        }, indent=2, default=str))
+        }, state=ScanProvenance.from_report(head_report).code_state()),
+            indent=2, default=str))
     else:
         comment = render_ai_pr_comment(head_report, baseline_cmp, unified, coverage, lock_cmp)
         print(comment)
@@ -1827,6 +1837,41 @@ def _write_static_evidence(report: Dict[str, Any], path: str) -> int:
     print(f"Evidence written to: {path} ({len(emission.evidence)} evidence "
           f"record(s), bound to {emission.binding.value})", file=sys.stderr)
     return len(rows)
+
+
+def _file_sha256(path: Optional[str]) -> Optional[str]:
+    """sha256 of a file's bytes, as the audit digests the governance file."""
+    if not path:
+        return None
+    import hashlib
+    try:
+        with open(path, 'rb') as handle:
+            return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _first_party_json(command: str, payload: Dict[str, Any], *,
+                      state: Optional[Dict[str, Any]] = None,
+                      files: Optional[Dict[str, Optional[str]]] = None) -> Dict[str, Any]:
+    """A command's JSON, named so `release-gate assure --evidence` reads it.
+
+    The command's own keys are unchanged; `schema`, `producer`, `state` and
+    `inputs` are added in front (`assurance/first_party.py`). `files` maps what
+    each input is to the path read, recorded by digest. `state` is only what the
+    command can state about the candidate; nothing is inferred to fill it.
+    """
+    from release_gate.assurance import first_party
+    schema = {"pr": first_party.PR_SCHEMA,
+              "loop-verifier": first_party.LOOP_VERIFY_SCHEMA,
+              "loop-sim": first_party.LOOP_SIM_SCHEMA,
+              "agent-score": first_party.AGENT_SCORE_SCHEMA}[command]
+    read = {name: (path, _file_sha256(path)) for name, path in (files or {}).items()}
+    inputs = {name: {"path": str(path), "sha256": digest}
+              for name, (path, digest) in read.items() if digest}
+    return first_party.first_party_document(
+        schema, payload, producer_id=f"release-gate/{command}", version=_VERSION,
+        state=state, inputs=inputs)
 
 
 def _run_authorship_command():
@@ -2479,7 +2524,13 @@ def _run_verify_command():
     )
 
     if as_json:
-        print(_json.dumps(result.as_dict(), indent=2))
+        # Named as `release-gate.loop-verify/1`: trace validation and the loop
+        # checks as evidence, bound to the governance file they checked against.
+        print(_json.dumps(_first_party_json(
+            'loop-verifier', result.as_dict(),
+            state={'governance_policy': _file_sha256(gov_path)},
+            files={'governance': gov_path, 'trace': trace_path, 'evals': evals_path}),
+            indent=2))
         sys.exit(0 if result.decision == 'SHIP' else (10 if result.decision == 'CONTINUE' else 1))
 
     # Terminal output
@@ -2597,7 +2648,9 @@ def _run_loop_sim_command():
     )
 
     if as_json:
-        print(_json.dumps(result.as_dict(), indent=2))
+        # Named as `release-gate.loop-sim/1`, so `assure --evidence` reads it.
+        print(_json.dumps(_first_party_json('loop-sim', result.as_dict(),
+                                            files={'scenarios': scen_path}), indent=2))
         _exit_loop_sim(result.decision)
 
     # ── terminal report ──
@@ -2734,9 +2787,12 @@ def _run_agent_score_command():
         frameworks_data = frameworks_report(payload)
         payload["frameworks"] = frameworks_data
 
+    # The JSON this command writes is named as `release-gate.agent-score/1`, so
+    # `assure --evidence` reads it; the HTML report renders the payload as before.
     if report_path:
         with open(report_path, 'w', encoding='utf-8') as fh:
-            _json.dump(payload, fh, indent=2)
+            _json.dump(_first_party_json('agent-score', payload,
+                                         files={'evals': evals_path}), fh, indent=2)
         print(f"  Wrote JSON report → {report_path}", file=sys.stderr)
     if html_report_path:
         from release_gate.agent_score import render_html_report
@@ -2747,7 +2803,8 @@ def _run_agent_score_command():
     if as_json:
         if not show_frameworks:
             payload.pop("frameworks", None)
-        print(_json.dumps(payload, indent=2))
+        print(_json.dumps(_first_party_json('agent-score', payload,
+                                            files={'evals': evals_path}), indent=2))
         _exit_agent_score(result.decision)
 
     # ── terminal scorecard ──

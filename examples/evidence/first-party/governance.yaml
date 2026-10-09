@@ -1,0 +1,11 @@
+# The refunds agent's declared trace and loop policies, as `release-gate verify`
+# reads them. `verify.json` is this file and `trace.json` checked together.
+trace_policies:
+  allowed_tools: [lookup_order, issue_refund, close_account]
+  forbidden_tools: [shell, http_request]
+  max_tool_calls: 6
+loop:
+  max_iterations: 8
+  total_cost_limit: 0.40
+  maker_model: acme-llm-2026-09
+  checker_model: acme-review-2026-07

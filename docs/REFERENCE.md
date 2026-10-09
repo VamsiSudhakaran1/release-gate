@@ -858,7 +858,7 @@ Every source of evidence meets the engine through one contract (`release_gate/as
 - a `DECISION` (a review bot's "review", a policy engine's "deny") is recorded as an external decision in its producer's vocabulary. It cannot bear on a claim, and its value never moves release-gate's verdict;
 - source fields no adapter maps are kept under `content.native`. They are bounded, and any field that does not fit is named in `native_omitted`. Fields that carry prompt, completion, test-variable or grader text are kept as a digest (`{"digest": …, "redacted": "PROMPT"}`), never as text, so a persisted case holds none of it. An undescribed promptfoo case is named by its position and a digest of its vars, not by their values.
 
-Built in: promptfoo, SARIF 2.1.0 (any static analyser; the tool is named by the file), the external-decision shape below, and release-gate's own static scanner (declared in the same terms).
+Built in: promptfoo, SARIF 2.1.0 (any static analyser; the tool is named by the file), the external-decision shape below, the generic contracts under *External evidence*, release-gate's own static scanner (declared in the same terms), and the `--json` of its `pr`, `verify`, `loop-sim` and `agent-score` commands (*First-party evidence* below).
 
 ```json
 {"external_decision": {"producer": {"id": "proofagent", "version": "1.4.0"},
@@ -922,6 +922,33 @@ It appears as `evidence_origin` in `--json`, as EVIDENCE ORIGIN in the text repo
     [         READ]  sam@example.com via human_review: 1 record(s) (1 HUMAN_REVIEW)
                      sam@example.com's review as recorded, read from what was submitted; release-gate did not perform, repeat or check the review
 ```
+
+#### First-party evidence: pr, verify, loop-sim, agent-score
+
+Release-gate's own checks are evidence producers too, and they reach a case the same way an external tool's results do. Each command's `--json` names its contract in a `schema` key. `assure --evidence` reads it through the producer contract, with no more standing than any other producer. Earlier versions read these outputs as unrecognised files.
+
+| Command | Schema | What it becomes |
+|---|---|---|
+| `release-gate pr --json` | `release-gate.pr/1` | PR diff analysis. A net-new finding argues against "this change introduces no static finding that its merge-base did not have". A change with none supports that claim through what the scanner read, never as a check. A newly missing safeguard argues against "this change leaves no declared safeguard missing". Lock drift argues against "the agent's context matches its pinned release-gate.lock", unless the change updated the lock. Bound to the commit and scanned tree, as the audit's findings are |
+| `release-gate verify --json` | `release-gate.loop-verify/1` | trace validation and the loop checks. The trace check is a RUNTIME_ASSERTION of "trace T violated none of the trace policies it was checked against". The loop-policy check is a RUNTIME_ASSERTION of one claim covering every iteration checked, so a breach at any iteration contradicts it. An eval case is a TEST_SUITE check of the output of the iteration it read (`rg-loop-eval:<case>:iteration-<n>`). Submit the verification of the iteration whose output is released: an earlier iteration's failed eval is a refuted claim about that earlier output. `PASS` passes and `FAIL` or `ERROR` fails. `WARN` is inconclusive. Any other word is unread and holds (RG-COV-002). Evals run with no output (`mode: static`), or with an expected behaviour the eval runner does not check, are NOT_RUN. Bound to the governance file it read (`state.governance_policy`) |
+| `release-gate loop-sim --json` | `release-gate.loop-sim/1` | an adversarial scenario the loop did not roll back is a COUNTEREXAMPLE to "the loop rolls back adversarial scenario S". A scenario that went as expected supports its claim and never checks it. The scenario counts are a measurement |
+| `release-gate agent-score --json`, or its JSON report file | `release-gate.agent-score/1` | a probe that got the planted secret out is a COUNTEREXAMPLE to "the agent revealed no planted secret under release-gate's injection probes". Several runs share that claim, and a leak in any of them stands. A failed correctness probe argues against its claim. A battery with no leak and no errored probe supports and never checks. Errored probes are recorded and read as nothing. Each tier's refusals are a count |
+
+In every one, the command's own verdict is recorded as an external decision and adopted by nothing:
+
+- `pr`'s PROMOTE / HOLD / BLOCK;
+- the loop verifier's SHIP / CONTINUE / ROLLBACK;
+- the simulation's and the agent score's PROMOTE / HOLD / BLOCK.
+
+Their scores and rates are kept in the record and read by nothing. `loop-sim` and `agent-score` run against a live agent and name no state of it, so their support binds to no candidate. Under an explicit `--candidate` that support is unbound (RG-DRIFT-008), and a breach they found stands regardless.
+
+```bash
+release-gate pr --base origin/main --json > pr.json
+release-gate verify governance.yaml --trace otel.json --json > trace-check.json
+release-gate assure release.jsonl --evidence pr.json --evidence trace-check.json --admission
+```
+
+The Admission Report lists these under *generated by release-gate*. `origin.py` says each was a document attributed to release-gate, read as submitted. [`examples/evidence/first-party/`](../examples/evidence/first-party/) holds one output of each, written by the commands.
 
 #### `--config` — an organisation's own standards
 

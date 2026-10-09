@@ -3,7 +3,7 @@ Loop Verifier — the Verify phase for agent loops.
 
 Sits inside an agent loop's iterate cycle and answers:
   CONTINUE  — output not yet acceptable; keep iterating
-  SHIP      — output passes all configured checks; ready to return/ship
+  SHIP      — every check that ran passed; the loop can stop and return this output
   ROLLBACK  — a hard violation means the loop should abort
 
 The three checks run in sequence:
@@ -264,8 +264,12 @@ class LoopVerifier:
                 *warnings,
             ]
 
-        # No violations, no warnings → ship
-        return "SHIP", ["All checks passed — output is ready to ship."]
+        # No violations, no warnings → ship. Say which checks ran: a SHIP is
+        # about the checks this iteration was given, never the output at large.
+        ran = ", ".join(sorted(checks)) or "none"
+        return "SHIP", [f"Every check that ran passed ({ran}); the loop can stop and "
+                        "return this output. A check that did not run says nothing, "
+                        "and this is not an admission decision."]
 
     def _evaluate_stop_condition(
         self,

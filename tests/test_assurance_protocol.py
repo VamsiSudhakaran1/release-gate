@@ -103,8 +103,9 @@ class TestNoDrift:
         # 79 since REFERENCE_EVIDENCE_SCHEMA_VERSION, ORIGIN_SCHEMA_VERSION and
         # AUTHORSHIP_SCHEMA_VERSION;
         # 81 since ADMISSION_SCHEMA_VERSION and ADMISSION_REPORT_SCHEMA_VERSION;
-        # 84 since SEMANTIC_PANEL_SCHEMA_VERSION.
-        assert len(PROTOCOL.schemas) == len(declared_constants()) == 84
+        # 84 since SEMANTIC_PANEL_SCHEMA_VERSION;
+        # 85 since FIRST_PARTY_EVIDENCE_SCHEMA_VERSION.
+        assert len(PROTOCOL.schemas) == len(declared_constants()) == 85
 
 
 # ── the eight a consumer names ───────────────────────────────────────────────

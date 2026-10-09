@@ -4526,7 +4526,7 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
         ? [iteration > maxIter ? 'Max iterations exceeded: ' + iteration + ' > ' + maxIter
                                : 'Total cost limit exceeded: $' + costSoFar.toFixed(2) + ' > $' + costLimit.toFixed(2)]
         : decision === 'CONTINUE' ? ['Approaching max iterations: ' + iteration + '/' + maxIter]
-        : ['All checks passed — output is ready to ship.'];
+        : ['Every check that ran passed (loop_policy); the loop can stop and return this output. A check that did not run says nothing, and this is not an admission decision.'];
       violations    = decision === 'ROLLBACK' ? reasons : [];
       warnings      = decision === 'CONTINUE' ? reasons : [];
       costRemaining = costLimit > 0 ? Math.max(0, costLimit - costSoFar) : null;

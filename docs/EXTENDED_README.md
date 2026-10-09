@@ -359,7 +359,7 @@ python cli.py run --config release-gate.yaml --env prod
 
 | Code | Status | Meaning | CI/CD Action |
 |------|--------|---------|--------------|
-| 0 | PASS | All checks passed | Deploy automatically |
+| 0 | PASS | Every governance check that ran passed | Continue the pipeline: admission is `release-gate assure`'s decision over all the evidence |
 | 10 | WARN | Some warnings found | Require approval |
 | 1 | FAIL | Critical failures | Block deployment |
 

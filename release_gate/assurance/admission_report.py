@@ -67,6 +67,10 @@ _PRODUCER_TYPE_LABEL = {
     "sast": "SAST", "human_review": "Human review",
     "behavior": "Behavioural evaluation",
     "external_decision": "External decision",
+    "release_gate_pr": "Release-Gate PR diff",
+    "release_gate_loop_verify": "Release-Gate trace and loop verifier",
+    "release_gate_loop_sim": "Release-Gate loop simulation",
+    "release_gate_agent_score": "Release-Gate agent score",
 }
 #: Traces, by the format they were read from.
 _TRACE_LABEL = {"LANGFUSE_EXPORT": "Langfuse", "OTLP_TRACE": "OpenTelemetry",
@@ -172,7 +176,9 @@ def _label(entry: Any, detection_kind: str) -> str:
     if producer.startswith("release-gate/static"):
         return "Release-Gate Static"
     if producer.startswith("release-gate/"):
-        return "Release-Gate"
+        return next((_PRODUCER_TYPE_LABEL[t] for t in entry.producer_types
+                     if t.startswith("release_gate_") and t in _PRODUCER_TYPE_LABEL),
+                    "Release-Gate")
     for producer_type in entry.producer_types:
         if producer_type in _PRODUCER_TYPE_LABEL:
             return _PRODUCER_TYPE_LABEL[producer_type]

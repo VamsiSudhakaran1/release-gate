@@ -4,6 +4,77 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🧭 The product invariant, and release-gate's own checks as evidence
+
+The product is now drawn as five parts:
+
+1. first-party evidence producers;
+2. external evidence;
+3. bounded semantic verification;
+4. the AssuranceCase;
+5. a deterministic admission policy.
+
+It keeps one invariant: *"Release-Gate may generate evidence, ingest evidence,
+normalize evidence, compare evidence, semantically interpret bounded evidence,
+and determine whether evidence satisfies policy. It must never pretend that one
+model, one scanner, one evaluator, one score, or one successful test establishes
+universal truth."* The picture is in
+[ARCHITECTURE](ARCHITECTURE.md#the-product-in-one-picture).
+`tests/test_product_invariant.py` does two things:
+
+- It resolves every node in the picture to the code that implements it.
+- It executes each clause. Alone, an evaluator's "approve", a clean scanner, a
+  score with no stated outcome, five model readings, or release-gate's own
+  commands at full marks cannot admit a held release. One passing test supports
+  and does not establish. Copies of one test from one session count as one
+  group. No single kind of source outvotes a counterexample.
+
+Checking the picture against the code found one gap. The CLI listed `pr`,
+`verify`, `loop-sim` and `agent-score` as "evidence release-gate produces
+itself, each one source among the case's evidence", but `assure` read every one
+of their outputs as an unrecognised file. Nothing they found reached a case.
+
+- **Each command's `--json` now names its contract.**
+  - `pr`: `release-gate.pr/1`, PR diff analysis.
+  - `verify`: `release-gate.loop-verify/1`, trace validation, the loop policy,
+    and evals of a stated output.
+  - `loop-sim`: `release-gate.loop-sim/1`.
+  - `agent-score`: `release-gate.agent-score/1`.
+- **`assure --evidence` reads each one** through the producer contract
+  (`assurance/first_party.py`), as it reads an external tool's.
+- **A command's own verdict decides nothing.** It is recorded as an external
+  decision and adopted by nothing, and its score is read by nothing.
+- **A check is scoped to what it checked.** A trace check is about that trace,
+  bound to the governance file it read.
+- **A behavioural sample supports and never checks.** A probe that leaked the
+  planted secret, or an adversarial scenario the loop did not roll back, is a
+  counterexample.
+- **Nothing becomes a pass.** WARN is inconclusive. The eval runner passes cases
+  it checked nothing on (no output, or an expected behaviour it does not know);
+  those read as NOT_RUN.
+
+Wording that claimed more than a check showed:
+
+- The loop verifier's SHIP said "All checks passed — output is ready to ship".
+  It now names the checks that ran and says it is not an admission decision.
+- `loop-sim`'s "Ready for a looping environment" and `agent-score`'s "ready to
+  promote" are reworded the same way.
+
+**Migration.**
+
+- **The four commands' JSON gains `schema`, `producer`, `state` and `inputs`
+  ahead of their existing keys.** No existing key moved or changed. A consumer
+  that compares the whole object for equality will see the new keys.
+- **Decisions, exit codes and terminal output are unchanged,** apart from the
+  three reason strings above.
+- **These outputs used to hold a case as unrecognised input (RG-COV-001).** They
+  are now read. A failed trace check, a leaked probe, a scenario that got
+  through, or a net-new finding now contradicts its claim, which blocks
+  (RG-CONTRA-002, RG-VERIF-002, RG-CEX-002), the same as a failed check from
+  any other producer.
+- **The legacy readiness score (`score`) is unchanged.** It still counts an
+  unchecked eval as passed.
+
 ### ✅ Product acceptance test: one enterprise release, end to end
 
 [`examples/acceptance/`](../examples/acceptance/README.md) admits one release of

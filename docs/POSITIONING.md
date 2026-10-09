@@ -143,6 +143,47 @@ So the statement is about reaching the boundary, not about clearing it. With a
 methodology stated, sufficiency is measured against that methodology and named as
 such. Without one, the case holds and the gap is the reason.
 
+### The invariant
+
+> Release-Gate may generate evidence, ingest evidence, normalize evidence, compare
+> evidence, semantically interpret bounded evidence, and determine whether evidence
+> satisfies policy. It must never pretend that one model, one scanner, one
+> evaluator, one score, or one successful test establishes universal truth.
+
+**May generate.** Its first-party producers are the scanner (`audit`), PR diff
+analysis (`pr`), governance verification, trace validation (`verify`) and the
+behavioural checks that already existed (`verify`, `loop-sim`, `agent-score`).
+Each one's output is read by `assure --evidence` through the same producer contract
+as any other tool's (`first_party.py`, `static_producer.py`). Its own commands get
+no special standing: `pr` saying PROMOTE is one source saying so.
+
+**Ingest, normalize, compare.** Every document goes through one normaliser
+(`producer_contract.normalise_output`). Every record is bound, or not, to the
+candidate state. Contradictions, counterexamples and independence groups are
+computed across sources, never within one.
+
+**Semantically interpret bounded evidence.** A model is asked only what the rules
+left open, about a minimised packet, under fixed instructions, and any failure is
+an UNKNOWN that moves nothing (`escalation.py`, `semantic_verifier.py`).
+
+**Determine whether evidence satisfies policy.** `decide()` reads the declared
+policy and the normalised evidence, and nothing else.
+
+**Never one source as universal truth.** Each clause is enforced and executed in
+`tests/test_product_invariant.py`:
+
+| One… | What it can do | Where |
+|---|---|---|
+| model | recorded and counted toward nothing; under a policy that counts it, supports and never establishes | `ResolutionPolicy.semantic_support`, CR-09 |
+| scanner | a finding is what the analyser saw; a clean scan supports its own scoped claim and no other | `static_producer.py`, SARIF and `sast/1` bear on no claim they do not name |
+| evaluator | its decision is an external decision, refused any claim and mapped onto nothing | `ResultKind.DECISION`, `is_release_gate_verdict: false` |
+| score | read by nothing | `decided_by_score: false`; scores kept in `native` |
+| successful test | supports; establishing takes a bound proof or two independent groups, and copies from one session are one group | `DEFAULT_RESOLUTION_POLICY`, `correlation.py` |
+
+An established claim is still established only about the state it is bound to,
+under the policy digested into the case. Every record says what its producer
+cannot establish.
+
 ---
 
 ## The six things it will not say

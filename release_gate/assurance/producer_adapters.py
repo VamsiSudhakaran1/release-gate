@@ -522,9 +522,12 @@ class ExternalDecisionAdapter(EvidenceAdapter):
 def builtin_adapters() -> Tuple[EvidenceAdapter, ...]:
     """Fresh instances, so a caller's registry never shares adapter state.
 
-    The three format adapters here, and the four generic contracts in
-    `reference_adapters` — eval, red team, SAST and human review.
+    The three format adapters here, the generic contracts in
+    `reference_adapters` — eval, red team, SAST, human review and behaviour —
+    and the contracts release-gate's own commands write (`first_party`): `pr`,
+    `verify`, `loop-sim` and `agent-score`, read as any producer's are.
     """
+    from release_gate.assurance.first_party import first_party_adapters
     from release_gate.assurance.reference_adapters import reference_adapters
     return (PromptfooAdapter(), SarifAdapter(), ExternalDecisionAdapter(),
-            *reference_adapters())
+            *reference_adapters(), *first_party_adapters())

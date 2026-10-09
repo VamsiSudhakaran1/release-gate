@@ -280,7 +280,8 @@ class LoopSimulator:
         if decision == "PROMOTE":
             reasons.append(
                 f"Converged on {convergence_rate * 100:.0f}% of scenarios within budget; "
-                f"all adversarial fixtures rolled back. Ready for a looping environment."
+                f"all adversarial fixtures rolled back. That is this scenario bank's "
+                f"result, not an admission decision."
             )
 
         return SimResult(
