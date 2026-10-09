@@ -77,7 +77,7 @@ the engine names a producer
 ### GitHub Actions
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.11.2
+- uses: VamsiSudhakaran1/release-gate@v0.12.0
   id: admission
   with:
     command: assure

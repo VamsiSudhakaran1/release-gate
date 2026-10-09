@@ -1470,7 +1470,7 @@ coverage.
 Gate it in CI the same way as `audit`:
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.11.2
+- uses: VamsiSudhakaran1/release-gate@v0.12.0
   with:
     command: loop-sim
     scenarios: examples/loop_scenarios.yaml
@@ -1833,7 +1833,7 @@ What HOLD does is a pipeline choice, named once as the **hold policy**:
 The GitHub Action does this as `command: assure`:
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.11.2
+- uses: VamsiSudhakaran1/release-gate@v0.12.0
   id: admit
   with:
     command: assure
@@ -1914,7 +1914,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Score & gate release
-        uses: VamsiSudhakaran1/release-gate@v0.11.2
+        uses: VamsiSudhakaran1/release-gate@v0.12.0
         with:
           command: score
           config: governance.yaml
@@ -1926,7 +1926,7 @@ jobs:
 ### Full options
 
 ```yaml
-- uses: VamsiSudhakaran1/release-gate@v0.11.2
+- uses: VamsiSudhakaran1/release-gate@v0.12.0
   with:
     config: governance.yaml
     command: score           # score | compare | evidence-pack | impact | run

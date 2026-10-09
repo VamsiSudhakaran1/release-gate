@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "release-gate"
-version = "0.11.2"
+version = "0.12.0"
 description = "The independent admission controller for AI systems: an auditable PROMOTE / HOLD / BLOCK from code-level agent risk, evaluations, traces, governance evidence, verification results and human approvals, read from the tools that produced them."
 readme = "README.md"
 license = {text = "MIT"}
