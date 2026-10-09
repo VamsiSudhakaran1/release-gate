@@ -218,7 +218,8 @@ class ApprovalView:
             case_version=self.offer.case_version,
             subject_digest=self.offer.subject_digest,
             evidence_pack_digest=self.offer.evidence_pack_digest,
-            case_digest=self.offer.case_digest)
+            case_digest=self.offer.case_digest,
+            bound_policy=dict(self.offer.bound_policy))
 
     @property
     def blocking_count(self) -> int:

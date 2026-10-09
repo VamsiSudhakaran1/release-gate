@@ -7,6 +7,7 @@ reaches.
 
 | Example | What it shows |
 |---|---|
+| [`acceptance/`](acceptance/README.md) | The product acceptance test: AI-generated code with tools that move money, every kind of evidence, one stale item, one correlated verifier, one counterexample and one unassessed critical area — admitted from a clean checkout, with an answer to every question a release owner asks |
 | [`demo-admission/`](demo-admission/README.md) | Six tools, one release, one decision: five tools report good news, and the release still holds or blocks for the reason it prints |
 | [`evidence/`](evidence/README.md) | One sample per external-evidence contract (eval, red team, SAST, formal verification, review, behavioural evaluation) and a release decided over all of them |
 | [`agents/`](agents/README.md) | Five agent runs in the shapes real systems emit: an OpenTelemetry trace, a promptfoo eval, a destructive migration, a research swarm, and one that promotes |

@@ -1253,9 +1253,14 @@ async def assure_demo(body: AssureRequest, request: Request = None):
     tree are each refused and counted rather than silently dropped. Those refusals
     are exercised by the hostile harness that ships with the package.
 
-    The file is written to a private temporary path so the engine can hash the
-    bytes it actually read — the subject's digest is OBSERVED because release-gate
-    computed it, not because the caller asserted it — and removed afterwards.
+    The file is written to a private temporary directory so the engine can hash
+    the bytes it actually read — the subject's digest is OBSERVED because
+    release-gate computed it, not because the caller asserted it — and removed
+    afterwards. It is read as `release-gate assure submission.jsonl` (or
+    `.json`, returned as `case.source`) reads it, from beside the file — never
+    by its temporary path. The path is part of the case, and a random one made
+    the digest this returns change on every call and match no CLI run of the
+    same bytes. Saved under that name, the CLI reaches the same case.
     """
     import json as _json
     import tempfile as _tempfile
@@ -1284,12 +1289,24 @@ async def assure_demo(body: AssureRequest, request: Request = None):
 
     suffix = ".json" if content.lstrip().startswith(("{", "[")) and \
         "\n{" not in content.strip() else ".jsonl"
-    path = None
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    workdir = path = None
+    here = os.getcwd()
     try:
-        with _tempfile.NamedTemporaryFile(
-                "w", suffix=suffix, delete=False, encoding="utf-8") as handle:
+        workdir = _tempfile.mkdtemp(prefix="rg-assure-")
+        name = f"submission{suffix}"
+        path = str(_Path(workdir) / name)
+        with open(path, "w", encoding="utf-8") as handle:
             handle.write(content)
-            path = handle.name
+        # Read from beside the file, as the CLI is run. The working directory is
+        # process-wide, and changing it is safe here only because nothing else
+        # can run while it is changed: from here to `finally` there is no
+        # `await`, every route in this app is async, and the app starts no
+        # threads — so no other request in this process executes until the
+        # directory is restored. Add an `await` or a thread and this is wrong.
+        os.chdir(workdir)
 
         from release_gate.assurance.review import build_review, render_review
         from release_gate.assurance.zero_config import assure
@@ -1302,7 +1319,7 @@ async def assure_demo(body: AssureRequest, request: Request = None):
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=400, detail=str(exc))
 
-        outcome = assure(path, methodology=methodology)
+        outcome = assure(name, methodology=methodology)
         review = build_review(outcome)
         normalisation = outcome.normalisation
 
@@ -1317,6 +1334,7 @@ async def assure_demo(body: AssureRequest, request: Request = None):
             "case": {
                 "case_id": outcome.case.case_id,
                 "digest": outcome.case.case_digest,
+                "source": name,
                 "subject_digest": review.subject.digest,
                 "methodology": review.methodology or None,
             },
@@ -1355,15 +1373,14 @@ async def assure_demo(body: AssureRequest, request: Request = None):
         # the caller and names a directory on this host, and an error page is a
         # poor place to start describing the server's filesystem.
         message = str(exc).replace(path or "", body.filename or "the submitted file")
+        message = message.replace(workdir or "", "the submission")
         raise HTTPException(
             status_code=422,
             detail=f"Could not read that as a run: {type(exc).__name__}: {message}")
     finally:
-        if path:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        os.chdir(here)
+        if workdir:
+            _shutil.rmtree(workdir, ignore_errors=True)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────

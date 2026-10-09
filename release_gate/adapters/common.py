@@ -104,8 +104,39 @@ def _too_deep(text: str, limit: int = MAX_JSON_DEPTH) -> bool:
     return False
 
 
-def _loads(text: str) -> Any:
-    """`json.loads` with the depth bound applied first, and a floor under it."""
+def _unambiguous_object(pairs: List[Any]) -> Dict[str, Any]:
+    """An object, refused when it names one key twice.
+
+    JSON leaves duplicate keys to the reader: Python keeps the last, others keep
+    the first or refuse. `{"outcome": "FAILED", "outcome": "PASSED"}` is a
+    failure to a reviewer's first-wins viewer and a pass to this process, and a
+    gate must not decide on a reading another reader would not share.
+    """
+    held: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in held:
+            raise ValueError(
+                f"duplicate key {key!r} in one JSON object: readers disagree about "
+                "which value it holds, so the document is refused rather than "
+                "read one way")
+        held[key] = value
+    return held
+
+
+def _not_json(constant: str) -> Any:
+    raise ValueError(
+        f"{constant} is not a JSON value (RFC 8259); a record carrying it cannot "
+        "be digested reproducibly, so the document is refused — emit null, or the "
+        "value as a string")
+
+
+def _loads(text: str, *, strict: bool = False) -> Any:
+    """`json.loads` with the depth bound applied first, and a floor under it.
+
+    `strict` refuses what JSON leaves ambiguous or does not define: a key named
+    twice in one object, and NaN or Infinity. The admission path reads strictly;
+    the scanner-side readers keep the decoder's lenient reading they always had.
+    """
     if _too_deep(text):
         raise ValueError(
             f"Ingest input nests deeper than {MAX_JSON_DEPTH} levels and was "
@@ -113,6 +144,9 @@ def _loads(text: str) -> Any:
             "interpreter stack in the JSON decoder rather than in anything that "
             "could report it")
     try:
+        if strict:
+            return json.loads(text, object_pairs_hook=_unambiguous_object,
+                              parse_constant=_not_json)
         return json.loads(text)
     except RecursionError as exc:
         # The scan above should make this unreachable. It is kept because a
@@ -123,11 +157,12 @@ def _loads(text: str) -> Any:
             "interpreter stack; it was refused rather than parsed") from exc
 
 
-def load_document(path: str) -> Any:
+def load_document(path: str, *, strict: bool = False) -> Any:
     """Read a JSON or JSONL export.
 
     JSONL is returned as a list of objects — every platform here can emit
-    line-delimited spans, and callers treat both the same way.
+    line-delimited spans, and callers treat both the same way. `strict` is
+    `_loads`'s: the admission path passes it.
     """
     p = Path(path)
     if not p.exists():
@@ -138,17 +173,18 @@ def load_document(path: str) -> Any:
         raise ValueError(f"Ingest input is empty: {path}")
 
     if p.suffix.lower() == ".jsonl":
-        return [_loads(line) for line in text.splitlines() if line.strip()]
+        return [_loads(line, strict=strict) for line in text.splitlines()
+                if line.strip()]
 
     try:
-        return _loads(text)
+        return _loads(text, strict=strict)
     except json.JSONDecodeError:
         # A .json file that is actually line-delimited is common enough
         # (`promptfoo eval -o out.json` on some versions, span dumps) that
         # falling back beats failing.
         lines = [line for line in text.splitlines() if line.strip()]
         if len(lines) > 1:
-            return [_loads(line) for line in lines]
+            return [_loads(line, strict=strict) for line in lines]
         raise
 
 

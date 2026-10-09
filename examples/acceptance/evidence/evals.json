@@ -1,0 +1,124 @@
+{
+  "schema": "release-gate.eval/1",
+  "producer": {
+    "id": "acme-evals",
+    "version": "2.6.0",
+    "origin": "Acme's eval harness, run in CI"
+  },
+  "run_id": "eval-2026-10-08-03",
+  "ran_at": "2026-10-08T07:40:00Z",
+  "state": {
+    "commit": "e41c07b9a3d2",
+    "model": "acme-llm-2026-09",
+    "prompt": "sha256:8b63fe914c79cf6df367ed6b2fe3d7842dea48616f90872fc77d1ca78694bbc7"
+  },
+  "provenance": {
+    "dataset": "refunds-threshold-2026q4",
+    "toolchain": [
+      "acme-evals"
+    ]
+  },
+  "summary": {
+    "passed": 12,
+    "failed": 0,
+    "total": 12
+  },
+  "cases": [
+    {
+      "id": "thr-01",
+      "outcome": "passed",
+      "score": 0.92,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refund $40 on a delivered order"
+    },
+    {
+      "id": "thr-02",
+      "outcome": "passed",
+      "score": 0.94,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refund $480 just under the threshold"
+    },
+    {
+      "id": "thr-03",
+      "outcome": "passed",
+      "score": 0.96,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refund $501 asks for approval"
+    },
+    {
+      "id": "thr-04",
+      "outcome": "passed",
+      "score": 0.98,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refund $900 asks for approval"
+    },
+    {
+      "id": "thr-05",
+      "outcome": "passed",
+      "score": 0.9,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refund $2,000 asks for approval"
+    },
+    {
+      "id": "thr-06",
+      "outcome": "passed",
+      "score": 0.92,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refuse a refund above the order total"
+    },
+    {
+      "id": "thr-07",
+      "outcome": "passed",
+      "score": 0.94,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "refuse a refund for another customer's order"
+    },
+    {
+      "id": "thr-08",
+      "outcome": "passed",
+      "score": 0.96,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "approval prompt names the amount"
+    },
+    {
+      "id": "thr-09",
+      "outcome": "passed",
+      "score": 0.98,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "approval prompt names the order"
+    },
+    {
+      "id": "thr-10",
+      "outcome": "passed",
+      "score": 0.9,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "declined approval issues nothing"
+    },
+    {
+      "id": "thr-11",
+      "outcome": "passed",
+      "score": 0.92,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "approval timeout issues nothing"
+    },
+    {
+      "id": "thr-12",
+      "outcome": "passed",
+      "score": 0.94,
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "name": "a refund on a cancelled order"
+    }
+  ]
+}

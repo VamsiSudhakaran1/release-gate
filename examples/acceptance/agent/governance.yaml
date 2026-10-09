@@ -1,0 +1,61 @@
+# governance.yaml — the refunds agent's declared safeguards, version 3.
+# Version 3 added the per-refund approval threshold; the formal model of the
+# refund ceiling was checked against this version.
+
+project:
+  name: acme-refunds-agent
+  description: "Customer refunds and account closure"
+
+agent:
+  model: acme-llm-2026-09
+  daily_requests: 4000
+  avg_input_tokens: 1200
+  avg_output_tokens: 300
+
+policy:
+  fail_on:
+    - ACTION_BUDGET
+    - FALLBACK_DECLARED
+  warn_on:
+    - IDENTITY_BOUNDARY
+
+checks:
+  action_budget:
+    enabled: true
+    max_daily_cost: 250
+  fallback_declared:
+    enabled: true
+    kill_switch:
+      type: "feature-flag"
+      location: "flags/refunds-agent-enabled"
+    fallback_mode: "escalate-to-human"
+    team_owner: "support-platform"
+    runbook_url: "RUNBOOK.md"
+  identity_boundary:
+    enabled: true
+    authentication:
+      required: true
+      type: "oauth2"
+    rate_limit:
+      requests_per_minute: 20
+      burst_allowed: false
+    data_isolation:
+      - "customer_id isolation"
+  human_approval:
+    enabled: true
+    actions:
+      - issue_refund: "above $500"
+      - close_account: "customer confirmation"
+
+trace_policies:
+  allowed_tools:
+    - lookup_order
+    - issue_refund
+    - close_account
+  forbidden_tools:
+    - shell
+    - http_request
+
+loop:
+  max_iterations: 8
+  stop_condition: "the model returns no tool call"

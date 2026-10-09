@@ -1,0 +1,37 @@
+{
+  "record_type": "assurance_methodology",
+  "model_version": 3,
+  "methodology_id": "acme-refunds-release",
+  "version": "1.0.0",
+  "domain": "finance",
+  "description": "What admitting a release of Acme's refunds agent requires: an identified subject, an approval of this exact release by its release owner, no refusal of it, and no contradiction left open without a person deciding it. What a valid counterexample does, and whether the author of the code may also check it, is the resolution policy's to say.",
+  "case_types": ["DEPLOYMENT", "AUTONOMOUS_ACTION", "FINANCIAL_ACTION", "CODE_CHANGE", "GENERAL_DECISION", "CUSTOM"],
+  "requirements": [
+    {"requirement_id": "subject.identified", "description": "the subject carries a cryptographic digest",
+     "predicate": {"kind": "subject_identified", "require_mutation_detectable": false},
+     "expects": "the subject is cryptographically identified", "effect": "BLOCK",
+     "remedy": "supply content that can be hashed",
+     "rationale": "An approval binds to a digest; without one nobody can later establish what was authorised."},
+    {"requirement_id": "approvals.release-owner", "description": "the release owner approved this exact release",
+     "predicate": {"kind": "approval_required", "roles": ["release-owner"]},
+     "expects": "an approval by the release-owner role bound to the candidate", "effect": "HOLD",
+     "remedy": "have the release owner review and approve this candidate",
+     "rationale": "An approval of another commit is an approval of another commit."},
+    {"requirement_id": "approvals.not-refused", "description": "no reviewer refused this exact release",
+     "predicate": {"kind": "approval_not_refused"},
+     "expects": "no refusal bound to the candidate", "effect": "BLOCK",
+     "remedy": "answer the refusal, then obtain a new review of this candidate",
+     "rationale": "A refusal of the release being admitted stops it."},
+    {"requirement_id": "contradictions.resolved", "description": "no unresolved contradictions remain",
+     "predicate": {"kind": "no_unresolved", "collection": "contradictions"},
+     "expects": "no unresolved contradictions among those observed", "effect": "HOLD",
+     "remedy": "resolve each open contradiction, or record why it does not bear on the decision",
+     "rationale": "A contradiction is closed by evidence that answers it, or by a person who decides it; never by a majority of passing tools."}
+  ],
+  "coverage_expectations": [
+    {"dimension": "overall", "expected_source": "the producing system's own account of what it did and did not assess",
+     "rationale": "A verdict without coverage is invalid.", "effect": "BLOCK"}
+  ],
+  "non_overridable_conditions": ["subject.identified", "approvals.not-refused"],
+  "provenance": "declared by Acme's refunds release owner for the acceptance scenario"
+}

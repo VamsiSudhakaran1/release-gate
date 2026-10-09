@@ -1,0 +1,22 @@
+{
+  "schema": "release-gate.review/1",
+  "evaluated_at": "2026-10-08T16:00:00Z",
+  "reviews": [
+    {
+      "id": "rel-882",
+      "reviewer": {
+        "id": "jordan@acme.example",
+        "role": "release-owner"
+      },
+      "decision": "approve",
+      "claim_id": "cl_refund_approval",
+      "claim": "No refund above $500 is issued without a support lead's approval",
+      "state": {
+        "commit": "e41c07b9a3d2",
+        "governance_policy": "sha256:579c798e179589f423ec911a943a2ce680cfbd49033e04a2bfc430f8e79c3dad"
+      },
+      "reviewed_at": "2026-10-08T15:30:00Z",
+      "rationale": "approved after reading the eval run, the canary traces and the approval-path review"
+    }
+  ]
+}

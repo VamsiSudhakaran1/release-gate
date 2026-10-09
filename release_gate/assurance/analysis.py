@@ -2078,19 +2078,33 @@ def _analyse_coverage(case: AssuranceCase, claim_graph: Optional[ClaimGraph],
                        "promptfoo, a release-gate audit report, or an assurance "
                        "envelope), or emit the assurance envelope directly",
                 observed={"confidence": normalisation.detection.confidence}))
-        if normalisation.skipped_total:
+        # A value the vocabulary could not read holds exactly as a rejected record
+        # does: the record is kept at its most conservative reading, and what
+        # its producer meant is still not known. Read with getattr so a
+        # normalisation built before the field existed reads as none.
+        unread = tuple(getattr(normalisation, "unread_values", ()) or ())
+        if normalisation.skipped_total or unread:
+            parts = []
+            if normalisation.skipped_total:
+                parts.append(f"{normalisation.skipped_total} record(s) in the input "
+                             "could not be mapped")
+            if unread:
+                parts.append(f"{len(unread)} value(s) in the input could not be "
+                             "read, and each record was kept at its most "
+                             "conservative reading")
             findings.append(Finding(
                 rule_id="RG-COV-002", domain=AnalysisDomain.COVERAGE,
                 effect=RequirementEffect.HOLD,
-                summary=f"{normalisation.skipped_total} record(s) in the input could "
-                        "not be mapped",
-                detail="; ".join(f"{reason} ({count})" for reason, count
-                                 in sorted(normalisation.skipped.items()))[:600],
+                summary="; ".join(parts),
+                detail="; ".join([f"{reason} ({count})" for reason, count
+                                  in sorted(normalisation.skipped.items())]
+                                 + sorted(unread))[:600],
                 remedy="correct the unmapped records, or accept that they are outside "
                        "what this case assessed",
                 observed={"skipped": normalisation.skipped_total,
                           "seen": normalisation.records_seen,
-                          "mapped": normalisation.records_mapped}))
+                          "mapped": normalisation.records_mapped,
+                          **({"unread": len(unread)} if unread else {})}))
 
     if claim_graph is not None:
         # Contradicting evidence counts as evidence. A claim something argues

@@ -2611,6 +2611,9 @@ def render_terminal(report: Dict[str, Any], full: bool = False) -> None:
     reason = report.get("decision_reason")
     if reason:
         print(f"  {_col(reason, _MUTED)}")
+    # The same three words as an admission, over far less: said, so a pipeline
+    # that gates a deploy on this verdict knows what it gated on.
+    print(f"  {_col('A code-level scan of what this run examined, not an admission decision: release-gate assure decides the release over all its evidence.', _MUTED)}")
 
     # Coverage matrix — say what was and wasn't assessed, so no one reads a
     # verdict as more than it is. Full matrix in --full; a one-line caveat by

@@ -143,6 +143,23 @@ def _case_name(row: Mapping[str, Any], test_case: Mapping[str, Any],
     return f"promptfoo case {index}"
 
 
+def _promptfoo_verdict(row: Mapping[str, Any],
+                       grading: Mapping[str, Any]) -> Optional[bool]:
+    """Whether promptfoo said the case passed, or None where it said nothing.
+
+    The same precedence as the scanner-side reader — `success`, then the
+    grading's `pass`, then an error meaning a failure — without its last step,
+    which read a positive score as a pass.
+    """
+    if isinstance(row.get("success"), bool):
+        return row["success"]
+    if isinstance(grading.get("pass"), bool):
+        return grading["pass"]
+    if row.get("error"):
+        return False
+    return None
+
+
 class PromptfooAdapter(EvidenceAdapter):
     """`promptfoo eval -o results.json`, read through the contract.
 
@@ -214,9 +231,22 @@ class PromptfooAdapter(EvidenceAdapter):
             raw_prompt = prompt.get("raw") if isinstance(prompt, Mapping) else None
             if isinstance(raw_prompt, str) and raw_prompt:
                 state["prompt"] = digest_bytes(raw_prompt.encode("utf-8"))
+            # What promptfoo stated, and nothing else. The scanner-side reader
+            # falls back to `score > 0` when a row states no verdict; read that
+            # way here, `{"success": "false", "score": 0.9}` was a pass — an
+            # evaluator's score thresholded into a verdict. A row with no boolean
+            # `success`, no boolean grading `pass` and no error states no
+            # verdict, and is unread (`outcome_unread`): never a pass, and it
+            # holds the case until the export is corrected.
+            stated = _promptfoo_verdict(row, grading)
+            if stated is None:
+                raw = row.get("success")
+                word = "" if raw is None else str(raw)
+            else:
+                word = "passed" if stated else "failed"
             results.append(NativeResult(
                 kind=ResultKind.CHECK, native_id=name,
-                native_outcome="passed" if mapped["passed"] else "failed",
+                native_outcome=word, outcome_unread=stated is None,
                 subject=name, native_severity=declared_severity,
                 native_confidence=row.get("score", grading.get("score")),
                 claim_statement=f"eval case {name!r} passes",

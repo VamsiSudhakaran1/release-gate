@@ -95,6 +95,15 @@ cd examples/agents && ./run-all.sh
 
 [What each one demonstrates →](examples/agents/README.md)
 
+The product's acceptance test is one more. [One enterprise release, end to end](examples/acceptance/README.md)
+admits AI-generated code whose tools move money, over every kind of evidence.
+It answers each question a release owner asks, and shows that no score, model
+judgment or test count outvotes the counterexample it contains:
+
+```bash
+python examples/acceptance/run_acceptance.py
+```
+
 ---
 
 ## Three things a scanner or a score cannot do

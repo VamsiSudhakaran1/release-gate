@@ -162,6 +162,31 @@ def _identity_from(data: Any) -> Any:
     return IdentityClaim.from_dict(data)
 
 
+def policy_of(state: Mapping[str, Any]) -> Dict[str, str]:
+    """The rules a case was decided under, from its binding state: the
+    methodology's digest, the resolution policy's, and the engine's ruleset
+    version. Only what the case holds; a case decided with no methodology has no
+    `methodology` entry, which is itself a difference from one decided with one.
+    """
+    inner = state.get("state") or {}
+    metadata = inner.get("metadata") or {}
+    policy: Dict[str, str] = {}
+    methodology = inner.get("methodology")
+    if isinstance(methodology, Mapping) and methodology.get("digest"):
+        policy["methodology"] = str(methodology["digest"])
+    resolution = metadata.get("resolution_policy")
+    if resolution:
+        policy["resolution_policy"] = digest_object(resolution)
+    if metadata.get("ruleset_version"):
+        policy["ruleset"] = str(metadata["ruleset_version"])
+    return policy
+
+
+def _policy_moved(bound: Mapping[str, str], current: Mapping[str, str]) -> List[str]:
+    return sorted(k for k in set(bound) | set(current)
+                  if bound.get(k) != current.get(k))
+
+
 def binding_of(case: Any) -> Dict[str, Any]:
     """The exact state any human act on this case must bind to.
 
@@ -186,6 +211,7 @@ def binding_of(case: Any) -> Dict[str, Any]:
         "bound_collections": {
             kind: str((component or {}).get("fold_digest") or "")
             for kind, component in (inner.get("collections") or {}).items()},
+        "bound_policy": policy_of(state),
     }
 
 
@@ -208,6 +234,13 @@ class BoundApproval:
     #: Per-collection fold digests as of approval, so a later check can say which
     #: part of the case moved rather than only that something did.
     bound_collections: Mapping[str, str] = field(default_factory=dict)
+    #: The release policy the approval was given under (`policy_of`): the
+    #: methodology's digest and the resolution policy's. A person approves a
+    #: decision made under stated rules; re-decided under other rules, the
+    #: evidence may be unchanged and the decision is still not the one they saw.
+    #: Empty on approvals recorded before this was bound, which then cannot show
+    #: the policy did not move.
+    bound_policy: Mapping[str, str] = field(default_factory=dict)
     #: What release-gate recommended at the time. Kept beside `decision` so an
     #: approval over a BLOCK is visible as an override rather than as agreement.
     case_decision: Optional[str] = None
@@ -232,6 +265,8 @@ class BoundApproval:
         object.__setattr__(self, "decision", ApprovalDecision(self.decision))
         object.__setattr__(self, "auth_source", AuthSource(self.auth_source))
         object.__setattr__(self, "bound_collections", dict(self.bound_collections or {}))
+        object.__setattr__(self, "bound_policy",
+                           {str(k): str(v) for k, v in (self.bound_policy or {}).items()})
 
         if self.auth_source is AuthSource.RELEASE_GATE:
             raise ApprovalError(
@@ -278,6 +313,10 @@ class BoundApproval:
                     "auth_source": self.auth_source.value}
         if self.override_id:
             identity["override_id"] = self.override_id
+        if self.bound_policy:
+            # Conditional for the same reason: approvals recorded before the
+            # policy was bound keep the ids they were issued with.
+            identity["bound_policy"] = dict(self.bound_policy)
         if self.approver_identity is not None:
             # Same conditional as `override_id`, for the same reason: an approval
             # established by a named identity is a different act from one taken
@@ -383,6 +422,8 @@ class BoundApproval:
                 "case_digest": self.case_digest,
                 "evidence_pack_digest": self.evidence_pack_digest,
                 "bound_collections": dict(self.bound_collections),
+                **({"bound_policy": dict(self.bound_policy)} if self.bound_policy
+                   else {}),
                 "timestamp": self.timestamp, "expires_at": self.expires_at,
                 "expiry_basis": self.expiry_basis,
                 "decision": self.decision.value,
@@ -414,6 +455,8 @@ class BoundApproval:
             evidence_pack_digest=(str(data["evidence_pack_digest"])
                                   if data.get("evidence_pack_digest") else None),
             bound_collections=data.get("bound_collections") or {},
+            bound_policy=(data.get("bound_policy")
+                          if isinstance(data.get("bound_policy"), Mapping) else {}),
             case_decision=(str(data["case_decision"]) if data.get("case_decision")
                            else None),
             auth_source=AuthSource(str(data.get("auth_source") or "ASSERTED").upper()),
@@ -444,6 +487,7 @@ class BoundApproval:
             case_digest=bound["case_digest"],
             evidence_pack_digest=bound["evidence_pack_digest"],
             bound_collections=bound["bound_collections"],
+            bound_policy=bound["bound_policy"],
             case_decision=(case.verdict.decision.value if case.verdict else None),
             auth_source=auth_source, approver_identity=identity, **kwargs)
 
@@ -490,6 +534,9 @@ class ApprovalCheck:
     moved_collections: Tuple[str, ...] = ()
     derived_only_changes: Tuple[str, ...] = ()
     stale_verifications: Tuple[str, ...] = ()
+    #: Which parts of the release policy moved since the approval was given
+    #: (`methodology`, `resolution_policy`).
+    moved_policy: Tuple[str, ...] = ()
     checked_at: str = field(default_factory=_utc_now)
 
     def __post_init__(self) -> None:
@@ -500,6 +547,7 @@ class ApprovalCheck:
         object.__setattr__(self, "derived_only_changes",
                            tuple(sorted(self.derived_only_changes)))
         object.__setattr__(self, "stale_verifications", tuple(self.stale_verifications))
+        object.__setattr__(self, "moved_policy", tuple(sorted(self.moved_policy)))
 
     @property
     def valid(self) -> bool:
@@ -528,6 +576,8 @@ class ApprovalCheck:
                 "moved_collections": list(self.moved_collections),
                 "derived_only_changes": list(self.derived_only_changes),
                 "stale_verifications": list(self.stale_verifications),
+                **({"moved_policy": list(self.moved_policy)} if self.moved_policy
+                   else {}),
                 "checked_at": self.checked_at}
 
     def render(self) -> str:
@@ -645,14 +695,37 @@ def check_approval(approval: BoundApproval, case: Any, *,
     evidentiary = tuple(sorted({k for k in moved if k in EVIDENCE_KINDS}))
     derived = tuple(sorted({k for k in moved if k not in EVIDENCE_KINDS}))
 
+    # The rules the decision was made under. A methodology or resolution policy
+    # that moved is not "release-gate's own output": it is what decides, and a
+    # person who approved under one set of rules has not seen the decision the
+    # other set makes, whether or not any evidence moved.
+    digest_moved = approval.case_digest != str(state.get("case_digest") or "")
+    moved_policy = (tuple(_policy_moved(approval.bound_policy, policy_of(state)))
+                    if approval.bound_policy else ())
+    if moved_policy:
+        conditions.append(ApprovalStanding.APPROVAL_REVIEW_REQUIRED)
+        reasons.append(
+            "the release policy this approval was given under has changed ("
+            + ", ".join(moved_policy) + "); the decision in front of you was made "
+            "under rules the approver did not see, so a person should look again")
+
     if evidentiary:
         conditions.append(ApprovalStanding.APPROVAL_REVIEW_REQUIRED)
         reasons.append(
             "evidence this approval rested on has changed (" +
             ", ".join(evidentiary) + "); what was authorised is unchanged, but what "
             "is known about it has moved, so a person should look again")
-    elif (approval.case_digest != str(state.get("case_digest") or "")
-          and not conditions):
+    elif digest_moved and not approval.bound_policy and not conditions:
+        # Recorded before approvals bound the policy. The digest moved and
+        # nothing evidentiary did, which is either release-gate's own output or
+        # the policy — and this approval cannot say which. Unknown is not VALID.
+        conditions.append(ApprovalStanding.APPROVAL_REVIEW_REQUIRED)
+        reasons.append(
+            "the case digest moved and no evidentiary collection did; this approval "
+            "was recorded before approvals bound the release policy, so whether "
+            "the policy it was given under changed cannot be established from it, "
+            "and a person should look again")
+    elif digest_moved and not conditions:
         # The case digest moved but no evidentiary collection did. Worth saying
         # plainly rather than passing in silence or raising review on nothing.
         reasons.append(
@@ -670,7 +743,7 @@ def check_approval(approval: BoundApproval, case: Any, *,
         conditions=tuple(conditions), reasons=tuple(reasons),
         moved_collections=evidentiary, derived_only_changes=derived,
         stale_verifications=_stale_verifications(case),
-        checked_at=now or _utc_now())
+        moved_policy=moved_policy, checked_at=now or _utc_now())
 
 
 def _stale_verifications(case: Any) -> Tuple[str, ...]:
@@ -720,6 +793,10 @@ class ApprovalAcknowledgement:
     subject_digest: Optional[str] = None
     evidence_pack_digest: Optional[str] = None
     case_digest: Optional[str] = None
+    #: The release policy the client read the case under (`policy_of`).
+    #: Optional, like `case_digest`, and enforced when supplied. Without it, a
+    #: moved `case_digest` cannot be told apart from a moved policy.
+    bound_policy: Optional[Mapping[str, str]] = None
 
     @property
     def complete(self) -> bool:
@@ -743,6 +820,8 @@ class ApprovalAcknowledgement:
                 "subject_digest": self.subject_digest,
                 "evidence_pack_digest": self.evidence_pack_digest,
                 "case_digest": self.case_digest,
+                **({"bound_policy": dict(self.bound_policy)}
+                   if self.bound_policy is not None else {}),
                 "complete": self.complete, "missing": list(self.missing)}
 
 
@@ -765,10 +844,13 @@ class ApprovalOffer:
     recommendation: Optional[str] = None
     packet: Any = None
     offered_at: str = field(default_factory=_utc_now)
+    #: The release policy this offer was decided under (`policy_of`).
+    bound_policy: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "collection_digests",
                            dict(self.collection_digests or {}))
+        object.__setattr__(self, "bound_policy", dict(self.bound_policy or {}))
 
     @property
     def required_acknowledgement(self) -> Tuple[str, ...]:
@@ -785,7 +867,7 @@ class ApprovalOffer:
         return ApprovalAcknowledgement(
             case_version=self.case_version, subject_digest=self.subject_digest,
             evidence_pack_digest=self.evidence_pack_digest,
-            case_digest=self.case_digest)
+            case_digest=self.case_digest, bound_policy=dict(self.bound_policy))
 
     def to_dict(self) -> Dict[str, Any]:
         return {"record_type": "approval_offer",
@@ -794,6 +876,8 @@ class ApprovalOffer:
                 "case_digest": self.case_digest,
                 "evidence_pack_digest": self.evidence_pack_digest,
                 "collection_digests": dict(self.collection_digests),
+                **({"bound_policy": dict(self.bound_policy)} if self.bound_policy
+                   else {}),
                 "recommendation": self.recommendation,
                 "required_acknowledgement": list(self.required_acknowledgement),
                 "offered_at": self.offered_at,
@@ -876,7 +960,7 @@ def offer_approval(case: Any, outcome: Any = None) -> ApprovalOffer:
             kind: str((component or {}).get("fold_digest") or "")
             for kind, component in (inner.get("collections") or {}).items()},
         recommendation=(case.verdict.decision.value if case.verdict else None),
-        packet=packet)
+        packet=packet, bound_policy=policy_of(state))
 
 
 def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
@@ -941,18 +1025,34 @@ def submit_approval(case: Any, acknowledgement: ApprovalAcknowledgement, *,
     if (acknowledgement.case_digest is not None
             and acknowledgement.case_digest != current.case_digest):
         mismatched.append("case_digest")
+    if (acknowledgement.bound_policy is not None
+            and dict(acknowledgement.bound_policy) != current.bound_policy):
+        mismatched.append("bound_policy")
 
     if mismatched:
+        # A moved policy is as much a change to what the person is signing as
+        # moved evidence: the decision they read was made under other rules. A
+        # moved case digest with no policy acknowledged cannot be shown not to
+        # be one, so it sends the person back too.
+        policy_moved = ("bound_policy" in mismatched
+                        or ("case_digest" in mismatched
+                            and acknowledgement.bound_policy is None))
         evidentiary = ("subject_digest" in mismatched
                        or "evidence_pack_digest" in mismatched
-                       or "case_version" in mismatched)
+                       or "case_version" in mismatched
+                       or policy_moved)
         return ApprovalSubmission(
             outcome=SubmissionOutcome.CONFLICT, current=current,
             mismatched=mismatched, evidentiary_change=evidentiary,
             reasons=("the case moved between the read and this submission ("
                      + ", ".join(mismatched) + "); the current state is returned so "
                      "you can decide whether the change matters"
-                     + (", and it does — what the person approved has changed"
+                     + (", and it does — the release policy it was decided under "
+                        "changed, or could not be shown not to have"
+                        if policy_moved and not ({"subject_digest",
+                                                  "evidence_pack_digest",
+                                                  "case_version"} & set(mismatched))
+                        else ", and it does — what the person approved has changed"
                         if evidentiary else
                         ", and only release-gate's own output moved: the evidence "
                         "and the subject are unchanged"),))

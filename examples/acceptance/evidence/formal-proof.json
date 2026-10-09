@@ -1,0 +1,33 @@
+{
+  "schema": "release-gate.formal/1",
+  "verifier": {
+    "name": "tlc",
+    "version": "2.19",
+    "family": "MODEL_CHECKER"
+  },
+  "results": [
+    {
+      "claim_id": "cl_refund_ceiling",
+      "claim": "The refunds on an order never total more than the order amount",
+      "method": "FORMAL_PROOF",
+      "result": "verified",
+      "state": {
+        "commit": "e41c07b9a3d2",
+        "governance_policy": "sha256:579c798e179589f423ec911a943a2ce680cfbd49033e04a2bfc430f8e79c3dad"
+      },
+      "assumptions": [
+        "the ledger serialises refunds on one order"
+      ],
+      "covers": [
+        "the refund model of governance v3: 4 orders, 3 concurrent refund requests, partial refunds"
+      ],
+      "provenance": {
+        "toolchain": [
+          "tlc"
+        ],
+        "reviewer": "verification-team",
+        "session": "tlc-2026-10-07"
+      }
+    }
+  ]
+}

@@ -251,7 +251,13 @@ class TestTheDefectsFound:
     def test_the_first_copy_wins_not_the_last(self):
         """The collapse used to keep whichever arrived latest, so a later copy
         quietly replaced an earlier one. The rest of that function already said
-        references resolve to the first record."""
+        references resolve to the first record.
+
+        Neither replaces the other now. Two rows under one id that say different
+        things are two records, not a copy (POST_ASSURANCE_ARCHITECTURE_AUDIT,
+        D6): the second used to be dropped, which let a counterexample reusing a
+        test result's id vanish. It is kept, references still resolve to the
+        first, and the clash holds the case."""
         from release_gate.assurance.chaos import _assure
         records = [
             {"record_type": "evidence", "evidence_id": "e1", "kind": "TEST_RESULT",
@@ -264,7 +270,8 @@ class TestTheDefectsFound:
         producers = {(r.to_dict().get("producer") or {}).get("producer_id")
                      for r in outcome.case.records("evidence")}
         assert "ci://first" in producers
-        assert "ci://second" not in producers
+        assert "ci://second" in producers
+        assert any("'e1'" in line for line in outcome.normalisation.unread_values)
 
 
 class TestDeterminismAcrossTheClock:

@@ -1,0 +1,5 @@
+[
+  {"type": "function", "function": {"name": "lookup_order", "description": "Read one order", "parameters": {"type": "object", "properties": {"order_id": {"type": "string"}}, "required": ["order_id"]}}},
+  {"type": "function", "function": {"name": "issue_refund", "description": "Refund part or all of an order", "parameters": {"type": "object", "properties": {"order_id": {"type": "string"}, "amount": {"type": "number"}}, "required": ["order_id", "amount"]}}},
+  {"type": "function", "function": {"name": "close_account", "description": "Close a customer's account", "parameters": {"type": "object", "properties": {"customer_id": {"type": "string"}, "confirmed_by_customer": {"type": "boolean"}}, "required": ["customer_id", "confirmed_by_customer"]}}}
+]

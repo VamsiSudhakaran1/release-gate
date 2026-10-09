@@ -10257,6 +10257,76 @@ stale as those tools change and nothing in the repository would notice.
 `tests/test_positioning.py` still greps the surfaces for the six refusals. The
 register for a PROMOTE is *meets the declared release policy with the following
 evidence and gaps*.
+
+### 10bv. Post-assurance red-team audit — eleven defects, each reproduced first
+
+`POST_ASSURANCE_ARCHITECTURE_AUDIT.md` records a hostile review across
+twenty-five attack areas, set out in advance and attacked against the running
+code. Every defect was reproduced as a failing test before it was fixed. The
+regression suite is `tests/test_post_assurance_audit.py`, and each new guard
+has a tamper probe that removes it.
+
+Four of the eleven could promote a release that should not have been
+admitted. All four were the same mistake: an input written so that the engine
+read it differently from its author, or not at all.
+
+- **D4.** A red-team attack whose outcome word the contract does not list.
+- **D5.** A duplicate JSON key.
+- **D6.** A row reusing an id.
+- **D10.** A result filed under one claim while wording another.
+  (D10 is rated High in the audit: it counts evidence that should not count.)
+
+One idea carries through the fixes: **a value the engine cannot read is kept
+at its most conservative reading, beside the producer's word, and holds the
+case.** It is never dropped and never read as a pass. `Normalisation.unread_values`
+carries each such value, and RG-COV-002 holds on them as it already held on
+rejected records. The three ways a record used to vanish now hold instead:
+
+- a word outside an enum (D1);
+- an answer its own checks refused (D1);
+- an id it shares with another record (D6).
+
+The others:
+
+- **D2.** Identity-only state names no revision. It reads UNKNOWN when the candidate states one.
+- **D3.** Approvals bind the methodology, resolution policy and ruleset they were given under.
+- **D7.** The hosted API reads a submission under a fixed name, so its case is the CLI's.
+- **D8.** The Admission Report lists failed branches.
+- **D9.** The Action says what decided (`decided-by`).
+- **D11.** The admission path no longer thresholds a promptfoo score into a verdict.
+
+Every behaviour change is stricter. The 117-run admission corpus is
+byte-identical before and after.
+
+### 10bw. Product acceptance — one enterprise release, end to end
+
+`examples/acceptance/` is the acceptance test of the whole product. One release
+of an AI agent is admitted from a clean checkout by the commands a pipeline
+runs:
+
+1. `release-gate audit` scans the agent and emits evidence.
+2. The semantic verifier asks what the rules left open, through its real
+   packet, prompt and parse path, against a scripted model.
+3. `release-gate assure` decides.
+
+The release carries every kind of evidence the architecture reads, and four
+defects put there on purpose:
+
+- a stale red team;
+- a reviewer in the author's own lineage;
+- a counterexample;
+- a critical claim nobody assessed.
+
+The runner answers the eleven questions a release owner asks from the outcome,
+and re-decides the release under each attempt to outvote the counterexample: a
+perfect scanner score, 1,000 passing evals, an evaluator's "approve", 500
+passing tests, five model judgments. Every one is still a BLOCK on RG-CEX-001.
+
+The agent is scanned from a copy outside the repository. Scanned in place, the
+scan would bind to release-gate's own commit instead of the agent's tree. That
+is the same binding a real pipeline gets from its own checkout.
+`tests/test_acceptance.py` changes one input at a time to show that each
+conclusion comes from its input.
 ---
 
 ## 11. Methodology behaviour
@@ -10507,6 +10577,17 @@ fixed, rather than the expectations being lowered.
 | panel (§10bt) | `assure --semantic-panel`; `plan_escalation(asked_of=)`; schema `semantic_panel` (protocol count 84) | additive; without a panel every run plans and asks as before |
 | reply metadata (§10bt) | a provider reply's `panel` key is not recorded in `provider_metadata` (it stays in the verbatim response) | assertion ids change only for decision replies that set that key |
 | verification attempt order | attempts with no stated time are ordered as if read in one second; a time stamped on arrival orders nothing | case digests are now independent of the second evidence was read in. Before, a read across a second boundary gave a different digest; the 117-run corpus is unchanged |
+| unread values (§10bv, D1/D4) | a word outside a vocabulary keeps its record at the most conservative reading; `Normalisation.unread_values`; RG-COV-002 holds on them | **stricter**: a record that used to be dropped (an unmapped-record HOLD) or kept and ignored (an attack outcome nobody listed, which could PROMOTE) now holds with the producer's word named. `unread_values` is serialised only when non-empty |
+| strict input JSON (§10bv, D5) | `assure` refuses a key named twice in one object, and NaN or Infinity, with exit 1 | **stricter**: such inputs used to be read last-key-wins, or refused one record at a time. The scanner-side readers are unchanged |
+| repeated ids (§10bv, D6) | rows under one id that differ only in their times collapse; rows that say something else are kept (evidence) or joined (claims), and the clash holds | **stricter**: a later row used to be dropped whole. `test_the_first_copy_wins_not_the_last` now asserts both records are kept, the first still winning references |
+| identity-only state (§10bv, D2) | a record whose only matches are identity components (repository, environment) binds UNKNOWN when the candidate states a revision | **stricter**: it bound PARTIAL. Its support now raises RG-DRIFT-008, and an approval naming only the repository no longer satisfies `approval_required` |
+| approval policy (§10bv, D3) | `BoundApproval.bound_policy`, `ApprovalOffer.bound_policy`, `ApprovalAcknowledgement.bound_policy`; `ApprovalCheck.moved_policy` | **stricter**: a policy change after approval requires review. An approval with no `bound_policy` against a moved case digest reads APPROVAL_REVIEW_REQUIRED rather than VALID. Approval ids are unchanged for approvals that carry no policy |
+| promptfoo verdicts (§10bv, D11) | the admission adapter reads `success`, then the grading's `pass`, then an error; a row with none is unread | **stricter** on the admission path only; `release-gate score` keeps its `score > 0` reading |
+| wording of a joined claim (§10bv, D10) | a result naming a claim by id and wording it as another holds | **stricter**; a result naming the claim by id alone, or wording it as the case does, joins as before |
+| Admission Report (§10bv, D8) | `failed_branches`; a FAILED BRANCHES section in text | additive |
+| Action (§10bv, D9) | output `decided-by` | additive; `decision` and every exit code unchanged |
+| hosted API (§10bv, D7) | `case.source`; the same bytes give the same `case.digest` on every call | the digest an API call returns changes once, and from then on is reproducible |
+| acceptance test (§10bw) | `examples/acceptance/`; `tests/test_acceptance.py`; a CI step | additive |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

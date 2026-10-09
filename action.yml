@@ -112,6 +112,9 @@ outputs:
   decision:
     description: "PROMOTE/HOLD/BLOCK (assure, audit, pr, loop-sim, score) or PASS/WARN/FAIL (run, impact); ERROR when no decision was reached. A job that deploys must check it: under hold-policy normal a HOLD leaves the step green."
     value: ${{ steps.assure.outputs.decision || steps.audit.outputs.decision || steps.pr.outputs.decision || steps.loop-sim.outputs.decision || steps.gate.outputs.decision }}
+  decided-by:
+    description: "What reached `decision`: 'admission' for command assure (the release decision over all of a release's evidence, against a declared policy), or the command's own name (audit, pr, score, loop-sim, run, impact), whose decision covers only what that command examines. A job that means to admit a release checks decided-by == 'admission' as well as decision."
+    value: ${{ inputs.command == 'assure' && 'admission' || inputs.command }}
   admission-report:
     description: "command: assure — path of the Admission Report JSON"
     value: ${{ steps.assure.outputs.admission-report }}

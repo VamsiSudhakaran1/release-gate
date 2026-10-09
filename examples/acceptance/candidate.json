@@ -1,0 +1,13 @@
+{
+  "components": {
+    "repository": "github.com/acme/refunds-agent",
+    "commit": "e41c07b9a3d2",
+    "tree": "sha256:ce8cb032a889211452cebc4f2e63a7dc78e0590cdea32244dc4454bebef4ecee",
+    "model": "acme-llm-2026-09",
+    "prompt": "sha256:8b63fe914c79cf6df367ed6b2fe3d7842dea48616f90872fc77d1ca78694bbc7",
+    "governance_policy": "sha256:579c798e179589f423ec911a943a2ce680cfbd49033e04a2bfc430f8e79c3dad",
+    "tool_manifest": "sha256:a743bd35f69301f0f41c94e591567285af81ecc8cad58c4dc558fa2d4af73437",
+    "environment": "production"
+  },
+  "note": "the release the pipeline was asked to admit: the agent's commit and tree, and the model, prompt, governance policy and tool manifest it ships with"
+}

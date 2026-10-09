@@ -41,6 +41,14 @@ jobs:
         # README gives. Fails if any of that stops being what the engine does.
         run: python examples/demo-admission/run_demo.py --check
 
+      - name: Product acceptance test (one enterprise release, end to end)
+        # The scanner, the semantic verifier and the admission decision, run as a
+        # pipeline runs them over AI-generated code with consequential tools.
+        # Asserts the decision, the answer to every release-owner question, that
+        # no score, model judgment or test count outvotes the counterexample,
+        # and that the scanner workflow is unchanged.
+        run: python examples/acceptance/run_acceptance.py --check
+
       - name: Run Impact Simulator demo (safe)
         run: release-gate impact examples/governance-safe-pass.yaml
 

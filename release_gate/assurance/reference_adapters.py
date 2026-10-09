@@ -125,6 +125,20 @@ def _rows(doc: Any, key: str) -> List[Any]:
     return list(rows) if isinstance(rows, list) else []
 
 
+def _container(doc: Any, key: str, skipped: Dict[str, int]) -> None:
+    """Count a results field that is present and not a list.
+
+    `_rows` reads such a field as no rows, which is right — nothing in it can be
+    read as a row — but it used to say nothing, so a red team whose `attacks`
+    arrived as an object read as a run of zero attacks. A field that is absent,
+    or an empty list, is a run that reported nothing, and is not counted.
+    """
+    if isinstance(doc, Mapping) and doc.get(key) is not None \
+            and not isinstance(doc.get(key), list):
+        _skip(skipped, f"`{key}` is a {type(doc.get(key)).__name__}, not a list, so "
+                       "none of its entries could be read")
+
+
 def _strings(value: Any) -> Dict[str, str]:
     if not isinstance(value, Mapping):
         return {}
@@ -245,6 +259,7 @@ class GenericEvalAdapter(EvidenceAdapter):
         results: List[NativeResult] = []
         skipped: Dict[str, int] = {}
         notes: List[str] = []
+        _container(doc, "cases", skipped)
         for row in rows:
             if not isinstance(row, Mapping):
                 _skip(skipped, "eval case is not an object")
@@ -355,6 +370,7 @@ class RedTeamAdapter(EvidenceAdapter):
         results: List[NativeResult] = []
         skipped: Dict[str, int] = {}
         notes: List[str] = []
+        _container(doc, "attacks", skipped)
         for row in rows:
             if not isinstance(row, Mapping):
                 _skip(skipped, "attack is not an object")
@@ -389,6 +405,10 @@ class RedTeamAdapter(EvidenceAdapter):
                 for_claim = _ATTACK_UNSETTLED.get(key, "unknown")
             results.append(NativeResult(
                 kind=kind, native_id=attack, native_outcome=word,
+                # A word the contract does not list may have meant that the
+                # attack got through; it holds the case until it is corrected.
+                outcome_unread=not (key in _ATTACK_SUCCEEDED or key in _ATTACK_BLOCKED
+                                    or key in _ATTACK_UNSETTLED),
                 subject=_text(row.get("technique")) or stated_class,
                 native_severity=_text(row.get("severity")),
                 evidence_type=etype, claim_statement=statement, claim_id=claim_id,
@@ -521,6 +541,8 @@ class BehaviorEvalAdapter(EvidenceAdapter):
         results: List[NativeResult] = []
         skipped: Dict[str, int] = {}
         notes: List[str] = []
+        _container(doc, "checks", skipped)
+        _container(doc, "violations", skipped)
         claims_of: Dict[str, Tuple[str, str]] = {}
         for row in rows:
             if not isinstance(row, Mapping):
@@ -555,6 +577,8 @@ class BehaviorEvalAdapter(EvidenceAdapter):
                 provenance = {**provenance, "evaluator_model": judge}
             results.append(NativeResult(
                 kind=ResultKind.CHECK, native_id=check, native_outcome=word,
+                outcome_unread=not (key in _CHECK_PASSED or key in _CHECK_FAILED
+                                    or key in _CHECK_UNSETTLED),
                 subject=_text(row.get("behaviour") or row.get("predicate")) or check,
                 native_severity=_text(row.get("severity")),
                 evidence_type=EvidenceType.EVAL_RESULT, method=method,
@@ -682,6 +706,7 @@ class GenericSastAdapter(EvidenceAdapter):
         results: List[NativeResult] = []
         skipped: Dict[str, int] = {}
         notes: List[str] = []
+        _container(doc, "findings", skipped)
         scanned = doc.get("scanned")
         if isinstance(scanned, Mapping) and scanned.get("paths"):
             paths = scanned.get("paths")
@@ -849,6 +874,7 @@ class HumanReviewAdapter(EvidenceAdapter):
         results: List[NativeResult] = []
         skipped: Dict[str, int] = {}
         notes: List[str] = []
+        _container(doc, "reviews", skipped)
         first: Optional[ProducerIdentity] = None
         for index, row in enumerate(rows):
             if not isinstance(row, Mapping):
@@ -909,11 +935,12 @@ class HumanReviewAdapter(EvidenceAdapter):
                 results.append(NativeResult(kind=ResultKind.DECISION,
                                             native_id=review_id, **common))
                 continue
-            for_claim = lapse or _REVIEW_DECISIONS.get(
-                decision.lower().replace("-", "_").replace(" ", "_"), "unknown")
+            said = decision.lower().replace("-", "_").replace(" ", "_")
+            for_claim = lapse or _REVIEW_DECISIONS.get(said, "unknown")
             for statement, claim_id in claims:
                 results.append(NativeResult(
                     kind=ResultKind.ATTESTATION,
+                    outcome_unread=not lapse and said not in _REVIEW_DECISIONS,
                     native_id=(f"{review_id}:{claim_id}" if len(claims) > 1
                                else review_id),
                     claim_statement=statement, claim_id=claim_id,

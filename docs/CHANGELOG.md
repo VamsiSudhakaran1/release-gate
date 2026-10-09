@@ -4,6 +4,104 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### ✅ Product acceptance test: one enterprise release, end to end
+
+[`examples/acceptance/`](../examples/acceptance/README.md) admits one release of
+an AI agent from a clean checkout, running the commands a pipeline runs. The
+agent's code was AI-generated, and its tools move money and delete accounts.
+
+- **Evidence collected:** a governance policy, external eval results, runtime
+  traces, SAST results, a semantic verifier's reading, a formal proof, and a
+  release owner's approval.
+- **Built in on purpose:** one stale evidence item, one correlated verifier,
+  one genuine counterexample, and one critical area nobody assessed.
+- **How it runs:** `release-gate audit` scans the agent, the semantic verifier
+  reads what the rules left open, and `release-gate assure` decides. The
+  release is BLOCKed on the counterexample alone.
+- **What it answers:** the eleven questions a release owner asks, each from
+  the computed outcome: what is released, what is claimed, what supports and
+  contradicts each claim, who produced it, whether it applies to this exact
+  state, how independent it is, what failed, what is unknown, what needs a
+  person, and why the decision is what it is.
+- **What cannot move the decision.** None of these moves it, alone or together:
+  - a perfect scanner score;
+  - 1,000 passing eval cases;
+  - an evaluator's own "approve" at 0.99;
+  - 500 passing test runs;
+  - five independent model judgments.
+- **Backward compatibility is checked.** `release-gate audit` exits, prints and
+  reports as before.
+- **It is a permanent regression.** `tests/test_acceptance.py` runs it, and it
+  is a step in `.github/workflows/tests.yml`.
+
+### 🛡️ Post-assurance red-team audit: eleven defects, reproduced, fixed, pinned
+
+[`POST_ASSURANCE_ARCHITECTURE_AUDIT.md`](../POST_ASSURANCE_ARCHITECTURE_AUDIT.md)
+records a hostile review across twenty-five attack areas. Every defect was
+reproduced as a failing test before it was fixed
+(`tests/test_post_assurance_audit.py`), and each new guard has a tamper probe.
+It does not claim the architecture is secure; it lists what remains open.
+
+Four defects could promote a release that should not have been admitted.
+
+- **A value the engine cannot read is never dropped, and never a pass.** It is
+  kept at the reading that claims least, beside the producer's word, and it
+  holds the case (RG-COV-002). This covers:
+  - an attempt outcome such as `error` or `true`;
+  - an attack outcome nobody listed, such as `success`;
+  - a counterexample method such as `fuzzing`;
+  - a refused answer to a found counterexample.
+
+  Before, a claim with a failed check and one `error` check vanished, so BLOCK
+  became HOLD. A red team's `"outcome": "success"` was ignored, and the release
+  promoted.
+- **Ambiguous JSON is refused.** A key named twice in one object, and NaN or
+  Infinity, are refused with exit 1. `{"outcome": "FAILED", "outcome": "PASSED"}`
+  promoted.
+- **A repeated id is no longer a hiding place.** Rows that differ only in their
+  times are a replay, and count once. Rows that say something else are kept
+  (evidence) or joined (claims), and the clash holds. A counterexample reusing a
+  test result's `evidence_id` used to be absorbed into it.
+- **A result worded as another claim holds.** A review filed under `cl_x` that
+  states the refund-policy claim used to count as `cl_x`'s support.
+
+The others:
+
+- **Naming the repository is not naming the release.** A state whose only
+  matches are the repository or environment binds UNKNOWN. An approval stating
+  only the repository no longer approves every future commit.
+- **Approvals bind the rules they were given under.** These are the
+  methodology digest, the resolution-policy digest and the ruleset version
+  (`bound_policy`). A change after approval requires review, and `moved_policy`
+  names what moved.
+- **The hosted API's case is the CLI's.** A submission is read as
+  `release-gate assure submission.jsonl` reads it, so the same bytes give the
+  same digest on every call. It used to change every time.
+- **The Admission Report lists failed branches**, in JSON (`failed_branches`)
+  and in text.
+- **The Action says what decided.** The new output `decided-by` is `admission`
+  for `assure`, or the command's name. The scanner's printed verdict says it is
+  a code-level scan, not an admission decision.
+- **A promptfoo score is not a verdict on the admission path.** A row with no
+  boolean `success`, no grading `pass` and no error is unread. It is no longer a
+  pass because its score is positive.
+
+#### Migration notes
+
+- Every behaviour change is stricter. The 117-run admission corpus is
+  byte-identical in decision, fired rules and reasons.
+- Inputs with duplicate keys, or with NaN or Infinity, now stop `assure` with
+  exit 1. Emit `null`, or the value as a string. Scanner-side commands read them
+  as before.
+- An approval with no `bound_policy` reads `APPROVAL_REVIEW_REQUIRED`, not
+  VALID, against a case whose digest moved while no evidence did. Re-approve to
+  bind the policy.
+- `test_assurance_chaos.py::test_the_first_copy_wins_not_the_last` now asserts
+  that a second, different record under one id is kept. The first still wins
+  references.
+- `release-gate score` keeps reading a promptfoo row's positive score as a pass.
+  Only the admission path changed.
+
 ### 🧭 Positioning: the independent admission controller for AI systems
 
 - **The product is the admission decision.** README, POSITIONING, ARCHITECTURE,

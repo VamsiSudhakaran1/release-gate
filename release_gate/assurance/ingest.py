@@ -39,7 +39,8 @@ from release_gate.assurance.consequence import (
 from release_gate.assurance.expectation import (
     EvidenceExpectation, ExpectationSource, ExpectationSourceKind)
 from release_gate.assurance.adversarial import (
-    AdversarialFinding, AdversarialOutcome, AdversarialRole, AdversarialStatus)
+    AdversarialError, AdversarialFinding, AdversarialOutcome, AdversarialRole,
+    AdversarialStatus)
 from release_gate.assurance.counterexample import (
     CounterexampleAttempt, CounterexampleError, CounterexampleResult,
     CounterexampleStatus,
@@ -227,6 +228,17 @@ class Normalisation:
     #: somebody stated it and the value was refused, and only the second is
     #: something the operator can go and fix.
     refused_consequence: Tuple[str, ...] = ()
+    #: Values the vocabulary could not read, one readable line each, on records
+    #: that were kept rather than dropped: an attempt outcome, a counterexample
+    #: method or an adversarial role outside the enum, or an answer to a found
+    #: counterexample that its own checks refused. Each record is kept at its
+    #: most conservative reading (UNKNOWN, OTHER, INCONCLUSIVE, or OPEN and
+    #: unanswered) with the producer's word beside it. Before this, any of
+    #: those raised inside the ingest and the whole record went, so a typo
+    #: could turn a found counterexample's BLOCK into an unmapped-record HOLD
+    #: that a reviewer could approve without seeing what was found. Holds the
+    #: case (RG-COV-002) exactly as a rejected record does.
+    unread_values: Tuple[str, ...] = ()
     #: The candidate the document states or implies: an envelope's `candidate`
     #: record (the submitter describing its own release), or an audit report's
     #: provenance. None when the document says nothing about one.
@@ -272,16 +284,25 @@ class Normalisation:
                 "records_unaccounted": self.records_unaccounted,
                 "records_skipped": self.skipped_total,
                 "skipped_by_reason": dict(self.skipped), "notes": list(self.notes),
-                "refused_consequence": list(self.refused_consequence)}
+                "refused_consequence": list(self.refused_consequence),
+                # Only when something was unread, so every case read before this
+                # field existed serialises exactly as it did.
+                **({"unread_values": list(self.unread_values)}
+                   if self.unread_values else {})}
 
 
 # ── loading ──────────────────────────────────────────────────────────────────
 
 def load_input(path: str | Path) -> Any:
-    """Read a JSON or JSONL file. The only thing that is allowed to be fatal."""
+    """Read a JSON or JSONL file. The only thing that is allowed to be fatal.
+
+    Strictly: a key named twice in one object, or a NaN or Infinity, refuses
+    the file (`adapters.common._loads`). Either would otherwise be read one way
+    here and another way by the next reader, or digested irreproducibly.
+    """
     from release_gate.adapters.common import load_document
     try:
-        return load_document(str(path))
+        return load_document(str(path), strict=True)
     except FileNotFoundError as exc:
         raise IngestError(str(exc)) from exc
     except (ValueError, json.JSONDecodeError) as exc:
@@ -719,7 +740,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                       execution: Any = None,
                       declared_consequence: Sequence[Any] = (),
                       producers: Optional[Any] = None,
-                      attempts_out: Optional[List[VerificationAttempt]] = None
+                      attempts_out: Optional[List[VerificationAttempt]] = None,
+                      unread_out: Optional[List[str]] = None
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  List[CounterexampleAttempt], List[FailedBranch],
                                  List[AdversarialFinding],
@@ -836,7 +858,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                     artifacts.append(built_artifact)
                 mapped += 1
             elif record_type == "counterexample":
-                counterexamples.append(_counterexample_from(row, producer))
+                counterexamples.append(_counterexample_from(row, producer, unread_out))
                 mapped += 1
             elif record_type == "semantic_assertion":
                 from release_gate.assurance.semantic_verifier import (
@@ -858,7 +880,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                 # export's results join the claims the submission declares.
                 export_rows.append(row)
             elif record_type == "adversarial":
-                adversarial.append(_adversarial_from(row, producer))
+                adversarial.append(_adversarial_from(row, producer, unread_out))
                 mapped += 1
             elif record_type == "expectation":
                 expectations.append(_expectation_from(row, producer))
@@ -888,7 +910,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             f"{absorbed_artifacts} artifact row(s) repeated a content digest "
             "already held and were absorbed; they are counted as mapped")
 
-    ordered_rows, absorbed_evidence = _ordered_evidence(evidence_rows, notes)
+    ordered_rows, absorbed_evidence = _ordered_evidence(evidence_rows, notes,
+                                                        unread_out)
     mapped += absorbed_evidence
     for row, producer, declared_parents in ordered_rows:
         # Resolved here, not at sort time: the ordering guarantees every parent has
@@ -938,25 +961,58 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     # duplicate. The builder refuses duplicate ids on purpose — evidence must
     # not be counted twice — but that refusal is fatal to the whole run, so a
     # retried delivery used to take the gate down rather than be absorbed.
-    seen_claims: Set[str] = set()
+    #
+    # Collapsing is joining, not dropping. A replay (`_said`) is absorbed as it
+    # always was. A later row under the same id that carries more — a failed
+    # check the first row did not — joins the first: it used to be absorbed
+    # whole, and its failure with it. A later row stating a different
+    # proposition under the same id holds the case: the first is kept, and
+    # which claim the id names cannot be read.
+    claim_at: Dict[str, int] = {}
+    claim_said: Dict[str, str] = {}
+    repeated_claims = 0
     for row, producer in claim_rows:
         declared = str(row.get("claim_id") or row.get("id") or "").strip()
-        if declared and declared in seen_claims:
+        if declared and declared in claim_at and _said(row) == claim_said[declared]:
+            repeated_claims += 1
             mapped += 1
             continue
         try:
-            claims.append(_claim_from(row, producer, id_map, notes))
-            if declared:
-                seen_claims.add(declared)
-            mapped += 1
+            built_claim = _claim_from(row, producer, id_map, notes, unread_out)
         except Exception as exc:
             skip("record rejected: " + type(exc).__name__)
             notes.append(f"a claim record was rejected: {exc}")
-    repeated_claims = len(claim_rows) - len(claims)
-    if repeated_claims > 0 and seen_claims:
+            continue
+        mapped += 1
+        if declared and declared in claim_at:
+            repeated_claims += 1
+            held = claims[claim_at[declared]]
+            if built_claim.statement != held.statement and unread_out is not None:
+                unread_out.append(
+                    f"claim {declared} is stated by two rows with two different "
+                    f"propositions ({held.statement!r}, {built_claim.statement!r}); "
+                    "the first is kept, what both carry is joined to it, and which "
+                    "claim the id names cannot be read")
+            known = {a.verification_id for a in held.verification_attempts}
+            claims[claim_at[declared]] = dataclasses.replace(
+                held,
+                supporting_evidence=tuple(dict.fromkeys(
+                    held.supporting_evidence + built_claim.supporting_evidence)),
+                contradicting_evidence=tuple(dict.fromkeys(
+                    held.contradicting_evidence + built_claim.contradicting_evidence)),
+                verification_attempts=held.verification_attempts + tuple(
+                    a for a in built_claim.verification_attempts
+                    if a.verification_id not in known))
+            continue
+        if declared:
+            claim_at[declared] = len(claims)
+            claim_said[declared] = _said(row)
+        claims.append(built_claim)
+    if repeated_claims:
         notes.append(
-            f"{repeated_claims} claim row(s) repeated a claim_id already seen and "
-            "were absorbed into the first record under that id")
+            f"{repeated_claims} claim row(s) repeated a claim_id already seen; a "
+            "replay was absorbed, and anything a repeat carried that the first "
+            "did not was joined to the first record under that id")
 
     # One document carried twice — under two names, or a file passed to
     # `--evidence` that an envelope beside it already embeds — is one tool's one
@@ -978,7 +1034,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
         if _fold_export(row, index, source=source, producers=producers,
                         evidence=evidence, claims=claims,
                         attempts=attempts_out if attempts_out is not None else [],
-                        skipped=skipped, notes=notes):
+                        skipped=skipped, notes=notes, unread=unread_out):
             mapped += 1
 
     return (evidence, claims, artifacts, counterexamples, branches, adversarial,
@@ -1042,12 +1098,25 @@ def _verifier_claims(report: VerifierReport, record: EvidenceRecord) -> List[Cla
     return [built[k] for k in sorted(built)]
 
 
-def _merge_into(claims: List[Claim], more: Sequence[Claim]) -> None:
+def _wording(text: str) -> str:
+    """A claim's wording, compared without case, spacing or a closing stop."""
+    return " ".join(str(text or "").split()).casefold().rstrip(" .")
+
+
+def _merge_into(claims: List[Claim], more: Sequence[Claim],
+                unread: Optional[List[str]] = None, name: str = "") -> None:
     """Join claims an export produced with the ones already held, by id.
 
     The claim the submission declares stands — its statement, its parents, its
     criticality — and gains the export's evidence and checks. An export's
     wording of the claim stays on its own evidence.
+
+    An export that names a claim by id and words it as some other claim is
+    still joined — a failure in it must not be lost — but said in `unread`,
+    which holds the case: the wording is the producer's account of what it
+    evaluated, and where it is not the claim's, which claim the result bears on
+    cannot be read. Named by id alone (`claim <id>`), there is nothing to
+    compare.
     """
     at = {c.claim_id: i for i, c in enumerate(claims)}
     for claim in more:
@@ -1056,6 +1125,16 @@ def _merge_into(claims: List[Claim], more: Sequence[Claim]) -> None:
             claims.append(claim)
             continue
         held = claims[at[claim.claim_id]]
+        stated = claim.statement
+        if (unread is not None and held.statement and stated
+                and stated != f"claim {claim.claim_id}"
+                and _wording(stated) != _wording(held.statement)):
+            line = (f"{name + ': ' if name else ''}a result names claim "
+                    f"{claim.claim_id} and words it as {stated!r}, which is not the "
+                    f"claim's proposition {held.statement!r}; it is joined to the "
+                    "claim, and which claim it bears on cannot be read")
+            if line not in unread:
+                unread.append(line)
         known = {a.verification_id for a in held.verification_attempts}
         claims[at[claim.claim_id]] = dataclasses.replace(
             held,
@@ -1069,7 +1148,8 @@ def _merge_into(claims: List[Claim], more: Sequence[Claim]) -> None:
 def _fold_export(row: Mapping[str, Any], index: int, *, source: str,
                  producers: Optional[Any], evidence: List[EvidenceRecord],
                  claims: List[Claim], attempts: List[VerificationAttempt],
-                 skipped: Dict[str, int], notes: List[str]) -> bool:
+                 skipped: Dict[str, int], notes: List[str],
+                 unread: Optional[List[str]] = None) -> bool:
     """Read one tool's document carried in an envelope, exactly as its file is read.
 
     The same detector, the same registry and the same verifier adapters as
@@ -1103,6 +1183,8 @@ def _fold_export(row: Mapping[str, Any], index: int, *, source: str,
                 key = f"{name}: {reason}"
                 skipped[key] = skipped.get(key, 0) + count
             notes.extend(f"{name}: {n}" for n in produced.notes)
+            if unread is not None:
+                unread.extend(f"{name}: {line}" for line in produced.unread)
             checks: List[VerificationAttempt] = []
         elif detection.kind is InputKind.VERIFIER_REPORT:
             report = default_verifier_registry().convert(document)
@@ -1136,7 +1218,7 @@ def _fold_export(row: Mapping[str, Any], index: int, *, source: str,
     if absorbed:
         notes.append(f"{name}: {absorbed} record(s) repeated evidence already held and "
                      "were absorbed rather than counted twice")
-    _merge_into(claims, more)
+    _merge_into(claims, more, unread, name)
     # A check whose target the case declares joins that claim; every check is
     # also kept whole, as a verifier file's are.
     position = {c.claim_id: i for i, c in enumerate(claims)}
@@ -1363,8 +1445,23 @@ def _exceeds_bounds(row: Mapping[str, Any]) -> str:
     return ""
 
 
+def _said(row: Mapping[str, Any]) -> str:
+    """What a row says, without when it said it.
+
+    Two rows under one declared id are a replay when they differ only in their
+    times (`timestamp`, any `*_at`) — fifty restamped copies of one result are
+    one result — and two records when they differ in anything else.
+    """
+    stated = {k: v for k, v in row.items()
+              if k != "timestamp" and not str(k).endswith("_at")}
+    try:
+        return digest_object(stated)
+    except Exception:
+        return json.dumps(stated, sort_keys=True, default=str)
+
+
 def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],
-                      notes: List[str]
+                      notes: List[str], unread: Optional[List[str]] = None
                       ) -> Tuple[List[Tuple[Mapping[str, Any], Producer,
                                             Tuple[str, ...]]], int]:
     """Evidence rows in ancestry order, plus how many repeats were absorbed.
@@ -1399,19 +1496,35 @@ def _ordered_evidence(rows: Sequence[Tuple[Mapping[str, Any], Producer]],
     # this function already says references "resolve to the first record", so
     # this now matches what it claims.
     #
+    # A replay is a row that says what the first said. A row under the same id
+    # that says something else — a counterexample reusing a test result's id —
+    # is a second record, not a copy: it used to be absorbed, and a release
+    # whose only contradiction arrived that way promoted. It is kept, references
+    # to the id still resolve to the first record, and the clash holds the case
+    # (`unread`), because which record the producer meant cannot be read.
+    #
     # The collapse is *counted*. Absorbed rows used to be neither mapped nor
     # skipped, so `records_mapped` came out below `records_seen` and the
     # record_mapping coverage row reported a shortfall for records that had not
     # gone missing — which made a redelivered batch degrade the verdict.
     indexed = {}
+    said: Dict[str, str] = {}
     absorbed = 0
     for position, (row, producer) in enumerate(rows):
         declared = str(row.get("evidence_id") or "").strip()
         key = declared or f"__row_{position}"
         if key in indexed:
-            absorbed += 1
-            continue
+            if _said(row) == said[key]:
+                absorbed += 1
+                continue
+            if unread is not None:
+                unread.append(
+                    f"evidence id {declared!r} is declared by two records that say "
+                    "different things; both are kept, references to it resolve to "
+                    "the first, and which one was meant cannot be read")
+            key = f"{declared}__row_{position}"
         indexed[key] = (position, row, producer)
+        said[key] = _said(row)
     if absorbed:
         notes.append(
             f"{absorbed} evidence row(s) repeated an evidence_id already seen and "
@@ -1494,9 +1607,42 @@ def _method_of(raw: Mapping[str, Any],
         return VerificationMethod.OTHER, declared
 
 
+def _read_enum(enum: Any, raw: Any, fallback: Any, field_name: str, where: str,
+               unread: Optional[List[str]]) -> Tuple[Any, Optional[str]]:
+    """`raw` as a member of `enum`, or `fallback` and the producer's own word.
+
+    Read exactly as the ingest always read these fields (`str(raw).upper()`),
+    so every value that parsed before parses to the same member now. What
+    changes is a value that does not: it used to raise, and the caller dropped
+    the whole record. Here it becomes `fallback`, which each caller chooses as
+    the reading that claims least, and one line in `unread` says what was
+    declared and what it was kept as — never a pass, never a loss.
+    """
+    try:
+        return enum(str(raw).upper()), None
+    except ValueError:
+        native = str(raw)
+        if unread is not None:
+            kept = getattr(fallback, "value", fallback)
+            unread.append(f"{where}: {field_name} {native!r} is not a value "
+                          f"release-gate reads; kept as {kept}")
+        return fallback, native
+
+
+def _declared_words(detail: str, words: Mapping[str, Optional[str]]) -> str:
+    """`detail`, with each unread word appended, so the record itself says what
+    its producer declared. Unchanged when every word was read."""
+    unread = [f"declared {name} {word!r}, not a value release-gate reads"
+              for name, word in words.items() if word is not None]
+    if not unread:
+        return detail
+    return (detail + " " if detail else "") + "[" + "; ".join(unread) + "]"
+
+
 def _claim_from(row: Mapping[str, Any], producer: Producer,
                 id_map: Optional[Mapping[str, str]] = None,
-                notes: Optional[List[str]] = None) -> Claim:
+                notes: Optional[List[str]] = None,
+                unread: Optional[List[str]] = None) -> Claim:
     resolve = (lambda i: (id_map or {}).get(i, i))
     attempts: List[VerificationAttempt] = []
     for raw in row.get("verification_attempts") or ():
@@ -1504,8 +1650,16 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
             continue
         evidence_ids = tuple(resolve(i) for i in _as_ids(
             raw.get("evidence") or raw.get("evidence_id")))
-        status = VerificationStatus(str(raw.get("outcome") or raw.get("status")
-                                        or "INCONCLUSIVE").upper())
+        # An outcome word outside the vocabulary ("error", "skipped", "PASS",
+        # True) reads as UNKNOWN — it contributes to no standing either way —
+        # and the word is kept on the attempt. It used to raise here, outside
+        # the attempt's own guard, and the caller dropped the claim it was on,
+        # failed checks and all.
+        status, native_outcome = _read_enum(
+            VerificationStatus,
+            raw.get("outcome") or raw.get("status") or "INCONCLUSIVE",
+            VerificationStatus.UNKNOWN, "outcome",
+            f"a verification attempt on {row.get('claim_id') or 'a claim'}", unread)
         # A check nobody is answerable for cannot be weighed, so an attempt with
         # no named verifier inherits the record's producer rather than being
         # dropped — the evidence is real even when the attribution is coarse.
@@ -1537,7 +1691,9 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
                         **({"provenance": dict(raw["provenance"])}
                            if isinstance(raw.get("provenance"), Mapping) else {}),
                         **{k: dict(raw[k]) for k in ("state", "covers", "inaccessible")
-                           if isinstance(raw.get(k), Mapping)}},
+                           if isinstance(raw.get(k), Mapping)},
+                        **({"native_outcome": native_outcome}
+                           if native_outcome is not None else {})},
                 evidence=() if status is VerificationStatus.NOT_RUN else evidence_ids,
                 independence_lineage=tuple(_as_ids(raw.get("independence_lineage"))),
                 status=status, detail=str(raw.get("detail") or "")))
@@ -1586,34 +1742,50 @@ def _claim_from(row: Mapping[str, Any], producer: Producer,
                      else {})})
 
 
-def _counterexample_from(row: Mapping[str, Any],
-                         producer: Producer) -> CounterexampleAttempt:
+def _counterexample_from(row: Mapping[str, Any], producer: Producer,
+                         unread: Optional[List[str]] = None) -> CounterexampleAttempt:
     """An explicitly declared attempt to break a claim.
 
     The envelope is the only way to record a search that came back *empty*:
     evidence can carry a counterexample that was found, but there is no evidence
     record for "I looked here and there was nothing", and that fact is worth
     keeping — bounded though it is.
+
+    A found counterexample is never lost to how it was written down. A result,
+    method or status outside the vocabulary is kept at the reading that claims
+    least (`_read_enum`), and an answer its own checks refuse — RESOLVED with no
+    evidence, ACCEPTED_RISK with nobody accepting it — leaves it OPEN and
+    unanswered rather than taking the record, and the BLOCK it carries, with it.
     """
-    result = CounterexampleResult(str(row.get("result") or "UNKNOWN").upper())
+    target = str(row.get("target_claim") or row.get("claim_id") or "")
+    where = f"a counterexample on {target or 'a claim'}"
+    result, native_result = _read_enum(
+        CounterexampleResult, row.get("result") or "UNKNOWN",
+        CounterexampleResult.UNKNOWN, "result", where, unread)
+    method, native_method = _read_enum(
+        VerificationMethod, row.get("method") or "PROPERTY_TEST",
+        VerificationMethod.OTHER, "method", where, unread)
+    # A found counterexample is open until something answers it. Silence in the
+    # envelope is not an answer, and neither is an answer nobody can read.
+    unanswered = (CounterexampleStatus.OPEN if result is CounterexampleResult.FOUND
+                  else CounterexampleStatus.NOT_APPLICABLE)
     declared_status = row.get("status")
+    native_status = None
     if declared_status:
-        status = CounterexampleStatus(str(declared_status).upper())
-    elif result is CounterexampleResult.FOUND:
-        # A found counterexample is open until something answers it. Silence in the
-        # envelope is not an answer.
-        status = CounterexampleStatus.OPEN
+        status, native_status = _read_enum(
+            CounterexampleStatus, declared_status, unanswered, "status", where, unread)
     else:
-        status = CounterexampleStatus.NOT_APPLICABLE
-    return CounterexampleAttempt(
-        target_claim=str(row.get("target_claim") or row.get("claim_id") or ""),
+        status = unanswered
+    fields = dict(
+        target_claim=target,
         producer=str(row.get("producer_id") or producer.producer_id),
-        method=VerificationMethod(str(row.get("method") or "PROPERTY_TEST").upper()),
-        result=result, evidence=tuple(_as_ids(row.get("evidence"))),
+        method=method, result=result, evidence=tuple(_as_ids(row.get("evidence"))),
         resolution=str(row.get("resolution") or ""),
         resolution_evidence=tuple(_as_ids(row.get("resolution_evidence"))),
         status=status, searched=str(row.get("searched") or ""),
-        detail=str(row.get("detail") or ""),
+        detail=_declared_words(str(row.get("detail") or ""),
+                               {"result": native_result, "method": native_method,
+                                "status": native_status}),
         # The state it was found against, and a documented exception's who, where
         # and for which state: read by `counterexample.assess_standing`.
         state=dict(row["state"]) if isinstance(row.get("state"), Mapping) else {},
@@ -1623,6 +1795,20 @@ def _counterexample_from(row: Mapping[str, Any],
                       if isinstance(row.get("accepted_for"), Mapping) else {}),
         **({"attempted_at": str(row["attempted_at"])} if row.get("attempted_at")
            else {}))
+    try:
+        return CounterexampleAttempt(**fields)
+    except CounterexampleError as exc:
+        if result is not CounterexampleResult.FOUND or status is unanswered:
+            raise
+        if unread is not None:
+            unread.append(f"{where}: its answer ({status.value}) was refused "
+                          f"({exc}); kept {unanswered.value}, unanswered")
+        return CounterexampleAttempt(**{
+            **fields, "status": unanswered, "resolution": "",
+            "resolution_evidence": (), "accepted_by": "", "reference": "",
+            "accepted_for": {},
+            "detail": (fields["detail"] + " " if fields["detail"] else "")
+                      + f"[declared answer {status.value} refused: {exc}]"})
 
 
 def _expectation_from(row: Mapping[str, Any],
@@ -1667,33 +1853,49 @@ def _expectation_from(row: Mapping[str, Any],
         note=str(row.get("note") or ""))
 
 
-def _adversarial_from(row: Mapping[str, Any],
-                      producer: Producer) -> AdversarialFinding:
+def _adversarial_from(row: Mapping[str, Any], producer: Producer,
+                      unread: Optional[List[str]] = None) -> AdversarialFinding:
     """A verifier whose job was to make the candidate fail.
 
     The status default is the asymmetry in miniature. A finding that turned
     something up is OPEN until something answers it — silence in the envelope is
     not an answer — and an attack that found nothing has nothing to answer, which
     is NOT_APPLICABLE rather than resolved.
+
+    Read as `_counterexample_from` is: a word outside the vocabulary is kept at
+    the reading that claims least (an outcome nobody can read is INCONCLUSIVE,
+    not a refutation and not a clean attack), and a refused answer to a finding
+    leaves it OPEN rather than dropping it.
     """
-    outcome = AdversarialOutcome(str(row.get("outcome") or "NOT_RUN").upper())
+    target = str(row.get("target_claim") or row.get("claim_id") or "")
+    where = f"an adversarial finding on {target or 'a claim'}"
+    outcome, native_outcome = _read_enum(
+        AdversarialOutcome, row.get("outcome") or "NOT_RUN",
+        AdversarialOutcome.INCONCLUSIVE, "outcome", where, unread)
+    unanswered = (AdversarialStatus.OPEN
+                  if outcome in (AdversarialOutcome.CANDIDATE_REFUTED,
+                                 AdversarialOutcome.ARGUMENT_DEFECT,
+                                 AdversarialOutcome.WEAKNESS_FOUND)
+                  else AdversarialStatus.NOT_APPLICABLE)
     declared = row.get("status")
+    native_status = None
     if declared:
-        status = AdversarialStatus(str(declared).upper())
-    elif outcome in (AdversarialOutcome.CANDIDATE_REFUTED,
-                     AdversarialOutcome.ARGUMENT_DEFECT,
-                     AdversarialOutcome.WEAKNESS_FOUND):
-        status = AdversarialStatus.OPEN
+        status, native_status = _read_enum(
+            AdversarialStatus, declared, unanswered, "status", where, unread)
     else:
-        status = AdversarialStatus.NOT_APPLICABLE
-    return AdversarialFinding(
-        target_claim=str(row.get("target_claim") or row.get("claim_id") or ""),
-        role=AdversarialRole(str(row.get("role") or "OTHER").upper()),
+        status = unanswered
+    role, native_role = _read_enum(
+        AdversarialRole, row.get("role") or "OTHER", AdversarialRole.OTHER,
+        "role", where, unread)
+    method, native_method = (_read_enum(VerificationMethod, row["method"],
+                                        VerificationMethod.OTHER, "method", where,
+                                        unread)
+                             if row.get("method") else (None, None))
+    fields = dict(
+        target_claim=target, role=role,
         adversary=str(row.get("adversary") or row.get("producer_id")
                       or producer.producer_id),
-        method=(VerificationMethod(str(row["method"]).upper())
-                if row.get("method") else None),
-        outcome=outcome, status=status,
+        method=method, outcome=outcome, status=status,
         evidence=tuple(_as_ids(row.get("evidence"))),
         independence_lineage=tuple(_as_ids(row.get("independence_lineage"))),
         attacked=str(row.get("attacked") or row.get("searched") or ""),
@@ -1701,7 +1903,22 @@ def _adversarial_from(row: Mapping[str, Any],
         resolution_evidence=tuple(_as_ids(row.get("resolution_evidence"))),
         resolved_by=str(row.get("resolved_by") or ""),
         accepted_by=str(row.get("accepted_by") or ""),
-        detail=str(row.get("detail") or ""))
+        detail=_declared_words(str(row.get("detail") or ""),
+                               {"outcome": native_outcome, "status": native_status,
+                                "role": native_role, "method": native_method}))
+    try:
+        return AdversarialFinding(**fields)
+    except AdversarialError as exc:
+        if unanswered is not AdversarialStatus.OPEN or status is unanswered:
+            raise
+        if unread is not None:
+            unread.append(f"{where}: its answer ({status.value}) was refused "
+                          f"({exc}); kept {unanswered.value}, unanswered")
+        return AdversarialFinding(**{
+            **fields, "status": unanswered, "resolution": "",
+            "resolution_evidence": (), "resolved_by": "", "accepted_by": "",
+            "detail": (fields["detail"] + " " if fields["detail"] else "")
+                      + f"[declared answer {status.value} refused: {exc}]"})
 
 
 def _failed_branch_from(row: Mapping[str, Any], producer: Producer) -> FailedBranch:
@@ -1813,12 +2030,14 @@ def normalise(doc: Any, detection: Detection, *, source: str,
             notes.append(f"verifier output was recognised but not convertible: {exc}")
 
     export_attempts: List[VerificationAttempt] = []
+    unread_values: List[str] = []
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
         seen = len(doc)
         ev, cl, art, cex, fbr, adv, exp, mapped, skipped, env_notes, seen_by_kind = \
             _envelope_records(doc, source, producer, execution=execution,
                               declared_consequence=declared_consequence,
-                              producers=producers, attempts_out=export_attempts)
+                              producers=producers, attempts_out=export_attempts,
+                              unread_out=unread_values)
         expectations.extend(exp)
         failed_branches.extend(fbr)
         evidence.extend(ev)
@@ -1846,6 +2065,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         seen, mapped = produced.records_seen, produced.records_mapped
         skipped.update(produced.skipped)
         notes.extend(produced.notes)
+        unread_values.extend(produced.unread)
 
     elif execution is not None:
         seen = len(execution.nodes)
@@ -1904,7 +2124,8 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         verification=tuple(export_attempts),
         records_seen=seen, records_mapped=mapped,
         records_seen_by_kind=dict(seen_by_kind), skipped=dict(skipped),
-        notes=tuple(notes), refused_consequence=tuple(refused_consequence))
+        notes=tuple(notes), refused_consequence=tuple(refused_consequence),
+        unread_values=tuple(unread_values))
 
 
 def _envelope_candidate(doc: Sequence[Any], notes: List[str]) -> Optional[Any]:

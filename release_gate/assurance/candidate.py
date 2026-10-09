@@ -349,6 +349,12 @@ class StateBinding:
                       else "it is reported, and a refutation from it still stands")
             return f"bound to {kind}: {'; '.join(parts)} — {effect}"
         if self.match is StateMatch.UNKNOWN:
+            subject = [c.component for c in self.comparisons
+                       if c.outcome is ComponentOutcome.MATCH]
+            if subject:
+                return (f"names only which subject it is about ({', '.join(subject)}) "
+                        "and no revision of it, so which state it is about cannot be "
+                        "compared")
             return "names no component the candidate states, so nothing could be compared"
         bound = [c.component for c in self.comparisons if c.outcome is ComponentOutcome.MATCH]
         if self.match is StateMatch.EXACT:
@@ -382,6 +388,28 @@ def _equal(key: str, left: str, right: str) -> bool:
 def values_equal(key: str, left: str, right: str) -> bool:
     """Whether two canonical values of one component name the same thing."""
     return _equal(key, left, right)
+
+
+def _names_only_the_subject(candidate: CandidateState,
+                            matched: Sequence[ComponentComparison]) -> bool:
+    """Whether every match is an identity component, where a revision was there
+    to be named.
+
+    The repository and the environment say *what* a record is about, never
+    which state of it. A record naming only those could be about any commit of
+    that repository, so it has said nothing a revision could be compared with —
+    which is UNKNOWN, not PARTIAL. It used to read PARTIAL ("everything it names
+    matches"): its support counted as bound and escaped RG-DRIFT-008, and an
+    approval stating only the repository read as an approval of every future
+    release of it. A candidate that itself states no revision has nothing more
+    to compare, and its subject still binds as before. A mismatched identity is
+    unaffected: another repository stays INCOMPATIBLE.
+    """
+    if any(component_class(c.component) is ComponentClass.REVISION
+           for c in matched):
+        return False
+    return any(component_class(key) is ComponentClass.REVISION
+               for key in candidate.components)
 
 
 def bind(candidate: CandidateState, *, state: Optional[Mapping[str, Any]] = None,
@@ -442,7 +470,7 @@ def bind(candidate: CandidateState, *, state: Optional[Mapping[str, Any]] = None
         match = StateMatch.INCOMPATIBLE
     elif mismatched:
         match = StateMatch.STALE
-    elif not matched:
+    elif not matched or _names_only_the_subject(candidate, matched):
         match = StateMatch.UNKNOWN
     elif all(c.outcome is not ComponentOutcome.NOT_BOUND for c in rows):
         match = StateMatch.EXACT

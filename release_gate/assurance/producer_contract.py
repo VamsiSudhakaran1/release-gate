@@ -419,6 +419,13 @@ class NativeResult:
     #: decided by code, by a jury of models or by a person, and a model jury's
     #: verdict is CROSS_MODEL_REVIEW, not a test suite. None takes the lane's.
     method: Optional[VerificationMethod] = None
+    #: True when the producer's outcome word is outside its contract's
+    #: vocabulary. The result is kept, never reads as a pass for its claim, and
+    #: holds the case (RG-COV-002) until the word is corrected: an unread word may
+    #: have meant anything, including that an attack got through. An adapter
+    #: that passes its words through the shared result-word table needs not set
+    #: it — a word that table does not define is caught the same way.
+    outcome_unread: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", ResultKind(self.kind))
@@ -558,6 +565,10 @@ class ProducerNormalisation:
     records_mapped: int = 0
     skipped: Mapping[str, int] = field(default_factory=dict)
     notes: Tuple[str, ...] = ()
+    #: Outcome words the contract does not define, one readable line each, on
+    #: results that were kept, never as a pass (`NativeResult.outcome_unread`). Read
+    #: into `Normalisation.unread_values`, which holds the case.
+    unread: Tuple[str, ...] = ()
 
 
 def _observation(result: NativeResult, producer_id: str) -> str:
@@ -625,6 +636,7 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
     claims: List[Claim] = []
     skipped: Dict[str, int] = dict(output.skipped)
     notes: List[str] = list(output.notes)
+    unread: List[str] = []
     lane = declaration.modality
     summary = declaration.summary()
     method = _LANE_METHOD.get(lane)
@@ -704,6 +716,28 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
             claim_id = result.claim_id or (
                 f"cl_{declaration.producer_type}_"
                 f"{digest_object([identity.producer_id, result.native_id, index])[7:19]}")
+            # A word nobody defined — the contract's own table, or the shared one
+            # — keeps the status it always read as (never a pass: INCONCLUSIVE
+            # or UNKNOWN), and is now said so, which holds the case. Before this
+            # it was kept and read by nothing, so a critical claim whose last
+            # attack reported "success" was decided on the attacks that were
+            # blocked.
+            if result.outcome_unread or status is VerificationStatus.UNKNOWN:
+                if status is VerificationStatus.PASSED:
+                    # A word the contract does not define never reads as a pass,
+                    # even where the shared table would read it as one ("true").
+                    status = VerificationStatus.UNKNOWN
+                # What the producer wrote, even where it was not text (`true`):
+                # the adapter keeps the row it read in `native`.
+                stated = result.native_outcome or next(
+                    (str(result.native[k]) for k in ("outcome", "result", "status",
+                                                     "state", "decision")
+                     if result.native.get(k) is not None), "")
+                unread.append(
+                    f"{declaration.producer_type} result {result.native_id!r} on "
+                    f"{result.claim_id or result.claim_statement!r}: outcome "
+                    f"{stated!r}{'' if stated else ' (none stated)'} is not a word "
+                    f"{declaration.label} defines; kept as {status.value}")
 
         supports = (claim_id,) if claim_id and status is VerificationStatus.PASSED else ()
         contradicts = (claim_id,) if claim_id and status is VerificationStatus.FAILED else ()
@@ -771,7 +805,8 @@ def normalise_output(output: AdapterOutput, declaration: ProducerDeclaration, *,
     return ProducerNormalisation(
         evidence=tuple(evidence), claims=tuple(claims), declaration=declaration,
         identity=output.identity, records_seen=output.records_seen,
-        records_mapped=mapped, skipped=skipped, notes=tuple(notes))
+        records_mapped=mapped, skipped=skipped, notes=tuple(notes),
+        unread=tuple(unread))
 
 
 # ── the registry ─────────────────────────────────────────────────────────────

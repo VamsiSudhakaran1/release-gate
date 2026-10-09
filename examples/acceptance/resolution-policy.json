@@ -1,0 +1,7 @@
+{
+  "policy_id": "acme-refunds-resolution",
+  "version": "1",
+  "counterexample_effect": "BLOCK",
+  "author_independence": "HOLD",
+  "note": "A valid counterexample against a critical claim stops the release. A check run by the same agent lineage that wrote the code goes to a person."
+}
