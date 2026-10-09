@@ -75,6 +75,12 @@ Wording that claimed more than a check showed:
 - **The legacy readiness score (`score`) is unchanged.** It still counts an
   unchecked eval as passed.
 
+**Docs and site.** The README gains two diagrams, one of the five parts and
+one of how a claim reaches its status, plus a first-party example with its real
+output. The homepage shows the five parts and the invariant.
+`docs/DEVELOPMENT.md` replaces a stale release checklist with the PyPI release
+steps the publish workflow runs.
+
 ### ✅ Product acceptance test: one enterprise release, end to end
 
 [`examples/acceptance/`](../examples/acceptance/README.md) admits one release of

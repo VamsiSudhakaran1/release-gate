@@ -57,19 +57,45 @@ evidence about another state of the release does not count for this one. The
 decision is deterministic from the declared policy and the evidence. Models can
 be asked to read evidence, and their readings never decide.
 
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph own["Release-gate's own checks"]
+    direction TB
+    o1["AST / taint scan"] ~~~ o2["PR diff"] ~~~ o3["governance"] ~~~ o4["trace validation"] ~~~ o5["loop sim, agent score"]
+  end
+  subgraph ext["Your tools"]
+    direction TB
+    e1["evals, red teams"] ~~~ e2["traces, SAST"] ~~~ e3["proofs, reviewers"]
+  end
+  sem["Semantic verifier<br/>bounded questions<br/>UNKNOWN on any failure"]
+  case["AssuranceCase<br/>claims, evidence, assumptions,<br/>contradictions, counterexamples,<br/>failed branches, coverage, independence"]
+  own --> case
+  ext --> case
+  sem -. "a reading, never a verdict" .-> case
+  case --> policy{"declared<br/>policy"} --> out["PROMOTE / HOLD / BLOCK"]
+```
+
 > **The invariant.** Release-Gate may generate evidence, ingest evidence, normalize evidence, compare evidence, semantically interpret bounded evidence, and determine whether evidence satisfies policy. It must never pretend that one model, one scanner, one evaluator, one score, or one successful test establishes universal truth.
 
-The product is five parts, drawn in [ARCHITECTURE](docs/ARCHITECTURE.md#the-product-in-one-picture):
+Each claim ends in one status, and the declared policy says which statuses admit:
 
-1. first-party evidence producers;
-2. external evidence;
-3. bounded semantic verification;
-4. the assurance case;
-5. a deterministic admission policy.
+```mermaid
+flowchart LR
+  ev["the evidence<br/>on one claim"] --> claim{"a claim"}
+  claim -- "a valid counterexample<br/>(outranks any support)" --> c["CONTRADICTED"]
+  claim -- "a bound proof, or two<br/>independent groups of checks" --> e["ESTABLISHED"]
+  claim -- "support short of that" --> s["SUPPORTED or<br/>PARTIALLY_SUPPORTED"]
+  claim -- "only support about<br/>another state" --> u["UNSUPPORTED"]
+  claim -- "inconclusive or unreadable" --> k["UNKNOWN"]
+  claim -- "nothing bears on it" --> n["NOT_ASSESSED"]
+```
 
-`tests/test_product_invariant.py` runs every clause of the invariant against
-the engine. For example, one passing test supports a claim and does not
-establish it, and a counterexample outranks any single kind of source.
+No score is an input, and copies of one test from one session count once.
+[ARCHITECTURE](docs/ARCHITECTURE.md#the-product-in-one-picture) maps each box to
+its code. `tests/test_product_invariant.py` executes every clause of the
+invariant.
 
 ## Try it
 
@@ -92,6 +118,27 @@ release-gate assure release.jsonl --evidence evidence/ \
 
 Exit 0 PROMOTE, 10 HOLD, 1 BLOCK. [CI templates](ci-templates/admission/) cover
 GitHub Actions, GitLab, Jenkins, CircleCI and Azure Pipelines.
+
+Release-gate's own checks are evidence too. The `--json` of `pr`, `verify`,
+`loop-sim` and `agent-score` is read like any tool's. Here is a release that
+promotes on its own, plus one trace that called a tool its governance file
+forbids:
+
+```bash
+# examples/evidence/first-party/verify.json was written by
+#   release-gate verify governance.yaml --trace trace.json --iteration 2 --cost 0.06 --json
+release-gate assure examples/agents/02-release-promoted.jsonl \
+  --evidence examples/evidence/first-party/verify.json \
+  --methodology general-agent-action@1.0.0 --admission
+```
+
+```text
+  Decision     BLOCK
+               BLOCK under general-agent-action@1.0.0 and rg-resolution@1: 2 blocking condition(s) established — RG-CONTRA-002 (contradictions, on rg-trace:run-2291); RG-VERIF-002 (claim_status, on rg-trace:run-2291)
+```
+
+The block comes from the failed trace check, not from the verifier's own
+`ROLLBACK`. That verdict is recorded and decides nothing.
 
 Nothing to install first: **[drop a run into the browser demo](https://release-gate.com/assurance.html)**
 — it runs this same engine, and its three sample runs are the files in

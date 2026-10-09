@@ -395,17 +395,43 @@ for sample in samples:
 
 ---
 
-## Release Checklist
+## Releasing to PyPI
 
-Before releasing a new version:
+Pushing a version tag publishes the package. `.github/workflows/publish.yml`
+does the rest, through PyPI Trusted Publishing (OIDC), so no API token is
+stored anywhere.
 
-- [ ] All tests pass: `python tests/test_release_gate.py`
-- [ ] Code follows style guide
-- [ ] Documentation updated
-- [ ] CHANGELOG.md updated
-- [ ] Examples updated
-- [ ] No breaking changes
-- [ ] Version bumped in docs
+**Once.**
+
+1. On PyPI, go to the `release-gate` project, then *Publishing*. Add a GitHub
+   publisher with owner `VamsiSudhakaran1`, repository `release-gate`,
+   workflow `publish.yml` and environment `pypi`.
+2. On GitHub, go to *Settings*, then *Environments*, and create `pypi`.
+   Requiring a reviewer there puts a person between the tag and the upload.
+
+**Each release, from an up-to-date `main`.**
+
+```bash
+python scripts/bump_version.py 0.12.0   # every version pin; re-embeds the site; checks sync
+# then move CHANGELOG's [Unreleased] entries under "## [0.12.0] — YYYY-MM-DD"
+pytest tests/ -q
+git commit -am "Release 0.12.0"
+git push origin main
+git tag v0.12.0 && git push origin v0.12.0
+```
+
+The tag runs three jobs:
+
+1. **guard.** The tag must equal the package version and every version pin
+   must agree. Then the full suite and the accuracy benchmark run, the sdist
+   and wheel are built, and `twine check` validates them. Any failure stops
+   the release.
+2. **publish.** Uploads the sdist and wheel to PyPI.
+3. **release.** Creates the GitHub Release and installs `release-gate==0.12.0`
+   from PyPI as a smoke test. It also moves the floating `v0.12` tag, which
+   `uses: …@v0.12` follows.
+
+To republish an existing tag, run the *Publish* workflow by hand with that tag.
 
 ---
 

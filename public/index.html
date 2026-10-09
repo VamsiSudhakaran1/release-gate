@@ -1928,6 +1928,48 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
       </div>
     </div>
 
+    <!--
+      The product in five parts, and the invariant it keeps. The same picture is
+      in docs/ARCHITECTURE.md, and tests/test_product_invariant.py resolves every
+      part to the code that implements it and executes each clause.
+    -->
+    <p style="font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin:6px 0 12px">How it is built</p>
+    <div style="display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));margin-bottom:14px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Its own checks</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">AST / taint, PR diff, governance, trace validation, loop simulation, agent score. Each is one producer among the others.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Your tools</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">Evaluators, red teams, traces, SAST, provers, people. Read in their own words, never re-run.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">A model, bounded</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">Asked only what the rules left open. Any failure is <code>UNKNOWN</code>. A reading never decides.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">The case</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">Claims, evidence, assumptions, contradictions, counterexamples, failed branches, coverage, independence.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">The policy</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0"><strong>PROMOTE · HOLD · BLOCK</strong>, deterministic from the declared policy and the evidence. No score is an input.</p>
+      </div>
+    </div>
+    <p style="font-size:.95rem;color:var(--heading);line-height:1.6;max-width:72ch;margin:0 0 10px;border-left:3px solid var(--accent);padding-left:14px">
+      It may generate, ingest, normalize and compare evidence, interpret bounded
+      evidence, and decide whether evidence satisfies policy. It never pretends
+      that one model, one scanner, one evaluator, one score or one successful test
+      establishes universal truth.
+    </p>
+    <p style="font-size:.85rem;color:var(--text);line-height:1.6;max-width:72ch;margin:0 0 28px">
+      Proven end to end. <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/examples/acceptance/README.md">One enterprise release</a>
+      blocks on a single counterexample. None of these outvotes it: a perfect
+      scanner score, 1,000 passing evals, an evaluator&rsquo;s &ldquo;approve&rdquo;,
+      or five model judgments. A <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/POST_ASSURANCE_ARCHITECTURE_AUDIT.md">hostile review</a>
+      of 25 attack areas found 11 defects; each was reproduced in a test and fixed.
+    </p>
+
     <div style="overflow-x:auto;margin-bottom:10px">
     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
       <thead>
