@@ -4,6 +4,59 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🔏 Signed evidence, a deploy-time check, containment drills, incidents, and a diversity-strict policy
+
+Five gaps a release decision about a capable system needs closed, each through
+an existing seam. Nothing new decides: every one ends in the same deterministic
+admission policy. Details are in [REFERENCE](REFERENCE.md) and spec §10by.
+
+- **Signed evidence.** `release-gate keygen`, `sign` and `check-signature` make
+  keys and DSSE envelopes (in-toto Statements too).
+  `assure --trusted-keys trusted-keys.json` verifies every signed input against
+  keys an organisation trusts for named producers.
+  - A valid signature from a key trusted for the record's producer
+    authenticates the record. It no longer counts toward RG-PROV-001.
+  - A signature that does not verify means the evidence is not read, and the
+    case holds.
+  - A file cannot claim its own authentication. Signing moves no evidence id.
+  - A policy can require authenticated support for required claims
+    (`require_authenticated_support`, RG-PROV-004).
+- **`release-gate deploy-check`.** Compares what is deployed with the state an
+  Admission Report admitted, component by component. Exit 0 MATCH, 1 MISMATCH,
+  10 UNVERIFIABLE; an admission that did not PROMOTE, or was edited, admits
+  nothing. With `--trusted-keys`, only an admission signed by a key trusted for
+  `release-gate/admission` is read.
+- **`release-gate.containment/1`.** A kill-switch, circuit-breaker or
+  credential-revocation drill. A halt within its bound is a check of "it can be
+  halted". A failed, partial or late halt, or actions still running after it,
+  is a counterexample, so one failed drill blocks a critical claim.
+- **`incident` envelope rows.** A production failure becomes the reporter's
+  account and one counterexample per claim and affected state. It blocks
+  against the state that failed and holds every later release until a
+  remediation cites evidence that release carries. Disclosure is recorded as
+  stated. `mitigated` is not a fix.
+- **`--resolution-policy diversity-strict@1`.** Required claims must be
+  ESTABLISHED by two independent groups, where a shared provider counts as one
+  group. They must also be checked by someone other than their author. An
+  author nobody stated holds. `--resolution-policy` now takes a built-in name as
+  well as a file.
+- **Fixed: "signed" wording.** ARCHITECTURE called `evidence_pack.py` a "signed"
+  bundle, and said the evidence pack was signed. Neither was. The evidence
+  pack, the sealed case and the assurance pack are content-addressed and
+  unsigned; `release-gate sign` signs any of them. The README, the integration
+  guide and the audit document are corrected the same way.
+- **Fixed: a run that raised.** Two open counterexamples citing the same
+  evidence against one claim, found on different states, lifted into two
+  contradictions with one id. The whole run raised. They are now one
+  disagreement, current over stale.
+- **Stricter identity bases.** `pinned-digest`, `declared-document…`,
+  `ingested-document…`, and an identity provider's result short of observed or
+  verified now read `independence_basis: asserted`. This is reporting only
+  (RG-PROV-001 is advisory). The 225-run corpus is unchanged in decision, fired
+  rules and reasons.
+- The protocol registers `signed_evidence`, `incident` and `deployment_check`
+  (88 schemas).
+
 ### 🧭 The product invariant, and release-gate's own checks as evidence
 
 The product is now drawn as five parts:

@@ -91,7 +91,7 @@ Every one of these is *reused as-is behind an adapter*, not reimplemented:
 | `evals/runner.py` | Eval evidence producer (`TEST_SUITE`). |
 | `agent_score.py`, `loop_verifier.py`, `loop_sim.py` | Behavioural evidence producers (`EXPERIMENT` / `SIMULATION`). Tier + canary structure is already evidence-shaped. |
 | `evidence_pack.py` | Becomes one renderer of an `ApprovalPacket`. |
-| `crypto/` (RSA-PSS + SHA256) | The signing primitive for `BoundApproval` and for signed evidence envelopes. |
+| `crypto/` (RSA-PSS + SHA256) | The signing primitive for `BoundApproval`. `crypto/envelope.py` signs and verifies DSSE evidence envelopes (Ed25519, ECDSA, RSA-PSS) against a trust store (§10by). |
 | `frameworks.py` | Already speaks `PASS/FAIL/PARTIAL/NOT_ASSESSED`; becomes the compliance projection of a case. |
 | `mcp_server.py` | Gains read-only case tools; keeps its allow-root sandboxing model. |
 | `action.yml`, `release_gate_api/`, `cli.py` | Surfaces. Additive only. |
@@ -10407,6 +10407,99 @@ evidence from satisfying a policy.
 
 ---
 
+### 10by. Five trust gaps — authenticated evidence, deploy-time binding, containment, incidents, diversity
+
+Five things a release decision about a capable system needs, which the engine
+could state as gaps and not close. Each is closed through an existing seam: no
+new decision path, and nothing that lets a score, a model or a file's own word
+decide.
+
+**1. Authenticated evidence** (`assurance/signed.py`, `crypto/envelope.py`).
+Every producer identity was the document's claim (RG-PROV-001). A document can
+now arrive in a DSSE envelope, or as an in-toto Statement whose predicate it is.
+The host boundary verifies each envelope against an organisation's trust store
+(`--trusted-keys`, `release-gate.trusted-keys/1`), where every key names the
+producers it may speak for and who decided to trust it, and hands the core a
+`SignatureVerdict` keyed by the envelope's digest. The core verifies nothing.
+
+| Verdict | Effect |
+|---|---|
+| VALID, key trusted for the record's producer | `EvidenceRecord.authentication` set; `independence_basis: authenticated` |
+| VALID, key trusted for another producer | none; the notes say the key is not trusted to speak for it |
+| INVALID | the envelope is not read; a skipped record holds the case (RG-COV) |
+| UNVERIFIABLE, or no verdict | read as the same document unsigned, and said so |
+
+Authentication is outside `identity()`: signing a document moves no evidence
+id. `from_dict` drops an `authentication` a row carries, so a file cannot vouch
+for itself. A signature says who, never whether (`SignatureMetadata.
+establishes_correctness` stays False). A policy may require it:
+`ResolutionPolicy.require_authenticated_support` (absent by default; HOLD or
+BLOCK) fires **RG-PROV-004** on a required claim whose counted support all rests
+on asserted identities. A check counts as authenticated when a record it cites
+is. Claims with no counted support stay RG-CRIT-006's, and contradicted ones
+are blocked by what contradicts them.
+
+The identity bases read as asserted are now an explicit list: `""`, `none`,
+`unauthenticated`, `unknown`, `pinned-digest` (a digest names the bytes, not the
+author), any `declared-document…` or `ingested-document…` basis (the document's
+own account), and an identity provider's result short of observed or verified
+(`provider:declared`, `:not_assessed`, `:unknown` and the rest). Before, the last
+three groups read as authenticated.
+
+**2. The deploy-time check** (`assurance/deployment.py`, `deploy-check`). An
+Admission Report names a state hash, and nothing checked that what was deployed
+was that state. `check_deployment` compares a deployment, stated as candidate
+components, with the admitted ones, using `candidate.values_equal`. MATCH needs
+every admitted component stated and equal, and no revision deployed that the
+admission did not cover. A differing component is MISMATCH (exit 1); an unstated
+one, or an uncovered revision, is UNVERIFIABLE (exit 10). An identity component
+the admission did not name is noted, not held. A report whose state hash does not
+match its own components was edited, and an admission that did not PROMOTE
+admits nothing (NOT_ADMITTED). With a trust store the report must be signed by
+a key trusted for `release-gate/admission`; an edited decision then fails its
+signature. Pure: the same documents and verdict give the same check.
+
+**3. Containment as evidence** (`release-gate.containment/1`,
+`ContainmentDrillAdapter`). "It can be paused" is a claim, and a drill is how it
+is checked. A halt within `bound_seconds`, with no action running after it, is a
+RUNTIME_ASSERTION check (EMPIRICAL: it held on the run drilled). A drill that
+did not halt, halted only partly, halted after its bound, or let actions run
+after the halt is a COUNTEREXAMPLE, lifted into the ledger, so one failed drill
+blocks a critical claim. A bound with no measured time, an errored drill and an
+unreadable number are inconclusive; an unlisted word holds (RG-COV-002).
+
+**4. Incidents** (`assurance/incident.py`, envelope `incident` rows). A failure
+in operation becomes the reporter's account, an ATTESTATION that bears on no
+claim itself, and one FOUND counterexample per claim and affected state citing
+it. Against the state that failed it is VALID; against any later state it is
+STALE (RG-CEX-004), so every later release holds on it until it is answered; with
+no stated state it stands against every candidate. The remediation's status is
+the counterexample's, under the counterexample's own checks. A RESOLVED
+remediation must cite evidence the case holds, by the id the envelope gave it,
+or it stays OPEN: a later release answers an incident with evidence it carries.
+`mitigated` is not a fix. Disclosure is recorded as stated and not judged.
+Limit: the cited evidence must be in the case, and that is all that is checked.
+Whether it shows the defect gone, and whether it is bound to the candidate, is the
+remediation's word, as it is for any counterexample's `resolution_evidence`.
+
+**5. Diversity-strict** (`DIVERSITY_STRICT_POLICY`, `diversity-strict@1`). A
+built-in resolution policy: required claims must be ESTABLISHED, every
+provenance dimension correlates (a shared provider included), author
+independence is required (HOLD), and an author nobody stated holds. It is
+nothing weaker than the default anywhere. `--resolution-policy` takes it by
+name; an unknown name is an error, never the default.
+
+**A defect this exposed.** Two open counterexamples citing the same evidence
+against one claim, differing only in their state, lifted into two contradictions
+under one id. The collection refused the duplicate, and the whole run raised.
+`CounterexampleLedger.to_contradictions` now lifts one disagreement per id, and
+keeps the current one over a stale one.
+
+`tests/test_signed_evidence.py`, `test_deployment_check.py`,
+`test_containment_evidence.py`, `test_incident_evidence.py`,
+`test_diversity_strict.py`, and
+`test_counterexample_precedence.py::TestUntilTheCandidateMoves::test_one_refutation_found_on_two_states_is_one_disagreement`.
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
@@ -10670,6 +10763,13 @@ fixed, rather than the expectations being lowered.
 | command JSON (§10bx) | `pr`, `verify`, `loop-sim` and `agent-score` `--json` (and `agent-score --report`) gain `schema`, `producer`, `state`, `inputs` ahead of their keys | additive; no key moved; exit codes unchanged |
 | verdict wording (§10bx) | the loop verifier's SHIP, `loop-sim`'s and `agent-score`'s PROMOTE reasons name what ran and say they are not admission decisions | text only; decisions unchanged |
 | Admission Report labels (§10bx) | the four producers are listed under *generated by release-gate* with their own labels | label text only |
+| identity basis (§10by) | `pinned-digest`, `declared-document…`, `ingested-document…` and identity-provider results short of observed or verified now read `independence_basis: asserted` | **stricter**, reporting only: such records now count toward RG-PROV-001 (advisory); no decision reads it unless a policy sets `require_authenticated_support`. The 25-input corpus (225 runs over every methodology) is unchanged in decision, fired rules and reasons, and every evidence record serialises as before |
+| RG-PROV-001 remedy (§10by) | names `release-gate sign` and `--trusted-keys` | text only; a case that carries RG-PROV-001 serialises differently, so an approval bound to its case digest reads stale: re-run and re-approve |
+| signed inputs (§10by) | a DSSE envelope, as a file or a `signed_export` row, is opened and read; `EvidenceRecord.authentication` serialised only when set | additive. A DSSE file used to be unrecognised input. Without `--trusted-keys` it is read as unsigned |
+| `require_authenticated_support` (§10by) | new `ResolutionPolicy` field, RG-PROV-004 | serialised only when set, so every existing policy digests as before |
+| incidents, containment drills (§10by) | envelope `incident` rows; `release-gate.containment/1`; schemas `signed_evidence`, `incident`, `deployment_check` (protocol count 88) | additive; an `incident` row used to be skipped as an unknown record type, which held the case |
+| lifted contradictions (§10by) | one per id, the current over the stale | a case that raised now runs; no case that ran before changes |
+| `--resolution-policy` (§10by) | takes a built-in name as well as a file | additive; a path that exists is read as before |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

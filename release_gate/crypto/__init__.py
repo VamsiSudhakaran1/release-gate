@@ -1,8 +1,11 @@
 """
-release-gate v0.5: Cryptographic Governance Validation
+release-gate's host-boundary cryptography.
 
-Signs and verifies governance.yaml with RSA-PSS + SHA256.
-Makes governance tamper-proof and auditable.
+- governance_signer / governance_verifier: sign and verify governance.yaml with
+  RSA-PSS + SHA256 (v0.5), so governance is tamper-evident and auditable.
+- envelope: sign evidence in DSSE envelopes and verify them against the keys an
+  organisation trusts for named producers. The assurance core imports none of
+  this; it is handed each verdict (`release_gate.assurance.signed`).
 """
 
 from .governance_signer import GovernanceSigner, sign_and_lock_governance

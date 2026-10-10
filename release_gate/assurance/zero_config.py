@@ -1134,7 +1134,8 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
            resolution_policy: Optional[ResolutionPolicy] = None,
            semantic_assertions: Sequence[Any] = (),
            semantic_submitted: bool = False,
-           evidence: Sequence[Any] = ()) -> AssuranceOutcome:
+           evidence: Sequence[Any] = (),
+           signatures: Optional[Mapping[str, Any]] = None) -> AssuranceOutcome:
     """Ingest, analyse, assess and decide — with nothing configured.
 
     `evidence` is more files or directories to decide over together with
@@ -1156,6 +1157,13 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
     when read back from a file — and the resolution policy decides what each one
     does. None of them is a verdict.
 
+    `signatures` is what the host boundary found when it checked each signed
+    envelope among the inputs (`signed.SignatureVerdict`, keyed by
+    `signed.envelope_digest`; `crypto.envelope.verify_envelope` makes them). A
+    VALID verdict from a key trusted for a record's producer authenticates the
+    record; an INVALID one means the envelope is not read. Nothing here checks a
+    signature, and nothing in a submitted file can stand in for a verdict.
+
     `candidate` is the exact release being admitted (`CandidateState`). Stated
     here, it wins over one the submission declares about itself or one derived
     from an audit report; with none of those, the case's own current artifacts
@@ -1175,12 +1183,13 @@ def assure(path: str | Path, *, methodology: Optional[AssuranceMethodology] = No
         rows, content, read = compose_inputs(source, evidence, producers=producers)
         normalisation = normalise(
             rows, detect_document(rows, filename=source.name, producers=producers),
-            source=str(source), content=content, producers=producers)
+            source=str(source), content=content, producers=producers,
+            signatures=signatures)
         normalisation = dataclasses.replace(normalisation, notes=(
             f"composed from {len(read)} file(s): {', '.join(read)}",
         ) + tuple(normalisation.notes))
     else:
-        normalisation = ingest_path(source, producers=producers)
+        normalisation = ingest_path(source, producers=producers, signatures=signatures)
     return assure_normalisation(
         normalisation, source_name=source.name,
         source_path=source,

@@ -38,6 +38,7 @@ million-line trace does not get copied into an evidence pack to prove it existed
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -193,6 +194,18 @@ class EvidenceSchemaError(ValueError):
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+#: Identity bases that say nobody established who produced a record: the
+#: document stated it, or a digest was pinned (which names the bytes, not the
+#: author), or an identity provider (`identity.py`, `provider:status`) reported
+#: it as anything short of observed or verified. Every other basis names a
+#: mechanism that checked who it was.
+_ASSERTED_BASES = frozenset({"", "none", "unauthenticated", "unknown", "pinned-digest"})
+_ASSERTED_PREFIXES = ("ingested-document", "declared-document")
+_UNESTABLISHED_SUFFIXES = tuple(
+    f":{status.value.lower()}" for status in EpistemicStatus
+    if status not in (EpistemicStatus.OBSERVED, EpistemicStatus.VERIFIED))
 
 
 @dataclass(frozen=True)
@@ -381,6 +394,12 @@ class EvidenceRecord:
     applies_to_digest: Optional[str] = None
     provenance_status: ProvenanceStatus = ProvenanceStatus.ATTRIBUTED
     trust: Optional[TrustDecision] = None
+    #: A signature this run verified, against a key the organisation trusts for
+    #: this record's producer (`signed.py`). Like `trust`, a ruling about the
+    #: record rather than part of what the producer said, so it is outside
+    #: `identity()`: signing a document changes no evidence id. Set only by
+    #: `with_authentication`, and never read back from a submitted row.
+    authentication: Optional[Any] = None
     coverage_status: CoverageStatus = CoverageStatus.UNKNOWN
     coverage_note: str = ""
     content: Mapping[str, Any] = field(default_factory=dict)
@@ -599,9 +618,15 @@ class EvidenceRecord:
         but it does make it weaker, and which of the two a decision requires is a
         methodology question rather than something to hardcode here.
         """
+        if self.authentication is not None and getattr(
+                self.authentication, "state", None) is not None \
+                and self.authentication.state.value == "VALID":
+            return "authenticated"
         basis = (self.producer.identity_basis or "").strip().lower()
-        return "asserted" if basis in ("", "none", "unauthenticated", "unknown") \
-            else "authenticated"
+        if basis in _ASSERTED_BASES or basis.startswith(_ASSERTED_PREFIXES) \
+                or basis.endswith(_UNESTABLISHED_SUFFIXES):
+            return "asserted"
+        return "authenticated"
 
     # ── transitions ─────────────────────────────────────────────────────────
 
@@ -615,6 +640,18 @@ class EvidenceRecord:
         """
         return dataclasses.replace(
             self, trust=TrustDecision(status=status, basis=basis, decided_by=decided_by))
+
+    def with_authentication(self, signature: Any) -> "EvidenceRecord":
+        """The same record, authenticated by a signature the host boundary verified.
+
+        A copy rather than `dataclasses.replace`: replace re-runs construction,
+        which would read an arrival stamp as a supplied timestamp and move the
+        evidence id. Authentication is outside the identity, so the id must not
+        move, and every claim that cites the record still cites it.
+        """
+        held = copy.copy(self)
+        object.__setattr__(held, "authentication", signature)
+        return held
 
     def supporting(self, *claim_ids: str) -> "EvidenceRecord":
         return dataclasses.replace(
@@ -642,6 +679,10 @@ class EvidenceRecord:
             # of time this is, and `from_dict` uses it to recompute the same id.
             "timestamp": self.timestamp,
             "stamped_on_arrival": self.stamped_on_arrival,
+            # Only when present, so a case read without signatures serialises
+            # exactly as before and its digest does not move.
+            **({"authentication": self.authentication.to_dict()}
+               if self.authentication is not None else {}),
         }
 
     @classmethod
@@ -683,6 +724,9 @@ class EvidenceRecord:
             content=data.get("content") or {},
             metadata=data.get("metadata") or {},
             schema_version=version)
+        # `authentication` is not read back. A row that could say it had been
+        # verified would have verified itself; it is re-established only by
+        # checking a signature in the run that reads it.
         stored = data.get("evidence_id")
         if stored and stored != record.evidence_id:
             raise EvidenceIntegrityError(

@@ -319,8 +319,8 @@ def _schemas() -> Tuple[SchemaRef, ...]:
         _ref("reference_evidence", "reference_adapters",
              "REFERENCE_EVIDENCE_SCHEMA_VERSION", 1,
              note="the generic contracts for external evidence — "
-                  "release-gate.eval/1, red-team/1, sast/1, review/1, formal/1 and "
-                  "behavior/1 — "
+                  "release-gate.eval/1, red-team/1, sast/1, review/1, formal/1, "
+                  "behavior/1 and containment/1 — "
                   "each read through the producer contract and never re-run"),
         _ref("first_party_evidence", "first_party",
              "FIRST_PARTY_EVIDENCE_SCHEMA_VERSION", 1,
@@ -328,6 +328,19 @@ def _schemas() -> Tuple[SchemaRef, ...]:
                   "release-gate.pr/1, loop-verify/1, loop-sim/1 and agent-score/1 — "
                   "read through the producer contract with no more standing than "
                   "any other producer; each command's verdict and score decide nothing"),
+        _ref("signed_evidence", "signed", "SIGNED_EVIDENCE_SCHEMA_VERSION", 1,
+             note="a document in a DSSE envelope, or an in-toto Statement whose "
+                  "predicate it is, and the verdict the host boundary found when it "
+                  "checked the signature against keys trusted for named producers; "
+                  "the core verifies nothing and reads no verdict from a file"),
+        _ref("incident", "incident", "INCIDENT_SCHEMA_VERSION", 1,
+             note="a failure in operation: the reporter's account, disclosure "
+                  "included, and one counterexample per claim and affected state "
+                  "that every later release must answer with evidence it holds"),
+        _ref("deployment_check", "deployment", "DEPLOYMENT_CHECK_SCHEMA_VERSION", 1,
+             note="what is deployed compared with what an admission admitted, "
+                  "component by component: MATCH, MISMATCH, UNVERIFIABLE or "
+                  "NOT_ADMITTED; unknown is never a match"),
         _ref("authorship", "authorship", "AUTHORSHIP_SCHEMA_VERSION", 1,
              note="who did each piece of the work, as CI, a commit or a person "
                   "states it, and whether each claim was checked by anyone but its "

@@ -143,11 +143,13 @@ _THREAT_MODEL: Mapping[Threat, Tuple[Detectability, str, str]] = {
         "tool and its supply chain"),
     Threat.SOURCE_SPOOFED: (
         Detectability.MITIGATED_ONLY,
-        "a signature establishes which key signed, and release-gate records that "
-        "rather than verifying it; an unsigned record proves nothing either way, "
-        "so absence of a signature is not evidence of spoofing",
-        "signed evidence with keys managed outside release-gate, and provenance "
-        "recorded per record so an unattributed one is visible as such"),
+        "a signature establishes which key signed; with a trust store the host "
+        "boundary verifies it against keys trusted for the record's producer, and "
+        "one that does not verify is not read, but an unsigned record proves "
+        "nothing either way, so absence of a signature is not evidence of spoofing",
+        "signed evidence verified against a trust store (`--trusted-keys`), keys "
+        "managed outside release-gate, and provenance recorded per record so an "
+        "unattributed one is visible as such"),
     Threat.HUMAN_APPROVES_STALE_STATE: (
         Detectability.DETECTED,
         "an approval binds to an exact case digest, subject digest and version; a "

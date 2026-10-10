@@ -1158,6 +1158,16 @@ def print_help():
     print("      what a person must look at, and the verdict — every figure read from the case.")
     print("  release-gate assure --list-methodologies  # Built-in methodologies you can pass")
     print("  release-gate authorship --role ROLE     # Emit an authorship record (from CI with --from-ci)")
+    print("  release-gate keygen NAME                # Make a signing key pair: NAME.key (keep secret), NAME.pub")
+    print("  release-gate sign FILE --key K --keyid ID [--out F]  # Sign a producer's output (DSSE envelope)")
+    print("  release-gate check-signature FILE --trusted-keys KEYS  # Verify it. Exit 0 valid · 10 no trusted key · 1 invalid")
+    print("      `assure --trusted-keys KEYS` verifies every signed input: a valid signature from a key the")
+    print("      trust store names for that producer authenticates its records; one that does not verify")
+    print("      is not read. A signature says who produced the evidence, never that it is right.")
+    print("  release-gate deploy-check --admission A.json --deployed D.json [--trusted-keys KEYS]")
+    print("      Is what runs what was admitted? Compares the deployed components with the admitted")
+    print("      state, component by component. Exit 0 MATCH · 1 MISMATCH · 10 UNVERIFIABLE. With")
+    print("      --trusted-keys the admission must be signed by a key trusted for release-gate/admission.")
     print("\nEvidence release-gate produces itself (each one source among the case's evidence):")
     print("  `audit --evidence-out FILE`, and the --json of pr, verify, loop-sim and agent-score, are read")
     print("  by `assure --evidence` like any producer's output. Each command's own verdict and score are")
@@ -1808,6 +1818,18 @@ def main():
     elif command == 'authorship':
         _run_authorship_command()
 
+    elif command == 'keygen':
+        _run_keygen_command()
+
+    elif command == 'sign':
+        _run_sign_command()
+
+    elif command == 'check-signature':
+        _run_check_signature_command()
+
+    elif command == 'deploy-check':
+        _run_deploy_check_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
@@ -1948,6 +1970,226 @@ def _run_authorship_command():
               file=sys.stderr)
 
 
+def _signature_verdicts(trusted_ref, target, evidence):
+    """Every signed input verified against the trust store, keyed by envelope digest."""
+    from release_gate.assurance.ingest import IngestError
+    from release_gate.assurance.signed import collect_signed_envelopes
+    from release_gate.crypto.envelope import (
+        TrustedKeysError, load_trusted_keys, verify_envelope)
+    try:
+        trusted = load_trusted_keys(trusted_ref)
+        found = collect_signed_envelopes(target, evidence)
+    except (TrustedKeysError, IngestError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    verdicts = {}
+    for envelope in found:
+        verdict = verify_envelope(envelope, trusted)
+        verdicts[verdict.envelope_digest] = verdict
+    return verdicts
+
+
+def _run_keygen_command():
+    """release-gate keygen NAME [--type ed25519|ecdsa-p256|rsa]
+
+    Writes NAME.key (the private key, unencrypted PEM: keep it in a secret store)
+    and NAME.pub (the public key, for the organisation's trust store). Refuses to
+    overwrite either.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    from release_gate.crypto.envelope import TrustedKeysError, generate_keypair
+
+    argv = sys.argv
+    name = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
+    if not name:
+        print("Usage: release-gate keygen NAME [--type ed25519|ecdsa-p256|rsa]")
+        sys.exit(1)
+    private_path, public_path = _Path(f"{name}.key"), _Path(f"{name}.pub")
+    for path in (private_path, public_path):
+        if path.exists():
+            print(f"Error: {path} exists; release-gate does not overwrite a key")
+            sys.exit(1)
+    try:
+        private_pem, public_pem = generate_keypair(_flag(argv, '--type') or 'ed25519')
+    except TrustedKeysError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    descriptor = _os.open(str(private_path), _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL,
+                          0o600)
+    with _os.fdopen(descriptor, 'wb') as handle:
+        handle.write(private_pem)
+    public_path.write_bytes(public_pem)
+    keyid = _Path(name).name
+    print(f"Wrote {private_path} (private: keep it secret) and {public_path} (public).")
+    print("Add the public key to your trust store, naming what it may speak for:")
+    print(json.dumps({"keyid": keyid, "public_key": public_pem.decode('ascii'),
+                      "producers": ["<the producer id this key signs for>"],
+                      "decided_by": "<who decided to trust it>"}, indent=2))
+    sys.exit(0)
+
+
+def _run_sign_command():
+    """release-gate sign FILE --key PRIVATE.key --keyid ID [--out FILE] [--in-toto]
+
+    Wraps FILE's exact bytes in a DSSE envelope signed with the key. With
+    `--in-toto`, FILE must already be an in-toto Statement whose predicate is the
+    evidence document. Prints the envelope, or writes it to `--out`.
+    """
+    from pathlib import Path as _Path
+
+    from release_gate.assurance.signed import (
+        DSSE_PAYLOAD_TYPE, IN_TOTO_PAYLOAD_TYPE, SignedEnvelopeError, inner_document)
+    from release_gate.crypto.envelope import TrustedKeysError, sign_document
+
+    argv = sys.argv
+    target = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
+    key, keyid = _flag(argv, '--key'), _flag(argv, '--keyid')
+    if not (target and key and keyid):
+        print("Usage: release-gate sign FILE --key PRIVATE.key --keyid ID "
+              "[--out FILE] [--in-toto]")
+        sys.exit(1)
+    try:
+        envelope = sign_document(
+            _Path(target).read_bytes(), private_key_pem=_Path(key).read_bytes(),
+            keyid=keyid,
+            payload_type=IN_TOTO_PAYLOAD_TYPE if '--in-toto' in argv else DSSE_PAYLOAD_TYPE)
+    except (OSError, TrustedKeysError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    try:
+        # What a run will read from it, checked before it is handed out: an
+        # envelope release-gate would refuse to open is not worth signing.
+        inner_document(envelope)
+    except SignedEnvelopeError as exc:
+        print(f"Error: {target} would not be readable once signed: {exc}")
+        sys.exit(1)
+    text = json.dumps(envelope, indent=2, sort_keys=True) + "\n"
+    out = _flag(argv, '--out')
+    if out:
+        _Path(out).write_text(text, encoding='utf-8')
+        print(f"Signed {target} as {keyid!r}: {out}", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    sys.exit(0)
+
+
+def _run_check_signature_command():
+    """release-gate check-signature FILE --trusted-keys KEYS [--json]
+
+    Verifies every signed envelope in FILE — the file itself, or `signed_export`
+    rows in an envelope — against the trust store. Exit 0 when every one verifies
+    against a trusted key, 1 when any does not verify, 10 when one is signed by no
+    key the store trusts (or FILE carries no signature at all).
+    """
+    from release_gate.assurance.ingest import IngestError, load_input
+    from release_gate.assurance.signed import is_signed_envelope
+    from release_gate.crypto.envelope import (
+        TrustedKeysError, load_trusted_keys, verify_envelope)
+
+    argv = sys.argv
+    target = argv[2] if len(argv) >= 3 and not argv[2].startswith('-') else None
+    store = _flag(argv, '--trusted-keys')
+    if not (target and store):
+        print("Usage: release-gate check-signature FILE --trusted-keys KEYS [--json]")
+        sys.exit(1)
+    try:
+        trusted = load_trusted_keys(store)
+        doc = load_input(target)
+    except (TrustedKeysError, IngestError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    if is_signed_envelope(doc):
+        envelopes = [doc]
+    elif isinstance(doc, list):
+        envelopes = [r['envelope'] for r in doc if isinstance(r, dict)
+                     and r.get('record_type') == 'signed_export'
+                     and is_signed_envelope(r.get('envelope'))]
+    else:
+        envelopes = []
+    verdicts = [verify_envelope(e, trusted) for e in envelopes]
+    states = {v.state.value for v in verdicts}
+    code = (1 if 'INVALID' in states else
+            10 if not verdicts or 'UNVERIFIABLE' in states else 0)
+    if '--json' in argv:
+        print(json.dumps({"file": target, "verdicts": [v.to_dict() for v in verdicts],
+                          "exit_code": code}, indent=2, sort_keys=True))
+    else:
+        if not verdicts:
+            print(f"{target}: carries no signed envelope")
+        for verdict in verdicts:
+            print(f"{target}: {verdict.state.value} — {verdict.detail}")
+            if verdict.producers:
+                print(f"  key {verdict.key_id!r} is trusted for "
+                      f"{', '.join(verdict.producers)} (decided by {verdict.decided_by})")
+        print("  A valid signature says who produced this, never that it is right.")
+    sys.exit(code)
+
+
+def _run_deploy_check_command():
+    """release-gate deploy-check --admission FILE --deployed FILE [--trusted-keys KEYS] [--json]
+
+    Compares what is deployed with what an Admission Report admitted
+    (`assure --admission-out`), component by component: the deployment is
+    stated in the shape `assure --candidate` takes. Exit 0 MATCH, 1 MISMATCH,
+    10 UNVERIFIABLE; an admission that did not PROMOTE admits nothing (10 for
+    HOLD, 1 for BLOCK or a report that was edited). With `--trusted-keys`, the
+    admission must be a signed envelope (`release-gate sign`) by a key the
+    store trusts for `release-gate/admission`.
+    """
+    from pathlib import Path as _Path
+
+    from release_gate.assurance.deployment import (
+        DeploymentCheckError, check_deployment, render_deployment_check)
+    from release_gate.assurance.ingest import IngestError, load_input
+    from release_gate.assurance.signed import (
+        SignedEnvelopeError, inner_document, is_signed_envelope)
+
+    argv = sys.argv
+    admission_ref, deployed_ref = _flag(argv, '--admission'), _flag(argv, '--deployed')
+    if not (admission_ref and deployed_ref):
+        print("Usage: release-gate deploy-check --admission FILE --deployed FILE "
+              "[--trusted-keys KEYS] [--json]")
+        sys.exit(1)
+    trusted_ref = _flag(argv, '--trusted-keys')
+    try:
+        admission = load_input(admission_ref)
+        deployed = load_input(deployed_ref)
+    except IngestError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    verdict = None
+    signed = is_signed_envelope(admission)
+    if signed:
+        if trusted_ref:
+            from release_gate.crypto.envelope import (
+                TrustedKeysError, load_trusted_keys, verify_envelope)
+            try:
+                verdict = verify_envelope(admission, load_trusted_keys(trusted_ref))
+            except TrustedKeysError as exc:
+                print(f"Error: {exc}")
+                sys.exit(1)
+        try:
+            admission, _kind = inner_document(admission)
+        except SignedEnvelopeError as exc:
+            print(f"Error: {admission_ref}: {exc}")
+            sys.exit(1)
+    try:
+        check = check_deployment(admission, deployed, admission_signature=verdict,
+                                 require_signed=bool(trusted_ref),
+                                 admission_was_signed=signed,
+                                 deployed_by=f"--deployed {_Path(deployed_ref).name}")
+    except DeploymentCheckError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    if '--json' in argv:
+        print(json.dumps(check.to_dict(), indent=2, sort_keys=True))
+    else:
+        print(render_deployment_check(check))
+    sys.exit(check.exit_code)
+
+
 def _run_assure_command():
     """release-gate assure — the admission decision: PROMOTE / HOLD / BLOCK for one
     candidate, from its claims and all of its evidence, against a declared policy.
@@ -1964,6 +2206,7 @@ def _run_assure_command():
                                   [--escalation-policy FILE]
                                   [--semantic-panel FILE]]
                                  [--semantic-assertions FILE]
+                                 [--trusted-keys FILE]
                                  [--calibration-out FILE
                                   [--calibration-privacy hash-only|redacted|full]
                                   [--calibration-declared-by WHO]]
@@ -1974,6 +2217,13 @@ def _run_assure_command():
     file in a directory, to the same decision: a pipeline's eval exports,
     scanner output, reviews and proofs beside the envelope that states the
     release's claims. One case, one decision, every source named.
+
+    `--trusted-keys FILE` is the organisation's trust store
+    (`release-gate.trusted-keys/1`). Every signed input — a DSSE envelope as a
+    file, or a `signed_export` row — is verified against it before anything is
+    read: a valid signature from a key trusted for a record's producer
+    authenticates that record, and an envelope whose signature does not verify is
+    not read at all. Without it, signed inputs are read as unsigned and said so.
 
     `--review` prints the one-screen case review: what arrived, what the decision
     rests on, what coverage the case has, what a person must look at, and the
@@ -2106,13 +2356,22 @@ def _run_assure_command():
     resolution_policy = None
     policy_ref = _flag(argv, '--resolution-policy')
     if policy_ref:
-        from release_gate.assurance.resolution import ResolutionError, ResolutionPolicy
-        try:
-            resolution_policy = ResolutionPolicy.from_dict(
-                _json.loads(_Path(policy_ref).read_text(encoding='utf-8')))
-        except (OSError, ValueError, ResolutionError) as exc:
-            print(f"Error: {policy_ref} is not a readable resolution policy: {exc}")
-            sys.exit(1)
+        from release_gate.assurance.resolution import (
+            ResolutionError, ResolutionPolicy, resolution_policy_named)
+        if _Path(policy_ref).is_file():
+            try:
+                resolution_policy = ResolutionPolicy.from_dict(
+                    _json.loads(_Path(policy_ref).read_text(encoding='utf-8')))
+            except (OSError, ValueError, ResolutionError) as exc:
+                print(f"Error: {policy_ref} is not a readable resolution policy: {exc}")
+                sys.exit(1)
+        else:
+            # A built-in by name, as a methodology is named: `diversity-strict@1`.
+            try:
+                resolution_policy = resolution_policy_named(policy_ref)
+            except ResolutionError as exc:
+                print(f"Error: {exc}")
+                sys.exit(1)
 
     # The semantic verifier (assurance/semantic_verifier.py): ask a model the
     # questions the escalation policy (assurance/escalation.py) selects from those
@@ -2121,6 +2380,13 @@ def _run_assure_command():
     # reads; neither path lets a model choose the verdict.
     # More of the release's evidence, decided over together with <file>.
     evidence = _flags(argv, '--evidence')
+
+    # Signatures are checked here, at the host boundary, and handed to the run as
+    # verdicts. The assurance core verifies nothing and reads no verdict from a file.
+    signatures = None
+    trusted_ref = _flag(argv, '--trusted-keys')
+    if trusted_ref:
+        signatures = _signature_verdicts(trusted_ref, target, evidence)
 
     # A calibration corpus records each semantic adjudication of this run
     # (assurance/calibration.py). Settled before any model is asked, so a bad
@@ -2154,14 +2420,15 @@ def _run_assure_command():
         escalation_ref=_flag(argv, '--escalation-policy'),
         panel_ref=_flag(argv, '--semantic-panel'),
         methodology=methodology, candidate=candidate,
-        resolution_policy=resolution_policy, evidence=evidence, keep=kept)
+        resolution_policy=resolution_policy, evidence=evidence, keep=kept,
+        signatures=signatures)
 
     try:
         outcome = assure(target, methodology=methodology, candidate=candidate,
                          resolution_policy=resolution_policy,
                          semantic_assertions=semantic_assertions,
                          semantic_submitted=semantic_submitted,
-                         evidence=evidence)
+                         evidence=evidence, signatures=signatures)
     except IngestError as exc:
         print(f"Error: {exc}")
         sys.exit(1)

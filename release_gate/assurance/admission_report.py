@@ -66,6 +66,7 @@ _PRODUCER_TYPE_LABEL = {
     "sarif": "SARIF", "eval": "Eval harness", "red_team": "Red team",
     "sast": "SAST", "human_review": "Human review",
     "behavior": "Behavioural evaluation",
+    "containment": "Containment drill",
     "external_decision": "External decision",
     "release_gate_pr": "Release-Gate PR diff",
     "release_gate_loop_verify": "Release-Gate trace and loop verifier",

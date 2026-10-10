@@ -62,6 +62,7 @@ from release_gate.assurance.correlation import (
     READER_INDEPENDENCE_POLICY,
     IndependenceAssessment,
     IndependencePolicy,
+    ProvenanceDimension,
     ProvenanceIndex,
     SourceProvenance,
     assess_independence,
@@ -72,7 +73,9 @@ from release_gate.assurance.methods import CHARACTERS, MethodCharacter
 
 __all__ = [
     "AdmissionEffect",
+    "BUILTIN_RESOLUTION_POLICIES",
     "DEFAULT_RESOLUTION_POLICY",
+    "DIVERSITY_STRICT_POLICY",
     "RESOLUTION_SCHEMA_VERSION",
     "ClaimResolution",
     "ClaimResolutionReport",
@@ -83,6 +86,7 @@ __all__ = [
     "ResolvedItem",
     "SemanticCorroboration",
     "Strength",
+    "resolution_policy_named",
     "resolve_claims",
 ]
 
@@ -308,6 +312,13 @@ class ResolutionPolicy:
     #: When a model's "supported" on a critical claim counts (RG-SEM-006). None:
     #: under COUNTS, a reading citing what the claim rests on counts, as before.
     semantic_corroboration: Optional[SemanticCorroboration] = None
+    #: Whether a required claim must rest on at least one record whose producer
+    #: was authenticated — a signature verified against a key trusted for that
+    #: producer (`signed.py`), or an identity established at the boundary. None
+    #: requires nothing: RG-PROV-001 reports unauthenticated records, advisory.
+    #: Set, a required claim whose counted support is all asserted takes this
+    #: effect (RG-PROV-004).
+    require_authenticated_support: Optional[AdmissionEffect] = None
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -342,6 +353,9 @@ class ResolutionPolicy:
         if self.semantic_uncertainty is not None:
             object.__setattr__(self, "semantic_uncertainty",
                                AdmissionEffect(self.semantic_uncertainty))
+        if self.require_authenticated_support is not None:
+            object.__setattr__(self, "require_authenticated_support",
+                               AdmissionEffect(self.require_authenticated_support))
         object.__setattr__(self, "establishing",
                            tuple(sorted({Strength(s) for s in self.establishing},
                                         key=lambda s: s.value)))
@@ -393,6 +407,11 @@ class ResolutionPolicy:
                 # exactly as it did before the field existed.
                 **({"semantic_corroboration": self.semantic_corroboration.to_dict()}
                    if self.semantic_corroboration is not None else {}),
+                # The same: a policy that does not require authentication digests
+                # as it did before the field existed.
+                **({"require_authenticated_support":
+                    self.require_authenticated_support.value}
+                   if self.require_authenticated_support is not None else {}),
                 "note": self.note, "schema_version": RESOLUTION_SCHEMA_VERSION}
 
     def digest(self) -> str:
@@ -449,6 +468,9 @@ class ResolutionPolicy:
                 semantic_corroboration=(
                     SemanticCorroboration.from_dict(data["semantic_corroboration"])
                     if data.get("semantic_corroboration") is not None else None),
+                require_authenticated_support=(
+                    AdmissionEffect(str(data["require_authenticated_support"]))
+                    if data.get("require_authenticated_support") else None),
                 note=str(data.get("note") or ""))
         except (TypeError, ValueError) as exc:
             if isinstance(exc, ResolutionError):
@@ -459,6 +481,48 @@ class ResolutionPolicy:
 DEFAULT_RESOLUTION_POLICY = ResolutionPolicy(
     note="a bound proof establishes alone; otherwise two independent groups of "
          "passing checks; a required claim must be at least SUPPORTED")
+
+#: Critical claims need diverse, independent support, checked by someone other
+#: than the author. Required claims must be ESTABLISHED: a bound proof, or
+#: passing checks from at least two independent groups, where a shared provider
+#: correlates as well as a shared model family, session, agent, reviewer or
+#: toolchain — two model families one organisation serves are one source here.
+#: Every required claim must be checked by someone who shares nothing with its
+#: author, and an author nobody stated holds the case (RG-INDEP-007, -008).
+#: Nothing in it is weaker than the default.
+DIVERSITY_STRICT_POLICY = ResolutionPolicy(
+    policy_id="rg-diversity-strict", version="1",
+    independence=IndependencePolicy(
+        policy_id="rg-diversity-strict", correlate_on=tuple(ProvenanceDimension),
+        min_independent_groups=2,
+        note="every stated dimension correlates, a shared provider included"),
+    admission_level=ResolutionStatus.ESTABLISHED,
+    author_independence=AdmissionEffect.HOLD,
+    note="diversity-strict: a required claim must be ESTABLISHED by a bound proof or "
+         "by two independent groups, where a shared provider is one group, and must "
+         "be checked by someone other than its author; an unstated author holds")
+
+#: The built-in resolution policies, by the name `--resolution-policy` takes.
+BUILTIN_RESOLUTION_POLICIES: Mapping[str, ResolutionPolicy] = {
+    "rg-resolution@1": DEFAULT_RESOLUTION_POLICY,
+    "diversity-strict@1": DIVERSITY_STRICT_POLICY,
+}
+
+
+def resolution_policy_named(name: str) -> ResolutionPolicy:
+    """A built-in resolution policy by name: `diversity-strict@1`, its bare name, or its ref.
+
+    A bare name takes the one version there is; an unknown name is refused with
+    the names that exist, never read as the default.
+    """
+    wanted = str(name or "").strip()
+    for key, policy in BUILTIN_RESOLUTION_POLICIES.items():
+        if wanted in (key, key.split("@", 1)[0], policy.ref):
+            return policy
+    raise ResolutionError(
+        f"{wanted!r} is not a built-in resolution policy (built-ins: "
+        + ", ".join(BUILTIN_RESOLUTION_POLICIES)
+        + "); pass one of those, or a path to a JSON resolution policy")
 
 
 # ── the items a resolution is made of ────────────────────────────────────────

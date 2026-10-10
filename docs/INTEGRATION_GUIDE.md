@@ -104,9 +104,12 @@ under `strict`, and never becomes a BLOCK.
 
 release-gate is a pipeline step, not a cluster webhook. Gate the deploy job on
 the step's decision, and keep the Admission Report as the record of what was
-admitted, against which state and policy. The signed evidence pack
-(`release-gate evidence-pack`) and the AIBOM lock (`release-gate lock`) are what
-a runtime policy layer can check the deployed version against.
+admitted, against which state and policy. Sign it (`release-gate sign`), and
+in the deploy job check that what runs is what it admitted (`release-gate
+deploy-check --admission … --deployed … --trusted-keys …`). The AIBOM lock
+(`release-gate lock`) is what a runtime policy layer can check the deployed
+version's context against. The evidence pack (`release-gate evidence-pack`) is
+not signed.
 
 ---
 

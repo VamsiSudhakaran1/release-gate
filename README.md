@@ -301,13 +301,17 @@ evidence, and each is documented in its own place:
 
 | | |
 |---|---|
-| **[External evidence](examples/evidence/README.md)** | Evaluations, red teams, SAST, formal verification, reviews and behavioural evaluations, each through one documented contract. Read and attributed, never re-run |
+| **[External evidence](examples/evidence/README.md)** | Evaluations, red teams, SAST, formal verification, reviews, behavioural evaluations and containment drills, each through one documented contract. Read and attributed, never re-run |
 | **[Trace & eval ingestion](docs/INTEGRATION_GUIDE.md)** | OpenTelemetry · Langfuse · Arize-Phoenix · promptfoo read in place: no bespoke file, no new instrumentation |
 | **[Agent code scanning](docs/RULES.md)** | Release-gate's own evidence producer for code-level agent risk: AST and taint analysis of model output reaching `eval`/`pickle`, retrieved text reaching prompts, uncapped LLM loops. Measured on its own [93-case corpus](benchmark/RESULTS.md) |
 | **[`release-gate pr`](docs/REFERENCE.md#commands)** | One verdict on what a pull request *introduced*: net-new agent risk only, inherited debt shown and never gated |
 | **[Release-gate's other checks](docs/REFERENCE.md#first-party-evidence-pr-verify-loop-sim-agent-score)** | PR diff analysis (`pr`), trace validation (`verify --trace`), loop simulation (`loop-sim`) and the agent score (`agent-score`). Their `--json` is evidence `assure --evidence` reads like any producer's; their own verdicts and scores are recorded and decide nothing |
 | **[Semantic verification](docs/REFERENCE.md)** | Optional. A model, or a panel of independent models, reads evidence the rules cannot. Its readings are recorded and never decide; disagreement goes to a person |
-| **[Evidence packs](docs/REFERENCE.md)** | A sealed, verifiable record of what was decided and on what |
+| **[Signed evidence](docs/REFERENCE.md#signed-evidence--who-produced-it-verified)** | Producers sign their output (`release-gate sign`, DSSE / in-toto). `assure --trusted-keys` checks each signature against keys trusted for named producers, and does not read evidence whose signature fails |
+| **[Deploy-time check](docs/REFERENCE.md#deploy-check--what-runs-is-what-was-admitted)** | `release-gate deploy-check` compares what is running with the state the admission admitted. Anything not shown to match does not pass |
+| **[Incidents and drills](docs/REFERENCE.md#incidents--a-failure-every-later-release-must-answer)** | A production failure becomes a counterexample that every later release must answer. A recorded kill-switch drill (`containment/1`) is the evidence behind "it can be paused" |
+| **[Diversity-strict](docs/REFERENCE.md#diversity-strict--diverse-independent-support-for-critical-claims)** | `--resolution-policy diversity-strict@1`: critical claims need two independent groups of checks, where a shared provider counts as one group, plus a check by someone other than the author |
+| **[Evidence packs](docs/REFERENCE.md#evidence-pack)** | `evidence-pack` writes JSON, Markdown and HTML. The sealed case (`--case-output`) is content-addressed and verifiable. None of these is signed unless you sign it |
 | **[GitHub Action](action.yml)** · **[MCP server](docs/REFERENCE.md)** | `command: assure` in the Action; `pip install 'release-gate[mcp]'` |
 | **[Benchmarks](benchmark/README.md)** | The scanner, the assurance layer and semantic providers, measured separately. The [assurance corpus](benchmark/ASSURANCE.md) publishes no headline precision figure, because on most of its cases precision is not a meaningful thing to measure |
 

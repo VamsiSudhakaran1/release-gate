@@ -70,6 +70,11 @@ from release_gate.assurance.evidence import (
 from release_gate.assurance.execution_graph import (
     ExecutionGraph, ExecutionGraphBuilder,
 )
+from release_gate.assurance.attestation import SignatureState
+from release_gate.assurance.signed import (
+    SignatureVerdict, SignedEnvelopeError, envelope_digest, envelope_keyids,
+    inner_document, is_signed_envelope,
+)
 from release_gate.assurance.subject import (
     ContentReference, DigestMethod, DigestStatus, ReferenceKind, SubjectType,
 )
@@ -110,7 +115,14 @@ ENVELOPE_RECORD_TYPES = frozenset(
      # An `AuthorshipStatement` (authorship.py): who did one piece of the work —
      # the implementation, the tests, a review — as CI, a commit or a person
      # states it. Read, never inferred; kept as DECLARED attestation evidence.
-     "authorship"})
+     "authorship",
+     # A document in a DSSE envelope (`signed.py`): opened before anything else
+     # reads the rows, and read as what it carries. Authenticated only by a
+     # verdict the run was handed, never by anything in the row.
+     "signed_export",
+     # An `IncidentRecord` (incident.py): a failure in operation, read as the
+     # reporter's account and one counterexample per claim and affected state.
+     "incident"})
 
 
 class IngestError(ValueError):
@@ -736,12 +748,94 @@ def _consequence_from(doc: Any,
     return found, refused
 
 
+def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureVerdict],
+                         notes: List[str], producers: Optional[Any] = None
+                         ) -> Tuple[List[Any], Dict[int, SignatureVerdict], Dict[int, str]]:
+    """An envelope's `signed_export` rows, opened into the rows they carry.
+
+    Opened before anything reads the envelope, so a signed primary file's
+    candidate, execution and consequence rows are read exactly as the same rows
+    unsigned. An envelope document's rows are spliced in where the signed row
+    stood; any other document becomes a `producer_export` row, as
+    `compose_inputs` makes one for the same file unsigned.
+
+    Returns the rows, the verdict for each row a VALID envelope carried (keyed
+    by the row object, so nothing a row says can attach it), and the refusal for
+    each envelope left unopened: one whose signature does not verify, whose
+    payload cannot be read, or that sits inside another signed envelope. One
+    level only, so a verdict always covers exactly the rows it was computed over.
+    """
+    if not any(isinstance(r, Mapping) and r.get("record_type") == "signed_export"
+               for r in doc):
+        return list(doc), {}, {}
+    rows: List[Any] = []
+    signed: Dict[int, SignatureVerdict] = {}
+    refused: Dict[int, str] = {}
+    for index, row in enumerate(doc):
+        if not (isinstance(row, Mapping) and row.get("record_type") == "signed_export"):
+            rows.append(row)
+            continue
+        name = str(row.get("source") or "").strip() or f"signed-export-{index}"
+        envelope = row.get("envelope")
+        refusal = ""
+        if not is_signed_envelope(envelope):
+            refusal, detail = ("signed_export not read: it carries no DSSE envelope",
+                               "it carries no `envelope` with a payloadType, a payload "
+                               "and signatures")
+        else:
+            verdict = signatures.get(envelope_digest(envelope))
+            if verdict is not None and verdict.state is SignatureState.INVALID:
+                refusal, detail = (
+                    "signed_export not read: its signature does not verify",
+                    f"{verdict.detail}. A payload whose signature does not verify is "
+                    "not weighed as what it says")
+            else:
+                try:
+                    document, kind = inner_document(envelope)
+                except SignedEnvelopeError as exc:
+                    refusal, detail = ("signed_export not read: its payload cannot be read",
+                                       str(exc))
+        if refusal:
+            refused[id(row)] = refusal
+            notes.append(f"signed envelope {name!r} was not read: {detail}")
+            rows.append(row)
+            continue
+        detection = detect_document(document, filename=name, producers=producers)
+        if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(document, list):
+            carried = list(document)
+        else:
+            carried = [{"record_type": "producer_export", "source": name,
+                        "document": document}]
+        for inner in carried:
+            if isinstance(inner, Mapping) and inner.get("record_type") == "signed_export":
+                refused[id(inner)] = ("signed_export not read: it is inside another "
+                                      "signed envelope")
+        if verdict is not None and verdict.state is SignatureState.VALID:
+            for inner in carried:
+                if id(inner) not in refused:
+                    signed[id(inner)] = verdict
+            notes.append(f"signed envelope {name!r} ({kind}): {verdict.detail}; its "
+                         "records are authenticated where the key is trusted for "
+                         "their producer")
+        else:
+            notes.append(
+                f"signed envelope {name!r} ({kind}) is signed by "
+                f"{', '.join(k or '?' for k in envelope_keyids(envelope))}, but no "
+                "trusted key verified it ("
+                + (verdict.detail if verdict is not None else "no trust store was given")
+                + "); it was read exactly as the same document unsigned")
+        rows.extend(carried)
+    return rows, signed, refused
+
+
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                       execution: Any = None,
                       declared_consequence: Sequence[Any] = (),
                       producers: Optional[Any] = None,
                       attempts_out: Optional[List[VerificationAttempt]] = None,
-                      unread_out: Optional[List[str]] = None
+                      unread_out: Optional[List[str]] = None,
+                      signed: Optional[Mapping[int, SignatureVerdict]] = None,
+                      refused: Optional[Mapping[int, str]] = None
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  List[CounterexampleAttempt], List[FailedBranch],
                                  List[AdversarialFinding],
@@ -762,6 +856,32 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
 
+    signed = signed or {}
+    refused = refused or {}
+    spoken: Set[Tuple[str, str]] = set()
+
+    def authenticate(row: Any, records: Sequence[EvidenceRecord]) -> List[EvidenceRecord]:
+        """Records built from a row a VALID envelope carried, authenticated where
+        the key is trusted for their producer, and only there."""
+        verdict = signed.get(id(row))
+        if verdict is None:
+            return list(records)
+        held: List[EvidenceRecord] = []
+        for record in records:
+            producer_id = record.producer.producer_id
+            if verdict.speaks_for(producer_id):
+                held.append(record.with_authentication(verdict.signature()))
+                continue
+            if (verdict.envelope_digest, producer_id) not in spoken:
+                spoken.add((verdict.envelope_digest, producer_id))
+                notes.append(
+                    f"key {verdict.key_id!r} verified a signed envelope, but it is not "
+                    f"trusted to speak for {producer_id!r} (it is trusted for "
+                    f"{', '.join(verdict.producers)}); those records read as "
+                    "unauthenticated")
+            held.append(record)
+        return held
+
     # Evidence first, so claims can be linked to the records they cite. An
     # evidence_id is derived from content at the boundary, never accepted from a
     # producer, so the envelope's own id would otherwise dangle — and a claim whose
@@ -778,10 +898,17 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
     # matter.
     declarations: Dict[str, ProducerDeclaration] = {}
     export_rows: List[Mapping[str, Any]] = []
+    incident_rows: List[Tuple[Mapping[str, Any], Producer]] = []
 
     for row in doc:
         if not isinstance(row, Mapping):
             skip("record is not an object")
+            continue
+        if id(row) in refused:
+            # A signed envelope `_open_signed_exports` would not open. Before the
+            # bounds, so a large refused payload is refused for what it is.
+            seen_by_kind["signed_export"] = seen_by_kind.get("signed_export", 0) + 1
+            skip(refused[id(row)])
             continue
         # Bounds before parsing. A submitted document is attacker-controlled in
         # the deployments this engine is built for, and three shapes used to get
@@ -863,8 +990,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             elif record_type == "semantic_assertion":
                 from release_gate.assurance.semantic_verifier import (
                     SemanticAssertion, assertions_to_records)
-                evidence.extend(assertions_to_records(
-                    [SemanticAssertion.from_dict(row)], submitted=True))
+                evidence.extend(authenticate(row, assertions_to_records(
+                    [SemanticAssertion.from_dict(row)], submitted=True)))
                 mapped += 1
             elif record_type == "failed_branch":
                 branches.append(_failed_branch_from(row, producer))
@@ -873,12 +1000,15 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                 from release_gate.assurance.authorship import AuthorshipStatement
                 built = AuthorshipStatement.from_dict(row).to_record(
                     producer=producer, source=source)
-                evidence.append(built)
+                evidence.extend(authenticate(row, [built]))
                 mapped += 1
             elif record_type == "producer_export":
                 # Folded after the envelope's own claims are built, so the
                 # export's results join the claims the submission declares.
                 export_rows.append(row)
+            elif record_type == "incident":
+                # Read after the evidence, so a remediation can cite it.
+                incident_rows.append((row, producer))
             elif record_type == "adversarial":
                 adversarial.append(_adversarial_from(row, producer, unread_out))
                 mapped += 1
@@ -910,6 +1040,11 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             f"{absorbed_artifacts} artifact row(s) repeated a content digest "
             "already held and were absorbed; they are counted as mapped")
 
+    if signed:
+        # Signed rows first, so a document carried both signed and unsigned keeps
+        # the signed copy when the repeat is absorbed. Stable: nothing else moves.
+        evidence_rows.sort(key=lambda held: id(held[0]) not in signed)
+        export_rows.sort(key=lambda held: id(held) not in signed)
     ordered_rows, absorbed_evidence = _ordered_evidence(evidence_rows, notes,
                                                         unread_out)
     mapped += absorbed_evidence
@@ -945,6 +1080,7 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             skip(f"record rejected: {type(exc).__name__}")
             notes.append(f"an evidence record was rejected: {exc}")
             continue
+        built = authenticate(row, built)
         evidence.extend(built)
         if declared_id:
             if declared_id in id_map:
@@ -1014,6 +1150,14 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
             "replay was absorbed, and anything a repeat carried that the first "
             "did not was joined to the first record under that id")
 
+    # Incidents after the envelope's evidence and claims: a remediation cites
+    # evidence by the id the envelope gave it, and an incident that names no claim
+    # adds its own.
+    mapped += _fold_incidents(incident_rows, source=source, evidence=evidence,
+                              claims=claims, counterexamples=counterexamples,
+                              id_map=id_map, authenticate=authenticate, skip=skip,
+                              notes=notes, unread=unread_out)
+
     # One document carried twice — under two names, or a file passed to
     # `--evidence` that an envelope beside it already embeds — is one tool's one
     # run. Read twice it would count its evidence twice, so it is read once and
@@ -1031,14 +1175,85 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                 mapped += 1
                 continue
             read_documents[key] = name
+        start = len(evidence)
         if _fold_export(row, index, source=source, producers=producers,
                         evidence=evidence, claims=claims,
                         attempts=attempts_out if attempts_out is not None else [],
                         skipped=skipped, notes=notes, unread=unread_out):
             mapped += 1
+        evidence[start:] = authenticate(row, evidence[start:])
 
     return (evidence, claims, artifacts, counterexamples, branches, adversarial,
             expectations, mapped, skipped, notes, seen_by_kind)
+
+
+def _incident_state_problem(state: Mapping[str, Any]) -> str:
+    """Why an incident's affected state is not candidate components, or ''."""
+    from release_gate.assurance.candidate import CandidateError, CandidateState
+    try:
+        CandidateState(components=state)
+    except CandidateError as exc:
+        return str(exc)
+    return "" if state else "it names no component"
+
+
+def _fold_incidents(rows: Sequence[Tuple[Mapping[str, Any], Producer]], *, source: str,
+                    evidence: List[EvidenceRecord], claims: List[Claim],
+                    counterexamples: List[CounterexampleAttempt],
+                    id_map: Mapping[str, str], authenticate: Any, skip: Any,
+                    notes: List[str], unread: Optional[List[str]]) -> int:
+    """Each `incident` row as its account and its counterexamples. Returns how many mapped."""
+    from release_gate.assurance.incident import IncidentRecord
+    mapped = 0
+    said: Dict[str, str] = {}
+    for row, producer in rows:
+        try:
+            incident = IncidentRecord.from_dict(row)
+        except Exception as exc:
+            skip(f"incident record rejected: {type(exc).__name__}")
+            notes.append(f"an incident record was rejected: {exc}")
+            continue
+        stated = _said(row)
+        if incident.incident_id in said:
+            if stated == said[incident.incident_id]:
+                mapped += 1
+                notes.append(f"incident {incident.incident_id} was stated twice; the "
+                             "repeat was absorbed")
+                continue
+            if unread is not None:
+                unread.append(f"incident {incident.incident_id} is stated by two rows "
+                              "that say different things; both are kept, and which one "
+                              "is the account cannot be read")
+        said.setdefault(incident.incident_id, stated)
+        try:
+            [record] = authenticate(row, [incident.to_record(producer=producer,
+                                                             source=source)])
+            held = {e.evidence_id for e in evidence}
+            built = [_counterexample_from(cex, producer, unread)
+                     for cex in incident.counterexample_rows(
+                         record.evidence_id, resolve=id_map, held=held, unread=unread,
+                         valid_state=_incident_state_problem)]
+        except Exception as exc:
+            skip(f"incident record rejected: {type(exc).__name__}")
+            notes.append(f"incident {incident.incident_id} was rejected: {exc}")
+            continue
+        if record.evidence_id not in held:
+            evidence.append(record)
+        known = {c.counterexample_id for c in counterexamples}
+        counterexamples.extend(c for c in built if c.counterexample_id not in known)
+        if not incident.claims and incident.own_claim_id not in {c.claim_id for c in claims}:
+            claims.append(Claim(
+                claim_id=incident.own_claim_id, statement=incident.own_claim_statement,
+                claim_type=ClaimType.ASSERTION, producer=producer,
+                provenance=ClaimProvenance.DECLARED,
+                metadata={"incident": incident.incident_id}))
+        declared = {c.claim_id for c in claims}
+        for missing in (c for c in incident.claims if c not in declared):
+            notes.append(f"incident {incident.incident_id} names claim {missing}, which "
+                         "this case does not state; its counterexample stands against "
+                         "it all the same")
+        mapped += 1
+    return mapped
 
 
 def _producer_type_of(detection: "Detection") -> Optional[str]:
@@ -1983,13 +2198,26 @@ def _enum_or(enum_cls, value: Any, default):
 
 def normalise(doc: Any, detection: Detection, *, source: str,
               content: Optional[bytes] = None,
-              producers: Optional[Any] = None) -> Normalisation:
+              producers: Optional[Any] = None,
+              signatures: Optional[Mapping[str, SignatureVerdict]] = None
+              ) -> Normalisation:
     """Fold one document into records. Never raises on unmappable content.
 
     `producers` is the `ProducerRegistry` to read registered formats with; the
     built-in one when omitted. Passing one is how an organisation's own adapter
     reaches a case without this function changing.
+
+    `signatures` is what the host boundary found when it checked each signed
+    envelope the document carries, keyed by `signed.envelope_digest`
+    (`crypto.envelope.verify_envelope`). Without one, a signed envelope is read
+    as the same document unsigned, and said so.
     """
+    opened_notes: List[str] = []
+    signed_rows: Dict[int, SignatureVerdict] = {}
+    refused_rows: Dict[int, str] = {}
+    if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
+        doc, signed_rows, refused_rows = _open_signed_exports(
+            doc, signatures or {}, opened_notes, producers)
     producer = _document_producer(doc, detection, source)
     evidence: List[EvidenceRecord] = []
     claims: List[Claim] = []
@@ -1999,7 +2227,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
     expectations: List[EvidenceExpectation] = []
     failed_branches: List[FailedBranch] = []
     skipped: Dict[str, int] = {}
-    notes: List[str] = []
+    notes: List[str] = list(opened_notes)
     seen = 0
     mapped = 0
     # Empty rather than zeroed: only the envelope path walks typed rows, so for any
@@ -2037,7 +2265,8 @@ def normalise(doc: Any, detection: Detection, *, source: str,
             _envelope_records(doc, source, producer, execution=execution,
                               declared_consequence=declared_consequence,
                               producers=producers, attempts_out=export_attempts,
-                              unread_out=unread_values)
+                              unread_out=unread_values, signed=signed_rows,
+                              refused=refused_rows)
         expectations.extend(exp)
         failed_branches.extend(fbr)
         evidence.extend(ev)
@@ -2247,7 +2476,10 @@ def compose_inputs(primary: str | Path, evidence: Sequence[str | Path], *,
     for path in [primary] + _evidence_files(evidence, primary):
         doc = load_input(path)
         detection = detect_document(doc, filename=path.name, producers=producers)
-        if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
+        if is_signed_envelope(doc):
+            rows.append({"record_type": "signed_export", "source": str(path),
+                         "envelope": doc})
+        elif detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
             rows.extend(doc)
         else:
             rows.append({"record_type": "producer_export", "source": str(path),
@@ -2258,8 +2490,18 @@ def compose_inputs(primary: str | Path, evidence: Sequence[str | Path], *,
     return rows, content, tuple(read)
 
 
-def ingest_path(path: str | Path, *, producers: Optional[Any] = None) -> Normalisation:
-    """Read, identify and fold one file. The whole zero-config front door."""
+def ingest_path(path: str | Path, *, producers: Optional[Any] = None,
+                signatures: Optional[Mapping[str, SignatureVerdict]] = None
+                ) -> Normalisation:
+    """Read, identify and fold one file. The whole zero-config front door.
+
+    A file that is a signed envelope is read as the one `signed_export` row it
+    is, so its contents are read as the same document unsigned would be, and
+    authenticated only by a verdict in `signatures`.
+    """
     doc = load_input(path)
+    if is_signed_envelope(doc):
+        doc = [{"record_type": "signed_export", "source": str(path), "envelope": doc}]
     detection = detect_document(doc, filename=Path(path).name, producers=producers)
-    return normalise(doc, detection, source=str(path), producers=producers)
+    return normalise(doc, detection, source=str(path), producers=producers,
+                     signatures=signatures)

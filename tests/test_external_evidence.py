@@ -100,7 +100,8 @@ class TestEveryContractIsAContract:
     def test_each_holds_the_producer_contract_on_its_shipped_example(self, adapter):
         sample = {"eval": "eval.json", "red_team": "red-team.json",
                   "sast": "sast.json", "human_review": "review.json",
-                  "behavior": "behavior.json"}[adapter.name]
+                  "behavior": "behavior.json",
+                  "containment": "containment.json"}[adapter.name]
         report = check_adapter_contract(adapter, example(sample))
         assert report.holds, report.violations
 
@@ -108,17 +109,19 @@ class TestEveryContractIsAContract:
     def test_nothing_is_read_by_resemblance(self, adapter):
         sample = {"eval": "eval.json", "red_team": "red-team.json",
                   "sast": "sast.json", "human_review": "review.json",
-                  "behavior": "behavior.json"}[adapter.name]
+                  "behavior": "behavior.json",
+                  "containment": "containment.json"}[adapter.name]
         doc = example(sample)
         doc.pop("schema")
         assert adapter.detect(doc) == 0
         doc["schema"] = doc.get("schema", "") + "release-gate.eval/2"
         assert adapter.detect(doc) == 0
 
-    def test_the_six_schemas_are_named_in_one_place(self):
+    def test_the_seven_schemas_are_named_in_one_place(self):
         assert REFERENCE_SCHEMAS == ("release-gate.eval/1", "release-gate.red-team/1",
                                      "release-gate.sast/1", "release-gate.review/1",
-                                     "release-gate.formal/1", "release-gate.behavior/1")
+                                     "release-gate.formal/1", "release-gate.behavior/1",
+                                     "release-gate.containment/1")
 
     def test_every_shipped_example_is_recognised_as_its_own_contract(self, tmp_path):
         expected = {"eval.json": "PRODUCER_EXPORT:eval",
@@ -126,6 +129,7 @@ class TestEveryContractIsAContract:
                     "sast.json": "PRODUCER_EXPORT:sast",
                     "review.json": "PRODUCER_EXPORT:human_review",
                     "behavior.json": "PRODUCER_EXPORT:behavior",
+                    "containment.json": "PRODUCER_EXPORT:containment",
                     "formal.json": "VERIFIER_REPORT"}
         from release_gate.assurance.ingest import detect_document
         for name, kind in expected.items():
@@ -136,7 +140,8 @@ class TestEveryContractIsAContract:
 
     def test_the_ingest_names_none_of_them(self):
         source = (ROOT / "release_gate/assurance/ingest.py").read_text(encoding="utf-8")
-        for producer_type in ("red_team", "human_review", "sast", "release-gate.eval"):
+        for producer_type in ("red_team", "human_review", "sast", "release-gate.eval",
+                              "containment"):
             assert f'"{producer_type}"' not in source, producer_type
 
 

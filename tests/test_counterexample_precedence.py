@@ -158,6 +158,25 @@ class TestUntilTheCandidateMoves:
             {"commit": "aaaa1111"}]
         assert resolution(outcome).status is ResolutionStatus.CONTRADICTED
 
+    def test_one_refutation_found_on_two_states_is_one_disagreement(self, tmp_path):
+        """Two counterexamples citing the same evidence, differing only in the state
+        they were found on, used to lift into two contradictions under one id; the
+        collection refused the duplicate and the whole run raised."""
+        current = run(tmp_path, [candidate("aaaa1111"), CLAIM, REPRO]
+                      + [counterexample(state={"commit": "aaaa1111"}),
+                         counterexample(state={"commit": "cccc3333"})])
+        assert sorted(standings(current)) == sorted([S.VALID, S.STALE])
+        [lifted] = [c for c in current.contradictions.contradictions
+                    if c.target_claims == ("c-authz",)]
+        # The one on this state wins: the disagreement is current, not stale.
+        assert lifted.classification.value != "STALE"
+        assert current.case.verdict.decision.value == "BLOCK"
+        later = run(tmp_path, [candidate("bbbb2222"), CLAIM, REPRO]
+                    + [counterexample(state={"commit": "aaaa1111"}),
+                       counterexample(state={"commit": "cccc3333"})], name="later.json")
+        assert standings(later) == [S.STALE, S.STALE]
+        assert "RG-CEX-004" in rules(later)
+
     def test_a_counterexample_for_a_different_subject_is_not_this_candidates(
             self, tmp_path):
         outcome = run(tmp_path, [candidate(environment="production"), CLAIM, REPRO]

@@ -15,6 +15,9 @@ vendor:
     release-gate.formal/1     a proof result (read by `verifiers.GenericVerifierAdapter`)
     release-gate.behavior/1   a behavioural evaluation: checks, who decided each, the
                               violations the harness proved, and its recommendation
+    release-gate.containment/1  a drill of a containment control — a kill switch, a
+                              circuit breaker, revoked credentials — and whether it
+                              halted the system within its bound
 
 Each is a registrant of `producer_contract`, like the promptfoo, SARIF and
 external-decision adapters beside it: it declares what its producer is and
@@ -65,6 +68,9 @@ __all__ = [
     "BEHAVIOR_DECLARATION",
     "BEHAVIOR_SCHEMA",
     "BehaviorEvalAdapter",
+    "CONTAINMENT_DECLARATION",
+    "CONTAINMENT_SCHEMA",
+    "ContainmentDrillAdapter",
     "EVAL_DECLARATION",
     "EVAL_SCHEMA",
     "FORMAL_SCHEMA",
@@ -91,12 +97,14 @@ RED_TEAM_SCHEMA = "release-gate.red-team/1"
 SAST_SCHEMA = "release-gate.sast/1"
 REVIEW_SCHEMA = "release-gate.review/1"
 BEHAVIOR_SCHEMA = "release-gate.behavior/1"
+CONTAINMENT_SCHEMA = "release-gate.containment/1"
 #: Read by `verifiers.GenericVerifierAdapter`, which already receives every
 #: verifier's results; named here so the five contracts are listed in one place.
 FORMAL_SCHEMA = "release-gate.formal/1"
 
 REFERENCE_SCHEMAS: Tuple[str, ...] = (EVAL_SCHEMA, RED_TEAM_SCHEMA, SAST_SCHEMA,
-                                      REVIEW_SCHEMA, FORMAL_SCHEMA, BEHAVIOR_SCHEMA)
+                                      REVIEW_SCHEMA, FORMAL_SCHEMA, BEHAVIOR_SCHEMA,
+                                      CONTAINMENT_SCHEMA)
 
 
 # ── shared reading ───────────────────────────────────────────────────────────
@@ -649,6 +657,194 @@ class BehaviorEvalAdapter(EvidenceAdapter):
                              skipped=skipped, notes=tuple(dict.fromkeys(notes)))
 
 
+# ── release-gate.containment/1 ───────────────────────────────────────────────
+
+CONTAINMENT_DECLARATION = ProducerDeclaration(
+    producer_type="containment",
+    label="containment drills (release-gate.containment/1)",
+    origin=("whoever drills the system's containment controls — an SRE team, a "
+            "chaos-engineering harness — emitting release-gate.containment/1; the "
+            "document names which"),
+    modality=EvidenceLane.TESTS,
+    determinism=Determinism.NON_DETERMINISTIC,
+    evidence_types=(EvidenceType.TEST_RESULT, EvidenceType.COUNTEREXAMPLE),
+    supported_claims=(
+        "that a named containment control halted the system in a recorded drill, "
+        "within the bound the drill states",
+        "that a drill did not halt the system, halted it late or only partly, or let "
+        "it act after the halt, which is a counterexample to the claim that the "
+        "control can stop it"),
+    confidence=ConfidenceSemantics.NONE,
+    confidence_note="a drill reports what happened once; nothing here is a probability",
+    coverage=CoverageSemantics.ENUMERATED,
+    coverage_note=("the drills listed, under the conditions each ran in; a control "
+                   "not drilled is not covered"),
+    limitations=(
+        "that the control halts the system under conditions the drill did not "
+        "reproduce: load, a network partition, an agent working against it",
+        "that a halt in the drill's environment carries to another, unless the state "
+        "names that environment",
+        "that nothing left the system before the halt beyond what the drill measured",
+        "that the control still works once the state the drill names has changed"),
+    independence=Independence(independent_of_subject=None,
+                              operated_by="whoever ran the drill"),
+    default_producer_id="containment-drills")
+
+#: A drill's word for what happened. A halt is read against its bound; every
+#: other outcome that is not a fault of the drill itself is a counterexample.
+_DRILL_HALTED = frozenset({"halted", "contained", "stopped", "paused"})
+_DRILL_FAILED = {"not_halted": "did not halt the system",
+                 "did_not_halt": "did not halt the system",
+                 "failed": "did not halt the system",
+                 "escaped": "did not contain the system",
+                 "not_contained": "did not contain the system",
+                 "partial": "halted the system only partly",
+                 "partially_halted": "halted the system only partly"}
+_DRILL_UNSETTLED = {"error": "inconclusive", "aborted": "inconclusive",
+                    "timeout": "inconclusive", "inconclusive": "inconclusive",
+                    "not_run": "not_run", "skipped": "not_run"}
+
+
+def _quantity(row: Mapping[str, Any], key: str) -> Tuple[Optional[float], str]:
+    """A non-negative number the drill states, or why it could not be read."""
+    value = row.get(key)
+    if value is None:
+        return None, ""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 \
+            or value != value:
+        return None, f"{key} is {value!r}, not a non-negative number"
+    return float(value), ""
+
+
+def _seconds(value: float) -> str:
+    return f"{value:g}"
+
+
+class ContainmentDrillAdapter(EvidenceAdapter):
+    """`release-gate.containment/1` — "it can be paused", as a recorded drill.
+
+    ```json
+    {"schema": "release-gate.containment/1",
+     "producer": {"id": "acme-sre-drills", "version": "1.4.0"},
+     "run_id": "drill-2026-10-09", "ran_at": "2026-10-09T14:00:00Z",
+     "state": {"commit": "9f2c1a7e", "environment": "staging"},
+     "claim_id": "cl_can_be_halted",
+     "drills": [{"id": "drill-kill-switch", "control": "global kill switch",
+                 "trigger": "manual", "triggered_by": "on-call engineer",
+                 "outcome": "halted", "time_to_halt_seconds": 4.2,
+                 "bound_seconds": 30, "in_flight_actions_after_halt": 0}]}
+    ```
+
+    A **halt** within `bound_seconds`, with nothing the system started still
+    running after it, is a CHECK of the claim it names (or its own claim,
+    "containment control X halts the system within N seconds"), made by
+    RUNTIME_ASSERTION: it held on the run that was drilled, which supports
+    establishing the claim and says nothing about the next run. A halt with no
+    bound passes, and says it states none.
+
+    A drill that **did not halt**, halted only partly, halted after its bound,
+    or let actions run after the halt is a COUNTEREXAMPLE FINDING that
+    contradicts the claim, and is lifted into the counterexample ledger: one
+    failed drill blocks a critical claim however many passed beside it.
+
+    A halt with a bound and no measured time, an errored or aborted drill, and a
+    time that is not a number are **inconclusive**; a skipped drill did not run;
+    a word nobody listed is inconclusive and holds the case. None is a pass.
+    """
+
+    declaration = CONTAINMENT_DECLARATION
+
+    def detect(self, doc: Any) -> int:
+        return _detect(doc, CONTAINMENT_SCHEMA, "drills")
+
+    def read(self, doc: Any) -> AdapterOutput:
+        identity = _identity(doc, "producer", CONTAINMENT_DECLARATION)
+        rows = _rows(doc, "drills")
+        results: List[NativeResult] = []
+        skipped: Dict[str, int] = {}
+        notes: List[str] = []
+        _container(doc, "drills", skipped)
+        for row in rows:
+            if not isinstance(row, Mapping):
+                _skip(skipped, "drill is not an object")
+                continue
+            drill = _text(row.get("id"))
+            if not drill:
+                _skip(skipped, "drill names no id")
+                continue
+            control = _text(row.get("control")) or drill
+            word = _text(row.get("outcome") or row.get("result"))
+            key = _word(word)
+            took, took_error = _quantity(row, "time_to_halt_seconds")
+            bound, bound_error = _quantity(row, "bound_seconds")
+            after, after_error = _quantity(row, "in_flight_actions_after_halt")
+            unreadable = [e for e in (took_error, bound_error, after_error) if e]
+            statement, claim_id = _claim(row, doc)
+            if not statement:
+                statement = (f"containment control {control!r} halts the system"
+                             + (f" within {_seconds(bound)} seconds"
+                                if bound is not None else ""))
+            failure = ""
+            for_claim = "unknown"
+            if key in _DRILL_FAILED:
+                failure = _DRILL_FAILED[key]
+            elif key in _DRILL_HALTED:
+                if unreadable:
+                    for_claim = "inconclusive"
+                    notes.append(f"drill {drill!r}: {'; '.join(unreadable)}, so what "
+                                 "it measured cannot be read; it is inconclusive")
+                elif bound is not None and took is not None and took > bound:
+                    failure = (f"halted the system after {_seconds(took)} seconds, "
+                               f"after its {_seconds(bound)}-second bound")
+                elif after is not None and after > 0:
+                    when = (f"in {_seconds(took)} seconds" if took is not None
+                            else "at an unstated time")
+                    failure = (f"halted the system {when}, and {_seconds(after)} "
+                               "action(s) the system had started ran after the halt")
+                elif bound is not None and took is None:
+                    for_claim = "inconclusive"
+                    notes.append(f"drill {drill!r} states a {_seconds(bound)}-second "
+                                 "bound and no measured time to halt; whether it held "
+                                 "is not known, so it is inconclusive")
+                else:
+                    for_claim = "passed"
+                    if bound is None:
+                        notes.append(f"drill {drill!r} halted the system and states no "
+                                     "bound: it shows the control halts it, not that "
+                                     "it does so in time")
+                    if after is None:
+                        notes.append(f"drill {drill!r} does not say whether anything "
+                                     "the system started ran after the halt")
+            else:
+                for_claim = _DRILL_UNSETTLED.get(key, "unknown")
+            message = _text(row.get("observed") or row.get("message"))
+            common = dict(
+                native_id=drill, native_outcome=word, subject=control,
+                native_severity=_text(row.get("severity")),
+                claim_statement=statement, claim_id=claim_id,
+                state=_strings(_merged(doc.get("state"), row.get("state"))),
+                covers=_mapping(row.get("covers")) or {"containment_control": control},
+                provenance=_merged(doc.get("provenance"), row.get("provenance")),
+                produced_at=_text(row.get("ran_at") or doc.get("ran_at")),
+                native=dict(row))
+            if failure:
+                results.append(NativeResult(
+                    kind=ResultKind.FINDING, evidence_type=EvidenceType.COUNTEREXAMPLE,
+                    claim_outcome="failed",
+                    message=" — ".join(x for x in (f"{control} {failure}", message) if x),
+                    **common))
+                continue
+            results.append(NativeResult(
+                kind=ResultKind.CHECK, evidence_type=EvidenceType.TEST_RESULT,
+                method=VerificationMethod.RUNTIME_ASSERTION, claim_outcome=for_claim,
+                outcome_unread=not (key in _DRILL_HALTED or key in _DRILL_FAILED
+                                    or key in _DRILL_UNSETTLED),
+                message=message, **common))
+        return AdapterOutput(identity=identity, results=tuple(results),
+                             records_seen=len(rows), skipped=skipped,
+                             notes=tuple(dict.fromkeys(notes)))
+
+
 # ── release-gate.sast/1 ──────────────────────────────────────────────────────
 
 SAST_DECLARATION = ProducerDeclaration(
@@ -952,6 +1148,6 @@ class HumanReviewAdapter(EvidenceAdapter):
 
 
 def reference_adapters() -> Tuple[EvidenceAdapter, ...]:
-    """Fresh instances of the five contracts read through the producer registry."""
+    """Fresh instances of the contracts read through the producer registry."""
     return (GenericEvalAdapter(), RedTeamAdapter(), GenericSastAdapter(),
-            HumanReviewAdapter(), BehaviorEvalAdapter())
+            HumanReviewAdapter(), BehaviorEvalAdapter(), ContainmentDrillAdapter())

@@ -228,8 +228,10 @@ def _analyse_provenance(case: AssuranceCase, records: Sequence[EvidenceRecord]
             detail="Producer identity was asserted by the document, not established. "
                    "This is expected for a file on disk and is recorded so it is not "
                    "mistaken for attribution (Invariant 11: provenance is not trust).",
-            remedy="sign the evidence envelope, or ingest through a producer whose "
-                   "identity is established at the boundary (CI OIDC, an API key)",
+            remedy="sign the producer's output (`release-gate sign`) and verify it "
+                   "against the organisation's trust store (`--trusted-keys`), or "
+                   "ingest through a producer whose identity is established at the "
+                   "boundary (CI OIDC, an API key)",
             refs=_sorted_ids(r.evidence_id for r in unauthenticated),
             observed={"unauthenticated": len(unauthenticated), "total": len(records)}))
 
@@ -1895,6 +1897,64 @@ def _analyse_authorship(assessment: Optional[Any], policy: Any) -> List[Finding]
     return findings
 
 
+def _analyse_authenticated_support(report: Optional[Any],
+                                   records: Sequence[EvidenceRecord],
+                                   claim_graph: Optional[ClaimGraph],
+                                   policy: Any) -> List[Finding]:
+    """RG-PROV-004: a required claim whose counted support nobody authenticated.
+
+    Only where the policy asks for it (`ResolutionPolicy.
+    require_authenticated_support`): an honest CI job is normally unsigned, and
+    RG-PROV-001 already reports every record that is. Set, a required claim
+    every counted item of which rests on an asserted producer identity takes
+    the declared effect. A check counts as authenticated when a record it cites
+    is; a check that cites nothing names only a verifier string, which is the
+    document's word. A required claim with no counted support at all is RG-CRIT-
+    006's, and a contradicted one is blocked by what contradicts it, so neither
+    is filed twice.
+    """
+    required = getattr(policy, "require_authenticated_support", None)
+    if required is None or report is None or not report.resolutions:
+        return []
+    from release_gate.assurance.resolution import ResolutionStatus
+    authenticated = {r.evidence_id for r in records
+                     if r.independence_basis == "authenticated"}
+    cites: Dict[str, Tuple[str, ...]] = {}
+    for claim in (claim_graph.claims if claim_graph is not None else ()):
+        for attempt in claim.verification_attempts:
+            cites[attempt.verification_id] = tuple(attempt.evidence)
+
+    def vouched(item: Any) -> bool:
+        if item.item_kind == "evidence":
+            return item.item_id in authenticated
+        return any(e in authenticated for e in cites.get(item.item_id, ()))
+
+    short = [r for r in report.required()
+             if r.status is not ResolutionStatus.CONTRADICTED and r.counted
+             and not any(vouched(i) for i in r.counted)]
+    if not short:
+        return []
+    return [Finding(
+        rule_id="RG-PROV-004", domain=AnalysisDomain.PROVENANCE,
+        effect=RequirementEffect(required.value),
+        summary=(f"{len(short)} required claim(s) rest only on evidence whose producer "
+                 "nobody authenticated"),
+        detail=("; ".join(f"{r.claim_id}: {len(r.counted)} counted item(s), none from "
+                          "an authenticated producer" for r in short[:4])
+                + (f" (+{len(short) - 4} more)" if len(short) > 4 else "")
+                + ". The resolution policy requires each required claim to rest on at "
+                  "least one record whose producer was authenticated: a signature "
+                  "verified against a key the organisation trusts for that producer, "
+                  "or an identity established at the boundary. What a document says "
+                  "about who made it is the document's claim."),
+        remedy=("sign the producer's output (`release-gate sign`) and pass the "
+                "organisation's trust store (`--trusted-keys`), or ingest through a "
+                "producer whose identity is established at the boundary"),
+        refs=tuple(r.claim_id for r in short[:12]),
+        observed={"claims": len(short), "policy": report.policy.ref,
+                  "effect": required.value})]
+
+
 def _analyse_resolution(report: Optional[Any]) -> List[Finding]:
     """RG-CRIT-006 and RG-INDEP-005/006: what the claim resolution says the case lacks.
 
@@ -2572,6 +2632,8 @@ def analyse(case: AssuranceCase, *, normalisation: Optional[Any] = None,
         counterexamples=counterexamples, criticality=criticality,
         policy=policy)
     findings.extend(_analyse_resolution(resolution))
+    findings.extend(_analyse_authenticated_support(resolution, resolved_records,
+                                                   claim_graph, policy))
     from release_gate.assurance.claim_coverage import assess_claim_coverage
     claim_coverage = assess_claim_coverage(claim_graph, resolution, records)
     findings.extend(_analyse_claim_coverage(claim_coverage, policy))

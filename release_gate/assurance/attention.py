@@ -60,7 +60,7 @@ _EFFECT_RANK = {RequirementEffect.BLOCK: 0, RequirementEffect.HOLD: 1,
 # Which rules point at a thing worth inspecting, and what kind of thing it is.
 _FOCUS_KIND = {
     "RG-PROV-001": "producer", "RG-PROV-002": "producer",
-    "RG-PROV-003": "evidence",
+    "RG-PROV-003": "evidence", "RG-PROV-004": "claim",
     "RG-VERIF-001": "case", "RG-VERIF-002": "claim", "RG-VERIF-003": "claim",
     "RG-CONTRA-001": "evidence", "RG-CONTRA-002": "claim",
     "RG-CONTRA-003": "claim", "RG-CONTRA-004": "claim",
@@ -219,6 +219,8 @@ _RULE_REASON = {
     "RG-EXPECT-003": AttentionReason.EVIDENCE_KNOWN_MISSING,
     "RG-EXPECT-005": AttentionReason.SELECTIVE_EVIDENCE,
     "RG-PROV-002": AttentionReason.UNKNOWN_PROVENANCE,
+    # Support whose producer nobody authenticated, where the policy requires it.
+    "RG-PROV-004": AttentionReason.UNKNOWN_PROVENANCE,
     "RG-CONS-004": AttentionReason.CONSEQUENTIAL_ACTION,
     "RG-CONS-005": AttentionReason.CONSEQUENTIAL_ACTION,
     "RG-DRIFT-004": AttentionReason.APPROVAL_MISMATCH,
@@ -951,6 +953,9 @@ _NON_MONOTONE_RULES = frozenset({
     "RG-CRIT-006", "RG-INDEP-005", "RG-INDEP-006",
     # An independent check, or a statement of who did the work, arrives later.
     "RG-INDEP-007", "RG-INDEP-008",
+    # Authenticated support is counted support, which a moved candidate can
+    # set aside.
+    "RG-PROV-004",
     "RG-SEM-001", "RG-SEM-002", "RG-SEM-003", "RG-SEM-004", "RG-SEM-005",
     "RG-SEM-006", "RG-SEM-007",
     # More evidence can reveal a capability that was exercised and undeclared, so

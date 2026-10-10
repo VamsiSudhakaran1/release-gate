@@ -649,10 +649,10 @@ class EvidencePacket:
 
 
 #: What a serialised evidence record carries about itself rather than about the
-#: world: ids, links, digests, trust and custody. The packet's `fields` already
+#: world: ids, links, digests, trust, authentication and custody. The packet's `fields` already
 #: say what kind of record it is; a reader needs what the producer said.
 _RECORD_MACHINERY = frozenset({
-    "applies_to_digest", "content_reference", "contradicts_claims", "coverage_note",
+    "applies_to_digest", "authentication", "content_reference", "contradicts_claims", "coverage_note",
     "coverage_status", "digest", "epistemic_status", "evidence_id", "evidence_type",
     "independence_basis", "independence_group", "metadata", "parent_evidence",
     "producer", "provenance_status", "record_id", "record_type", "schema_version",

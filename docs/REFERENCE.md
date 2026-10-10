@@ -120,6 +120,8 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 | `release-gate verify <governance.yaml>` | **Loop Verifier** — CONTINUE / SHIP / ROLLBACK for one loop iteration |
 | `release-gate loop-sim <scenarios.yaml>` | **Loop Sim** — pre-deploy PROMOTE / HOLD / BLOCK from a scenario bank |
 | `release-gate agent-score <agent-spec>` | **Agent Score** — run a behavior battery against a live agent, 0-100 + decision |
+| `release-gate keygen` · `sign` · `check-signature` | **Signed evidence** — make a key pair, sign a producer's output as a DSSE envelope, verify it against a trust store ([signing](#keygen-sign-check-signature--signed-evidence)) |
+| `release-gate deploy-check --admission A --deployed D` | **What runs is what was admitted** — compares a deployment with an Admission Report's state, component by component ([deploy-check](#deploy-check--what-runs-is-what-was-admitted)) |
 
 ### `assure` — the assurance engine
 
@@ -128,7 +130,8 @@ release-gate assure <file> [--evidence PATH ...]
                            [--json] [--full] [--review]
                            [--admission] [--admission-out FILE]
                            [--methodology REF] [--config FILE] [--case-output FILE]
-                           [--candidate FILE] [--resolution-policy FILE]
+                           [--candidate FILE] [--resolution-policy NAME|FILE]
+                           [--trusted-keys FILE]
                            [--semantic [--semantic-out FILE] [--semantic-policy FILE]
                                        [--escalation-policy FILE] [--semantic-panel FILE]]
                            [--semantic-assertions FILE]
@@ -188,10 +191,10 @@ Rows that differ only in their times are a replay and count once.
 | `ARIZE_EXPORT` | Arize / Phoenix |
 | `PROMPTFOO_EVAL` | `promptfoo eval -o results.json` |
 | `ORCHESTRATOR_EXPORT` | LangGraph, OpenAI Agents, CrewAI, AutoGen, Temporal |
-| `ASSURANCE_ENVELOPE` | release-gate's record format (JSONL or a JSON array). A `producer_export` row carries any other row's tool document whole, so one envelope composes many producers' evidence about one set of claims ([external evidence](#external-evidence--read-never-re-run)) |
+| `ASSURANCE_ENVELOPE` | release-gate's record format (JSONL or a JSON array). A `producer_export` row carries any other row's tool document whole, so one envelope composes many producers' evidence about one set of claims ([external evidence](#external-evidence--read-never-re-run)). A `signed_export` row carries a signed document ([signed evidence](#signed-evidence--who-produced-it-verified)), and an `incident` row a failure in operation ([incidents](#incidents--a-failure-every-later-release-must-answer)). A file that is itself a DSSE envelope is read as one `signed_export` row |
 | `AUDIT_REPORT` | release-gate's own audit output |
 | `VERIFIER_REPORT` | a prover, checker or lab report |
-| `PRODUCER_EXPORT` | anything a registered evidence producer reads: SARIF 2.1.0 from any static analyser, an external decision (a review bot, a policy engine), the generic `release-gate.eval/1`, `red-team/1`, `sast/1` and `review/1` contracts, or an organisation's own adapter. `Detection.adapter` names which producer |
+| `PRODUCER_EXPORT` | anything a registered evidence producer reads: SARIF 2.1.0 from any static analyser, an external decision (a review bot, a policy engine), the generic `release-gate.eval/1`, `red-team/1`, `sast/1`, `review/1`, `behavior/1` and `containment/1` contracts, or an organisation's own adapter. `Detection.adapter` names which producer |
 
 #### Flags
 
@@ -207,7 +210,8 @@ Rows that differ only in their times are a replay and count once.
 | `--full` | Show every structural finding, including the advisory ones the default output summarises. |
 | `--case-output FILE` | Write the sealed case on its own, for an evidence pack or an approval packet. |
 | `--candidate FILE` | The exact release being admitted, as a JSON object of components (see [candidate state](#candidate-state--what-the-evidence-must-be-about)). Evidence bound to a different state of it stops supporting the claims it names, and the report says which records and why. Wins over a candidate the submission states about itself. |
-| `--resolution-policy FILE` | What it takes to establish a claim, and what a required claim must reach, as JSON (see [claim resolution](#claim-resolution--where-each-claim-stands)). It is recorded on the case and digested with it. A policy that would let a declaration or an unclassified method establish, or that drops a correlation dimension, is refused. |
+| `--resolution-policy NAME\|FILE` | What it takes to establish a claim, and what a required claim must reach: a built-in by name (`rg-resolution@1`, the default, or [`diversity-strict@1`](#diversity-strict--diverse-independent-support-for-critical-claims)), or a policy as JSON (see [claim resolution](#claim-resolution--where-each-claim-stands)). An unknown name is an error, never the default. It is recorded on the case and digested with it. A policy that would let a declaration or an unclassified method establish, or that drops a correlation dimension, is refused. |
+| `--trusted-keys FILE` | The organisation's trust store (`release-gate.trusted-keys/1`). Every signed input is verified against it before anything is read: a valid signature from a key trusted for a record's producer authenticates that record, and an envelope whose signature does not verify is not read at all. See [signed evidence](#signed-evidence--who-produced-it-verified). Without it, signed inputs are read as unsigned and the case says so. |
 | `--semantic` | Ask a model the questions the deterministic rules left open and the [escalation policy](#which-questions-are-asked--semantic-escalation) selects (see [semantic verifier](#semantic-verifier--a-model-reads-what-structure-cannot)). Needs `RG_SEMANTIC_BASE_URL` and `RG_SEMANTIC_MODEL`. Each answer is a bounded assertion, and the resolution policy decides what it does. A provider failure makes an UNKNOWN assertion, never a pass. |
 | `--semantic-out FILE` | With `--semantic`: write the escalation plan, then each evidence packet and its assertion, as JSONL. The file records what was considered and why, what was sent, to which model, and what came back. |
 | `--escalation-policy FILE` | With `--semantic`: the escalation policy as JSON (`scope`, `always`, `never`, `hybrid`, `max_questions`, `max_cost`, `modes`). It decides which questions are asked, never what an answer does. An error without `--semantic`. |
@@ -307,7 +311,17 @@ The default policy, `rg-resolution@1`:
  "independence": {"policy_id": "rg-independence", "version": "1", "min_independent_groups": 2}}
 ```
 
-`admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION`, `OBSERVATION` or `UNCLASSIFIED`: a hundred clean traces show what happened, never that anything else cannot. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `author_independence` and `semantic_uncertainty` may be `null`. For `author_independence` that means [authorship](#authorship--who-checked-the-work) is reported and required of nothing. For `semantic_uncertainty` it means a model's unanswered or low-confidence reading is reported (RG-SEM-002, advisory), or held where the verifier policy asks for more verification (RG-SEM-003). It never blocks: a model's low confidence blocks a required claim only under `"semantic_uncertainty": "BLOCK"`. `surface_coverage` is within (0, 1]. `semantic_corroboration` is absent by default. When declared, it says when a model's `supported` on a critical claim counts at all (see [several verifiers](#several-verifiers--independent-readings-never-a-vote)), and its `unmet` is `null`, `HOLD` or `BLOCK`. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+`require_authenticated_support` is absent by default. Set to `HOLD` or `BLOCK`, a required claim whose counted support all comes from producers nobody authenticated takes that effect (**RG-PROV-004**); see [signed evidence](#signed-evidence--who-produced-it-verified). `admission_level` is `SUPPORTED` or `ESTABLISHED`; nothing lower is accepted. `establishing` cannot include `DECLARATION`, `OBSERVATION` or `UNCLASSIFIED`: a hundred clean traces show what happened, never that anything else cannot. Every effect field is `HOLD` or `BLOCK`: a policy can make a gap stop the release harder, never make it advisory. `author_independence` and `semantic_uncertainty` may be `null`. For `author_independence` that means [authorship](#authorship--who-checked-the-work) is reported and required of nothing. For `semantic_uncertainty` it means a model's unanswered or low-confidence reading is reported (RG-SEM-002, advisory), or held where the verifier policy asks for more verification (RG-SEM-003). It never blocks: a model's low confidence blocks a required claim only under `"semantic_uncertainty": "BLOCK"`. `surface_coverage` is within (0, 1]. `semantic_corroboration` is absent by default. When declared, it says when a model's `supported` on a critical claim counts at all (see [several verifiers](#several-verifiers--independent-readings-never-a-vote)), and its `unmet` is `null`, `HOLD` or `BLOCK`. The policy is stored in the case metadata, so the case is reproducible from what it holds. The `claim_resolution` coverage row is `NOT_ASSESSED` when the case states no claims.
+
+#### Diversity-strict — diverse, independent support for critical claims
+
+`--resolution-policy diversity-strict@1` is a built-in preset for decisions that should not rest on one source's view:
+
+- a required claim must be `ESTABLISHED`: a bound proof, or passing checks from at least two independent groups;
+- every provenance dimension correlates, **a shared provider included**: two model families one organisation serves are one group;
+- every required claim must be checked by someone who shares nothing with its author (RG-INDEP-007 HOLD), and an author nobody stated holds (RG-INDEP-008).
+
+Nothing in it is weaker than the default: model readings still count toward nothing, a counterexample still blocks, and exceptions are still off. Its ref is `rg-diversity-strict@1`. To also require signed support, copy it to a file and add `"require_authenticated_support": "HOLD"`.
 
 #### Counterexamples — one outweighs any amount of support
 
@@ -881,6 +895,7 @@ Release-gate does not compete with the tools that produce evidence. For each cla
 | `release-gate.sast/1` | static analysis without SARIF (SARIF stays the first choice) | the tool's rule at its own severity; suppressed findings stay as suppressed; the declared scan scope is stated |
 | `release-gate.review/1` | human review | reviewer `id`, `reference` and `role`; `decision`; `scope`; `state` or `state_hash`; `reviewed_at`, `expires_at`; `rationale`; `reference`. With a claim it is a HUMAN_REVIEW check: approve passes it, reject or changes requested fails it, and comment is inconclusive. Without one it is the reviewer's decision, recorded and adopted as nothing. An `expires_at` is checked against the document's `evaluated_at`, and with none stated the review is inconclusive: release-gate does not read a clock |
 | `release-gate.behavior/1` | behavioural evaluation | each check under its harness's own state word: only a pass passes, only a fail fails, and evaluator faults (`EVALUATOR_ERROR`, `EVIDENCE_INVALID`, `EVIDENCE_INCOMPLETE`, `UNRESOLVED`) are inconclusive. The check's `decided_by` fixes its method: `deterministic` is SIMULATION, `semantic` (a jury of models) is CROSS_MODEL_REVIEW, which the default policy does not let establish, and `human` is HUMAN_REVIEW. A violation the harness marks proven is a COUNTEREXAMPLE; an unproven one is a finding beside its failed check. The harness's `recommendation` is its external decision, recorded and adopted as nothing. Its `scores` are kept verbatim and read as nothing: they are not confidence |
+| `release-gate.containment/1` | containment drills | a drill of a kill switch, circuit breaker or credential revocation. A halt within `bound_seconds`, with no `in_flight_actions_after_halt`, is a RUNTIME_ASSERTION check of the claim it names, or of "containment control X halts the system within N seconds". A drill that did not halt, halted only partly, halted after its bound, or let actions run after the halt is a COUNTEREXAMPLE, so one failed drill blocks a critical claim. A halt with a bound and no measured time, or an errored drill, is inconclusive; a skipped one did not run; any other word is inconclusive and held |
 | `release-gate.formal/1` | formal verification | per row: `claim_id`, `claim`, `artifact` (`name`, `digest`), `method`, `result`, `assumptions`, `state`, `proof_artifact` (`locator`, `digest`), under a `verifier` with its version and family. The artifact binds as the candidate's `artifact:<name>`, so a proof of another version of the spec does not establish. Assumptions are listed under what the result does not cover |
 
 ```json
@@ -922,6 +937,70 @@ It appears as `evidence_origin` in `--json`, as EVIDENCE ORIGIN in the text repo
     [         READ]  sam@example.com via human_review: 1 record(s) (1 HUMAN_REVIEW)
                      sam@example.com's review as recorded, read from what was submitted; release-gate did not perform, repeat or check the review
 ```
+
+#### Signed evidence — who produced it, verified
+
+A producer identity a document states is the document's claim, and RG-PROV-001 says so. A document can instead arrive signed, as a DSSE envelope (the format in-toto and Sigstore use): the evidence document itself, or an in-toto Statement whose `predicate` is the document.
+
+```json
+{"payloadType": "application/vnd.release-gate.evidence+json",
+ "payload": "<base64 of the document's bytes>",
+ "signatures": [{"keyid": "acme-evals-ci", "sig": "<base64>"}]}
+```
+
+`assure --trusted-keys trusted-keys.json` verifies every envelope among the inputs, at the host boundary, before anything is read. The trust store names each key, what it may speak for, and who decided to trust it:
+
+```json
+{"schema": "release-gate.trusted-keys/1",
+ "keys": [{"keyid": "acme-evals-ci", "public_key": "-----BEGIN PUBLIC KEY-----\n…",
+           "producers": ["acme-evals"], "decided_by": "security@acme.example"}]}
+```
+
+| Verdict | What it does |
+|---|---|
+| VALID, from a key trusted for the record's producer | the record is authenticated (`authentication` on the record, `independence_basis: authenticated`); it no longer counts toward RG-PROV-001 |
+| VALID, from a key trusted for another producer | nothing: the records read as unauthenticated, and the notes say the key is not trusted to speak for that producer |
+| INVALID | the envelope is not read. A skipped record says its signature does not verify, which holds the case (RG-COV) |
+| UNVERIFIABLE, or no trust store | read exactly as the same document unsigned, and said so |
+
+- **Who, never whether.** A signature establishes who produced a report, not that the report is right.
+- **A file cannot vouch for itself.** An `authentication` a row carries is dropped; only a verdict from this run sets it.
+- **Ids do not move.** Authentication is outside the evidence id, so signing a document changes nothing any claim cites.
+- **Keys.** Ed25519, ECDSA P-256 / P-384 and RSA-PSS (SHA-256). `producers` entries are exact ids, or a family ending in `*` (`release-gate/*`); a bare `*` is refused.
+
+Signed and unsigned copies of one document are read once, and the signed copy is the one kept. A policy can require authenticated support for required claims with `"require_authenticated_support": "HOLD"` (RG-PROV-004).
+
+The identity bases that count as authenticated changed with this: a basis that says a document stated the identity (`declared-document…`, `ingested-document…`), a pinned digest, or an identity provider's `:declared` / `:not_assessed` result now reads `asserted`. Before, only `unauthenticated`, `none`, `unknown` and an empty basis did.
+
+#### Incidents — a failure every later release must answer
+
+An `incident` envelope row states a failure in operation once: which claims it breaks, which states of the release it was seen on, who reported it, whether it was disclosed, and where its remediation stands.
+
+```json
+{"record_type": "incident", "incident_id": "INC-2291", "severity": "critical",
+ "title": "a refund was paid twice after a gateway timeout",
+ "claims": ["cl_refund_once"],
+ "affected_states": [{"commit": "9f2c1a7e"}],
+ "disclosure": {"status": "disclosed", "to": "affected customers", "reference": "https://…"},
+ "remediation": {"status": "open"}}
+```
+
+It becomes the reporter's account (one ATTESTATION, DECLARED, bearing on no claim itself) and one FOUND counterexample per claim and affected state, citing that account:
+
+- against a state the candidate is, it is VALID: it blocks a critical claim (RG-CEX-001);
+- against another state it is STALE and holds (RG-CEX-004), so every later release has to answer it;
+- with no affected state it stands against every candidate;
+- with no claim it is its own claim, `rg-incident:<id>`.
+
+| `remediation.status` | Reads as |
+|---|---|
+| `open`, `investigating`, `mitigated`, `monitoring` | OPEN: a mitigation is not a fix |
+| `resolved`, `fixed` | RESOLVED, with `resolution` and `resolution_evidence` this case holds. Evidence the case does not hold is refused, and the incident stays OPEN. Whether the cited evidence shows the fix is the remediation's word |
+| `accepted_risk` | ACCEPTED_RISK, with `resolution`, `accepted_by`, `reference` and `accepted_for`; lifts the block only under `counterexample_exceptions` |
+| `invalid`, `not_a_defect` | INVALID, with `resolution` saying why |
+| anything else | OPEN, and held as an unread value |
+
+Disclosure is recorded on the account and in each counterexample's detail, as stated. Release-gate does not judge whether it was adequate. [`examples/evidence/incident.jsonl`](../examples/evidence/incident.jsonl) is a release one incident later.
 
 #### First-party evidence: pr, verify, loop-sim, agent-score
 
@@ -1109,6 +1188,47 @@ and a research swarm. `python examples/agents/run_all.py` prints what each one
 decides. [What each demonstrates](../examples/agents/README.md).
 
 ---
+
+### `keygen`, `sign`, `check-signature` — signed evidence
+
+```
+release-gate keygen NAME [--type ed25519|ecdsa-p256|rsa]
+release-gate sign FILE --key NAME.key --keyid ID [--out FILE] [--in-toto]
+release-gate check-signature FILE --trusted-keys KEYS [--json]
+```
+
+`keygen` writes `NAME.key` (unencrypted PEM: keep it in a secret store) and `NAME.pub`, refuses to overwrite either, and prints the trust-store entry to fill in. `sign` wraps FILE's exact bytes in a DSSE envelope; with `--in-toto`, FILE must be an in-toto Statement whose `predicate` is the evidence. A document release-gate could not read once signed is refused. `check-signature` verifies a signed file, or every `signed_export` row in an envelope: exit `0` when each verifies against a trusted key, `1` when any does not verify, `10` when one is signed by no trusted key or the file carries no signature. Then pass the trust store to `assure --trusted-keys` ([signed evidence](#signed-evidence--who-produced-it-verified)).
+
+```bash
+release-gate keygen acme-evals-ci                     # once; publish acme-evals-ci.pub
+release-gate sign evals.json --key acme-evals-ci.key --keyid acme-evals-ci --out evals.signed.json
+release-gate assure release.jsonl --evidence evals.signed.json --trusted-keys trusted-keys.json --admission
+```
+
+### `deploy-check` — what runs is what was admitted
+
+```
+release-gate deploy-check --admission ADMISSION.json --deployed DEPLOYED.json
+                          [--trusted-keys KEYS] [--json]
+```
+
+An admission is about one candidate state. `deploy-check` compares what is deployed, stated in the shape `assure --candidate` takes, with the state an Admission Report (`assure --admission-out`) admitted, component by component:
+
+| Outcome | When | Exit |
+|---|---|---|
+| `MATCH` | every admitted component is deployed and equal, and nothing the admission did not cover is deployed | `0` |
+| `MISMATCH` | a component differs | `1` |
+| `UNVERIFIABLE` | the deployment does not state an admitted component, deploys a revision the admission never covered, or the admission names no candidate | `10` |
+| `NOT_ADMITTED` | the admission did not PROMOTE, its signature does not verify, or its state hash does not match its own components (it was edited) | `10` for HOLD, `1` otherwise |
+
+An identity the admission did not name (`repository`, `environment`) is noted, not held. A commit abbreviated to seven or more characters names the same commit. With `--trusted-keys`, the admission must be a signed envelope (`release-gate sign`) by a key the store trusts for `release-gate/admission`; an unsigned one is UNVERIFIABLE. Run it in the deploy job, after the image is built and before traffic moves.
+
+```bash
+release-gate assure release.jsonl --evidence evidence/ --candidate candidate.json --admission-out admission.json
+release-gate sign admission.json --key rg-ci.key --keyid rg-ci --out admission.signed.json
+# … at deploy time, from what the platform reports is running:
+release-gate deploy-check --admission admission.signed.json --deployed deployed.json --trusted-keys trusted-keys.json
+```
 
 ### `authorship` — state who did the work
 

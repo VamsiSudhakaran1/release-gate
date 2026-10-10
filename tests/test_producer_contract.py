@@ -103,6 +103,7 @@ SAMPLES = {
     "sast": _example("sast.json"),
     "human_review": _example("review.json"),
     "behavior": _example("behavior.json"),
+    "containment": _example("containment.json"),
     # Release-gate's own commands' outputs (first_party.py), as the commands wrote
     # them into examples/evidence/first-party/.
     "release_gate_pr": _example("first-party/pr.json"),

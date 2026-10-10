@@ -1,6 +1,6 @@
 # External evidence examples
 
-One file per generic evidence contract, and one envelope that composes five of them.
+One file per generic evidence contract, one envelope that composes five of them, and one release with an open incident.
 Release-gate ran none of these tools. It reads what each one says, keeps it in
 that tool's words, and decides from it under a declared policy. Every report
 says so, under EVIDENCE ORIGIN.
@@ -13,12 +13,19 @@ says so, under EVIDENCE ORIGIN.
 | `review.json` | `release-gate.review/1` | an approval of the overdraft claim and a changes-requested review of the transfer claim, both bound to a commit, plus an approval of a previous release that names no claim and is recorded as nothing more than that |
 | `formal.json` | `release-gate.formal/1` | a model checker's result for the overdraft claim: the spec it checked, its assumptions, the commit and the proof artifact |
 | `behavior.json` | `release-gate.behavior/1` | a behavioural harness's three checks of the transfer claim. A deterministic pass is a SIMULATION check. A pass decided by a jury of models is a CROSS_MODEL_REVIEW, which supports and never establishes. An `EVALUATOR_ERROR` is inconclusive, never a pass. On its own the claim is PARTIALLY_SUPPORTED and the decision HOLD. The harness's REVIEW recommendation and its scores are recorded and read by nothing. It is not in `release.jsonl`; compose it with `--evidence`. `examples/proofagent/` maps ProofAgent's PER export to this contract |
+| `containment.json` | `release-gate.containment/1` | three drills of the transfer agent's containment controls. The kill switch halted it in 4.2 seconds against a 30-second bound, a check of the claim. The spend breaker halted it after 41 seconds, past its bound, and revoking credentials left 2 actions running after the halt. Both are counterexamples, so the claim "it can be halted within 30 seconds" is contradicted however the first drill went |
+| `incident.jsonl` | an envelope with an `incident` row | the next release after a production failure. INC-2291 (a refund paid twice) was seen on commit `9f2c1a7e`, and the candidate is `b7e4f2a1c3d5`. The incident is a counterexample found against another state, so it holds the release (RG-CEX-004) until a remediation cites evidence this case carries. Under `general-agent-action@1.0.0`, which requires that no contradiction stays open, it blocks. Its disclosure is recorded as stated |
 | `release.jsonl` | an envelope with `producer_export` rows | the release: a candidate, three claims and all five exports. It blocks on `atk-017`, and the proof establishes the overdraft claim |
 
 ```
 release-gate assure examples/evidence/release.jsonl
 release-gate assure examples/evidence/red-team.json --json
+release-gate assure examples/evidence/incident.jsonl --methodology general-agent-action@1.0.0
 ```
+
+To answer the incident, add the evidence that shows it fixed and cite it:
+`"remediation": {"status": "resolved", "resolution": "…", "resolution_evidence": ["e-retry-test"]}`.
+A resolution that cites evidence the case does not hold is refused.
 
 Each file is also read on its own. An export inside an envelope means exactly
 what the same file means on disk. To add who did the work, append `authorship`

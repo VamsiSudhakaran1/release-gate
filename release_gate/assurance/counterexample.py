@@ -423,6 +423,12 @@ class CounterexampleLedger:
         critical = set(critical_claims)
         stale_ids = set(stale)
         out: List[Contradiction] = []
+        # One refutation found on several states — the same evidence against the
+        # same claim — is one disagreement, under one id. It used to be lifted
+        # once per state, and the collection refused the duplicate id and took
+        # the run down. Where one of them stands against the candidate, the
+        # disagreement is current, not stale.
+        at: Dict[str, int] = {}
         for attempt in self.open():
             contradiction = Contradiction(
                 target_claims=(attempt.target_claim,),
@@ -449,7 +455,13 @@ class CounterexampleLedger:
             if attempt.target_claim in critical:
                 contradiction = contradiction.mark_critical(
                     "a counterexample stands against a critical claim")
-            out.append(contradiction)
+            held = at.get(contradiction.contradiction_id)
+            if held is None:
+                at[contradiction.contradiction_id] = len(out)
+                out.append(contradiction)
+            elif out[held].classification is ConflictClass.STALE \
+                    and contradiction.classification is not ConflictClass.STALE:
+                out[held] = contradiction
         return tuple(out)
 
     def digest(self) -> str:

@@ -189,11 +189,11 @@ it (section 8).
 - **The decision is as good as the integrity of its inputs.** release-gate reads what it is handed. Anyone who can write the release file or the evidence directory can write evidence. The defences are:
   - restrict who writes the evidence;
   - bind the candidate (`--candidate`);
-  - keep the signed evidence pack;
+  - sign the evidence and the Admission Report (`release-gate sign`) and verify them against a trust store (`--trusted-keys`). *Corrected: this line said "keep the signed evidence pack", but no pack was signed. Signing was added after this audit.*
   - prefer evidence the pipeline produced over evidence a submitter attached.
 - **Between the decision and the deploy.**
   - release-gate decides; it does not deploy.
-  - The Admission Report names the candidate and its state hash. Nothing in release-gate checks that the deployed artifact is that candidate.
+  - The Admission Report names the candidate and its state hash. Nothing in release-gate checks that the deployed artifact is that candidate. *Since addressed: `release-gate deploy-check` compares the deployment with the admitted state, and with a trust store reads only a signed admission.*
   - The GitHub Actions template's candidate binding is optional and commented out, because without it evidence that names no state still counts.
   - Pipelines should deploy the exact admitted SHA and compare it to the report's candidate.
 - **Prompt-injection detection is pattern-based.**
@@ -216,7 +216,7 @@ it (section 8).
 
 ## 6. Known trust assumptions
 
-- **Producer identity is asserted, not authenticated.** Every submitted record reads `identity_basis: unauthenticated`. The hostile harness records `fake_verifier_identity` and `verifier_name_squatting` as DECLARED: the case reports them; it does not prevent them.
+- **Producer identity is asserted, not authenticated.** Every submitted record reads `identity_basis: unauthenticated`. *Since addressed for signed evidence: a record from an envelope verified against a key trusted for its producer reads `authenticated` (`--trusted-keys`). Unsigned evidence is unchanged.* The hostile harness records `fake_verifier_identity` and `verifier_name_squatting` as DECLARED: the case reports them; it does not prevent them.
   - Independence is computed from declared provenance: producer, model family, lineage, session, reviewer and the rest.
   - Two producer ids operated by one actor read as two producers unless their provenance says otherwise.
 - **Imported evidence is its producer's word.**
