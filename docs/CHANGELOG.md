@@ -4,6 +4,8 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-11
+
 ### 🔏 Signed evidence, a deploy-time check, containment drills, incidents, and a diversity-strict policy
 
 Five gaps a release decision about a capable system needs closed, each through
