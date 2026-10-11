@@ -84,7 +84,7 @@ jobs:
       # ran against (commit, model, prompt or artifact digest) for its support
       # to count. Uncomment, and pass `candidate:` below.
       # - run: mkdir -p release-gate-out && printf '{"commit": "%s"}\n' "$GITHUB_SHA" > release-gate-out/candidate.json
-      - uses: VamsiSudhakaran1/release-gate@v0.11.2
+      - uses: VamsiSudhakaran1/release-gate@v0.12.0
         id: admit
         with:
           command: assure
