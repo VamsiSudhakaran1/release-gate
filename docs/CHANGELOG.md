@@ -4,6 +4,23 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🧾 The Admission Report says what was signed, and what each counterexample found
+
+- **Signed inputs.** A new section lists every signed envelope the run met.
+  For each one it gives what checking it found and what that did:
+  - verified, with the number of records authenticated, the key, and who trusts it;
+  - read as unsigned, because no trust store was given or no key in it signed this;
+  - not read, because its signature does not verify.
+- **Signatures by source.** Each evidence source says how many of its records a
+  trusted key authenticated (`signed: 4 of 4 record(s) authenticated — key …`).
+- **What each counterexample found.** A `found:` line gives it in the
+  producer's own words: a drill that halted after its bound, an attack that
+  got through, an incident. Before this it was only in `--json` or the sealed
+  case.
+- **Compatibility.** Neither changes a decision. A report that read nothing
+  signed serialises as before, except that each counterexample now carries
+  `found`.
+
 ## [0.13.0] — 2026-10-11
 
 ### 🔏 Signed evidence, a deploy-time check, containment drills, incidents, and a diversity-strict policy

@@ -255,6 +255,10 @@ class Normalisation:
     #: record (the submitter describing its own release), or an audit report's
     #: provenance. None when the document says nothing about one.
     candidate: Optional[Any] = None
+    #: Every signed envelope the input carried, and what checking it found: the
+    #: verdict, the key and who trusts it, whether its contents were read, and
+    #: how many records it authenticated. Empty when nothing was signed.
+    signed_inputs: Tuple[Mapping[str, Any], ...] = ()
 
     @property
     def skipped_total(self) -> int:
@@ -300,7 +304,9 @@ class Normalisation:
                 # Only when something was unread, so every case read before this
                 # field existed serialises exactly as it did.
                 **({"unread_values": list(self.unread_values)}
-                   if self.unread_values else {})}
+                   if self.unread_values else {}),
+                **({"signed_inputs": [dict(i) for i in self.signed_inputs]}
+                   if self.signed_inputs else {})}
 
 
 # ── loading ──────────────────────────────────────────────────────────────────
@@ -750,7 +756,8 @@ def _consequence_from(doc: Any,
 
 def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureVerdict],
                          notes: List[str], producers: Optional[Any] = None
-                         ) -> Tuple[List[Any], Dict[int, SignatureVerdict], Dict[int, str]]:
+                         ) -> Tuple[List[Any], Dict[int, SignatureVerdict], Dict[int, str],
+                                    List[Dict[str, Any]]]:
     """An envelope's `signed_export` rows, opened into the rows they carry.
 
     Opened before anything reads the envelope, so a signed primary file's
@@ -764,13 +771,32 @@ def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureV
     each envelope left unopened: one whose signature does not verify, whose
     payload cannot be read, or that sits inside another signed envelope. One
     level only, so a verdict always covers exactly the rows it was computed over.
+    The fourth value is one entry per envelope for the reports: what the check
+    found and whether the contents were read.
     """
     if not any(isinstance(r, Mapping) and r.get("record_type") == "signed_export"
                for r in doc):
-        return list(doc), {}, {}
+        return list(doc), {}, {}, []
     rows: List[Any] = []
     signed: Dict[int, SignatureVerdict] = {}
     refused: Dict[int, str] = {}
+    inputs: List[Dict[str, Any]] = []
+
+    def entry(name: str, verdict_word: str, read: bool, detail: str,
+              envelope: Any = None, verdict: Optional[SignatureVerdict] = None,
+              kind: str = "") -> None:
+        valid = verdict is not None and verdict.state is SignatureState.VALID
+        inputs.append({
+            "source": name, "verdict": verdict_word, "read": read, "detail": detail,
+            "payload": kind,
+            "envelope_digest": (envelope_digest(envelope)
+                                if is_signed_envelope(envelope) else ""),
+            "keyids": (list(envelope_keyids(envelope))
+                       if is_signed_envelope(envelope) else []),
+            "key_id": verdict.key_id if valid else "",
+            "trusted_by": verdict.decided_by if valid else "",
+            "trusted_for": list(verdict.producers) if valid else [],
+            "authenticated_records": 0, "not_trusted_for": []})
     for index, row in enumerate(doc):
         if not (isinstance(row, Mapping) and row.get("record_type") == "signed_export"):
             rows.append(row)
@@ -799,6 +825,12 @@ def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureV
             refused[id(row)] = refusal
             notes.append(f"signed envelope {name!r} was not read: {detail}")
             rows.append(row)
+            invalid = (is_signed_envelope(envelope) and verdict is not None
+                       and verdict.state is SignatureState.INVALID)
+            entry(name, "INVALID" if invalid else (
+                      "NOT_AN_ENVELOPE" if not is_signed_envelope(envelope)
+                      else "UNREADABLE"),
+                  False, detail, envelope)
             continue
         detection = detect_document(document, filename=name, producers=producers)
         if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(document, list):
@@ -810,6 +842,10 @@ def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureV
             if isinstance(inner, Mapping) and inner.get("record_type") == "signed_export":
                 refused[id(inner)] = ("signed_export not read: it is inside another "
                                       "signed envelope")
+                entry(str(inner.get("source") or "").strip() or f"{name} (nested)",
+                      "NOT_OPENED", False,
+                      "it is inside another signed envelope, and only one level is "
+                      "opened", inner.get("envelope"))
         if verdict is not None and verdict.state is SignatureState.VALID:
             for inner in carried:
                 if id(inner) not in refused:
@@ -817,6 +853,7 @@ def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureV
             notes.append(f"signed envelope {name!r} ({kind}): {verdict.detail}; its "
                          "records are authenticated where the key is trusted for "
                          "their producer")
+            entry(name, "VALID", True, verdict.detail, envelope, verdict, kind)
         else:
             notes.append(
                 f"signed envelope {name!r} ({kind}) is signed by "
@@ -824,8 +861,11 @@ def _open_signed_exports(doc: Sequence[Any], signatures: Mapping[str, SignatureV
                 "trusted key verified it ("
                 + (verdict.detail if verdict is not None else "no trust store was given")
                 + "); it was read exactly as the same document unsigned")
+            entry(name, verdict.state.value if verdict is not None else "NOT_VERIFIED",
+                  True, verdict.detail if verdict is not None
+                  else "no trust store was given", envelope, kind=kind)
         rows.extend(carried)
-    return rows, signed, refused
+    return rows, signed, refused, inputs
 
 
 def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
@@ -835,7 +875,8 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
                       attempts_out: Optional[List[VerificationAttempt]] = None,
                       unread_out: Optional[List[str]] = None,
                       signed: Optional[Mapping[int, SignatureVerdict]] = None,
-                      refused: Optional[Mapping[int, str]] = None
+                      refused: Optional[Mapping[int, str]] = None,
+                      signature_out: Optional[Dict[str, Dict[str, Any]]] = None
                       ) -> Tuple[List[EvidenceRecord], List[Claim], List[Artifact],
                                  List[CounterexampleAttempt], List[FailedBranch],
                                  List[AdversarialFinding],
@@ -866,12 +907,19 @@ def _envelope_records(doc: Sequence[Any], source: str, fallback: Producer, *,
         verdict = signed.get(id(row))
         if verdict is None:
             return list(records)
+        tally = (signature_out.setdefault(verdict.envelope_digest,
+                                          {"authenticated": 0, "not_trusted_for": set()})
+                 if signature_out is not None else None)
         held: List[EvidenceRecord] = []
         for record in records:
             producer_id = record.producer.producer_id
             if verdict.speaks_for(producer_id):
                 held.append(record.with_authentication(verdict.signature()))
+                if tally is not None:
+                    tally["authenticated"] += 1
                 continue
+            if tally is not None:
+                tally["not_trusted_for"].add(producer_id)
             if (verdict.envelope_digest, producer_id) not in spoken:
                 spoken.add((verdict.envelope_digest, producer_id))
                 notes.append(
@@ -2215,8 +2263,10 @@ def normalise(doc: Any, detection: Detection, *, source: str,
     opened_notes: List[str] = []
     signed_rows: Dict[int, SignatureVerdict] = {}
     refused_rows: Dict[int, str] = {}
+    signed_inputs: List[Dict[str, Any]] = []
+    signature_tally: Dict[str, Dict[str, Any]] = {}
     if detection.kind is InputKind.ASSURANCE_ENVELOPE and isinstance(doc, list):
-        doc, signed_rows, refused_rows = _open_signed_exports(
+        doc, signed_rows, refused_rows, signed_inputs = _open_signed_exports(
             doc, signatures or {}, opened_notes, producers)
     producer = _document_producer(doc, detection, source)
     evidence: List[EvidenceRecord] = []
@@ -2266,7 +2316,7 @@ def normalise(doc: Any, detection: Detection, *, source: str,
                               declared_consequence=declared_consequence,
                               producers=producers, attempts_out=export_attempts,
                               unread_out=unread_values, signed=signed_rows,
-                              refused=refused_rows)
+                              refused=refused_rows, signature_out=signature_tally)
         expectations.extend(exp)
         failed_branches.extend(fbr)
         evidence.extend(ev)
@@ -2342,7 +2392,14 @@ def normalise(doc: Any, detection: Detection, *, source: str,
         from release_gate.assurance.static_producer import ScanProvenance
         candidate = ScanProvenance.from_report(doc).candidate_state(doc)
 
+    for opened in signed_inputs:
+        tally = signature_tally.get(opened["envelope_digest"])
+        if opened["verdict"] == "VALID" and tally is not None:
+            opened["authenticated_records"] = tally["authenticated"]
+            opened["not_trusted_for"] = sorted(tally["not_trusted_for"])
+
     return Normalisation(
+        signed_inputs=tuple(signed_inputs),
         candidate=candidate,
         detection=detection, source=source, evidence=tuple(evidence),
         claims=tuple(claims), artifacts=tuple(artifacts), execution=execution,

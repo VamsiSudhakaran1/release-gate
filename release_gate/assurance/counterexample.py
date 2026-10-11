@@ -493,6 +493,12 @@ class CounterexampleLedger:
         return "\n".join(a.render() for a in self._held)
 
 
+#: The detail every counterexample lifted from evidence carries. It says how the
+#: attempt came to exist, not what it found; the evidence it cites says that.
+LIFTED_DETAIL = ("lifted from counterexample evidence; no resolution is recorded, and "
+                 "silence is not a resolution")
+
+
 def counterexamples_from_evidence(evidence: Sequence[EvidenceRecord]
                                   ) -> Tuple[CounterexampleAttempt, ...]:
     """Lift counterexample evidence already in a case into typed attempts.
@@ -520,8 +526,7 @@ def counterexamples_from_evidence(evidence: Sequence[EvidenceRecord]
                 status=CounterexampleStatus.OPEN,
                 attempted_at=record.timestamp,
                 state={str(k): str(v) for k, v in record_state(record).items()},
-                detail=("lifted from counterexample evidence; no resolution is "
-                        "recorded, and silence is not a resolution")))
+                detail=LIFTED_DETAIL))
     return tuple(out)
 
 

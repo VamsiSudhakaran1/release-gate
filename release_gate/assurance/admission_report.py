@@ -89,11 +89,16 @@ class EvidenceSource:
     evidence_types: Mapping[str, int] = field(default_factory=dict)
     statement: str = ""
     sources: Tuple[str, ...] = ()
+    #: How many of the records a trusted key authenticated, and which key.
+    authenticated: int = 0
+    signed_by: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {"label": self.label, "producer": self.producer, "records": self.records,
                 "evidence_types": dict(self.evidence_types),
-                "statement": self.statement, "sources": list(self.sources)}
+                "statement": self.statement, "sources": list(self.sources),
+                **({"authenticated": self.authenticated,
+                    "signed_by": list(self.signed_by)} if self.authenticated else {})}
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,9 @@ class AdmissionReport:
     generated: Tuple[EvidenceSource, ...] = ()
     obtained: Tuple[EvidenceSource, ...] = ()
     imported: Tuple[EvidenceSource, ...] = ()
+    #: Every signed envelope the run met: the verdict, the key and who trusts
+    #: it, whether its contents were read, and how many records it authenticated.
+    signed_inputs: Tuple[Mapping[str, Any], ...] = ()
     summaries: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -165,6 +173,9 @@ class AdmissionReport:
                 "generated_by_release_gate": [s.to_dict() for s in self.generated],
                 "obtained_in_this_run": [s.to_dict() for s in self.obtained],
                 "imported": [s.to_dict() for s in self.imported]},
+            # Only when something was signed, so every other report is unchanged.
+            **({"signed_inputs": [dict(i) for i in self.signed_inputs]}
+               if self.signed_inputs else {}),
             "summaries": dict(self.summaries),
             "decided_by_score": self.decided_by_score,
         }
@@ -207,7 +218,8 @@ def _sources(outcome: Any) -> Tuple[List[EvidenceSource], List[EvidenceSource],
         source = EvidenceSource(
             label=_label(entry, kind), producer=entry.who, records=entry.records,
             evidence_types=dict(entry.evidence_types), statement=entry.statement,
-            sources=tuple(entry.sources))
+            sources=tuple(entry.sources), authenticated=entry.authenticated,
+            signed_by=tuple(entry.signed_by))
         if entry.origin is OriginKind.COMPUTED_HERE or entry.producer_id.startswith(
                 "release-gate/"):
             # Release-gate's own work: this run's, or a release-gate run's
@@ -234,6 +246,40 @@ def _candidate(outcome: Any) -> Tuple[Dict[str, str], str, str, str]:
                                        if candidate.declared_by else "")
     return (dict(candidate.components), source, candidate.digest(),
             "digest of the candidate's components (candidate.py)")
+
+
+#: Where a record states what it found, in the producer's words, by preference.
+_FOUND_KEYS = ("message", "observed", "summary")
+
+
+def _found(attempt: Any, records: Mapping[str, Any]) -> str:
+    """What a counterexample found, in its producer's words, and nothing else.
+
+    The attempt's own detail where it states one (a declared counterexample, an
+    incident), then what each record it cites says it observed (a drill that
+    halted late, an attack that got through). Empty when none of them says.
+    """
+    from release_gate.assurance.counterexample import LIFTED_DETAIL
+    said: List[str] = []
+    detail = str(attempt.detail or "").strip()
+    if detail and detail != LIFTED_DETAIL:
+        said.append(detail)
+    for evidence_id in attempt.evidence:
+        content = getattr(records.get(evidence_id), "content", None)
+        if not isinstance(content, Mapping):
+            continue
+        words = next((str(content[k]).strip() for k in _FOUND_KEYS
+                      if isinstance(content.get(k), str) and content[k].strip()), "")
+        if words:
+            said.append(words)
+    return "; ".join(dict.fromkeys(_cut(w) for w in said))
+
+
+def _cut(words: str, limit: int = 400) -> str:
+    """At most `limit` characters, and saying so when the producer said more."""
+    if len(words) <= limit:
+        return words
+    return f"{words[:limit]} … (cut; {len(words)} characters in all)"
 
 
 def _claims(evaluation: Any) -> Tuple[bool, Dict[str, Tuple[Dict[str, Any], ...]], int]:
@@ -288,13 +334,18 @@ def build_admission_report(outcome: Any, *, attention_limit: int = 12) -> Admiss
         for c in outcome.contradictions.open())
 
     standing = {s.counterexample_id: s for s in analysis.counterexample_standings}
+    records = {r.evidence_id: r
+               for r in tuple(getattr(outcome.normalisation, "evidence", ()) or ())
+               + tuple(outcome.case.collection("evidence").materialised)
+               if getattr(r, "evidence_id", None)}
     counterexamples = tuple(
         {"counterexample_id": a.counterexample_id, "claim": a.target_claim,
          "producer": a.producer, "result": a.result.value, "status": a.status.value,
          "standing": (standing[a.counterexample_id].standing.value
                       if a.counterexample_id in standing else ""),
          "reason": (standing[a.counterexample_id].reason
-                    if a.counterexample_id in standing else "")}
+                    if a.counterexample_id in standing else ""),
+         "found": _found(a, records)}
         for a in outcome.counterexamples.attempts
         if a.counterexample_id not in standing
         or standing[a.counterexample_id].standing is not CounterexampleStanding.NOT_FOUND)
@@ -366,6 +417,8 @@ def build_admission_report(outcome: Any, *, attention_limit: int = 12) -> Admiss
         independence_concerns=tuple(concerns),
         dimensions=tuple(d.to_dict() for d in evaluation.dimensions()),
         generated=tuple(generated), obtained=tuple(obtained), imported=tuple(imported),
+        signed_inputs=tuple(dict(i) for i in getattr(outcome.normalisation,
+                                                     "signed_inputs", ()) or ()),
         summaries=summaries)
 
 
@@ -387,6 +440,34 @@ def _sources_block(lines: List[str], title: str, rows: Sequence[EvidenceSource],
         kinds = ", ".join(f"{n} {t}" for t, n in sorted(row.evidence_types.items()))
         lines.append(f"      {row.label} — {row.producer}: {row.records} record(s) ({kinds})")
         lines.append(f"        {row.statement}")
+        if row.authenticated:
+            lines.append(f"        signed: {row.authenticated} of {row.records} record(s) "
+                         f"authenticated — {'; '.join(row.signed_by)}")
+
+
+def _signed_input(entry: Mapping[str, Any]) -> str:
+    """One signed envelope: what checking it found, and what that did."""
+    source, verdict = entry.get("source", ""), entry.get("verdict", "")
+    keys = ", ".join(k or "?" for k in entry.get("keyids") or ()) or "no key named"
+    if verdict == "VALID":
+        line = (f"{source}  VALID — read; {entry.get('authenticated_records', 0)} "
+                f"record(s) authenticated by key {entry.get('key_id')} (trusted by "
+                f"{entry.get('trusted_by')} for "
+                f"{', '.join(entry.get('trusted_for') or ())})")
+        untrusted = entry.get("not_trusted_for") or ()
+        if untrusted:
+            line += (f"; not trusted for {', '.join(untrusted)}, whose records read as "
+                     "unauthenticated")
+        return line
+    if verdict == "NOT_VERIFIED":
+        return (f"{source}  signed by {keys} — read as unsigned: no trust store was "
+                "given (--trusted-keys)")
+    if verdict == "UNVERIFIABLE":
+        return (f"{source}  signed by {keys} — read as unsigned: no key in the trust "
+                "store signed it")
+    if verdict == "INVALID":
+        return f"{source}  INVALID — not read: its signature does not verify (key {keys})"
+    return f"{source}  {verdict} — not read: {entry.get('detail', '')}"
 
 
 def render_admission_report(report: AdmissionReport) -> str:
@@ -436,6 +517,7 @@ def render_admission_report(report: AdmissionReport) -> str:
     _section(lines, "COUNTEREXAMPLES", [
         f"{c['counterexample_id']}  {c['claim']}  {c['standing'] or c['status']} "
         f"(by {c['producer']})" + (f" — {c['reason']}" if c["reason"] else "")
+        + (f"\n        found: {c['found']}" if c.get("found") else "")
         for c in report.counterexamples])
     _section(lines, "FAILED BRANCHES", [
         f"{b['branch_id']}  {b['outcome']}"
@@ -453,6 +535,8 @@ def render_admission_report(report: AdmissionReport) -> str:
         (f"{c['condition_id']}  [{c['effect']}]  {c['summary']}" if "condition_id" in c
          else f"{c['claim']}  [{c['authorship']}]  {c['summary']}")
         for c in report.independence_concerns])
+    if report.signed_inputs:
+        _section(lines, "SIGNED INPUTS", [_signed_input(i) for i in report.signed_inputs])
 
     lines.append("")
     lines.append("  EVIDENCE SOURCES")

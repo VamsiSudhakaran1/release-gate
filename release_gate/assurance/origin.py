@@ -78,6 +78,11 @@ class OriginEntry:
     #: A person, by the producer's stated kind or because everything they
     #: produced is a review or an approval.
     person: bool = False
+    #: How many of these records a key the organisation trusts for this
+    #: producer authenticated in this run (`signed.py`), and the key, as each
+    #: authentication names it. Zero when none was.
+    authenticated: int = 0
+    signed_by: Tuple[str, ...] = ()
 
     @property
     def who(self) -> str:
@@ -113,7 +118,11 @@ class OriginEntry:
                 "evidence_types": dict(self.evidence_types),
                 "statuses": dict(self.statuses),
                 "sources": list(self.sources), "person": self.person,
-                "statement": self.statement}
+                "statement": self.statement,
+                # Only when a signature was verified, so every report that read
+                # nothing signed serialises as it did.
+                **({"authenticated": self.authenticated,
+                    "signed_by": list(self.signed_by)} if self.authenticated else {})}
 
 
 @dataclass(frozen=True)
@@ -165,8 +174,14 @@ def evidence_origin(records: Iterable[Any]) -> EvidenceOriginReport:
     for (producer_id, version, origin), held in groups.items():
         types: Dict[str, int] = {}
         statuses: Dict[str, int] = {}
-        kinds, described, sources = set(), set(), set()
+        kinds, described, sources, signers = set(), set(), set(), set()
+        authenticated = 0
         for record in held:
+            proof = getattr(record, "authentication", None)
+            if proof is not None and getattr(getattr(proof, "state", None), "value",
+                                             None) == "VALID":
+                authenticated += 1
+                signers.add(str(proof.signer))
             types[record.evidence_type.value] = types.get(record.evidence_type.value, 0) + 1
             statuses[record.epistemic_status.value] = \
                 statuses.get(record.epistemic_status.value, 0) + 1
@@ -184,7 +199,8 @@ def evidence_origin(records: Iterable[Any]) -> EvidenceOriginReport:
             producer_types=tuple(sorted(kinds)), described_as=tuple(sorted(described)),
             identity_basis=held[0].producer.identity_basis, records=len(held),
             evidence_types=types, statuses=statuses, sources=tuple(sorted(sources)),
-            person=person))
+            person=person, authenticated=authenticated,
+            signed_by=tuple(sorted(signers))))
     order = {OriginKind.READ: 0, OriginKind.OBTAINED_HERE: 1, OriginKind.COMPUTED_HERE: 2}
     entries.sort(key=lambda e: (order[e.origin], e.producer_id, e.version or ""))
     return EvidenceOriginReport(entries=tuple(entries))
