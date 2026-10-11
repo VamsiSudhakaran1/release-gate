@@ -1970,6 +1970,42 @@ section .container [style*="margin:0 auto"] > .section-title { text-align: left 
       of 25 attack areas found 11 defects; each was reproduced in a test and fixed.
     </p>
 
+    <!--
+      From evidence to production: the five trust gaps closed in
+      docs/specs/universal-assurance-architecture.md §10by. Each ends in the same
+      deterministic policy; docs/REFERENCE.md documents the commands.
+    -->
+    <p style="font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:700;margin:6px 0 12px">From evidence to production</p>
+    <div style="display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));margin-bottom:14px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Signed evidence</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">Producers sign what they report (DSSE / in-toto). It is checked against keys you trust for named producers. If a signature fails, the evidence is not read.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Deploy check</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0"><code>deploy-check</code> compares what runs with the admitted state, component by component. Anything not shown to match does not pass.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Drilled containment</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">A kill-switch drill that halts in time checks &ldquo;it can be paused&rdquo;. One that fails, or halts late, is a counterexample.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Incidents</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">A production failure becomes a counterexample. Every later release has to answer it with evidence that release carries.</p>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+        <h3 class="rg-card-title">Diversity-strict</h3>
+        <p style="font-size:.85rem;color:var(--text);line-height:1.55;margin:0">Critical claims need two independent groups of checks, and two models from one provider count as one. Someone other than the author must check.</p>
+      </div>
+    </div>
+    <p style="font-size:.85rem;color:var(--text);line-height:1.6;max-width:72ch;margin:0 0 28px">
+      A signature says who produced a report, never that the report is right.
+      <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/REFERENCE.md#signed-evidence--who-produced-it-verified">Signing</a>,
+      <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/REFERENCE.md#deploy-check--what-runs-is-what-was-admitted">the deploy check</a>
+      and <a href="https://github.com/VamsiSudhakaran1/release-gate/blob/main/docs/REFERENCE.md#incidents--a-failure-every-later-release-must-answer">incidents</a>
+      are in the reference.
+    </p>
+
     <div style="overflow-x:auto;margin-bottom:10px">
     <table style="width:100%;border-collapse:collapse;font-size:.88rem">
       <thead>

@@ -56,6 +56,10 @@ admission policy. Details are in [REFERENCE](REFERENCE.md) and spec §10by.
   rules and reasons.
 - The protocol registers `signed_evidence`, `incident` and `deployment_check`
   (88 schemas).
+- The homepage shows the five in a "From evidence to production" block, beside
+  "How it is built".
+
+## [0.12.0] — 2026-10-09
 
 ### 🧭 The product invariant, and release-gate's own checks as evidence
 
