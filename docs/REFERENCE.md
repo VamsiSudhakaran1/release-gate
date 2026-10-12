@@ -122,6 +122,7 @@ are runtime and out of scope — the lockfile says so rather than pretending.)*
 | `release-gate agent-score <agent-spec>` | **Agent Score** — run a behavior battery against a live agent, 0-100 + decision |
 | `release-gate keygen` · `sign` · `check-signature` | **Signed evidence** — make a key pair, sign a producer's output as a DSSE envelope, verify it against a trust store ([signing](#keygen-sign-check-signature--signed-evidence)) |
 | `release-gate deploy-check --admission A --deployed D` | **What runs is what was admitted** — compares a deployment with an Admission Report's state, component by component ([deploy-check](#deploy-check--what-runs-is-what-was-admitted)) |
+| `release-gate state [--model M] [--prompt F] [--tools F] [--policy F]` | **The candidate, as a runtime observes it** — prompt bytes, tool definitions and policy digested by the same functions the [runtime gate](#runtime-gate--the-admitted-state-at-the-point-of-use) uses. Pass it to `assure --candidate` |
 
 ### `assure` — the assurance engine
 
@@ -1241,6 +1242,86 @@ release-gate sign admission.json --key rg-ci.key --keyid rg-ci --out admission.s
 # … at deploy time, from what the platform reports is running:
 release-gate deploy-check --admission admission.signed.json --deployed deployed.json --trusted-keys trusted-keys.json
 ```
+
+### Runtime gate — the admitted state at the point of use
+
+`deploy-check` compares what a deployer *says* is running. In an agent system
+the state also moves without a deploy: a prompt edited in a config store, an MCP
+server that adds a tool or rewrites a description, a provider alias that now
+serves another model. `release_gate.runtime` puts the admission on the agent's
+own path. The agent observes its state from the objects it is about to use, and
+the gate refuses to start unless a signed PROMOTE admits exactly that state.
+After that it decides every tool call.
+
+```
+release-gate state [--model ID] [--prompt FILE | --prompt NAME=FILE ...]
+                   [--tools FILE] [--policy FILE] [--component KEY=VALUE ...] [--out FILE]
+```
+
+`state` writes the candidate for `assure --candidate`, computed the way the
+runtime computes it:
+
+| Component | Computed from |
+|---|---|
+| `prompt` | the exact UTF-8 bytes sent (`sha256sum` of the file gives the same), or a mapping of named prompts |
+| `tool_manifest` | every tool definition exposed (name, description, schema, annotations), in any order. A list, an MCP `tools/list` result, or function-calling definitions |
+| `governance_policy` | the loaded policy document, YAML or JSON |
+| `model` | the model identifier, as the runtime requests it. Pin a dated version: the gate compares it with the model the provider reports |
+
+```python
+from release_gate.runtime import NotAdmitted, RuntimeGate, observe
+
+state = observe(model=MODEL, prompt=system_prompt, tools=tools,
+                governance_policy=policy, commit=GIT_SHA)
+gate = RuntimeGate.open("admission.signed.json", observed=state,
+                        trusted_keys="trusted-keys.json",
+                        log_path="decisions.json", halt_file="/run/agent/HALT")
+
+decision = gate.authorize(name, arguments, definition=tool_definition)
+if not decision.allowed:      # DENY, or NEEDS_APPROVAL: ask a person, then
+    ...                       # gate.authorize(..., approved_by="ops@acme.example")
+gate.check_model(response.model)   # the model the provider says it served
+gate.recheck(observe(...))         # on a config reload or MCP tools/list_changed
+gate.halt(by="oncall@acme.example", reason="refund loop")
+```
+
+`RuntimeGate.open` raises `NotAdmitted` unless `deploy-check`'s comparison of
+the observed state with the admission is MATCH:
+
+- an edited prompt or a changed tool is MISMATCH;
+- an unsigned admission is UNVERIFIABLE when a trust store is given;
+- a HOLD admits nothing;
+- a component the admission never covered is UNVERIFIABLE.
+
+Without `trusted_keys` it refuses unless `allow_unsigned=True` is passed.
+
+Each call is decided in this order, and the first rule that applies wins:
+
+| Decision | When |
+|---|---|
+| DENY | the gate was closed (a re-check that did not match, or a model drift) or halted (`halt()`, or the halt file exists) |
+| DENY | no tool manifest was admitted, or the tool is not in it |
+| DENY | the definition passed with the call is not the admitted one. A rewritten description is how a tool is poisoned |
+| DENY | `trace_policies` refuses it: `forbidden_tools`, or outside a non-empty `allowed_tools`. This is the reading `verify --trace` applies after a run |
+| DENY | `max_tool_calls` calls were already allowed |
+| NEEDS_APPROVAL | the tool is irreversible (MCP `destructiveHint`, or `impact: irreversible`) or listed in `approval_required_tools`, and no person was named. A tool listed in `autonomous_irreversible_tools` is exempt |
+| ALLOW | otherwise. A tool whose impact is not declared is allowed when admitted, and RG-TOOL-001 reports undeclared blast radius at scan time |
+
+`check_model(reported)` allows only the admitted model. A different model is
+DENY and closes the gate, whether an alias resolved elsewhere or the admission
+named no model.
+
+Every decision is written to `log_path` as a native trace. Allowed calls are
+`tool_call` and `llm_call` steps; refusals are `guard_denied` steps and calls
+waiting for a person are `guard_held` steps. The admission, every re-check and
+every halt have their own steps. `verify --trace` and `assure` read the trace
+like any other. Arguments are digested, not written, unless `log_arguments=True`.
+
+The gate decides; the runtime enforces. A harness that calls a tool without
+asking is not stopped, so put the gate where every call already passes: the tool
+dispatcher, or a gateway in front of the tools. `approved_by` is recorded as the
+runtime states it, not authenticated. [`examples/runtime`](../examples/runtime/README.md)
+runs the whole flow, including an edited prompt refused at start.
 
 ### `authorship` — state who did the work
 

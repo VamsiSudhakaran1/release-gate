@@ -42,6 +42,30 @@ from typing import Any, Dict, List, Optional
 DEFAULT_IDENTICAL_CALL_LIMIT = 3
 
 
+def policy_tool_sets(policies: Dict[str, Any]) -> tuple:
+    """(forbidden, allowed) tool names, as `trace_policies` states them.
+
+    One reading for both places that enforce them: this validator, after a
+    run, and the runtime gate (`release_gate.runtime`), before each call. An
+    empty `allowed_tools` restricts nothing; `forbidden_tools` always applies.
+    """
+    return (set(policies.get("forbidden_tools") or []),
+            set(policies.get("allowed_tools") or []))
+
+
+def tool_policy_refusal(tool: str, policies: Dict[str, Any]) -> Optional[str]:
+    """Why `trace_policies` refuses a call to `tool`, or None if it does not.
+
+    The same reading `validate` applies after a run, worded for before a call.
+    """
+    forbidden, allowed = policy_tool_sets(policies)
+    if tool in forbidden:
+        return "it is in forbidden_tools"
+    if allowed and tool not in allowed:
+        return "it is not in allowed_tools"
+    return None
+
+
 def _arg_key(step: Dict[str, Any]) -> Optional[str]:
     """A canonical key for a tool call's arguments, or None if not recorded.
 
@@ -120,8 +144,7 @@ class TraceValidator:
         warnings:   List[str] = []
         unauth_tools: List[str] = []
 
-        forbidden = set(policies.get("forbidden_tools", []))
-        allowed   = set(policies.get("allowed_tools", []))
+        forbidden, allowed = policy_tool_sets(policies)
         max_tools = policies.get("max_tool_calls")
         max_retry = policies.get("max_retries")
         max_tok   = policies.get("max_tokens_per_run")

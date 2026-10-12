@@ -106,7 +106,12 @@ release-gate is a pipeline step, not a cluster webhook. Gate the deploy job on
 the step's decision, and keep the Admission Report as the record of what was
 admitted, against which state and policy. Sign it (`release-gate sign`), and
 in the deploy job check that what runs is what it admitted (`release-gate
-deploy-check --admission … --deployed … --trusted-keys …`). The AIBOM lock
+deploy-check --admission … --deployed … --trusted-keys …`). Inside the agent,
+`release_gate.runtime.RuntimeGate` makes the same check on the state the process
+observes for itself, refuses to start on anything else, and decides each tool
+call ([runtime gate](REFERENCE.md#runtime-gate--the-admitted-state-at-the-point-of-use)).
+It decides, and the runtime enforces, so it belongs in the tool dispatcher or a
+gateway every call passes through. The AIBOM lock
 (`release-gate lock`) is what a runtime policy layer can check the deployed
 version's context against. The evidence pack (`release-gate evidence-pack`) is
 not signed.

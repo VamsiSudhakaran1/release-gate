@@ -4,6 +4,47 @@ All notable changes to release-gate will be documented in this file.
 
 ## [Unreleased]
 
+### 🚦 The runtime gate: the admitted state, held at the point of use
+
+An admission decides about one exact state. In an agent system that state
+moves without a release: a prompt is edited in a config store, an MCP server
+adds a tool or rewrites a description, or a provider alias starts serving
+another model. `deploy-check` also believes whatever the deployer says is
+running. `release_gate.runtime` puts the admission on the agent's own path.
+
+- **Observed, not stated.** `observe(...)` computes each component from the
+  object the runtime is about to use: the prompt's exact bytes, every tool
+  definition (description included, in any order, in MCP or function-calling
+  shape), and the loaded policy. What was observed is frozen.
+  `release-gate state` states the candidate for `assure --candidate` with the
+  same functions.
+- **Fail closed at start.** `RuntimeGate.open` raises `NotAdmitted` unless a
+  PROMOTE, signed by a key trusted for `release-gate/admission`, admits exactly
+  the observed state. Without a trust store it refuses unless
+  `allow_unsigned=True` is passed.
+- **Every call decided.** `authorize` denies a call when:
+  - the tool is outside the admitted manifest;
+  - the tool's definition has changed;
+  - `trace_policies` refuses it (the same reading `verify --trace` applies);
+  - it goes past `max_tool_calls`.
+
+  An irreversible tool waits for a named person. `check_model` compares the
+  model the provider reports with the admitted one, and a drift closes the
+  gate. `recheck` closes the gate when the state moves, and `halt` or a halt
+  file stops everything after it.
+- **Evidence.** Every decision is written as a native trace that `verify --trace`
+  and `assure` read.
+- **Honest limits.**
+  - It decides, and the runtime enforces, so it belongs where every call passes.
+  - `approved_by` is recorded, not authenticated.
+  - The decision log is DECLARED execution evidence, like any trace.
+- [`examples/runtime`](../examples/runtime/README.md) runs the whole flow,
+  including an edited prompt refused at start.
+- **Compatibility.** Additive. `trace_validator` now reads `allowed_tools` and
+  `forbidden_tools` through one function. `validate` reports the same
+  violations, in the same words and order, and a `null` list reads as empty
+  instead of raising.
+
 ### 🧾 The Admission Report says what was signed, and what each counterexample found
 
 - **Signed inputs.** A new section lists every signed envelope the run met.

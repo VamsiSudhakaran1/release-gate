@@ -10500,6 +10500,82 @@ keeps the current one over a stale one.
 `test_diversity_strict.py`, and
 `test_counterexample_precedence.py::TestUntilTheCandidateMoves::test_one_refutation_found_on_two_states_is_one_disagreement`.
 
+### 10bz. The runtime gate — the admitted state, held at the point of use
+
+An admission decides about one exact state, and `deploy-check` (§10by) compares
+a deployment with it. In a loosely built agent system that leaves three gaps.
+The state moves without a release: a prompt edited in a config store, an MCP
+server that adds a tool or rewrites a description, a provider alias that now
+serves another model. The deployment's components are the deployer's word.
+And the danger is at the moment of an action, where an admission made earlier
+is not present.
+
+**1. Observed, not stated** (`assurance/runtime_gate.py`, `observe`). The runtime
+computes each component from the object it is about to use. A prompt is the
+digest of the exact UTF-8 bytes sent (equal to `sha256sum` of the file), or of a
+mapping of named prompts. A tool manifest is the digest of every definition
+exposed: name, description, schema and annotations, in any order, in the MCP
+`tools/list` or function-calling shape, and a name defined twice is refused. A
+governance policy is the digest of the loaded document. What was observed is
+frozen, so a caller's later edits change neither the digest nor what is
+enforced. `release-gate state` states the candidate for `assure --candidate`
+with the same functions, so an admission and a runtime agree byte for byte or
+not at all.
+
+**2. Fail closed at start** (`release_gate/runtime.py`, `RuntimeGate.open`). It
+runs `check_deployment` on the observed state and raises `NotAdmitted` unless
+the outcome is MATCH. With a trust store, the admission must be signed by a key
+trusted for `release-gate/admission`. Without one it refuses unless
+`allow_unsigned=True` is passed, and then the check notes that the decision is
+the document's word. A state whose components do not digest the objects held
+beside it, which only a hand-built `ObservedState` can be, is refused.
+
+**3. One decision per call** (`decide_tool_call`, `decide_model`). In order:
+
+- a closed or halted gate denies;
+- a tool not in the admitted manifest, or with no manifest admitted, is denied;
+- a definition passed with the call that is not the admitted one is denied;
+- `trace_policies` is read by `trace_validator.tool_policy_refusal`, the reading
+  `verify --trace` applies after a run;
+- a call past `max_tool_calls` is denied;
+- an irreversible tool (MCP `destructiveHint`, or `impact: irreversible`), or one
+  in `approval_required_tools`, is NEEDS_APPROVAL until a person is named, unless
+  the admitted policy lists it in `autonomous_irreversible_tools`.
+
+A tool whose impact is not declared is allowed when admitted: the admission
+reviewed the manifest, and RG-TOOL-001 reports undeclared blast radius at scan
+time. The model a provider reports serving must equal the admitted model. An
+alias that resolved elsewhere is DENY and closes the gate, and so does a model
+nobody admitted.
+
+**4. Re-checked and haltable.** `recheck(observe(...))`, on a config reload or an
+MCP `tools/list_changed`, closes the gate on anything but MATCH. `halt(by=…)`,
+or a halt file appearing, denies every later call.
+
+**5. Evidence.** Every decision is written as a native trace:
+
+- an allowed call is a `tool_call` or `llm_call` step;
+- a refusal is a `guard_denied` step, and a call waiting for a person is
+  `guard_held`;
+- the admission, every re-check and every halt have their own steps.
+
+`verify --trace` and `assure` read the trace like any other. A denied call never
+became a `tool_call`, so the run passes the policy it was held to. Arguments are
+digested unless `log_arguments=True`.
+
+**What it is not.** It decides, and the runtime enforces. A harness that calls a
+tool without asking is not stopped, so the gate belongs where every call
+already passes: the tool dispatcher, or a gateway in front of the tools.
+`approved_by` is recorded, not authenticated. The decision log does not bind
+itself to the admitted state as evidence does (it carries the state hash for a
+reader). It is execution evidence, DECLARED like any trace.
+
+`trace_validator.policy_tool_sets` is now the one reading of `allowed_tools` and
+`forbidden_tools`, and `validate`'s wording and order are unchanged.
+
+`tests/test_runtime_gate.py`, `test_runtime_example.py` (`examples/runtime`,
+end to end through the CLI, including an edited prompt refused at start).
+
 ## 11. Methodology behaviour
 
 * **Resolution order.** Explicit `--methodology` → an organisation
@@ -10770,6 +10846,9 @@ fixed, rather than the expectations being lowered.
 | incidents, containment drills (§10by) | envelope `incident` rows; `release-gate.containment/1`; schemas `signed_evidence`, `incident`, `deployment_check` (protocol count 88) | additive; an `incident` row used to be skipped as an unknown record type, which held the case |
 | lifted contradictions (§10by) | one per id, the current over the stale | a case that raised now runs; no case that ran before changes |
 | `--resolution-policy` (§10by) | takes a built-in name as well as a file | additive; a path that exists is read as before |
+| runtime gate (§10bz) | `release_gate.runtime` (`RuntimeGate`, `observe`, `NotAdmitted`), `assurance/runtime_gate.py`, `release-gate state` | additive; nothing existing calls it |
+| `trace_policies` keys (§10bz) | `approval_required_tools`, `autonomous_irreversible_tools`, read by the runtime gate only | additive; `verify --trace` ignores them, and the governance schema already allowed them |
+| `trace_validator` (§10bz) | `policy_tool_sets` and `tool_policy_refusal` factored out; a `null` `allowed_tools` or `forbidden_tools` now reads as empty instead of raising | `validate`'s violations, their wording and order are unchanged |
 
 An approval or override already bound to an audit-derived **case digest** will
 read as stale after upgrading, because the evidence it binds to now carries more

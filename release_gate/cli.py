@@ -1168,6 +1168,11 @@ def print_help():
     print("      Is what runs what was admitted? Compares the deployed components with the admitted")
     print("      state, component by component. Exit 0 MATCH · 1 MISMATCH · 10 UNVERIFIABLE. With")
     print("      --trusted-keys the admission must be signed by a key trusted for release-gate/admission.")
+    print("  release-gate state [--model ID] [--prompt FILE|NAME=FILE] [--tools F] [--policy F]")
+    print("                     [--component KEY=VALUE] [--out FILE]")
+    print("      The candidate state, computed the way a runtime observes it (release_gate.runtime):")
+    print("      prompt bytes, tool definitions and policy digested by the same functions. Pass it")
+    print("      to `assure --candidate`; RuntimeGate.open then admits only that exact state.")
     print("\nEvidence release-gate produces itself (each one source among the case's evidence):")
     print("  `audit --evidence-out FILE`, and the --json of pr, verify, loop-sim and agent-score, are read")
     print("  by `assure --evidence` like any producer's output. Each command's own verdict and score are")
@@ -1830,6 +1835,9 @@ def main():
     elif command == 'deploy-check':
         _run_deploy_check_command()
 
+    elif command == 'state':
+        _run_state_command()
+
     else:
         print(f"Unknown command: {command}")
         print_help()
@@ -2188,6 +2196,78 @@ def _run_deploy_check_command():
     else:
         print(render_deployment_check(check))
     sys.exit(check.exit_code)
+
+
+def _run_state_command():
+    """release-gate state [--model ID] [--prompt FILE | --prompt NAME=FILE ...]
+                          [--tools FILE] [--policy FILE] [--component KEY=VALUE ...]
+                          [--out FILE]
+
+    States the candidate the way a runtime observes it (`release_gate.runtime`):
+    a prompt is the digest of the file's exact UTF-8 text, a tool manifest the
+    digest of every definition (a list, or an MCP tools/list result), a policy
+    the digest of the loaded document (YAML or JSON). The output is a candidate
+    state for `assure --candidate` and `deploy-check --deployed`, and
+    `RuntimeGate.open` compares the runtime's own observation with it.
+    """
+    from release_gate.assurance.candidate import CandidateError
+    from release_gate.assurance.runtime_gate import RuntimeStateError, observe
+
+    argv = sys.argv
+
+    def read_text(ref):
+        try:
+            return Path(ref).read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"Error: {ref}: {exc}")
+            sys.exit(1)
+
+    def read_document(ref):
+        text = read_text(ref)
+        try:
+            return json.loads(text) if ref.endswith(".json") else yaml.safe_load(text)
+        except (ValueError, yaml.YAMLError) as exc:
+            print(f"Error: {ref}: not readable as {'JSON' if ref.endswith('.json') else 'YAML'}: {exc}")
+            sys.exit(1)
+
+    prompts = _flags(argv, '--prompt')
+    prompt = None
+    if len(prompts) == 1 and "=" not in prompts[0]:
+        prompt = read_text(prompts[0])
+    elif prompts:
+        named = {}
+        for entry in prompts:
+            name, sep, ref = entry.partition("=")
+            if not sep or not name.strip():
+                print(f"Error: --prompt {entry}: with several prompts, each is NAME=FILE")
+                sys.exit(1)
+            named[name.strip()] = read_text(ref)
+        prompt = named
+    components = {}
+    for entry in _flags(argv, '--component'):
+        key, sep, value = entry.partition("=")
+        if not sep:
+            print(f"Error: --component {entry}: expected KEY=VALUE")
+            sys.exit(1)
+        components[key.strip()] = value.strip()
+    tools_ref, policy_ref = _flag(argv, '--tools'), _flag(argv, '--policy')
+    try:
+        state = observe(model=_flag(argv, '--model'), prompt=prompt,
+                        tools=read_document(tools_ref) if tools_ref else None,
+                        governance_policy=read_document(policy_ref) if policy_ref else None,
+                        components=components)
+    except (RuntimeStateError, CandidateError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    text = json.dumps(state.to_dict(declared_by="release-gate state"), indent=2,
+                      sort_keys=True)
+    out = _flag(argv, '--out')
+    if out:
+        Path(out).write_text(text + "\n", encoding="utf-8")
+        print(f"Candidate state {state.candidate().digest()} written to {out}")
+    else:
+        print(text)
+    sys.exit(0)
 
 
 def _run_assure_command():

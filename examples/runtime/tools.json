@@ -1,0 +1,22 @@
+{
+  "tools": [
+    {
+      "name": "get_balance",
+      "description": "Read the balance of one customer account.",
+      "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}}, "required": ["account"]},
+      "annotations": {"readOnlyHint": true}
+    },
+    {
+      "name": "transfer_funds",
+      "description": "Move money from one customer account to another.",
+      "inputSchema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "amount": {"type": "number"}}, "required": ["from", "to", "amount"]},
+      "annotations": {"destructiveHint": true}
+    },
+    {
+      "name": "close_account",
+      "description": "Close a customer account.",
+      "inputSchema": {"type": "object", "properties": {"account": {"type": "string"}}, "required": ["account"]},
+      "annotations": {"destructiveHint": true}
+    }
+  ]
+}

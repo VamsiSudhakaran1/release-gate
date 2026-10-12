@@ -1,0 +1,8 @@
+# The payments assistant's runtime policy. RuntimeGate enforces it call by call;
+# `verify --trace` checks a finished run against the same keys.
+project:
+  name: payments-assistant
+trace_policies:
+  allowed_tools: [get_balance, transfer_funds, close_account]
+  forbidden_tools: [close_account]
+  max_tool_calls: 20
